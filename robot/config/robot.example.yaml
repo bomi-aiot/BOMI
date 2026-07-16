@@ -1,0 +1,6 @@
+robot_id: robot-01
+mqtt:
+  host: localhost
+  port: 1883
+navigation:
+  map: maps/home.yaml

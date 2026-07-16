@@ -1,0 +1,23 @@
+server:
+  port: ${BACKEND_PORT:8080}
+
+spring:
+  application:
+    name: bomi-backend
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:bomi}?serverTimezone=Asia/Seoul&characterEncoding=UTF-8
+    username: ${MYSQL_USERNAME:bomi}
+    password: ${MYSQL_PASSWORD:change-me}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  integration:
+    mqtt:
+      broker-url: tcp://${MQTT_BROKER_HOST:localhost}:${MQTT_BROKER_PORT:1883}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

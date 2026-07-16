@@ -1,0 +1,7 @@
+device_id: door-sensor-01
+mqtt:
+  host: localhost
+  port: 1883
+  topic_prefix: bomi/v1
+gpio:
+  door_pin: 17
