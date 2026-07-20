@@ -60,12 +60,38 @@ services:
       - backend-net
       - proxy-net
 
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    image: bomi-frontend:${FRONTEND_IMAGE_TAG:-local}
+    container_name: bomi-frontend
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:8080/frontend-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    mem_limit: 128m
+    cpus: 0.5
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=16m,mode=0755
+      - /var/run:size=1m,mode=0755
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - proxy-net
+
   nginx:
     image: nginx:1.30.4-alpine
     container_name: bomi-nginx
     restart: unless-stopped
     depends_on:
       backend:
+        condition: service_healthy
+      frontend:
         condition: service_healthy
     ports:
       - "80:80"
