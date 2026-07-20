@@ -1,0 +1,16 @@
+pipeline {
+    agent { node { label 'built-in'; customWorkspace '/home/ubuntu/bomi/data/jenkins/workspace/bomi-backend-production' } }
+    options { disableConcurrentBuilds(); skipDefaultCheckout(true); timestamps(); timeout(time: 15, unit: 'MINUTES') }
+    stages {
+        stage('Checkout be-main') { steps { checkout scm } }
+        stage('Validate') { steps { sh 'bash -n scripts/deploy/deploy-common.sh scripts/deploy/deploy-backend.sh' } }
+        stage('Deploy Backend') {
+            steps {
+                sh '''BOMI_SOURCE_DIR="$WORKSPACE" \
+                    BOMI_RELEASE_BRANCH=be-main \
+                    scripts/deploy/deploy-backend.sh'''
+            }
+        }
+    }
+    post { success { echo "Backend deployment succeeded: ${env.GIT_COMMIT}" }; failure { echo "Backend deployment failed: ${env.BUILD_URL}" } }
+}
