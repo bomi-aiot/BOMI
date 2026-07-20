@@ -7,6 +7,7 @@ readonly ROBOT_DIR="$SOURCE_DIR/robot"
 
 docker run --rm \
   --volume "$ROBOT_DIR:/workspace:ro" \
+  --env PYTHONPYCACHEPREFIX=/tmp/pycache \
   python:3.10-slim \
   sh -ec '
     python -m compileall -q /workspace
