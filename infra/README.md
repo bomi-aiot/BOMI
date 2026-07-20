@@ -268,6 +268,157 @@ docker compose \
 
 Backend만 재시작해도 PostgreSQL 컨테이너와 데이터에는 영향을 주지 않습니다.
 
+## Nginx 및 HTTPS 운영
+
+외부 HTTP/HTTPS 요청은 Nginx만 수신합니다. `/api/` 요청은 `bomi-proxy-net`을
+통해 Backend로 전달하고 `/actuator`는 외부에서 차단합니다. Backend의 8080은
+계속 호스트에 공개하지 않습니다.
+
+- 도메인: `i15e102.p.ssafy.io`
+- Nginx 이미지: `nginx:1.30.4-alpine`
+- Certbot 이미지: `certbot/certbot:v5.7.0`
+- 인증서: `/home/ubuntu/bomi/data/certbot/conf`
+- ACME webroot: `/home/ubuntu/bomi/data/certbot/www`
+
+### 1. 사전 확인
+
+도메인의 A 레코드와 EC2의 공인 IP가 일치해야 하며 외부에서 80과 443 포트에
+접근할 수 있어야 합니다.
+
+```bash
+getent ahostsv4 i15e102.p.ssafy.io
+curl -4 --max-time 10 https://checkip.amazonaws.com
+sudo ss -lntp | grep -E ':(80|443) ' || true
+```
+
+UFW에 HTTP를 허용합니다. HTTPS는 기존 규칙이 있더라도 함께 확인합니다.
+
+```bash
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw status numbered
+```
+
+### 2. 인증서 디렉터리와 환경변수
+
+```bash
+sudo install -d -o ubuntu -g ubuntu -m 700 /home/ubuntu/bomi/data/certbot/conf
+sudo install -d -o ubuntu -g ubuntu -m 755 /home/ubuntu/bomi/data/certbot/www
+```
+
+`/home/ubuntu/bomi/secrets/production.env`에 다음 값을 추가합니다.
+
+```dotenv
+BOMI_DOMAIN=i15e102.p.ssafy.io
+LETSENCRYPT_EMAIL=<팀에서 관리하는 실제 이메일>
+CERTBOT_CONF_DIR=/home/ubuntu/bomi/data/certbot/conf
+CERTBOT_WEBROOT_DIR=/home/ubuntu/bomi/data/certbot/www
+```
+
+### 3. 최초 인증서 발급
+
+인증서가 없으면 HTTPS Nginx가 시작될 수 없습니다. 먼저 임시 HTTP Nginx를
+실행하여 ACME challenge 경로를 제공합니다.
+
+```bash
+cd /home/ubuntu/bomi/deploy/source
+
+docker compose \
+  --profile tools \
+  --env-file /home/ubuntu/bomi/secrets/production.env \
+  -f infra/compose.prod.yml \
+  up -d nginx-bootstrap
+
+curl --fail http://localhost/nginx-health
+```
+
+환경파일에서 도메인과 이메일을 읽어 인증서를 발급합니다.
+
+```bash
+BOMI_DOMAIN=$(awk -F= '$1 == "BOMI_DOMAIN" { print $2 }' /home/ubuntu/bomi/secrets/production.env)
+BOMI_LETSENCRYPT_EMAIL=$(awk -F= '$1 == "LETSENCRYPT_EMAIL" { print $2 }' /home/ubuntu/bomi/secrets/production.env)
+
+docker compose \
+  --profile tools \
+  --env-file /home/ubuntu/bomi/secrets/production.env \
+  -f infra/compose.prod.yml \
+  run --rm certbot certonly \
+  --webroot --webroot-path /var/www/certbot \
+  --domain "$BOMI_DOMAIN" \
+  --email "$BOMI_LETSENCRYPT_EMAIL" \
+  --agree-tos --no-eff-email --non-interactive
+```
+
+발급에 성공하면 임시 Nginx를 제거합니다.
+
+```bash
+docker compose \
+  --profile tools \
+  --env-file /home/ubuntu/bomi/secrets/production.env \
+  -f infra/compose.prod.yml \
+  rm -sf nginx-bootstrap
+```
+
+### 4. HTTPS Nginx 시작 및 검증
+
+```bash
+docker compose \
+  --env-file /home/ubuntu/bomi/secrets/production.env \
+  -f infra/compose.prod.yml \
+  up -d --wait --wait-timeout 60 nginx
+
+curl -I http://i15e102.p.ssafy.io/api/health
+curl --fail --silent --show-error https://i15e102.p.ssafy.io/api/health
+curl -I https://i15e102.p.ssafy.io/actuator/health
+```
+
+정상 기준은 HTTP 요청의 HTTPS 리다이렉트, `/api/health`의 `UP` 응답,
+`/actuator/health`의 404 응답입니다.
+
+Backend 포트가 계속 비공개인지 함께 확인합니다.
+
+```bash
+docker port bomi-backend
+sudo ss -lntp | grep ':8080' || echo 'OK: Backend is not published on the host'
+```
+
+### 5. 인증서 갱신
+
+갱신 테스트:
+
+```bash
+cd /home/ubuntu/bomi/deploy/source
+docker compose \
+  --profile tools \
+  --env-file /home/ubuntu/bomi/secrets/production.env \
+  -f infra/compose.prod.yml \
+  run --rm certbot renew \
+  --webroot --webroot-path /var/www/certbot \
+  --dry-run
+```
+
+운영 갱신 스크립트는 `scripts/deploy/renew-certificates.sh`입니다. 실행 권한을
+부여하고 cron 또는 systemd timer로 하루 한 번 실행합니다. Certbot은 갱신 시점이
+아니면 인증서를 변경하지 않습니다.
+
+```bash
+chmod 750 scripts/deploy/renew-certificates.sh
+scripts/deploy/renew-certificates.sh
+```
+
+운영 EC2는 UTC 기준 매일 03:17(한국 시간 12:17)에 갱신 여부를 확인합니다.
+
+```bash
+(
+  crontab -l 2>/dev/null | grep -v 'renew-certificates.sh'
+  echo '17 3 * * * /home/ubuntu/bomi/deploy/source/scripts/deploy/renew-certificates.sh >> /home/ubuntu/bomi/logs/certbot-renew.log 2>&1'
+) | crontab -
+
+crontab -l
+```
+
+갱신 로그는 `/home/ubuntu/bomi/logs/certbot-renew.log`에서 확인합니다.
+
 ## Mosquitto 주의사항
 
 현재 Mosquitto 설정은 로컬 개발 편의를 위해 익명 접속을 허용합니다. 운영 환경에
