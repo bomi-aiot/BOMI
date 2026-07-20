@@ -179,6 +179,95 @@ pg_restore --list /home/ubuntu/bomi/backup/<backup-file>.dump | head
 
 PostgreSQL 메이저 버전 변경은 단순 컨테이너 교체가 아니라 데이터 마이그레이션 작업으로 취급합니다.
 
+## Backend 컨테이너 운영
+
+Backend는 PostgreSQL과 동일한 `bomi-backend-net`에 연결하며 DB 서비스 이름
+`postgres`를 사용합니다. 8080 포트는 호스트에 공개하지 않습니다.
+
+### 1. 이미지 빌드
+
+배포할 커밋 SHA를 이미지 태그로 사용하는 것을 권장합니다.
+
+```bash
+cd /home/ubuntu/bomi/deploy/source
+docker compose \
+  --env-file /home/ubuntu/bomi/secrets/production.env \
+  -f infra/compose.prod.yml \
+  build --pull backend
+```
+
+`production.env`의 `BACKEND_IMAGE_TAG`에는 배포할 커밋 SHA나 릴리스 식별자를
+기록합니다. 태그 값을 바꾼 뒤 빌드해야 해당 이름으로 이미지가 생성됩니다.
+
+### 2. Backend 시작
+
+```bash
+docker compose \
+  --env-file /home/ubuntu/bomi/secrets/production.env \
+  -f infra/compose.prod.yml \
+  up -d --wait --wait-timeout 120 backend
+```
+
+PostgreSQL이 healthy 상태가 된 이후 Backend가 시작됩니다.
+
+### 3. 상태 및 DB 연결 확인
+
+```bash
+docker compose \
+  --env-file /home/ubuntu/bomi/secrets/production.env \
+  -f infra/compose.prod.yml \
+  ps postgres backend
+
+docker inspect \
+  --format='Status={{.State.Status}} Health={{.State.Health.Status}} RestartCount={{.RestartCount}}' \
+  bomi-backend
+
+docker logs --tail=100 bomi-backend
+```
+
+Actuator health 응답은 Backend 컨테이너 내부에서 확인합니다.
+
+```bash
+docker exec bomi-backend \
+  curl --fail --silent --show-error http://localhost:8080/actuator/health
+```
+
+응답의 전체 상태가 `UP`이어야 합니다. Spring Boot Actuator의 전체 health에는
+DataSource 상태가 반영됩니다.
+
+호스트 포트가 공개되지 않았는지 확인합니다.
+
+```bash
+docker port bomi-backend
+sudo ss -lntp | grep ':8080' || echo 'OK: Backend is not published on the host'
+```
+
+### 4. 리소스 및 보안 설정
+
+- 메모리 제한: 1GB
+- CPU 제한: 1.5 CPU
+- 파일시스템: 읽기 전용
+- 임시 파일: 64MB `/tmp` tmpfs
+- 실행 사용자: 비-root `bomi`
+- 추가 권한 획득: 금지
+- 정상 종료 대기: 30초
+
+### 5. 로그와 재시작
+
+```bash
+docker compose \
+  --env-file /home/ubuntu/bomi/secrets/production.env \
+  -f infra/compose.prod.yml \
+  logs --tail=100 backend
+
+docker compose \
+  --env-file /home/ubuntu/bomi/secrets/production.env \
+  -f infra/compose.prod.yml \
+  restart backend
+```
+
+Backend만 재시작해도 PostgreSQL 컨테이너와 데이터에는 영향을 주지 않습니다.
+
 ## Mosquitto 주의사항
 
 현재 Mosquitto 설정은 로컬 개발 편의를 위해 익명 접속을 허용합니다. 운영 환경에
