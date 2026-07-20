@@ -89,7 +89,7 @@ Robot은 Ubuntu 22.04 및 ROS 2 Humble 환경에서 `robot/README.md`를 따릅�
 
 - `main`: 시연·배포 가능한 안정 버전, PR로만 병합
 - `develop`: 기능 통합 브랜치
-- `feature/*`: 기능별 작업 브랜치(예: `feature/be-door-event`)
+- `feat/*`: 기능별 작업 브랜치(예: `feat/be-door-event`)
 
 ## 민감정보 관리
 
@@ -99,4 +99,3 @@ Robot은 Ubuntu 22.04 및 ROS 2 Humble 환경에서 `robot/README.md`를 따릅�
 
 - 포함: 초기 React 화면, 백엔드 Health API, MySQL/Mosquitto Compose, 환경변수 기반 설정, ROS 2/IoT 디렉터리, 핵심 문서와 GitHub 템플릿
 - 미포함: 실제 센서 제어, MQTT 구독·발행 비즈니스 흐름, DB 도메인 모델, 로봇 자율주행, STT/TTS, AI 대화, WebSocket 화면 연동, 운영 보안·배포 설정
-
