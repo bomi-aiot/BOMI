@@ -1,0 +1,16 @@
+pipeline {
+    agent { node { label 'built-in'; customWorkspace '/home/ubuntu/bomi/data/jenkins/workspace/bomi-frontend-production' } }
+    options { disableConcurrentBuilds(); skipDefaultCheckout(true); timestamps(); timeout(time: 15, unit: 'MINUTES') }
+    stages {
+        stage('Checkout fe-main') { steps { checkout scm } }
+        stage('Validate') { steps { sh 'bash -n scripts/deploy/deploy-common.sh scripts/deploy/deploy-frontend.sh' } }
+        stage('Deploy Frontend') {
+            steps {
+                sh '''BOMI_SOURCE_DIR="$WORKSPACE" \
+                    BOMI_RELEASE_BRANCH=fe-main \
+                    scripts/deploy/deploy-frontend.sh'''
+            }
+        }
+    }
+    post { success { echo "Frontend deployment succeeded: ${env.GIT_COMMIT}" }; failure { echo "Frontend deployment failed: ${env.BUILD_URL}" } }
+}
