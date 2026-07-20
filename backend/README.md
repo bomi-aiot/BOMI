@@ -3,8 +3,26 @@
 Java 17 / Spring Boot / Gradle 기반 중앙 백엔드입니다.
 
 1. 루트 `.env.example`을 `.env`로 복사하고 값을 설정합니다.
-2. 루트에서 `docker compose up -d`로 MySQL과 Mosquitto를 시작합니다.
+2. 루트에서 `docker compose up -d`로 PostgreSQL + pgvector와 Mosquitto를 시작합니다.
 3. 이 디렉터리에서 `./gradlew bootRun`(Windows: `gradlew.bat bootRun`)을 실행합니다.
 4. `GET http://localhost:8080/api/health`로 상태를 확인합니다.
 
 MQTT 라이브러리와 접속 환경변수의 기반만 포함하며 실제 구독·발행 흐름은 후속 구현 대상입니다.
+
+## Docker 이미지
+
+운영 이미지는 `backend/Dockerfile`의 멀티스테이지 빌드를 사용합니다.
+
+- 빌드: Eclipse Temurin Java 17 JDK + Gradle Wrapper
+- 실행: Eclipse Temurin Java 17 JRE
+- 실행 사용자: UID/GID 10001의 비-root 사용자 `bomi`
+- Health check: `GET /actuator/health`
+- 컨테이너 포트: 8080
+
+저장소 루트에서 이미지를 빌드할 수 있습니다.
+
+```bash
+docker build -t bomi-backend:local backend
+```
+
+운영 환경에서는 8080을 호스트에 직접 공개하지 않고 Nginx와 Docker 내부 네트워크로 연결합니다.
