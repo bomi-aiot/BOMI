@@ -1,0 +1,19 @@
+pipeline {
+    agent { node { label 'built-in'; customWorkspace '/home/ubuntu/bomi/data/jenkins/workspace/bomi-ai-verify' } }
+    options { disableConcurrentBuilds(); skipDefaultCheckout(true); timestamps(); timeout(time: 15, unit: 'MINUTES') }
+    stages {
+        stage('Checkout ai-main') { steps { checkout scm } }
+        stage('Verify AI') {
+            steps {
+                script {
+                    if (!fileExists('ai')) {
+                        unstable('ai/ is not available yet; AI verification is pending')
+                    } else {
+                        sh 'BOMI_SOURCE_DIR="$WORKSPACE" scripts/ci/verify-ai.sh'
+                    }
+                }
+            }
+        }
+    }
+    post { always { echo 'AI deployment is disabled; verification only' } }
+}
