@@ -5,9 +5,9 @@ spring:
   application:
     name: bomi-backend
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:bomi}?serverTimezone=Asia/Seoul&characterEncoding=UTF-8
-    username: ${MYSQL_USERNAME:bomi}
-    password: ${MYSQL_PASSWORD:change-me}
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:bomi}
+    username: ${POSTGRES_USER:bomi}
+    password: ${POSTGRES_PASSWORD:change-me}
   jpa:
     hibernate:
       ddl-auto: validate

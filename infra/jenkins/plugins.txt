@@ -1,0 +1,5 @@
+credentials-binding
+git
+gitlab-plugin:1.9.16
+pipeline-stage-view
+workflow-aggregator
