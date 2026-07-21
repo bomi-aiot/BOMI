@@ -1,13 +1,14 @@
 server:
   port: ${BACKEND_PORT:8080}
+  forward-headers-strategy: framework
 
 spring:
   application:
     name: bomi-backend
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:bomi}?serverTimezone=Asia/Seoul&characterEncoding=UTF-8
-    username: ${MYSQL_USERNAME:bomi}
-    password: ${MYSQL_PASSWORD:change-me}
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:bomi}
+    username: ${POSTGRES_USER:bomi}
+    password: ${POSTGRES_PASSWORD:change-me}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -21,3 +22,21 @@ management:
     web:
       exposure:
         include: health,info
+
+springdoc:
+  api-docs:
+    enabled: true
+  enable-default-api-docs: false
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    disable-swagger-default-url: true
+    supported-submit-methods: []
+    urls:
+      - name: AI Vision Recognition API
+        url: /openapi/vision-ai.openapi.yaml
+      - name: AI Vision Result Callback API
+        url: /openapi/vision-callback.openapi.yaml
+      - name: Conversation and Voice AI API
+        url: /openapi/voice-ai.openapi.yaml
+    urls-primary-name: AI Vision Recognition API
