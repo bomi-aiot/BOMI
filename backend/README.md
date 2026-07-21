@@ -9,6 +9,30 @@ Java 17 / Spring Boot / Gradle 기반 중앙 백엔드입니다.
 
 MQTT 라이브러리와 접속 환경변수의 기반만 포함하며 실제 구독·발행 흐름은 후속 구현 대상입니다.
 
+## API 계약과 Swagger UI
+
+AI Vision과 대화·음성 AI의 OpenAPI 계약은 `src/main/resources/static/openapi/`에서 관리합니다. PostgreSQL 없이 문서만 확인하려면 `docs` Profile로 실행합니다.
+
+Windows PowerShell:
+
+```powershell
+.\gradlew.bat bootRun --args="--spring.profiles.active=docs"
+```
+
+macOS 또는 Linux:
+
+```bash
+./gradlew bootRun --args='--spring.profiles.active=docs'
+```
+
+Swagger UI:
+
+```text
+http://localhost:8080/swagger-ui.html
+```
+
+상세한 명세 목록, 개별 YAML 주소와 계약 변경 규칙은 [`../docs/api/README.md`](../docs/api/README.md)를 참고합니다.
+
 ## Docker 이미지
 
 운영 이미지는 `backend/Dockerfile`의 멀티스테이지 빌드를 사용합니다.

@@ -1,0 +1,296 @@
+openapi: 3.0.3
+info:
+  title: BOMI AI Vision Result Callback API
+  version: 1.0.0
+  description: |
+    AI Vision이 사람 인식 결과를 Spring Boot에 비동기로 전달하는 내부 API 계약입니다.
+
+    `eventId`는 Callback 멱등 키입니다. AI Vision은 네트워크 오류 또는 5xx 응답일 때 같은
+    `eventId`로 재전송하고, Spring Boot는 이미 처리한 요청에 부수 효과를 다시 발생시키지 않습니다.
+servers:
+  - url: http://localhost:8080
+    description: 로컬 Spring Boot 개발 서버
+tags:
+  - name: Vision Callback
+    description: AI Vision 비동기 결과 수신
+paths:
+  /api/v1/integrations/vision/results:
+    post:
+      tags:
+        - Vision Callback
+      summary: 사람 인식 결과 전달
+      operationId: receiveVisionResult
+      security:
+        - ServiceBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VisionResult'
+            examples:
+              personDetected:
+                summary: 사람 감지 성공
+                value:
+                  eventId: 01K0M50ZTR2C8D6F4G9H1J3N5Q
+                  requestId: 01K0M50M89A3C7D2F5G8H1J4NP
+                  scenarioId: 01K0M4Y80XD4J7C2H6P9N5Q3RS
+                  robotId: robot-01
+                  type: PERSON_DETECTED
+                  occurredAt: '2026-07-21T10:30:18+09:00'
+                  personCount: 1
+                  confidence: 0.91
+                  targetPersonId: user-3
+                  interactionAllowed: true
+                  model:
+                    name: bomi-person-detector
+                    version: '1.0.0'
+              personNotFound:
+                summary: 제한 시간 내 사람 미감지
+                value:
+                  eventId: 01K0M50ZTR2C8D6F4G9H1J3N6R
+                  requestId: 01K0M50M89A3C7D2F5G8H1J4NP
+                  scenarioId: 01K0M4Y80XD4J7C2H6P9N5Q3RS
+                  robotId: robot-01
+                  type: PERSON_NOT_FOUND
+                  occurredAt: '2026-07-21T10:30:31+09:00'
+                  reason: DETECTION_TIMEOUT
+              inferenceFailed:
+                summary: AI Vision 처리 실패
+                value:
+                  eventId: 01K0M50ZTR2C8D6F4G9H1J3N7S
+                  requestId: 01K0M50M89A3C7D2F5G8H1J4NP
+                  scenarioId: 01K0M4Y80XD4J7C2H6P9N5Q3RS
+                  robotId: robot-01
+                  type: INFERENCE_FAILED
+                  occurredAt: '2026-07-21T10:30:19+09:00'
+                  failureCode: MODEL_UNAVAILABLE
+                  message: 추론 모델을 사용할 수 없습니다.
+      responses:
+        '202':
+          description: 신규 결과 또는 중복 결과를 정상 접수함
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VisionResultAcceptedResponse'
+              example:
+                eventId: 01K0M50ZTR2C8D6F4G9H1J3N5Q
+                scenarioId: 01K0M4Y80XD4J7C2H6P9N5Q3RS
+                acceptedAt: '2026-07-21T10:30:18.130+09:00'
+                duplicate: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: '`scenarioId` 또는 `requestId`를 찾을 수 없음'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: 현재 시나리오 상태에서 해당 결과를 적용할 수 없음
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: INVALID_SCENARIO_STATE
+                message: RECOGNIZING 상태에서만 Vision 결과를 처리할 수 있습니다.
+                traceId: 7de289f8086e4dba
+                occurredAt: '2026-07-21T10:30:18.100+09:00'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+components:
+  securitySchemes:
+    ServiceBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: service-token
+      description: 환경변수 또는 비밀 저장소로 주입하는 내부 서비스 토큰
+  schemas:
+    VisionResult:
+      oneOf:
+        - $ref: '#/components/schemas/PersonDetectedResult'
+        - $ref: '#/components/schemas/PersonNotFoundResult'
+        - $ref: '#/components/schemas/InferenceFailedResult'
+      discriminator:
+        propertyName: type
+        mapping:
+          PERSON_DETECTED: '#/components/schemas/PersonDetectedResult'
+          PERSON_NOT_FOUND: '#/components/schemas/PersonNotFoundResult'
+          INFERENCE_FAILED: '#/components/schemas/InferenceFailedResult'
+    BaseVisionResult:
+      type: object
+      required:
+        - eventId
+        - requestId
+        - scenarioId
+        - robotId
+        - type
+        - occurredAt
+      properties:
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: AI Vision이 생성하는 Callback 멱등 키
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Backend가 인식 시작 요청에 부여한 식별자
+        scenarioId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        robotId:
+          type: string
+          minLength: 1
+          maxLength: 64
+        type:
+          type: string
+        occurredAt:
+          type: string
+          format: date-time
+          description: 인식 결과가 확정된 시각
+    PersonDetectedResult:
+      allOf:
+        - $ref: '#/components/schemas/BaseVisionResult'
+        - type: object
+          required:
+            - personCount
+            - confidence
+            - interactionAllowed
+            - model
+          properties:
+            type:
+              type: string
+              enum:
+                - PERSON_DETECTED
+            personCount:
+              type: integer
+              minimum: 1
+            confidence:
+              type: number
+              format: double
+              minimum: 0
+              maximum: 1
+              description: AI Vision이 최종 판정한 신뢰도
+            targetPersonId:
+              type: string
+              nullable: true
+              description: 사용자를 식별하지 못한 경우 null 또는 생략
+            interactionAllowed:
+              type: boolean
+              description: AI Vision 관점에서 능동 대화를 시작해도 되는지 여부
+            model:
+              $ref: '#/components/schemas/ModelInfo'
+    PersonNotFoundResult:
+      allOf:
+        - $ref: '#/components/schemas/BaseVisionResult'
+        - type: object
+          required:
+            - reason
+          properties:
+            type:
+              type: string
+              enum:
+                - PERSON_NOT_FOUND
+            reason:
+              type: string
+              enum:
+                - DETECTION_TIMEOUT
+                - NO_VALID_PERSON
+                - MULTIPLE_PEOPLE_UNRESOLVED
+    InferenceFailedResult:
+      allOf:
+        - $ref: '#/components/schemas/BaseVisionResult'
+        - type: object
+          required:
+            - failureCode
+          properties:
+            type:
+              type: string
+              enum:
+                - INFERENCE_FAILED
+            failureCode:
+              type: string
+              enum:
+                - CAMERA_UNAVAILABLE
+                - MODEL_UNAVAILABLE
+                - INFERENCE_ERROR
+            message:
+              type: string
+              maxLength: 500
+    ModelInfo:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - version
+      properties:
+        name:
+          type: string
+          example: bomi-person-detector
+        version:
+          type: string
+          example: '1.0.0'
+    VisionResultAcceptedResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - eventId
+        - scenarioId
+        - acceptedAt
+        - duplicate
+      properties:
+        eventId:
+          type: string
+        scenarioId:
+          type: string
+        acceptedAt:
+          type: string
+          format: date-time
+        duplicate:
+          type: boolean
+          description: 이미 처리한 `eventId`인지 여부
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - occurredAt
+      properties:
+        code:
+          type: string
+          example: INVALID_REQUEST
+        message:
+          type: string
+          example: 요청 필드가 올바르지 않습니다.
+        traceId:
+          type: string
+          example: 7de289f8086e4dba
+        occurredAt:
+          type: string
+          format: date-time
+  responses:
+    BadRequest:
+      description: JSON 형식, 필수 필드 또는 enum 값 오류
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: 내부 서비스 인증 실패
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalServerError:
+      description: Backend 내부 오류. AI Vision은 같은 `eventId`로 제한적으로 재시도 가능
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
