@@ -12,7 +12,7 @@ BOMI는 사용자의 일상에 지속적으로 개입해 대화·행동·안전 
 | --- | --- |
 | Frontend | React, Vite, JavaScript, npm |
 | Backend | Spring Boot, Java 17, Gradle, JPA, WebSocket, MQTT |
-| Database / Broker | MySQL 8, Eclipse Mosquitto 2 |
+| Database / Broker | PostgreSQL 17, pgvector, Eclipse Mosquitto 2 |
 | Robot | Ubuntu 22.04, ROS 2 Humble, Python 3.10, Nav2, SLAM Toolbox |
 | Hardware | Jetson Orin Nano, Raspberry Pi 5, LiDAR, Camera, IMU |
 
@@ -39,14 +39,14 @@ cp .env.example .env
 
 `.env`의 `change-me` 값을 로컬 개발용 값으로 변경합니다. PowerShell에서는 `Copy-Item .env.example .env`를 사용합니다.
 
-### 2. MySQL과 Mosquitto
+### 2. PostgreSQL + pgvector와 Mosquitto
 
 ```bash
 docker compose up -d
 docker compose ps
 ```
 
-- MySQL: `localhost:3306`
+- PostgreSQL: `127.0.0.1:5432`
 - MQTT: `localhost:1883`
 - MQTT WebSocket: `localhost:9001`
 
@@ -74,6 +74,8 @@ cd backend
 
 Windows에서는 `gradlew.bat bootRun`을 사용합니다. 상태 확인은 `GET http://localhost:8080/api/health`입니다.
 
+팀 공용 REST 계약은 [배포 Swagger UI](https://i15e102.p.ssafy.io/swagger-ui.html)에서 확인합니다. 상단 선택 메뉴에서 AI Vision 요청, Vision 결과 Callback, 대화·음성 AI 명세를 전환할 수 있습니다.
+
 ### 5. Robot / IoT
 
 Robot은 Ubuntu 22.04 및 ROS 2 Humble 환경에서 `robot/README.md`를 따릅니다. IoT Python 의존성은 대상 장치에서 `pip install -r iot/requirements.txt`로 설치합니다.
@@ -97,5 +99,5 @@ Robot은 Ubuntu 22.04 및 ROS 2 Humble 환경에서 `robot/README.md`를 따릅�
 
 ## 현재 구현 범위
 
-- 포함: 초기 React 화면, 백엔드 Health API, MySQL/Mosquitto Compose, 환경변수 기반 설정, ROS 2/IoT 디렉터리, 핵심 문서와 GitHub 템플릿
+- 포함: 초기 React 화면, 백엔드 Health API, PostgreSQL/pgvector/Mosquitto Compose, 환경변수 기반 설정, ROS 2/IoT 디렉터리, 핵심 문서와 GitHub 템플릿
 - 미포함: 실제 센서 제어, MQTT 구독·발행 비즈니스 흐름, DB 도메인 모델, 로봇 자율주행, STT/TTS, AI 대화, WebSocket 화면 연동, 운영 보안·배포 설정

@@ -9,7 +9,7 @@ flowchart LR
   Robot -->|상태·결과| BE
   Robot <-->|REST/stream| AI["AI 서비스"]
   BE <-->|REST/WebSocket| FE["React 보호자 대시보드"]
-  BE --> DB[(MySQL)]
+  BE --> DB[(PostgreSQL + pgvector)]
 ```
 
 ## 통신 기준
