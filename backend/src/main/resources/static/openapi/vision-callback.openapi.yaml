@@ -8,6 +8,8 @@ info:
     `eventId`는 Callback 멱등 키입니다. AI Vision은 네트워크 오류 또는 5xx 응답일 때 같은
     `eventId`로 재전송하고, Spring Boot는 이미 처리한 요청에 부수 효과를 다시 발생시키지 않습니다.
 servers:
+  - url: https://i15e102.p.ssafy.io
+    description: BOMI 배포 Spring Boot 서버
   - url: http://localhost:8080
     description: 로컬 Spring Boot 개발 서버
 tags:

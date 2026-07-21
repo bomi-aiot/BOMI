@@ -370,10 +370,16 @@ docker compose \
 curl -I http://i15e102.p.ssafy.io/api/health
 curl --fail --silent --show-error https://i15e102.p.ssafy.io/api/health
 curl -I https://i15e102.p.ssafy.io/actuator/health
+curl -I https://i15e102.p.ssafy.io/swagger-ui.html
+curl --fail --silent --show-error https://i15e102.p.ssafy.io/openapi/vision-ai.openapi.yaml > /dev/null
+curl --fail --silent --show-error https://i15e102.p.ssafy.io/openapi/vision-callback.openapi.yaml > /dev/null
+curl --fail --silent --show-error https://i15e102.p.ssafy.io/openapi/voice-ai.openapi.yaml > /dev/null
 ```
 
 정상 기준은 HTTP 요청의 HTTPS 리다이렉트, `/api/health`의 `UP` 응답,
-`/actuator/health`의 404 응답입니다.
+`/actuator/health`의 404 응답, `/swagger-ui.html`의 Backend Swagger UI 리다이렉트,
+세 OpenAPI YAML의 200 응답입니다. Swagger UI는 계약 열람 전용이며 Nginx는 지정된
+문서 경로에 GET·HEAD만 허용합니다.
 
 Backend 포트가 계속 비공개인지 함께 확인합니다.
 

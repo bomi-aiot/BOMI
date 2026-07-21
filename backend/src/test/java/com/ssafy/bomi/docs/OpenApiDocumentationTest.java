@@ -3,6 +3,8 @@ package com.ssafy.bomi.docs;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.io.IOException;
@@ -69,6 +71,9 @@ class OpenApiDocumentationTest {
     void swaggerConfigListsEveryStaticSpec() throws Exception {
         String config = mockMvc.perform(get("/v3/api-docs/swagger-config"))
             .andExpect(status().isOk())
+            .andExpect(jsonPath("$.urls.length()").value(SPECS.size()))
+            .andExpect(jsonPath("$['urls.primaryName']").value("AI Vision Recognition API"))
+            .andExpect(jsonPath("$.supportedSubmitMethods").isEmpty())
             .andReturn()
             .getResponse()
             .getContentAsString();
@@ -81,6 +86,10 @@ class OpenApiDocumentationTest {
 
     @Test
     void swaggerUiAndStaticSpecsAreServed() throws Exception {
+        mockMvc.perform(get("/swagger-ui.html"))
+            .andExpect(status().is3xxRedirection())
+            .andExpect(redirectedUrl("/swagger-ui/index.html"));
+
         mockMvc.perform(get("/swagger-ui/index.html"))
             .andExpect(status().isOk());
 
@@ -89,6 +98,26 @@ class OpenApiDocumentationTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("openapi: 3.0.3")));
         }
+
+        mockMvc.perform(get("/v3/api-docs"))
+            .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void visionCallbackSpecListsTheDeployedBackendFirst() throws IOException {
+        ClassPathResource resource = new ClassPathResource(
+            "static/openapi/vision-callback.openapi.yaml"
+        );
+        OpenAPI openApi;
+
+        try (InputStream inputStream = resource.getInputStream()) {
+            openApi = io.swagger.v3.core.util.Yaml.mapper()
+                .readValue(inputStream.readAllBytes(), OpenAPI.class);
+        }
+
+        assertThat(openApi.getServers()).isNotEmpty();
+        assertThat(openApi.getServers().get(0).getUrl())
+            .isEqualTo("https://i15e102.p.ssafy.io");
     }
 
     private record OpenApiSpec(String name, String fileName) {}
