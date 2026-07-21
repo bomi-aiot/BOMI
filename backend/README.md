@@ -11,7 +11,15 @@ MQTT 라이브러리와 접속 환경변수의 기반만 포함하며 실제 구
 
 ## API 계약과 Swagger UI
 
-AI Vision과 대화·음성 AI의 OpenAPI 계약은 `src/main/resources/static/openapi/`에서 관리합니다. PostgreSQL 없이 문서만 확인하려면 `docs` Profile로 실행합니다.
+AI Vision과 대화·음성 AI의 OpenAPI 계약은 `src/main/resources/static/openapi/`에서 관리합니다. 팀 공용 문서는 배포 Swagger UI를 기준으로 확인합니다.
+
+```text
+https://i15e102.p.ssafy.io/swagger-ui.html
+```
+
+Swagger UI 상단에서 사람 인식 요청, Vision 결과 Callback, 대화·음성 생성 명세를 선택할 수 있습니다. 계약 열람 전용이므로 `Try it out`은 비활성화되어 있습니다.
+
+배포 전 변경 내용을 로컬에서 확인하거나 PostgreSQL 없이 문서만 확인하려면 `docs` Profile로 실행합니다.
 
 Windows PowerShell:
 
@@ -25,7 +33,7 @@ macOS 또는 Linux:
 ./gradlew bootRun --args='--spring.profiles.active=docs'
 ```
 
-Swagger UI:
+로컬 Swagger UI:
 
 ```text
 http://localhost:8080/swagger-ui.html
