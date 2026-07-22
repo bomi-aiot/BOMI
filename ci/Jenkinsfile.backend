@@ -4,7 +4,16 @@ pipeline {
     parameters { booleanParam(name: 'FORCE_DEPLOY', defaultValue: false, description: '변경 경로와 관계없이 Backend를 다시 배포합니다.') }
     environment { BACKEND_DEPLOY_REQUIRED = 'true' }
     stages {
-        stage('Checkout be-main') { steps { checkout scm } }
+        stage('Checkout be-main') {
+            steps {
+                script {
+                    def scmVars = checkout scm
+                    env.GIT_COMMIT = scmVars.GIT_COMMIT ?: sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                    env.GIT_PREVIOUS_SUCCESSFUL_COMMIT = scmVars.GIT_PREVIOUS_SUCCESSFUL_COMMIT ?: ''
+                    echo "SCM checkout: current=${env.GIT_COMMIT}, previousSuccessful=${env.GIT_PREVIOUS_SUCCESSFUL_COMMIT ?: 'none'}"
+                }
+            }
+        }
         stage('Validate') { steps { sh 'bash -n scripts/ci/has-changes.sh scripts/deploy/deploy-common.sh scripts/deploy/deploy-backend.sh' } }
         stage('Detect Backend Changes') {
             steps {
