@@ -427,5 +427,7 @@ crontab -l
 
 ## Mosquitto 주의사항
 
-현재 Mosquitto 설정은 로컬 개발 편의를 위해 익명 접속을 허용합니다. 운영 환경에
-배포하기 전에 사용자 인증, ACL, TLS를 적용해야 합니다.
+`docker/mosquitto/config/mosquitto.conf`는 로컬 개발용 설정입니다. 운영 배포는
+별도 파일인 `compose.mqtt.prod.yml`과 `docker/mosquitto/production/`을 사용하며,
+익명 접속 차단, 사용자별 ACL, MQTTS(8883)를 적용합니다. 최초 EC2 설정과 Jenkins
+Job 등록 절차는 `scripts/deploy/MQTT_DEPLOYMENT.md`를 따릅니다.
