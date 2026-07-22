@@ -19,6 +19,7 @@ Robot 내부의 MQTT Bridge가 MQTT 메시지와 ROS 2 명령·결과를 변환�
 - MQTT에는 명령과 작은 상태·결과만 전송하고 영상·음성 바이너리는 전송하지 않습니다.
 - 모든 토픽은 `retain=false`를 사용합니다. 과거 명령이 재연결한 Robot에서 실행되면 안 됩니다.
 - 이번 시나리오 토픽은 전달 보장을 위해 QoS 1을 사용하고 수신자는 중복을 허용해야 합니다.
+- `eventId`는 생산자와 관계없이 BOMI 시스템 전체에서 충돌하지 않는 불투명 문자열을 사용합니다.
 
 ## 3. 토픽 구조
 
@@ -47,43 +48,74 @@ bomi/v1/robot/+/results
 
 | 필드 | 적용 메시지 | 설명 |
 | --- | --- | --- |
-| `eventId` | 이벤트·상태·결과 | 생산자가 생성한 메시지 식별자. 재전송 시 같은 값 유지 |
+| `eventId` | 이벤트·상태·결과 | BOMI 시스템 전체에서 유일한 논리 이벤트 식별자. 동일 이벤트 재전송 시 같은 값 유지 |
 | `scenarioId` | Robot 명령·상태·결과 | Backend가 생성한 E2E 시나리오 식별자 |
 | `commandId` | Robot 명령·상태·결과 | 명령과 상태·결과를 연결하는 식별자 |
 | `robotId` | Robot 메시지 | 토픽의 `{robotId}`와 반드시 동일해야 함 |
+| `sequence` | Robot 진행 상태 | 동일한 `commandId` 안에서 단조 증가하는 상태 순서 |
 | `occurredAt` | 모든 메시지 | 이벤트 발생 시각. 전송 시각이 아님 |
 
 최초 IoT 이벤트에는 아직 `scenarioId`, `commandId`, `robotId`가 없을 수 있습니다. Backend가 시나리오와 명령을 생성한 이후의 메시지부터 해당 식별자를 사용합니다.
 
 ## 5. IoT 센서 이벤트
 
-### `PRESENCE_DETECTED`
+문 열림 자체와 사람의 이동 방향 판정은 서로 다른 사건으로 취급합니다. 단순 문 열림 이벤트는 `DOOR_OPENED`로 발행할 수 있지만 귀가 환영 시나리오를 직접 시작하지 않습니다. 귀가 환영 시나리오는 방향 판정이 완료된 `PRESENCE_DETECTED` 중 `direction=INBOUND`인 이벤트만 사용합니다.
 
-현관 센서가 귀가 방향의 사람 또는 문 열림을 감지했을 때 발행합니다.
+### `DOOR_OPENED`
+
+단일 도어 센서가 문 열림을 감지했을 때 발행합니다. 이 이벤트만으로 사람의 존재나 이동 방향을 추론하지 않습니다.
 
 ```json
 {
-  "eventId": "01K0M4Y7G1D8W3A9H2T6Q5R4NP",
-  "type": "PRESENCE_DETECTED",
-  "occurredAt": "2026-07-21T10:30:00+09:00",
+  "eventId": "01K0M4Y6YQ6B9D2F7H3J5N8RSC",
+  "type": "DOOR_OPENED",
+  "occurredAt": "2026-07-21T10:29:59+09:00",
   "sourceId": "door-sensor-01",
   "payload": {
-    "location": "ENTRANCE",
-    "direction": "INBOUND"
+    "location": "ENTRANCE"
   }
 }
 ```
 
 | 필드 | 필수 | 설명 |
 | --- | --- | --- |
-| `eventId` | 예 | 이벤트 멱등 키 |
+| `eventId` | 예 | BOMI 시스템 전체에서 유일한 이벤트 멱등 키 |
+| `type` | 예 | `DOOR_OPENED` 고정 |
+| `occurredAt` | 예 | 실제 문 열림 감지 시각 |
+| `sourceId` | 예 | 토픽의 `{deviceId}`와 동일한 도어 센서 ID |
+| `payload.location` | 예 | 등록된 논리 위치. 이번 시나리오는 `ENTRANCE` |
+
+Backend는 `DOOR_OPENED`를 감사 로그 또는 센서 상태 확인에 사용할 수 있지만 이 이벤트만으로 귀가 환영 시나리오를 시작하지 않습니다.
+
+### `PRESENCE_DETECTED`
+
+IoT Gateway가 등록된 센서 조합으로 현관의 사람과 이동 방향을 판정했을 때 발행합니다. 단일 도어 센서의 문 열림만으로 이 이벤트를 생성해서는 안 됩니다.
+
+```json
+{
+  "eventId": "01K0M4Y7G1D8W3A9H2T6Q5R4NP",
+  "type": "PRESENCE_DETECTED",
+  "occurredAt": "2026-07-21T10:30:00+09:00",
+  "sourceId": "entrance-sensor-hub-01",
+  "payload": {
+    "location": "ENTRANCE",
+    "direction": "INBOUND",
+    "detectionMethod": "SENSOR_SEQUENCE"
+  }
+}
+```
+
+| 필드 | 필수 | 설명 |
+| --- | --- | --- |
+| `eventId` | 예 | BOMI 시스템 전체에서 유일한 이벤트 멱등 키 |
 | `type` | 예 | `PRESENCE_DETECTED` 고정 |
-| `occurredAt` | 예 | 실제 감지 시각 |
-| `sourceId` | 예 | 토픽의 `{deviceId}`와 동일한 센서 ID |
+| `occurredAt` | 예 | 사람과 이동 방향 판정이 확정된 시각 |
+| `sourceId` | 예 | 토픽의 `{deviceId}`와 동일한 IoT Gateway ID |
 | `payload.location` | 예 | 등록된 논리 위치. 이번 시나리오는 `ENTRANCE` |
 | `payload.direction` | 예 | `INBOUND`, `OUTBOUND`, `UNKNOWN` 중 하나 |
+| `payload.detectionMethod` | 예 | `SENSOR_SEQUENCE`, `VISION`, `MANUAL_OVERRIDE` 중 하나 |
 
-Backend는 `direction=INBOUND` 이벤트만 귀가 환영 시나리오의 트리거로 사용합니다. 같은 `eventId`가 다시 전달되면 기존 처리 결과를 유지합니다.
+Backend는 `type=PRESENCE_DETECTED`이면서 `direction=INBOUND`인 이벤트만 귀가 환영 시나리오의 트리거로 사용합니다. `DOOR_OPENED`와 `direction=UNKNOWN` 이벤트는 귀가 시나리오를 시작하지 않습니다. 같은 `eventId`가 다시 전달되면 기존 처리 결과를 유지합니다.
 
 ## 6. Backend → Robot 명령
 
@@ -198,6 +230,7 @@ Robot MQTT Bridge는 `targetCommandId`의 작업을 찾고 ROS 2/Nav2 또는 음
   "scenarioId": "01K0M4Y80XD4J7C2H6P9N5Q3RS",
   "robotId": "robot-01",
   "type": "NAVIGATION_STATUS",
+  "sequence": 2,
   "occurredAt": "2026-07-21T10:30:10+09:00",
   "payload": {
     "status": "MOVING",
@@ -207,6 +240,21 @@ Robot MQTT Bridge는 `targetCommandId`의 작업을 찾고 ROS 2/Nav2 또는 음
 ```
 
 `payload.status`는 `ACCEPTED`, `MOVING` 중 하나입니다. Backend는 진행 상태만으로 시나리오를 `ARRIVED` 또는 실패 상태로 전환하지 않습니다.
+
+`sequence`는 동일한 `commandId`에서 발생한 진행 상태의 순서를 나타내는 1 이상의 정수입니다. Robot은 첫 상태부터 1씩 증가시킵니다.
+
+| `sequence` | `payload.status` |
+| ---: | --- |
+| 1 | `ACCEPTED` |
+| 2 | `MOVING` |
+
+Backend는 `(commandId, sequence)`를 기준으로 진행 상태를 적용합니다.
+
+- 마지막으로 적용한 값보다 작은 `sequence`는 늦게 도착한 이전 상태이므로 무시합니다.
+- 같은 `sequence`와 같은 `eventId`는 재전송으로 처리합니다.
+- 같은 `sequence`에 서로 다른 `eventId` 또는 다른 상태가 들어오면 계약 위반으로 기록합니다.
+- 최종 `NAVIGATION_RESULT`가 확정된 후 도착한 진행 상태는 저장만 하고 현재 상태를 변경하지 않습니다.
+- `occurredAt`은 표시와 장애 분석에 사용하며 처리 순서 판정에는 사용하지 않습니다.
 
 ## 8. Robot 최종 결과
 
@@ -310,6 +358,7 @@ Backend는 `CANCEL_RESULT`를 별도 명령 결과로 기록하고 시나리오�
 - 토픽의 `{deviceId}` 또는 `{robotId}`와 payload의 식별자가 다르면 메시지를 거부합니다.
 - 알 수 없는 `type`, `status`, `outcome`은 임의로 성공 처리하지 않습니다.
 - `occurredAt`이 파싱되지 않거나 필수 필드가 없으면 오류 로그를 남기고 폐기합니다.
+- Backend는 `eventId`에 시스템 전체 unique constraint를 적용하고 동일 이벤트의 부수 효과를 다시 실행하지 않습니다.
 - 로그에 전체 `audioUri`, 인증 토큰이나 개인정보를 기록하지 않습니다.
 - 운영 MQTT는 인증과 TLS를 적용합니다. 실제 인증정보는 저장소에 커밋하지 않습니다.
 - Backend와 Robot은 `eventId`, `commandId`를 기준으로 QoS 1 중복을 안전하게 처리합니다.
@@ -318,7 +367,8 @@ Backend는 `CANCEL_RESULT`를 별도 명령 결과로 기록하고 시나리오�
 
 ### IoT
 
-- [ ] `PRESENCE_DETECTED` 예시를 그대로 발행할 수 있음
+- [ ] 단순 문 열림은 `DOOR_OPENED`, 방향 판정이 완료된 사람 감지는 `PRESENCE_DETECTED`로 구분함
+- [ ] `PRESENCE_DETECTED` 방향 판정에 사용하는 센서 조합과 `detectionMethod`를 합의함
 - [ ] 재전송 시 같은 `eventId`를 유지함
 - [ ] `sourceId`와 토픽의 장치 ID가 일치함
 
@@ -326,13 +376,14 @@ Backend는 `CANCEL_RESULT`를 별도 명령 결과로 기록하고 시나리오�
 
 - [ ] 세 구독 패턴과 Robot 명령 토픽을 설정함
 - [ ] `eventId`, `commandId` 멱등 처리를 구현함
-- [ ] 명령 발행과 시나리오 상태 변경을 연결함
+- [ ] 명령·시나리오 상태·Outbox를 먼저 저장하고 커밋 후 같은 `commandId`로 발행함
 - [ ] 만료·실패·순서 역전 결과를 처리함
 
 ### Robot
 
 - [ ] MQTT Bridge가 `NAVIGATE`, `SPEAK`, `CANCEL`을 ROS 2 작업으로 변환함
 - [ ] 상태와 최종 결과를 구분해 발행함
+- [ ] 진행 상태의 `sequence`를 `commandId`별로 단조 증가시킴
 - [ ] 만료되거나 중복된 명령을 재실행하지 않음
 - [ ] 이동·재생 취소 결과를 `CANCEL_RESULT`로 반환함
 - [ ] 음성 바이너리를 MQTT로 요청하거나 발행하지 않음
