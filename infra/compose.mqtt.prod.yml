@@ -1,0 +1,113 @@
+name: bomi-mqtt
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2.0.22-openssl
+    container_name: bomi-mosquitto
+    restart: unless-stopped
+    environment:
+      MQTT_HEALTH_USERNAME: ${MQTT_HEALTH_USERNAME:?MQTT_HEALTH_USERNAME is required}
+      MQTT_HEALTH_PASSWORD: ${MQTT_HEALTH_PASSWORD:?MQTT_HEALTH_PASSWORD is required}
+    ports:
+      - "8883:8883"
+    volumes:
+      - ./docker/mosquitto/production/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./docker/mosquitto/production/acl:/mosquitto/config/acl:ro
+      - ${MQTT_PASSWORD_FILE:?MQTT_PASSWORD_FILE is required}:/mosquitto/config/passwords:ro
+      - ${MQTT_DATA_DIR:?MQTT_DATA_DIR is required}:/mosquitto/data
+      - ${MQTT_LOG_DIR:?MQTT_LOG_DIR is required}:/mosquitto/log
+      - ${MQTT_CERT_DIR:?MQTT_CERT_DIR is required}:/mosquitto/certs:ro
+    mem_limit: 256m
+    cpus: 0.5
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mosquitto_pub -h localhost -p 1883
+          -u "$${MQTT_HEALTH_USERNAME}"
+          -P "$${MQTT_HEALTH_PASSWORD}"
+          -t bomi/v1/system/healthcheck/broker
+          -m health -q 1
+      interval: 15s
+      timeout: 7s
+      retries: 5
+      start_period: 15s
+    networks:
+      mqtt-net:
+        aliases:
+          - ${BOMI_DOMAIN:?BOMI_DOMAIN is required}
+
+  mosquitto-cert-sync:
+    image: certbot/certbot:v5.7.0
+    profiles:
+      - tools
+    environment:
+      BOMI_DOMAIN: ${BOMI_DOMAIN:?BOMI_DOMAIN is required}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        cp -L "/etc/letsencrypt/live/$${BOMI_DOMAIN}/fullchain.pem" /mosquitto-certs/fullchain.pem.tmp
+        cp -L "/etc/letsencrypt/live/$${BOMI_DOMAIN}/privkey.pem" /mosquitto-certs/privkey.pem.tmp
+        chown 1883:1883 /mosquitto-certs
+        chmod 0750 /mosquitto-certs
+        chown 1883:1883 /mosquitto-certs/fullchain.pem.tmp /mosquitto-certs/privkey.pem.tmp
+        chmod 0644 /mosquitto-certs/fullchain.pem.tmp
+        chmod 0600 /mosquitto-certs/privkey.pem.tmp
+        mv -f /mosquitto-certs/fullchain.pem.tmp /mosquitto-certs/fullchain.pem
+        mv -f /mosquitto-certs/privkey.pem.tmp /mosquitto-certs/privkey.pem
+    volumes:
+      - ${CERTBOT_CONF_DIR:?CERTBOT_CONF_DIR is required}:/etc/letsencrypt:ro
+      - ${MQTT_CERT_DIR:?MQTT_CERT_DIR is required}:/mosquitto-certs
+
+  mqtt-smoke-test:
+    image: eclipse-mosquitto:2.0.22-openssl
+    profiles:
+      - tools
+    environment:
+      BOMI_DOMAIN: ${BOMI_DOMAIN:?BOMI_DOMAIN is required}
+      MQTT_HEALTH_USERNAME: ${MQTT_HEALTH_USERNAME:?MQTT_HEALTH_USERNAME is required}
+      MQTT_HEALTH_PASSWORD: ${MQTT_HEALTH_PASSWORD:?MQTT_HEALTH_PASSWORD is required}
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        topic="bomi/v1/system/healthcheck/smoke-$$(date +%s)-$$$$"
+        message="mqtt-smoke-$$(date +%s)-$$$$"
+        ca_file=/etc/ssl/certs/ca-certificates.crt
+
+        if mosquitto_pub \
+          -h "$${BOMI_DOMAIN}" -p 8883 --cafile "$${ca_file}" \
+          -t "$${topic}" -m unauthorized -q 1 >/dev/null 2>&1; then
+          echo "Anonymous MQTT connection was unexpectedly accepted" >&2
+          exit 1
+        fi
+
+        mosquitto_sub \
+          -h "$${BOMI_DOMAIN}" -p 8883 --cafile "$${ca_file}" \
+          -u "$${MQTT_HEALTH_USERNAME}" -P "$${MQTT_HEALTH_PASSWORD}" \
+          -t "$${topic}" -C 1 -W 10 > /tmp/mqtt-smoke-message &
+        subscriber_pid=$$!
+        trap 'kill "$${subscriber_pid}" 2>/dev/null || true' EXIT
+        sleep 1
+
+        mosquitto_pub \
+          -h "$${BOMI_DOMAIN}" -p 8883 --cafile "$${ca_file}" \
+          -u "$${MQTT_HEALTH_USERNAME}" -P "$${MQTT_HEALTH_PASSWORD}" \
+          -t "$${topic}" -m "$${message}" -q 1
+
+        wait "$${subscriber_pid}"
+        trap - EXIT
+        grep -Fxq "$${message}" /tmp/mqtt-smoke-message
+        echo "Authenticated MQTTS publish/subscribe smoke test passed"
+    networks:
+      - mqtt-net
+
+networks:
+  mqtt-net:
+    name: bomi-mqtt-net
