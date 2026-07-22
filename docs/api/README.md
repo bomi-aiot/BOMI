@@ -125,7 +125,7 @@ API 계약을 변경할 때는 다음 순서를 따릅니다.
 1. 시나리오 상태와 호출 방향에 미치는 영향을 확인합니다.
 2. `backend/src/main/resources/static/openapi/`의 YAML 원본을 수정합니다.
 3. 요청·응답 예시와 오류 응답을 함께 수정합니다.
-4. MQTT에서 사용하는 `scenarioId`, `commandId`, `robotId`와 의미가 일치하는지 확인합니다.
+4. MQTT와 REST에서 사용하는 `eventId`, `scenarioId`, `requestId`, `commandId`, `robotId`의 생성 주체와 의미가 일치하는지 확인합니다.
 5. Swagger UI에서 변경된 명세가 정상 렌더링되는지 확인합니다.
 6. Robot·AI·Backend 담당자에게 계약 변경 리뷰를 요청합니다.
 
@@ -135,7 +135,7 @@ YAML 원본을 `docs/api/`에 복사해서 이중 관리하지 않습니다.
 
 - [ ] AI Vision이 인식 요청의 `requestId`, `scenarioId`, `robotId`를 그대로 Callback에 반환함
 - [ ] AI Vision과 Backend가 `PERSON_DETECTED`, `PERSON_NOT_FOUND`, `INFERENCE_FAILED`의 의미에 합의함
-- [ ] 대화·음성 AI가 같은 `commandId` 재요청에 동일한 결과를 반환함
+- [ ] 대화·음성 AI가 같은 `requestId` 재요청에 동일한 결과를 반환함
 - [ ] Robot이 AI 서버의 `audioUri`에 접근할 네트워크와 내부 인증 방식을 확인함
 - [ ] 모든 서비스가 타임존을 포함한 ISO 8601 시각을 사용함
 - [ ] 내부 서비스 토큰을 저장소가 아닌 환경변수 또는 비밀 저장소로 주입함

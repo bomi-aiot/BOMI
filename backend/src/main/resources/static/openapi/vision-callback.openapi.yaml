@@ -5,8 +5,9 @@ info:
   description: |
     AI Vision이 사람 인식 결과를 Spring Boot에 비동기로 전달하는 내부 API 계약입니다.
 
-    `eventId`는 Callback 멱등 키입니다. AI Vision은 네트워크 오류 또는 5xx 응답일 때 같은
-    `eventId`로 재전송하고, Spring Boot는 이미 처리한 요청에 부수 효과를 다시 발생시키지 않습니다.
+    `eventId`는 동일 Callback 전달의 멱등 키이고 `requestId`는 하나의 Vision 작업 식별자입니다.
+    AI Vision은 네트워크 오류 또는 5xx 응답일 때 같은 `eventId`로 재전송합니다. Spring Boot는
+    같은 `eventId`의 부수 효과를 다시 발생시키지 않고 하나의 `requestId`에는 하나의 최종 결과만 적용합니다.
 servers:
   - url: https://i15e102.p.ssafy.io
     description: BOMI 배포 Spring Boot 서버
@@ -41,9 +42,10 @@ paths:
                   type: PERSON_DETECTED
                   occurredAt: '2026-07-21T10:30:18+09:00'
                   personCount: 1
-                  confidence: 0.91
-                  targetPersonId: user-3
-                  interactionAllowed: true
+                  detectionConfidence: 0.91
+                  identifiedPerson:
+                    personId: user-3
+                    identificationConfidence: 0.87
                   model:
                     name: bomi-person-detector
                     version: '1.0.0'
@@ -77,6 +79,7 @@ paths:
                 $ref: '#/components/schemas/VisionResultAcceptedResponse'
               example:
                 eventId: 01K0M50ZTR2C8D6F4G9H1J3N5Q
+                requestId: 01K0M50M89A3C7D2F5G8H1J4NP
                 scenarioId: 01K0M4Y80XD4J7C2H6P9N5Q3RS
                 acceptedAt: '2026-07-21T10:30:18.130+09:00'
                 duplicate: false
@@ -91,16 +94,26 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
         '409':
-          description: 현재 시나리오 상태에서 해당 결과를 적용할 수 없음
+          description: |
+            동일한 `requestId`에 다른 최종 결과가 이미 확정됐거나,
+            현재 시나리오 상태에서 신규 결과를 적용할 수 없음
           content:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-              example:
-                code: INVALID_SCENARIO_STATE
-                message: RECOGNIZING 상태에서만 Vision 결과를 처리할 수 있습니다.
-                traceId: 7de289f8086e4dba
-                occurredAt: '2026-07-21T10:30:18.100+09:00'
+              examples:
+                alreadyCompleted:
+                  value:
+                    code: VISION_REQUEST_ALREADY_COMPLETED
+                    message: 해당 Vision 요청의 최종 결과가 이미 확정되었습니다.
+                    traceId: 7de289f8086e4dba
+                    occurredAt: '2026-07-21T10:30:18.100+09:00'
+                invalidState:
+                  value:
+                    code: INVALID_SCENARIO_STATE
+                    message: 현재 시나리오 상태에서는 신규 Vision 결과를 적용할 수 없습니다.
+                    traceId: 7de289f8086e4dba
+                    occurredAt: '2026-07-21T10:30:18.100+09:00'
         '500':
           $ref: '#/components/responses/InternalServerError'
 components:
@@ -162,9 +175,7 @@ components:
         - type: object
           required:
             - personCount
-            - confidence
-            - interactionAllowed
-            - model
+            - detectionConfidence
           properties:
             type:
               type: string
@@ -173,19 +184,14 @@ components:
             personCount:
               type: integer
               minimum: 1
-            confidence:
+            detectionConfidence:
               type: number
               format: double
               minimum: 0
               maximum: 1
-              description: AI Vision이 최종 판정한 신뢰도
-            targetPersonId:
-              type: string
-              nullable: true
-              description: 사용자를 식별하지 못한 경우 null 또는 생략
-            interactionAllowed:
-              type: boolean
-              description: AI Vision 관점에서 능동 대화를 시작해도 되는지 여부
+              description: 화면에 사람이 존재한다는 판정의 신뢰도
+            identifiedPerson:
+              $ref: '#/components/schemas/IdentifiedPerson'
             model:
               $ref: '#/components/schemas/ModelInfo'
     PersonNotFoundResult:
@@ -225,6 +231,24 @@ components:
             message:
               type: string
               maxLength: 500
+    IdentifiedPerson:
+      type: object
+      additionalProperties: false
+      required:
+        - personId
+        - identificationConfidence
+      properties:
+        personId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: AI Vision이 식별한 내부 사용자 ID
+        identificationConfidence:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 1
+          description: 해당 사용자가 `personId`와 일치한다는 판정의 신뢰도
     ModelInfo:
       type: object
       additionalProperties: false
@@ -243,12 +267,16 @@ components:
       additionalProperties: false
       required:
         - eventId
+        - requestId
         - scenarioId
         - acceptedAt
         - duplicate
       properties:
         eventId:
           type: string
+        requestId:
+          type: string
+          description: Callback 요청의 `requestId`와 동일
         scenarioId:
           type: string
         acceptedAt:
@@ -256,7 +284,7 @@ components:
           format: date-time
         duplicate:
           type: boolean
-          description: 이미 처리한 `eventId`인지 여부
+          description: 동일한 `eventId` 또는 같은 `requestId`의 동일 최종 결과를 이미 처리했는지 여부
     ErrorResponse:
       type: object
       additionalProperties: false
