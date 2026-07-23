@@ -1,0 +1,612 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import {
+  API_BASE_URL,
+  USE_MOCK_API,
+  bomiService,
+} from "../services/bomiService";
+import type {
+  ConfirmationRequest,
+  ConfirmationResolution,
+  ConversationPreference,
+  CreateConversationPreferenceInput,
+  CreateMedicationInput,
+  CreateScheduleInput,
+  ElderProfile,
+  HomeDashboardSummary,
+  Medication,
+  MedicationResponse,
+  Schedule,
+  StructuredValue,
+  UpdateConversationPreferenceInput,
+  UpdateMedicationInput,
+  UpdateScheduleInput,
+} from "../types/domain";
+
+export interface BomiToast {
+  id: number;
+  tone: "SUCCESS" | "INFO" | "ERROR";
+  message: string;
+  actionLabel?: string;
+  actionRequestId?: string;
+}
+
+export interface BomiContextValue {
+  dashboard: HomeDashboardSummary | null;
+  elderProfile: ElderProfile | null;
+  conversationPreferences: ConversationPreference[];
+  confirmationRequests: ConfirmationRequest[];
+  medications: Medication[];
+  medicationResponses: MedicationResponse[];
+  schedules: Schedule[];
+  isLoading: boolean;
+  isSaving: boolean;
+  pendingActionId: string | null;
+  error: string | null;
+  toast: BomiToast | null;
+  isMockMode: boolean;
+  apiBaseUrl: string;
+  refresh: () => Promise<void>;
+  saveElderProfile: (profile: ElderProfile) => Promise<ElderProfile>;
+  addConversationPreference: (
+    input: CreateConversationPreferenceInput,
+  ) => Promise<ConversationPreference>;
+  updateConversationPreference: (
+    id: string,
+    input: UpdateConversationPreferenceInput,
+  ) => Promise<ConversationPreference>;
+  deleteConversationPreference: (id: string) => Promise<void>;
+  toggleConversationPreference: (
+    id: string,
+  ) => Promise<ConversationPreference>;
+  resolveConfirmationRequest: (
+    id: string,
+    resolution: ConfirmationResolution,
+    options?: {
+      editedValue?: StructuredValue;
+      note?: string;
+    },
+  ) => Promise<ConfirmationRequest>;
+  undoConfirmationRequest: (id: string) => Promise<ConfirmationRequest>;
+  addMedication: (input: CreateMedicationInput) => Promise<Medication>;
+  updateMedication: (
+    id: string,
+    input: UpdateMedicationInput,
+  ) => Promise<Medication>;
+  toggleMedicationStatus: (id: string) => Promise<Medication>;
+  deleteMedication: (id: string) => Promise<void>;
+  toggleMedicationReminder: (id: string) => Promise<Medication>;
+  addSchedule: (input: CreateScheduleInput) => Promise<Schedule>;
+  updateSchedule: (
+    id: string,
+    input: UpdateScheduleInput,
+  ) => Promise<Schedule>;
+  resetDemoData: () => Promise<void>;
+  clearError: () => void;
+  clearToast: () => void;
+}
+
+export const BomiContext = createContext<BomiContextValue | undefined>(
+  undefined,
+);
+
+interface BomiProviderProps {
+  children: ReactNode;
+}
+
+const messageFromError = (error: unknown): string =>
+  error instanceof Error
+    ? error.message
+    : "요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.";
+
+export function BomiProvider({ children }: BomiProviderProps) {
+  const [dashboard, setDashboard] = useState<HomeDashboardSummary | null>(null);
+  const [elderProfile, setElderProfile] = useState<ElderProfile | null>(null);
+  const [conversationPreferences, setConversationPreferences] = useState<
+    ConversationPreference[]
+  >([]);
+  const [confirmationRequests, setConfirmationRequests] = useState<
+    ConfirmationRequest[]
+  >([]);
+  const [medications, setMedications] = useState<Medication[]>([]);
+  const [medicationResponses, setMedicationResponses] = useState<
+    MedicationResponse[]
+  >([]);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [pendingActionId, setPendingActionId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<BomiToast | null>(null);
+
+  const showToast = useCallback(
+    (
+      message: string,
+      tone: BomiToast["tone"] = "SUCCESS",
+      undoRequestId?: string,
+    ) => {
+      setToast({
+        id: Date.now(),
+        tone,
+        message,
+        actionLabel: undoRequestId ? "되돌리기" : undefined,
+        actionRequestId: undoRequestId,
+      });
+    },
+    [],
+  );
+
+  const refreshDashboard = useCallback(async () => {
+    try {
+      const nextDashboard = await bomiService.getDashboard();
+      setDashboard(nextDashboard);
+    } catch {
+      // 주 변경은 이미 성공했으므로 파생 요약 갱신 실패를 액션 실패로 되돌리지 않는다.
+    }
+  }, []);
+
+  const refreshPersonalizationState = useCallback(async () => {
+    try {
+      const [nextProfile, nextPreferences] = await Promise.all([
+        bomiService.getElderProfile(),
+        bomiService.getConversationPreferences(),
+      ]);
+      setElderProfile(nextProfile);
+      setConversationPreferences(nextPreferences);
+    } catch {
+      // 다음 전체 새로고침에서 재동기화한다.
+    }
+  }, []);
+
+  const refreshConfirmationEffects = useCallback(async () => {
+    try {
+      const [
+        nextDashboard,
+        nextProfile,
+        nextPreferences,
+        nextSchedules,
+      ] = await Promise.all([
+        bomiService.getDashboard(),
+        bomiService.getElderProfile(),
+        bomiService.getConversationPreferences(),
+        bomiService.getSchedules(),
+      ]);
+      setDashboard(nextDashboard);
+      setElderProfile(nextProfile);
+      setConversationPreferences(nextPreferences);
+      setSchedules(nextSchedules);
+    } catch {
+      // 확인 결과 자체는 저장되었으므로 중복 처리를 막기 위해 성공으로 유지한다.
+    }
+  }, []);
+
+  const refresh = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await bomiService.getInitialData();
+      setDashboard(data.dashboard);
+      setElderProfile(data.elderProfile);
+      setConversationPreferences(data.conversationPreferences);
+      setConfirmationRequests(data.confirmationRequests);
+      setMedications(data.medications);
+      setMedicationResponses(data.medicationResponses);
+      setSchedules(data.schedules);
+    } catch (requestError: unknown) {
+      setError(messageFromError(requestError));
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const runAction = useCallback(
+    async <T,>(
+      actionId: string,
+      request: () => Promise<T>,
+      successMessage?: string,
+    ): Promise<T> => {
+      setPendingActionId(actionId);
+      setError(null);
+      try {
+        const result = await request();
+        if (successMessage) {
+          showToast(successMessage);
+        }
+        return result;
+      } catch (requestError: unknown) {
+        const message = messageFromError(requestError);
+        setError(message);
+        showToast(message, "ERROR");
+        throw requestError;
+      } finally {
+        setPendingActionId(null);
+      }
+    },
+    [showToast],
+  );
+
+  const saveElderProfile = useCallback(
+    async (profile: ElderProfile): Promise<ElderProfile> => {
+      setIsSaving(true);
+      try {
+        const saved = await runAction(
+          "elder-profile",
+          () => bomiService.saveElderProfile(profile),
+          "어르신 정보가 저장되었습니다.",
+        );
+        setElderProfile(saved);
+        void refreshPersonalizationState();
+        void refreshDashboard();
+        return saved;
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [refreshDashboard, refreshPersonalizationState, runAction],
+  );
+
+  const addConversationPreference = useCallback(
+    async (
+      input: CreateConversationPreferenceInput,
+    ): Promise<ConversationPreference> => {
+      const created = await runAction(
+        "preference-new",
+        () => bomiService.createConversationPreference(input),
+        "맞춤 대화 정보가 추가되었습니다.",
+      );
+      setConversationPreferences((current) => [created, ...current]);
+      void refreshPersonalizationState();
+      return created;
+    },
+    [refreshPersonalizationState, runAction],
+  );
+
+  const updateConversationPreference = useCallback(
+    async (
+      id: string,
+      input: UpdateConversationPreferenceInput,
+    ): Promise<ConversationPreference> => {
+      const updated = await runAction(
+        `preference-${id}`,
+        () => bomiService.updateConversationPreference(id, input),
+        "맞춤 대화 정보가 수정되었습니다.",
+      );
+      setConversationPreferences((current) =>
+        current.map((preference) =>
+          preference.id === id ? updated : preference,
+        ),
+      );
+      void refreshPersonalizationState();
+      return updated;
+    },
+    [refreshPersonalizationState, runAction],
+  );
+
+  const deleteConversationPreference = useCallback(
+    async (id: string): Promise<void> => {
+      await runAction(
+        `preference-${id}`,
+        () => bomiService.deleteConversationPreference(id),
+        "맞춤 대화 정보가 삭제되었습니다.",
+      );
+      setConversationPreferences((current) =>
+        current.filter((preference) => preference.id !== id),
+      );
+      setElderProfile((current) =>
+        current
+          ? {
+              ...current,
+              personalPreferences: current.personalPreferences.filter(
+                (preference) => preference.id !== id,
+              ),
+              importantPeople: current.importantPeople.filter(
+                (person) => person.id !== id,
+              ),
+            }
+          : current,
+      );
+      void refreshPersonalizationState();
+    },
+    [refreshPersonalizationState, runAction],
+  );
+
+  const toggleConversationPreference = useCallback(
+    async (id: string): Promise<ConversationPreference> => {
+      const updated = await runAction(
+        `preference-${id}`,
+        () => bomiService.toggleConversationPreference(id),
+        "대화 활용 상태가 변경되었습니다.",
+      );
+      setConversationPreferences((current) =>
+        current.map((preference) =>
+          preference.id === id ? updated : preference,
+        ),
+      );
+      return updated;
+    },
+    [runAction],
+  );
+
+  const resolveConfirmationRequest = useCallback(
+    async (
+      id: string,
+      resolution: ConfirmationResolution,
+      options?: {
+        editedValue?: StructuredValue;
+        note?: string;
+      },
+    ): Promise<ConfirmationRequest> => {
+      const updated = await runAction(
+        `confirmation-${id}`,
+        () => bomiService.resolveConfirmationRequest(id, resolution, options),
+      );
+      setConfirmationRequests((current) =>
+        current.map((request) => (request.id === id ? updated : request)),
+      );
+      void refreshConfirmationEffects();
+      showToast(
+        resolution === "REASK"
+          ? "로봇에게 다시 질문하도록 요청했습니다."
+          : "확인 요청을 처리했습니다.",
+        "SUCCESS",
+        id,
+      );
+      return updated;
+    },
+    [refreshConfirmationEffects, runAction, showToast],
+  );
+
+  const undoConfirmationRequest = useCallback(
+    async (id: string): Promise<ConfirmationRequest> => {
+      const updated = await runAction(
+        `confirmation-${id}`,
+        () => bomiService.undoConfirmationResolution(id),
+        "확인 요청 처리를 되돌렸습니다.",
+      );
+      setConfirmationRequests((current) =>
+        current.map((request) => (request.id === id ? updated : request)),
+      );
+      void refreshConfirmationEffects();
+      return updated;
+    },
+    [refreshConfirmationEffects, runAction],
+  );
+
+  const addMedication = useCallback(
+    async (input: CreateMedicationInput): Promise<Medication> => {
+      const created = await runAction(
+        "medication-new",
+        () => bomiService.createMedication(input),
+        "복약 정보가 추가되었습니다.",
+      );
+      setMedications((current) => [...current, created]);
+      void refreshDashboard();
+      return created;
+    },
+    [refreshDashboard, runAction],
+  );
+
+  const updateMedication = useCallback(
+    async (
+      id: string,
+      input: UpdateMedicationInput,
+    ): Promise<Medication> => {
+      const updated = await runAction(
+        `medication-${id}`,
+        () => bomiService.updateMedication(id, input),
+        "복약 정보가 수정되었습니다.",
+      );
+      setMedications((current) =>
+        current.map((medication) =>
+          medication.id === id ? updated : medication,
+        ),
+      );
+      void refreshDashboard();
+      return updated;
+    },
+    [refreshDashboard, runAction],
+  );
+
+  const toggleMedicationStatus = useCallback(
+    async (id: string): Promise<Medication> => {
+      const updated = await runAction(
+        `medication-${id}`,
+        () => bomiService.toggleMedicationStatus(id),
+        "복약 사용 상태가 변경되었습니다.",
+      );
+      setMedications((current) =>
+        current.map((medication) =>
+          medication.id === id ? updated : medication,
+        ),
+      );
+      void refreshDashboard();
+      return updated;
+    },
+    [refreshDashboard, runAction],
+  );
+
+  const deleteMedication = useCallback(
+    async (id: string): Promise<void> => {
+      await runAction(
+        `medication-${id}`,
+        () => bomiService.deleteMedication(id),
+        "복약 정보가 삭제되었습니다.",
+      );
+      setMedications((current) =>
+        current.filter((medication) => medication.id !== id),
+      );
+      void refreshDashboard();
+    },
+    [refreshDashboard, runAction],
+  );
+
+  const toggleMedicationReminder = useCallback(
+    async (id: string): Promise<Medication> => {
+      const updated = await runAction(
+        `medication-${id}`,
+        () => bomiService.toggleMedicationReminder(id),
+        "복약 알림 설정이 변경되었습니다.",
+      );
+      setMedications((current) =>
+        current.map((medication) =>
+          medication.id === id ? updated : medication,
+        ),
+      );
+      void refreshDashboard();
+      return updated;
+    },
+    [refreshDashboard, runAction],
+  );
+
+  const addSchedule = useCallback(
+    async (input: CreateScheduleInput): Promise<Schedule> => {
+      const created = await runAction(
+        "schedule-new",
+        () => bomiService.createSchedule(input),
+        "새 일정이 추가되었습니다.",
+      );
+      setSchedules((current) =>
+        [...current, created].sort((left, right) =>
+          left.startsAt.localeCompare(right.startsAt),
+        ),
+      );
+      void refreshDashboard();
+      return created;
+    },
+    [refreshDashboard, runAction],
+  );
+
+  const updateSchedule = useCallback(
+    async (
+      id: string,
+      input: UpdateScheduleInput,
+    ): Promise<Schedule> => {
+      const updated = await runAction(
+        `schedule-${id}`,
+        () => bomiService.updateSchedule(id, input),
+        "일정이 수정되었습니다.",
+      );
+      setSchedules((current) =>
+        current
+          .map((schedule) => (schedule.id === id ? updated : schedule))
+          .sort((left, right) => left.startsAt.localeCompare(right.startsAt)),
+      );
+      void refreshDashboard();
+      return updated;
+    },
+    [refreshDashboard, runAction],
+  );
+
+  const resetDemoData = useCallback(async (): Promise<void> => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await bomiService.resetMockData();
+      setDashboard(data.dashboard);
+      setElderProfile(data.elderProfile);
+      setConversationPreferences(data.conversationPreferences);
+      setConfirmationRequests(data.confirmationRequests);
+      setMedications(data.medications);
+      setMedicationResponses(data.medicationResponses);
+      setSchedules(data.schedules);
+      showToast("데모 데이터를 초기 상태로 되돌렸습니다.", "INFO");
+    } catch (requestError: unknown) {
+      setError(messageFromError(requestError));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [showToast]);
+
+  const clearError = useCallback(() => setError(null), []);
+  const clearToast = useCallback(() => setToast(null), []);
+
+  const value = useMemo<BomiContextValue>(
+    () => ({
+      dashboard,
+      elderProfile,
+      conversationPreferences,
+      confirmationRequests,
+      medications,
+      medicationResponses,
+      schedules,
+      isLoading,
+      isSaving,
+      pendingActionId,
+      error,
+      toast,
+      isMockMode: USE_MOCK_API,
+      apiBaseUrl: API_BASE_URL,
+      refresh,
+      saveElderProfile,
+      addConversationPreference,
+      updateConversationPreference,
+      deleteConversationPreference,
+      toggleConversationPreference,
+      resolveConfirmationRequest,
+      undoConfirmationRequest,
+      addMedication,
+      updateMedication,
+      toggleMedicationStatus,
+      deleteMedication,
+      toggleMedicationReminder,
+      addSchedule,
+      updateSchedule,
+      resetDemoData,
+      clearError,
+      clearToast,
+    }),
+    [
+      dashboard,
+      elderProfile,
+      conversationPreferences,
+      confirmationRequests,
+      medications,
+      medicationResponses,
+      schedules,
+      isLoading,
+      isSaving,
+      pendingActionId,
+      error,
+      toast,
+      refresh,
+      saveElderProfile,
+      addConversationPreference,
+      updateConversationPreference,
+      deleteConversationPreference,
+      toggleConversationPreference,
+      resolveConfirmationRequest,
+      undoConfirmationRequest,
+      addMedication,
+      updateMedication,
+      toggleMedicationStatus,
+      deleteMedication,
+      toggleMedicationReminder,
+      addSchedule,
+      updateSchedule,
+      resetDemoData,
+      clearError,
+      clearToast,
+    ],
+  );
+
+  return <BomiContext.Provider value={value}>{children}</BomiContext.Provider>;
+}
+
+export function useBomi(): BomiContextValue {
+  const context = useContext(BomiContext);
+  if (!context) {
+    throw new Error("useBomi는 BomiProvider 내부에서만 사용할 수 있습니다.");
+  }
+  return context;
+}
