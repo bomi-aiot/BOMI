@@ -57,6 +57,8 @@ bomi/v1/robot/+/results
 
 최초 IoT 이벤트에는 아직 `scenarioId`, `commandId`, `robotId`가 없을 수 있습니다. Backend가 시나리오와 명령을 생성한 이후의 메시지부터 해당 식별자를 사용합니다.
 
+`scenarioId`는 PostgreSQL `scenario.id` UUID의 표준 문자열 표현입니다. `eventId`와 `commandId`는 오프라인 생산자와 외부 시스템이 만든 최대 64자의 불투명 식별자로, 팀이 확정한 UUIDv4/v7 또는 ULID 형식을 사용하고 재전송 시 원문을 유지합니다. `robotId`는 MQTT 토픽에 안전한 등록 코드이며 DB의 `robot.serial_number`와 매핑합니다. 서로 다른 종류의 ID를 같은 값으로 재사용하지 않습니다.
+
 ## 5. IoT 센서 이벤트
 
 문 열림 자체와 사람의 이동 방향 판정은 서로 다른 사건으로 취급합니다. 단순 문 열림 이벤트는 `DOOR_OPENED`로 발행할 수 있지만 귀가 환영 시나리오를 직접 시작하지 않습니다. 귀가 환영 시나리오는 방향 판정이 완료된 `PRESENCE_DETECTED` 중 `direction=INBOUND`인 이벤트만 사용합니다.
@@ -124,7 +126,7 @@ Backend는 `type=PRESENCE_DETECTED`이면서 `direction=INBOUND`인 이벤트만
 ```json
 {
   "commandId": "01K0M4Y8B7F5M2N1Q9R6S3T8VX",
-  "scenarioId": "01K0M4Y80XD4J7C2H6P9N5Q3RS",
+  "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
   "robotId": "robot-01",
   "type": "NAVIGATE",
   "occurredAt": "2026-07-21T10:30:01+09:00",
@@ -150,7 +152,7 @@ Robot은 `expiresAt`이 지난 명령을 실행하지 않고 `COMMAND_EXPIRED` �
 ```json
 {
   "commandId": "01K0M4Y8B7F5M2N1Q9R6S3T8VX",
-  "scenarioId": "01K0M4Y80XD4J7C2H6P9N5Q3RS",
+  "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
   "robotId": "robot-01",
   "type": "NAVIGATE",
   "occurredAt": "2026-07-21T10:30:01+09:00",
@@ -161,14 +163,14 @@ Robot은 `expiresAt`이 지난 명령을 실행하지 않고 `COMMAND_EXPIRED` �
 }
 ```
 
-`waypointId`는 Backend와 Robot이 사전에 합의한 논리 위치 이름입니다. 좌표나 Nav2 세부 파라미터는 MQTT 계약에 노출하지 않고 Robot 설정에서 해석합니다.
+`waypointId`는 Backend와 Robot이 사전에 합의한 논리 위치 이름입니다. 귀가 시나리오는 현관 이동에 `ENTRANCE`, 안전 확인 후 기본 위치 복귀에 `DEFAULT_POSITION`을 사용하며 충전소를 복귀 대상으로 사용하지 않습니다. 좌표나 Nav2 세부 파라미터는 MQTT 계약에 노출하지 않고 Robot 설정에서 해석합니다.
 
 ### `SPEAK`
 
 ```json
 {
   "commandId": "01K0M51BR2X6A8D4F9G7H3J5KC",
-  "scenarioId": "01K0M4Y80XD4J7C2H6P9N5Q3RS",
+  "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
   "robotId": "robot-01",
   "type": "SPEAK",
   "occurredAt": "2026-07-21T10:30:20+09:00",
@@ -198,7 +200,7 @@ Backend는 대화·음성 AI 응답의 서버 기준 주소와 `downloadPath`를
 ```json
 {
   "commandId": "01K0M53F6C8D2G9H4J1N5Q7RST",
-  "scenarioId": "01K0M4Y80XD4J7C2H6P9N5Q3RS",
+  "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
   "robotId": "robot-01",
   "type": "CANCEL",
   "occurredAt": "2026-07-21T10:31:01+09:00",
@@ -213,7 +215,7 @@ Backend는 대화·음성 AI 응답의 서버 기준 주소와 `downloadPath`를
 | 필드 | 필수 | 설명 |
 | --- | --- | --- |
 | `payload.targetCommandId` | 예 | 중단할 `NAVIGATE` 또는 `SPEAK` 명령 ID |
-| `payload.reason` | 예 | `SCENARIO_TIMED_OUT`, `USER_CANCELLED`, `POLICY_CANCELLED` 중 하나 |
+| `payload.reason` | 예 | `SCENARIO_TIMED_OUT`, `USER_CANCELLED`, `POLICY_CANCELLED`, `SAFETY_CONDITION_UNCERTAIN` 중 하나 |
 
 Robot MQTT Bridge는 `targetCommandId`의 작업을 찾고 ROS 2/Nav2 또는 음성 재생 노드에 취소를 요청합니다. 취소 요청을 받았다는 이유만으로 대상 작업을 성공 처리하지 않습니다.
 
@@ -227,7 +229,7 @@ Robot MQTT Bridge는 `targetCommandId`의 작업을 찾고 ROS 2/Nav2 또는 음
 {
   "eventId": "01K0M4Z1CT7N9B5V3X2K8P6QRS",
   "commandId": "01K0M4Y8B7F5M2N1Q9R6S3T8VX",
-  "scenarioId": "01K0M4Y80XD4J7C2H6P9N5Q3RS",
+  "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
   "robotId": "robot-01",
   "type": "NAVIGATION_STATUS",
   "sequence": 2,
@@ -266,7 +268,7 @@ Backend는 `(commandId, sequence)`를 기준으로 진행 상태를 적용합니
 {
   "eventId": "01K0M50D4S8V2X6Z1B3N7Q9RTP",
   "commandId": "01K0M4Y8B7F5M2N1Q9R6S3T8VX",
-  "scenarioId": "01K0M4Y80XD4J7C2H6P9N5Q3RS",
+  "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
   "robotId": "robot-01",
   "type": "NAVIGATION_RESULT",
   "occurredAt": "2026-07-21T10:30:15+09:00",
@@ -283,7 +285,7 @@ Backend는 `(commandId, sequence)`를 기준으로 진행 상태를 적용합니
 {
   "eventId": "01K0M50D4S8V2X6Z1B3N7Q9RTQ",
   "commandId": "01K0M4Y8B7F5M2N1Q9R6S3T8VX",
-  "scenarioId": "01K0M4Y80XD4J7C2H6P9N5Q3RS",
+  "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
   "robotId": "robot-01",
   "type": "NAVIGATION_RESULT",
   "occurredAt": "2026-07-21T10:30:15+09:00",
@@ -301,7 +303,7 @@ Backend는 `(commandId, sequence)`를 기준으로 진행 상태를 적용합니
 {
   "eventId": "01K0M528W4Q7B2N6P9R1S3T5VX",
   "commandId": "01K0M51BR2X6A8D4F9G7H3J5KC",
-  "scenarioId": "01K0M4Y80XD4J7C2H6P9N5Q3RS",
+  "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
   "robotId": "robot-01",
   "type": "SPEAK_RESULT",
   "occurredAt": "2026-07-21T10:30:25+09:00",
@@ -319,7 +321,7 @@ Backend는 `(commandId, sequence)`를 기준으로 진행 상태를 적용합니
 {
   "eventId": "01K0M53J8P2R4S6T9V1X3Z5BCD",
   "commandId": "01K0M53F6C8D2G9H4J1N5Q7RST",
-  "scenarioId": "01K0M4Y80XD4J7C2H6P9N5Q3RS",
+  "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
   "robotId": "robot-01",
   "type": "CANCEL_RESULT",
   "occurredAt": "2026-07-21T10:31:02+09:00",
@@ -376,7 +378,7 @@ Backend는 `CANCEL_RESULT`를 별도 명령 결과로 기록하고 시나리오�
 
 - [ ] 세 구독 패턴과 Robot 명령 토픽을 설정함
 - [ ] `eventId`, `commandId` 멱등 처리를 구현함
-- [ ] 명령·시나리오 상태·Outbox를 먼저 저장하고 커밋 후 같은 `commandId`로 발행함
+- [ ] 8테이블 MVP에서는 명령 ID·업무 상태·발행 대기 상태를 먼저 저장하고 커밋 후 같은 `commandId`로 발행함(별도 Outbox는 측정된 필요가 생길 때 분리)
 - [ ] 만료·실패·순서 역전 결과를 처리함
 
 ### Robot
