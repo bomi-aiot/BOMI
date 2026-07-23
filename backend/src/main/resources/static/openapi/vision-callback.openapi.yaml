@@ -37,7 +37,7 @@ paths:
                 value:
                   eventId: 01K0M50ZTR2C8D6F4G9H1J3N5Q
                   requestId: 01K0M50M89A3C7D2F5G8H1J4NP
-                  scenarioId: 01K0M4Y80XD4J7C2H6P9N5Q3RS
+                  scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
                   robotId: robot-01
                   type: PERSON_DETECTED
                   occurredAt: '2026-07-21T10:30:18+09:00'
@@ -54,7 +54,7 @@ paths:
                 value:
                   eventId: 01K0M50ZTR2C8D6F4G9H1J3N6R
                   requestId: 01K0M50M89A3C7D2F5G8H1J4NP
-                  scenarioId: 01K0M4Y80XD4J7C2H6P9N5Q3RS
+                  scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
                   robotId: robot-01
                   type: PERSON_NOT_FOUND
                   occurredAt: '2026-07-21T10:30:31+09:00'
@@ -64,7 +64,7 @@ paths:
                 value:
                   eventId: 01K0M50ZTR2C8D6F4G9H1J3N7S
                   requestId: 01K0M50M89A3C7D2F5G8H1J4NP
-                  scenarioId: 01K0M4Y80XD4J7C2H6P9N5Q3RS
+                  scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
                   robotId: robot-01
                   type: INFERENCE_FAILED
                   occurredAt: '2026-07-21T10:30:19+09:00'
@@ -80,7 +80,7 @@ paths:
               example:
                 eventId: 01K0M50ZTR2C8D6F4G9H1J3N5Q
                 requestId: 01K0M50M89A3C7D2F5G8H1J4NP
-                scenarioId: 01K0M4Y80XD4J7C2H6P9N5Q3RS
+                scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
                 acceptedAt: '2026-07-21T10:30:18.130+09:00'
                 duplicate: false
         '400':
@@ -157,6 +157,7 @@ components:
           description: Backend가 인식 시작 요청에 부여한 식별자
         scenarioId:
           type: string
+          format: uuid
           minLength: 1
           maxLength: 64
         robotId:
@@ -279,6 +280,7 @@ components:
           description: Callback 요청의 `requestId`와 동일
         scenarioId:
           type: string
+          format: uuid
         acceptedAt:
           type: string
           format: date-time
