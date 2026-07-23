@@ -5,6 +5,7 @@ import wave
 
 import numpy as np
 import sounddevice as sd
+import noisereduce as nr
 
 from .base import AudioInput, AudioOutput
 
@@ -38,7 +39,7 @@ class LaptopMicInput(AudioInput):
             frames.append(chunk.copy())
 
             volume = np.abs(chunk).mean()
-            print(f"volume: {volume:.1f}")  # 임시로 볼륨값 출력
+            print(f"volume: {volume:.1f}")
 
             if volume < SILENCE_THRESHOLD:
                 silence_chunks += 1
@@ -50,11 +51,26 @@ class LaptopMicInput(AudioInput):
 
         stream.stop()
         stream.close()
-    
 
         print("[녹음 종료]")
-        recording = np.concatenate(frames)
+        recording = np.concatenate(frames).flatten()
+        recording = self._reduce_noise(recording)
         return self._to_wav_bytes(recording)
+
+    def _reduce_noise(self, recording: np.ndarray) -> np.ndarray:
+        """첫 0.3초를 배경 소음 샘플로 삼아 노이즈를 제거한다."""
+        audio_float = recording.astype(np.float32) / 32768.0
+        noise_sample = audio_float[: int(0.3 * SAMPLE_RATE)]
+
+        reduced = nr.reduce_noise(
+            y=audio_float,
+            sr=SAMPLE_RATE,
+            y_noise=noise_sample,
+            prop_decrease=0.8,
+            stationary=True,
+        )
+        reduced = np.nan_to_num(reduced)  # 혹시 남는 NaN/inf 방어
+        return np.clip(reduced * 32768.0, -32768, 32767).astype(np.int16)
 
     def _to_wav_bytes(self, recording: np.ndarray) -> bytes:
         buffer = io.BytesIO()
