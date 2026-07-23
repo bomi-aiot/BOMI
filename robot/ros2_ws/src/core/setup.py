@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'bomi_core'
+package_name = 'core'
 
 setup(
     name=package_name,
@@ -24,9 +24,9 @@ setup(
     },
     entry_points={
         "console_scripts": [
-            "status_publisher = bomi_core.status_publisher:main",
-            "mock_motor_driver = bomi_core.mock_motor_driver:main",
-            "keyboard_teleop = bomi_core.keyboard_teleop:main",
+            "status_publisher = core.status_publisher:main",
+            "mock_motor_driver = core.mock_motor_driver:main",
+            "keyboard_teleop = core.keyboard_teleop:main",
         ],
     },
 )
