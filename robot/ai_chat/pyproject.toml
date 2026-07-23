@@ -8,6 +8,8 @@ dependencies = [
     "python-dotenv",
     "sounddevice",
     "numpy",
+    "sentence-transformers>=2.2.0",
+    "noisereduce",
 ]
 
 [project.optional-dependencies]
