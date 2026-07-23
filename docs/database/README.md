@@ -11,9 +11,17 @@ BOMI의 중앙 데이터베이스는 PostgreSQL 17과 pgvector를 사용합니�
 - 저장 시각 기준: UTC
 
 귀가 환영 및 맞춤 대화 MVP의 1차 물리 모델은
-[`mvp-erd.md`](./mvp-erd.md)에 정의합니다. 현재 ERD는 8개 테이블로 제한하며,
+[`mvp-erd.md`](./mvp-erd.md)에 정의합니다. 현재 ERD는 기존 8개 도메인 테이블에
+온보딩 처리 원장 2개를 추가한 10개 테이블이며,
 벡터 차원은 임베딩 모델 확정 전까지 `<EMBEDDING_DIM>` 자리표시자로 유지합니다.
 전체 PostgreSQL DDL과 JPA Entity는 아직 이 문서의 범위가 아닙니다.
+
+초기 설문 적용 판단, 동의 게이트, 휴식 상태 인지와 온습도 저장 경계는
+[`onboarding-rest-environment-design.md`](./onboarding-rest-environment-design.md)에
+정리합니다. `onboarding_session`과 `onboarding_answer`는 진행·검증·수정·멱등 반영
+원장이며 프로필 조회 원본은 아닙니다. 확인된 최종 사실은 `app_user`, `memory`,
+`care_record`에 반영하고, 휴식·온습도는 별도 센서 시계열 테이블 없이 최신 상태와
+의미 있는 사건만 저장합니다.
 
 ## 연결 원칙
 
