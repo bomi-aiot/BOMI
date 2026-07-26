@@ -50,7 +50,7 @@ bomi/v1/robot/+/results
 
 | 필드 | 적용 메시지 | 설명 |
 | --- | --- | --- |
-| `eventId` | 이벤트·상태·결과 | BOMI 시스템 전체에서 유일한 논리 이벤트 식별자. 동일 온보딩 답변을 포함한 재전송은 같은 값 유지 |
+| `eventId` | 이벤트·상태·결과 | 논리 이벤트 식별자. 같은 사건을 재전송할 때 같은 값 유지 |
 | `scenarioId` | Robot 명령·상태·결과 | Backend가 생성한 E2E 시나리오 식별자 |
 | `commandId` | Robot 명령·상태·결과 | 명령과 상태·결과를 연결하는 식별자 |
 | `robotId` | Robot 메시지 | 토픽의 `{robotId}`와 반드시 동일해야 함 |
@@ -59,7 +59,9 @@ bomi/v1/robot/+/results
 
 최초 IoT 이벤트에는 아직 `scenarioId`, `commandId`, `robotId`가 없을 수 있습니다. Backend가 시나리오와 명령을 생성한 이후의 메시지부터 해당 식별자를 사용합니다. 명령 없이 계속되는 백그라운드 `REST_STATE_CHANGED`와 `ONBOARDING_ANSWER_CAPTURED`는 `robotId`와 `eventId`는 필수지만 `scenarioId`, `commandId`, `sequence`는 사용하지 않습니다.
 
-`scenarioId`는 PostgreSQL `scenario.id` UUID의 표준 문자열 표현입니다. `eventId`와 `commandId`는 오프라인 생산자와 외부 시스템이 만든 최대 64자의 불투명 식별자로, 팀이 확정한 UUIDv4/v7 또는 ULID 형식을 사용하고 재전송 시 원문을 유지합니다. `robotId`는 MQTT 토픽에 안전한 등록 코드이며 DB의 `robot.serial_number`와 매핑합니다. 서로 다른 종류의 ID를 같은 값으로 재사용하지 않습니다.
+`scenarioId`와 `robotId`는 각각 PostgreSQL `scenario.id`, `robot.id` UUID의 표준 문자열 표현입니다. `eventId`와 `commandId`는 생산자가 만든 최대 64자의 불투명 식별자로, 팀이 확정한 UUIDv4/v7 또는 ULID 형식을 사용하고 재전송 시 원문을 유지합니다. 서로 다른 종류의 ID를 같은 값으로 재사용하지 않습니다.
+
+현재 9테이블 ERD에는 모든 `eventId`, `commandId`, 진행 `sequence`를 저장할 원장이 없습니다. 시나리오 시작 이벤트만 `scenario.external_event_id`에 보관합니다. 따라서 아래 식별자 규칙은 통신 계약이며, Backend 재시작을 넘어선 전역 중복 제거까지 DB가 보장한다는 뜻은 아닙니다.
 
 ## 5. IoT 센서 이벤트
 
@@ -161,7 +163,7 @@ Backend는 `occurredAt`이 현재 `robot.ambient_observed_at`보다 새로울 �
 {
   "commandId": "01K0M4Y8B7F5M2N1Q9R6S3T8VX",
   "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
-  "robotId": "robot-01",
+  "robotId": "7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40",
   "type": "NAVIGATE",
   "occurredAt": "2026-07-21T10:30:01+09:00",
   "expiresAt": "2026-07-21T10:31:01+09:00",
@@ -187,7 +189,7 @@ Robot은 `expiresAt`이 지난 명령을 실행하지 않고 `COMMAND_EXPIRED` �
 {
   "commandId": "01K0M4Y8B7F5M2N1Q9R6S3T8VX",
   "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
-  "robotId": "robot-01",
+  "robotId": "7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40",
   "type": "NAVIGATE",
   "occurredAt": "2026-07-21T10:30:01+09:00",
   "expiresAt": "2026-07-21T10:31:01+09:00",
@@ -205,7 +207,7 @@ Robot은 `expiresAt`이 지난 명령을 실행하지 않고 `COMMAND_EXPIRED` �
 {
   "commandId": "01K0M51BR2X6A8D4F9G7H3J5KC",
   "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
-  "robotId": "robot-01",
+  "robotId": "7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40",
   "type": "SPEAK",
   "occurredAt": "2026-07-21T10:30:20+09:00",
   "expiresAt": "2026-07-21T10:30:50+09:00",
@@ -235,7 +237,7 @@ Backend는 대화·음성 AI 응답의 서버 기준 주소와 `downloadPath`를
 {
   "commandId": "01K0M53F6C8D2G9H4J1N5Q7RST",
   "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
-  "robotId": "robot-01",
+  "robotId": "7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40",
   "type": "CANCEL",
   "occurredAt": "2026-07-21T10:31:01+09:00",
   "expiresAt": "2026-07-21T10:31:06+09:00",
@@ -264,7 +266,7 @@ Robot의 로컬 Vision이 설정된 지속시간 이상 누움 또는 기상 상
 ```json
 {
   "eventId": "01K0REST8B7F5M2N1Q9R6S3T8V",
-  "robotId": "robot-01",
+  "robotId": "7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40",
   "type": "REST_STATE_CHANGED",
   "occurredAt": "2026-07-23T13:10:00+09:00",
   "payload": {
@@ -284,7 +286,7 @@ Robot의 로컬 Vision이 설정된 지속시간 이상 누움 또는 기상 상
 ```json
 {
   "eventId": "01K0RESTAWAKE5M2N1Q9R6S3T8V",
-  "robotId": "robot-01",
+  "robotId": "7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40",
   "type": "REST_STATE_CHANGED",
   "occurredAt": "2026-07-23T14:02:00+09:00",
   "payload": {
@@ -324,7 +326,7 @@ Backend는 `RESTING`에서 `robot.current_mode=REST_GUARD`와 `REST_OBSERVATION/
   "eventId": "01K0M4Z1CT7N9B5V3X2K8P6QRS",
   "commandId": "01K0M4Y8B7F5M2N1Q9R6S3T8VX",
   "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
-  "robotId": "robot-01",
+  "robotId": "7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40",
   "type": "NAVIGATION_STATUS",
   "sequence": 2,
   "occurredAt": "2026-07-21T10:30:10+09:00",
@@ -349,56 +351,46 @@ Backend는 `(commandId, sequence)`를 기준으로 진행 상태를 적용합니
 - 마지막으로 적용한 값보다 작은 `sequence`는 늦게 도착한 이전 상태이므로 무시합니다.
 - 같은 `sequence`와 같은 `eventId`는 재전송으로 처리합니다.
 - 같은 `sequence`에 서로 다른 `eventId` 또는 다른 상태가 들어오면 계약 위반으로 기록합니다.
-- 최종 `NAVIGATION_RESULT`가 확정된 후 도착한 진행 상태는 저장만 하고 현재 상태를 변경하지 않습니다.
+- 최종 `NAVIGATION_RESULT`가 확정된 후 도착한 진행 상태는 현재 상태를 변경하지 않고 운영 로그에 남깁니다.
 - `occurredAt`은 표시와 장애 분석에 사용하며 처리 순서 판정에는 사용하지 않습니다.
 
 ## 8. Robot 업무 이벤트
 
 ### `ONBOARDING_ANSWER_CAPTURED`
 
-현재 배정된 로봇이 진행 중인 초기 온보딩에서 한 문항의 답변 또는 수정본을 캡처했을 때 `events` 토픽으로 발행합니다. 답변이 Backend에 도달했는지 불확실해 재전송할 때는 반드시 같은 `eventId`를 사용합니다.
+현재 배정된 로봇이 진행 중인 초기 온보딩에서 한 문항의 답변을 캡처했을 때 `events` 토픽으로 발행합니다. 답변이 Backend에 도달했는지 불확실해 재전송할 때는 반드시 같은 `eventId`를 사용합니다.
 
 ```json
 {
   "eventId": "01K0ONBOARD7F5M2N1Q9R6S3T8V",
-  "robotId": "robot-01",
+  "robotId": "7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40",
   "type": "ONBOARDING_ANSWER_CAPTURED",
   "occurredAt": "2026-07-23T10:15:20+09:00",
   "payload": {
     "sessionId": "6c047625-c1d2-4e61-9e70-1c865ec6ac7f",
     "questionCode": "Q04_DAILY_ROUTINE",
-    "revision": 1,
     "sourceConversationId": "1a4fe41a-6464-4e7e-b292-9a507333a3fa",
     "sourceMessageId": "a6f8cb84-c91c-4a38-a7b6-386ce6aa027f",
-    "transcriptExcerpt": "아침 일곱 시쯤 일어나요.",
-    "sttConfidence": 0.93,
-    "sttModelName": "bomi-stt",
-    "sttModelVersion": "2026-07",
-    "processingPolicyVersion": "onboarding-extract-v1"
+    "verificationStatus": "UNVERIFIED"
   }
 }
 ```
 
 | 필드 | 필수 | 설명 |
 | --- | --- | --- |
-| `eventId` | 예 | `onboarding_answer.client_event_id`에 원문 저장하는 전역 멱등 키 |
+| `eventId` | 예 | 같은 답변 전송을 식별하는 통신 ID. 현재 최소 ERD에는 저장 컬럼이 없음 |
 | `robotId` | 예 | 토픽의 `{robotId}`와 동일하며 세션의 배정 로봇과 일치 |
 | `type` | 예 | `ONBOARDING_ANSWER_CAPTURED` 고정 |
-| `occurredAt` | 예 | 답변이 캡처된 시각; `answered_at`으로 변환 |
+| `occurredAt` | 예 | 답변이 캡처된 시각. 현재 최소 ERD에는 별도 저장 컬럼이 없음 |
 | `payload.sessionId` | 예 | `onboarding_session.id` UUID |
-| `payload.questionCode` | 예 | 해당 `question_set_version`의 허용 문항 코드 |
-| `payload.revision` | 예 | 1 이상의 문항별 수정 순번 |
+| `payload.questionCode` | 예 | 애플리케이션 질문 사전의 허용 문항 코드 |
 | `payload.sourceConversationId` | 아니오 | 단기 원문 출처 conversation UUID |
 | `payload.sourceMessageId` | 아니오 | conversation JSON의 논리 messageId |
-| `payload.transcriptExcerpt` | 아니오 | 확인에 필요한 최소 발췌; 전체 대화 금지, 기본 7일 파기 |
-| `payload.sttConfidence` | 아니오 | 0~1; 있으면 STT 모델명·버전 필수 |
-| `payload.sttModelName` | confidence가 있으면 | STT 모델명 |
-| `payload.sttModelVersion` | confidence가 있으면 | STT 모델 버전 |
-| `payload.processingPolicyVersion` | 예 | 추출·확인 처리 정책 버전 |
+| `payload.verificationStatus` | 예 | `UNVERIFIED`, `AUTO_ACCEPTED`, `USER_CONFIRMED`, `GUARDIAN_CONFIRMED`, `REJECTED` |
 
-Backend는 토픽/메시지 `robotId`가 현재 세션의 `robot_id`와 일치하고 세션이 `IN_PROGRESS`인지 먼저 검사합니다. `(sessionId, questionCode, revision)`이 기존 행과 다르면서 `eventId`만 같으면 계약 위반입니다. 같은 `eventId`의 정상 재전송은 기존 `onboarding_answer.id`와 처리 상태를 반환하며 추출이나 최종 도메인 반영을 다시 실행하지 않습니다.
+Backend는 토픽/메시지 `robotId`가 세션의 `robot_id`와 일치하고 세션이 아직 종료되지 않았는지 먼저 검사합니다. 저장할 때 `session_id`, `source_conversation_id`, `question_code`, `verification_status`만 `onboarding_answer`에 반영합니다. 현재 ERD에는 `eventId`와 수정 순번 컬럼이 없으므로 재시작을 넘어선 답변 멱등성과 수정 이력은 보장하지 않습니다.
 
-`transcriptExcerpt`는 MQTT 최대 payload와 개인정보 최소화 정책을 모두 통과한 짧은 텍스트만 허용합니다. 전체 STT, 원본/인코딩 음성, 토큰, 전체 프롬프트·모델 응답, 건강정보의 불필요한 반복은 포함하지 않습니다. AI 구조화 결과가 큰 경우 Backend/AI REST 계약에서 처리하고 MQTT에는 캡처 상관관계만 둡니다.
+전체 STT, 원본·인코딩 음성, 토큰, 전체 프롬프트·모델 응답은 MQTT에 포함하지 않습니다. 실제 답변 텍스트는 `sourceConversationId`와 `sourceMessageId`로 `conversation.messages`에서 찾습니다.
 
 ## 9. Robot 최종 결과
 
@@ -411,7 +403,7 @@ Backend는 토픽/메시지 `robotId`가 현재 세션의 `robot_id`와 일치�
   "eventId": "01K0M50D4S8V2X6Z1B3N7Q9RTP",
   "commandId": "01K0M4Y8B7F5M2N1Q9R6S3T8VX",
   "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
-  "robotId": "robot-01",
+  "robotId": "7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40",
   "type": "NAVIGATION_RESULT",
   "occurredAt": "2026-07-21T10:30:15+09:00",
   "payload": {
@@ -428,7 +420,7 @@ Backend는 토픽/메시지 `robotId`가 현재 세션의 `robot_id`와 일치�
   "eventId": "01K0M50D4S8V2X6Z1B3N7Q9RTQ",
   "commandId": "01K0M4Y8B7F5M2N1Q9R6S3T8VX",
   "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
-  "robotId": "robot-01",
+  "robotId": "7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40",
   "type": "NAVIGATION_RESULT",
   "occurredAt": "2026-07-21T10:30:15+09:00",
   "payload": {
@@ -446,7 +438,7 @@ Backend는 토픽/메시지 `robotId`가 현재 세션의 `robot_id`와 일치�
   "eventId": "01K0M528W4Q7B2N6P9R1S3T5VX",
   "commandId": "01K0M51BR2X6A8D4F9G7H3J5KC",
   "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
-  "robotId": "robot-01",
+  "robotId": "7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40",
   "type": "SPEAK_RESULT",
   "occurredAt": "2026-07-21T10:30:25+09:00",
   "payload": {
@@ -464,7 +456,7 @@ Backend는 토픽/메시지 `robotId`가 현재 세션의 `robot_id`와 일치�
   "eventId": "01K0M53J8P2R4S6T9V1X3Z5BCD",
   "commandId": "01K0M53F6C8D2G9H4J1N5Q7RST",
   "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12",
-  "robotId": "robot-01",
+  "robotId": "7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40",
   "type": "CANCEL_RESULT",
   "occurredAt": "2026-07-21T10:31:02+09:00",
   "payload": {
@@ -502,12 +494,12 @@ Backend는 `CANCEL_RESULT`를 별도 명령 결과로 기록하고 시나리오�
 - 토픽의 `{deviceId}` 또는 `{robotId}`와 payload의 식별자가 다르면 메시지를 거부합니다.
 - 알 수 없는 `type`, `status`, `outcome`은 임의로 성공 처리하지 않습니다.
 - `occurredAt`이 파싱되지 않거나 필수 필드가 없으면 오류 로그를 남기고 폐기합니다.
-- Backend는 `eventId`에 시스템 전체 unique constraint를 적용하고 동일 이벤트의 부수 효과를 다시 실행하지 않습니다.
-- `ONBOARDING_ANSWER_CAPTURED.eventId`는 `onboarding_answer.client_event_id`에 그대로 저장하고, 같은 답변 재전송에서 새 ID를 만들지 않습니다.
-- Backend는 온보딩 세션의 `robot_id`, `senior_id`, `status`, question set의 허용 코드를 검증한 뒤 답변을 저장합니다.
+- 생산자는 같은 논리 사건을 재전송할 때 같은 `eventId`를 유지합니다.
+- Backend는 시나리오 시작 이벤트의 `eventId`를 `scenario.external_event_id`에 저장합니다. 다른 이벤트는 현재 최소 ERD에 보존하지 않습니다.
+- Backend는 온보딩 세션의 `robot_id`, `senior_id`, 종료 시각과 애플리케이션 질문 사전의 허용 코드를 검증한 뒤 답변을 저장합니다.
 - 로그에 전체 `audioUri`, 인증 토큰이나 개인정보를 기록하지 않습니다.
 - 운영 MQTT는 인증과 TLS를 적용합니다. 실제 인증정보는 저장소에 커밋하지 않습니다.
-- Backend와 Robot은 `eventId`, `commandId`를 기준으로 QoS 1 중복을 안전하게 처리합니다.
+- Robot은 이미 처리한 `commandId`를 재실행하지 않습니다. Backend의 재시작을 넘어선 QoS 1 중복 제거는 별도 원장을 추가하기 전에는 보장하지 않습니다.
 - 더 오래된 `AMBIENT_ENVIRONMENT_OBSERVED.occurredAt`은 최신 `robot.ambient_*`를 덮어쓰지 않습니다.
 - `REST_STATE_CHANGED`에는 프레임·관절 좌표·track ID·얼굴 특징을 포함하지 않으며 휴식 후보가 아닌 최종 전이만 발행합니다.
 
@@ -525,10 +517,11 @@ Backend는 `CANCEL_RESULT`를 별도 명령 결과로 기록하고 시나리오�
 ### Backend
 
 - [ ] 네 구독 패턴과 Robot 명령 토픽을 설정함
-- [ ] `eventId`, `commandId` 멱등 처리를 구현함
-- [ ] 10테이블 MVP에서는 명령 ID·업무 상태·발행 대기 상태를 먼저 저장하고 커밋 후 같은 `commandId`로 발행함(별도 Outbox는 측정된 필요가 생길 때 분리)
-- [ ] 온보딩 eventId를 `client_event_id`에 원문 저장하고 같은 ID 재전송 시 기존 answer를 반환함
-- [ ] 세션 로봇·상태·question code·revision을 검증하고 최종 반영은 `materialization_key`로 한 번만 수행함
+- [ ] `robotId`가 `robot.id` UUID와 일치하는지 검증함
+- [ ] 시나리오 시작 `eventId`를 `scenario.external_event_id`에 연결함
+- [ ] 현재 9테이블 모델에서 저장하지 않는 `commandId`, 기타 `eventId`, `sequence`를 영속화했다고 가정하지 않음
+- [ ] 온보딩 세션의 로봇·시니어·종료 시각·question code를 검증함
+- [ ] 재시작 후 중복·재발행 시험에서 필요성이 확인되면 Outbox와 수신 이벤트 원장을 추가함
 - [ ] 만료·실패·순서 역전 결과를 처리함
 - [ ] 최신 온습도 스냅샷과 임계 사건 저장을 분리하고 오래된 관측의 역덮어쓰기를 차단함
 - [ ] 휴식 시작/종료 external event를 멱등 처리하고 `REST_OBSERVATION`을 연결함
@@ -541,7 +534,7 @@ Backend는 `CANCEL_RESULT`를 별도 명령 결과로 기록하고 시나리오�
 - [ ] 만료되거나 중복된 명령을 재실행하지 않음
 - [ ] 이동·재생 취소 결과를 `CANCEL_RESULT`로 반환함
 - [ ] 음성 바이너리를 MQTT로 요청하거나 발행하지 않음
-- [ ] 동일 온보딩 답변을 재전송할 때 같은 `eventId`, `sessionId`, `questionCode`, `revision`을 유지함
+- [ ] 동일 온보딩 답변을 재전송할 때 같은 `eventId`, `sessionId`, `questionCode`를 유지함
 - [ ] 온보딩 답변 이벤트에 전체 STT·음성·프롬프트·모델 응답을 포함하지 않음
 - [ ] 누움 지속시간 미달 후보는 `REST_STATE_CHANGED`로 발행하지 않음
 - [ ] `REST_GUARD`에서 일반 능동 기능을 억제하고 호출·안전·긴급 기능 allowlist는 유지함

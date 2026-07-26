@@ -1,166 +1,117 @@
-﻿코드 그룹 ID,코드 그룹명,사용 테이블,사용 컬럼,코드값,코드 논리명,설명,표시 순서,시작 상태 여부,종료 상태 여부,허용 이전 상태,허용 다음 상태,활성 여부,최초 도입 버전,폐기 버전,최종 변경 Jira,비고
-CODE_AUDIT_ACTION_TYPE,감사 행위 유형,audit_log,action_type,CREATE,CREATE,감사 행위 유형의 CREATE 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_AUDIT_ACTION_TYPE,감사 행위 유형,audit_log,action_type,UPDATE,UPDATE,감사 행위 유형의 UPDATE 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_AUDIT_ACTION_TYPE,감사 행위 유형,audit_log,action_type,VERIFY,VERIFY,감사 행위 유형의 VERIFY 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_AUDIT_ACTION_TYPE,감사 행위 유형,audit_log,action_type,REJECT,REJECT,감사 행위 유형의 REJECT 값,4,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_AUDIT_ACTION_TYPE,감사 행위 유형,audit_log,action_type,DELETE,DELETE,감사 행위 유형의 DELETE 값,5,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_AUDIT_ACTION_TYPE,감사 행위 유형,audit_log,action_type,CHANGE_VISIBILITY,CHANGE VISIBILITY,감사 행위 유형의 CHANGE_VISIBILITY 값,6,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_AUDIT_ACTION_TYPE,감사 행위 유형,audit_log,action_type,LINK,LINK,감사 행위 유형의 LINK 값,7,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_AUDIT_ACTION_TYPE,감사 행위 유형,audit_log,action_type,UNLINK,UNLINK,감사 행위 유형의 UNLINK 값,8,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_AUDIT_ACTOR_TYPE,감사 행위자 유형,audit_log,actor_type,SENIOR,SENIOR,감사 행위자 유형의 SENIOR 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_AUDIT_ACTOR_TYPE,감사 행위자 유형,audit_log,actor_type,GUARDIAN,GUARDIAN,감사 행위자 유형의 GUARDIAN 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_AUDIT_ACTOR_TYPE,감사 행위자 유형,audit_log,actor_type,SYSTEM,SYSTEM,감사 행위자 유형의 SYSTEM 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_AUDIT_ACTOR_TYPE,감사 행위자 유형,audit_log,actor_type,ROBOT,ROBOT,감사 행위자 유형의 ROBOT 값,4,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_RECORD_TYPE,돌봄 기록 유형,care_record,record_type,HEALTH_CONDITION,HEALTH CONDITION,돌봄 기록 유형의 HEALTH_CONDITION 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_RECORD_TYPE,돌봄 기록 유형,care_record,record_type,ALLERGY,ALLERGY,돌봄 기록 유형의 ALLERGY 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_RECORD_TYPE,돌봄 기록 유형,care_record,record_type,PHYSICAL_LIMITATION,PHYSICAL LIMITATION,돌봄 기록 유형의 PHYSICAL_LIMITATION 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_RECORD_TYPE,돌봄 기록 유형,care_record,record_type,MEDICATION,MEDICATION,돌봄 기록 유형의 MEDICATION 값,4,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_RECORD_TYPE,돌봄 기록 유형,care_record,record_type,MEDICATION_SCHEDULE,MEDICATION SCHEDULE,돌봄 기록 유형의 MEDICATION_SCHEDULE 값,5,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_RECORD_TYPE,돌봄 기록 유형,care_record,record_type,MEDICATION_REMINDER,MEDICATION REMINDER,돌봄 기록 유형의 MEDICATION_REMINDER 값,6,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_RECORD_TYPE,돌봄 기록 유형,care_record,record_type,MEDICATION_TAKEN,MEDICATION TAKEN,돌봄 기록 유형의 MEDICATION_TAKEN 값,7,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_RECORD_TYPE,돌봄 기록 유형,care_record,record_type,APPOINTMENT,APPOINTMENT,돌봄 기록 유형의 APPOINTMENT 값,8,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_RECORD_TYPE,돌봄 기록 유형,care_record,record_type,PERSONAL_SCHEDULE,PERSONAL SCHEDULE,돌봄 기록 유형의 PERSONAL_SCHEDULE 값,9,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_RECORD_TYPE,돌봄 기록 유형,care_record,record_type,HEALTH_OBSERVATION,HEALTH OBSERVATION,돌봄 기록 유형의 HEALTH_OBSERVATION 값,10,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_RECORD_TYPE,돌봄 기록 유형,care_record,record_type,REST_OBSERVATION,REST OBSERVATION,돌봄 기록 유형의 REST_OBSERVATION 값,11,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_RECORD_TYPE,돌봄 기록 유형,care_record,record_type,ENVIRONMENT_OBSERVATION,ENVIRONMENT OBSERVATION,돌봄 기록 유형의 ENVIRONMENT_OBSERVATION 값,12,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_RECORD_TYPE,돌봄 기록 유형,care_record,record_type,COGNITIVE_ASSESSMENT,COGNITIVE ASSESSMENT,돌봄 기록 유형의 COGNITIVE_ASSESSMENT 값,13,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_RECORD_TYPE,돌봄 기록 유형,care_record,record_type,GUARDIAN_NOTIFICATION,GUARDIAN NOTIFICATION,돌봄 기록 유형의 GUARDIAN_NOTIFICATION 값,14,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_SOURCE_TYPE,돌봄 정보 출처,care_record,source_type,USER,USER,돌봄 정보 출처의 USER 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_SOURCE_TYPE,돌봄 정보 출처,care_record,source_type,GUARDIAN,GUARDIAN,돌봄 정보 출처의 GUARDIAN 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_SOURCE_TYPE,돌봄 정보 출처,care_record,source_type,ROBOT,ROBOT,돌봄 정보 출처의 ROBOT 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_SOURCE_TYPE,돌봄 정보 출처,care_record,source_type,AI,AI,돌봄 정보 출처의 AI 값,4,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_SOURCE_TYPE,돌봄 정보 출처,care_record,source_type,SYSTEM,SYSTEM,돌봄 정보 출처의 SYSTEM 값,5,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_VERIFICATION,돌봄 검증 상태,care_record,verification_status,UNVERIFIED,UNVERIFIED,돌봄 검증 상태의 UNVERIFIED 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_VERIFICATION,돌봄 검증 상태,care_record,verification_status,USER_CONFIRMED,USER CONFIRMED,돌봄 검증 상태의 USER_CONFIRMED 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_VERIFICATION,돌봄 검증 상태,care_record,verification_status,GUARDIAN_CONFIRMED,GUARDIAN CONFIRMED,돌봄 검증 상태의 GUARDIAN_CONFIRMED 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_VERIFICATION,돌봄 검증 상태,care_record,verification_status,DOCUMENT_VERIFIED,DOCUMENT VERIFIED,돌봄 검증 상태의 DOCUMENT_VERIFIED 값,4,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CARE_VERIFICATION,돌봄 검증 상태,care_record,verification_status,REJECTED,REJECTED,돌봄 검증 상태의 REJECTED 값,5,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CONSENT_STATUS,동의 상태,app_user,"personalization_consent_status, health_data_consent_status, schedule_consent_status, guardian_sharing_consent_status",NOT_ASKED,NOT ASKED,동의 상태의 NOT_ASKED 값,1,Y,N,N/A,"GRANTED, DENIED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CONSENT_STATUS,동의 상태,app_user,"personalization_consent_status, health_data_consent_status, schedule_consent_status, guardian_sharing_consent_status",GRANTED,GRANTED,동의 상태의 GRANTED 값,2,N,N,"NOT_ASKED, DENIED, REVOKED",REVOKED,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CONSENT_STATUS,동의 상태,app_user,"personalization_consent_status, health_data_consent_status, schedule_consent_status, guardian_sharing_consent_status",DENIED,DENIED,동의 상태의 DENIED 값,3,N,N,NOT_ASKED,GRANTED,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CONSENT_STATUS,동의 상태,app_user,"personalization_consent_status, health_data_consent_status, schedule_consent_status, guardian_sharing_consent_status",REVOKED,REVOKED,동의 상태의 REVOKED 값,4,N,N,GRANTED,GRANTED,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CONVERSATION_STATUS,대화 상태,conversation,status,OPEN,OPEN,대화 상태의 OPEN 값,1,Y,N,N/A,"COMPLETED, FAILED, CANCELLED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CONVERSATION_STATUS,대화 상태,conversation,status,COMPLETED,COMPLETED,대화 상태의 COMPLETED 값,2,N,Y,OPEN,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CONVERSATION_STATUS,대화 상태,conversation,status,FAILED,FAILED,대화 상태의 FAILED 값,3,N,Y,OPEN,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_CONVERSATION_STATUS,대화 상태,conversation,status,CANCELLED,CANCELLED,대화 상태의 CANCELLED 값,4,N,Y,OPEN,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_EMBEDDING_STATUS,임베딩 생성 상태,memory,embedding_generation_status,NOT_REQUESTED,NOT REQUESTED,임베딩 생성 상태의 NOT_REQUESTED 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_EMBEDDING_STATUS,임베딩 생성 상태,memory,embedding_generation_status,REQUESTED,REQUESTED,임베딩 생성 상태의 REQUESTED 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_EMBEDDING_STATUS,임베딩 생성 상태,memory,embedding_generation_status,GENERATED,GENERATED,임베딩 생성 상태의 GENERATED 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_EMBEDDING_STATUS,임베딩 생성 상태,memory,embedding_generation_status,FAILED,FAILED,임베딩 생성 상태의 FAILED 값,4,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_EMBEDDING_STATUS,임베딩 생성 상태,memory,embedding_generation_status,REGENERATION_REQUIRED,REGENERATION REQUIRED,임베딩 생성 상태의 REGENERATION_REQUIRED 값,5,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ENVIRONMENT_COMFORT,환경 쾌적도,care_record,details.comfortAssessment,TOO_HOT,TOO HOT,환경 쾌적도의 TOO_HOT 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ENVIRONMENT_COMFORT,환경 쾌적도,care_record,details.comfortAssessment,TOO_COLD,TOO COLD,환경 쾌적도의 TOO_COLD 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ENVIRONMENT_COMFORT,환경 쾌적도,care_record,details.comfortAssessment,TOO_HUMID,TOO HUMID,환경 쾌적도의 TOO_HUMID 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ENVIRONMENT_COMFORT,환경 쾌적도,care_record,details.comfortAssessment,TOO_DRY,TOO DRY,환경 쾌적도의 TOO_DRY 값,4,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ENVIRONMENT_COMFORT,환경 쾌적도,care_record,details.comfortAssessment,COMFORTABLE,COMFORTABLE,환경 쾌적도의 COMFORTABLE 값,5,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_EXECUTION_LOCATION,AI 실행 위치,conversation,execution_location,LOCAL,LOCAL,AI 실행 위치의 LOCAL 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_EXECUTION_LOCATION,AI 실행 위치,conversation,execution_location,CLOUD,CLOUD,AI 실행 위치의 CLOUD 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_GENERATION_STATUS,대화 생성 상태,conversation,generation_status,NOT_STARTED,NOT STARTED,대화 생성 상태의 NOT_STARTED 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_GENERATION_STATUS,대화 생성 상태,conversation,generation_status,RUNNING,RUNNING,대화 생성 상태의 RUNNING 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_GENERATION_STATUS,대화 생성 상태,conversation,generation_status,SUCCEEDED,SUCCEEDED,대화 생성 상태의 SUCCEEDED 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_GENERATION_STATUS,대화 생성 상태,conversation,generation_status,FAILED,FAILED,대화 생성 상태의 FAILED 값,4,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_LIFECYCLE,기억 생명주기,memory,lifecycle_status,ACTIVE,ACTIVE,기억 생명주기의 ACTIVE 값,1,Y,N,N/A,"DISPUTED, EXPIRED, DELETED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_LIFECYCLE,기억 생명주기,memory,lifecycle_status,DISPUTED,DISPUTED,기억 생명주기의 DISPUTED 값,2,N,N,ACTIVE,"SUPERSEDED, DELETED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_LIFECYCLE,기억 생명주기,memory,lifecycle_status,SUPERSEDED,SUPERSEDED,기억 생명주기의 SUPERSEDED 값,3,N,N,DISPUTED,DELETED,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_LIFECYCLE,기억 생명주기,memory,lifecycle_status,EXPIRED,EXPIRED,기억 생명주기의 EXPIRED 값,4,N,N,ACTIVE,DELETED,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_LIFECYCLE,기억 생명주기,memory,lifecycle_status,DELETED,DELETED,기억 생명주기의 DELETED 값,5,N,Y,"ACTIVE, DISPUTED, SUPERSEDED, EXPIRED",N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_TYPE,기억 유형,memory,memory_type,PERSONAL_RELATIONSHIP,PERSONAL RELATIONSHIP,기억 유형의 PERSONAL_RELATIONSHIP 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_TYPE,기억 유형,memory,memory_type,PREFERENCE,PREFERENCE,기억 유형의 PREFERENCE 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_TYPE,기억 유형,memory,memory_type,HOBBY,HOBBY,기억 유형의 HOBBY 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_TYPE,기억 유형,memory,memory_type,DAILY_ROUTINE,DAILY ROUTINE,기억 유형의 DAILY_ROUTINE 값,4,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_TYPE,기억 유형,memory,memory_type,LIFE_EVENT,LIFE EVENT,기억 유형의 LIFE_EVENT 값,5,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_TYPE,기억 유형,memory,memory_type,FAMILY_MEMORY,FAMILY MEMORY,기억 유형의 FAMILY_MEMORY 값,6,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_TYPE,기억 유형,memory,memory_type,EMOTIONAL_EVENT,EMOTIONAL EVENT,기억 유형의 EMOTIONAL_EVENT 값,7,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_TYPE,기억 유형,memory,memory_type,CONVERSATION_SUMMARY,CONVERSATION SUMMARY,기억 유형의 CONVERSATION_SUMMARY 값,8,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_TYPE,기억 유형,memory,memory_type,OTHER,OTHER,기억 유형의 OTHER 값,9,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_VERIFICATION,기억 검증 상태,memory,verification_status,UNVERIFIED,UNVERIFIED,기억 검증 상태의 UNVERIFIED 값,1,Y,N,N/A,"AUTO_ACCEPTED, USER_CONFIRMED, GUARDIAN_CONFIRMED, REJECTED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_VERIFICATION,기억 검증 상태,memory,verification_status,AUTO_ACCEPTED,AUTO ACCEPTED,기억 검증 상태의 AUTO_ACCEPTED 값,2,N,Y,UNVERIFIED,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_VERIFICATION,기억 검증 상태,memory,verification_status,USER_CONFIRMED,USER CONFIRMED,기억 검증 상태의 USER_CONFIRMED 값,3,N,Y,UNVERIFIED,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_VERIFICATION,기억 검증 상태,memory,verification_status,GUARDIAN_CONFIRMED,GUARDIAN CONFIRMED,기억 검증 상태의 GUARDIAN_CONFIRMED 값,4,N,Y,UNVERIFIED,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_VERIFICATION,기억 검증 상태,memory,verification_status,REJECTED,REJECTED,기억 검증 상태의 REJECTED 값,5,N,Y,UNVERIFIED,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_VISIBILITY,기억 공개 범위,memory,visibility,PRIVATE,PRIVATE,기억 공개 범위의 PRIVATE 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_VISIBILITY,기억 공개 범위,memory,visibility,SHARED_WITH_PRIMARY,SHARED WITH PRIMARY,기억 공개 범위의 SHARED_WITH_PRIMARY 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MEMORY_VISIBILITY,기억 공개 범위,memory,visibility,SHARED_WITH_GUARDIANS,SHARED WITH GUARDIANS,기억 공개 범위의 SHARED_WITH_GUARDIANS 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MESSAGE_ROLE,대화 메시지 역할,conversation,messages,SENIOR,SENIOR,대화 메시지 역할의 SENIOR 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_MESSAGE_ROLE,대화 메시지 역할,conversation,messages,ROBOT,ROBOT,대화 메시지 역할의 ROBOT 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_NAVIGATION_STATUS,현관 이동 상태,scenario,navigation_status,REQUESTED,REQUESTED,현관 이동 상태의 REQUESTED 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_NAVIGATION_STATUS,현관 이동 상태,scenario,navigation_status,IN_PROGRESS,IN PROGRESS,현관 이동 상태의 IN_PROGRESS 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_NAVIGATION_STATUS,현관 이동 상태,scenario,navigation_status,SUCCEEDED,SUCCEEDED,현관 이동 상태의 SUCCEEDED 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_NAVIGATION_STATUS,현관 이동 상태,scenario,navigation_status,FAILED,FAILED,현관 이동 상태의 FAILED 값,4,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_NAVIGATION_STATUS,현관 이동 상태,scenario,navigation_status,CANCELLED,CANCELLED,현관 이동 상태의 CANCELLED 값,5,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_NAVIGATION_STATUS,현관 이동 상태,scenario,navigation_status,TIMED_OUT,TIMED OUT,현관 이동 상태의 TIMED_OUT 값,6,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_PROCESSING_STATUS,온보딩 답변 처리 상태,onboarding_answer,processing_status,CAPTURED,CAPTURED,온보딩 답변 처리 상태의 CAPTURED 값,1,Y,N,N/A,"NEEDS_CLARIFICATION, NEEDS_CONFIRMATION, PROCESSED, SKIPPED, REJECTED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_PROCESSING_STATUS,온보딩 답변 처리 상태,onboarding_answer,processing_status,NEEDS_CLARIFICATION,NEEDS CLARIFICATION,온보딩 답변 처리 상태의 NEEDS_CLARIFICATION 값,2,N,N,CAPTURED,"NEEDS_CONFIRMATION, PROCESSED, REJECTED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_PROCESSING_STATUS,온보딩 답변 처리 상태,onboarding_answer,processing_status,NEEDS_CONFIRMATION,NEEDS CONFIRMATION,온보딩 답변 처리 상태의 NEEDS_CONFIRMATION 값,3,N,N,"CAPTURED, NEEDS_CLARIFICATION","PROCESSED, REJECTED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_PROCESSING_STATUS,온보딩 답변 처리 상태,onboarding_answer,processing_status,PROCESSED,PROCESSED,온보딩 답변 처리 상태의 PROCESSED 값,4,N,Y,"CAPTURED, NEEDS_CLARIFICATION, NEEDS_CONFIRMATION",N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_PROCESSING_STATUS,온보딩 답변 처리 상태,onboarding_answer,processing_status,SKIPPED,SKIPPED,온보딩 답변 처리 상태의 SKIPPED 값,5,N,Y,CAPTURED,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_PROCESSING_STATUS,온보딩 답변 처리 상태,onboarding_answer,processing_status,REJECTED,REJECTED,온보딩 답변 처리 상태의 REJECTED 값,6,N,Y,"CAPTURED, NEEDS_CLARIFICATION, NEEDS_CONFIRMATION",N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_SESSION_STATUS,온보딩 세션 상태,onboarding_session,status,IN_PROGRESS,IN PROGRESS,온보딩 세션 상태의 IN_PROGRESS 값,1,Y,N,N/A,"COMPLETED, DECLINED, CANCELLED, EXPIRED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_SESSION_STATUS,온보딩 세션 상태,onboarding_session,status,COMPLETED,COMPLETED,온보딩 세션 상태의 COMPLETED 값,2,N,Y,IN_PROGRESS,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_SESSION_STATUS,온보딩 세션 상태,onboarding_session,status,DECLINED,DECLINED,온보딩 세션 상태의 DECLINED 값,3,N,Y,IN_PROGRESS,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_SESSION_STATUS,온보딩 세션 상태,onboarding_session,status,CANCELLED,CANCELLED,온보딩 세션 상태의 CANCELLED 값,4,N,Y,IN_PROGRESS,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_SESSION_STATUS,온보딩 세션 상태,onboarding_session,status,EXPIRED,EXPIRED,온보딩 세션 상태의 EXPIRED 값,5,N,Y,IN_PROGRESS,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_STATUS,온보딩 projection 상태,app_user,onboarding_status,NOT_STARTED,NOT STARTED,온보딩 projection 상태의 NOT_STARTED 값,1,Y,N,N/A,IN_PROGRESS,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_STATUS,온보딩 projection 상태,app_user,onboarding_status,IN_PROGRESS,IN PROGRESS,온보딩 projection 상태의 IN_PROGRESS 값,2,N,N,"NOT_STARTED, DECLINED, CANCELLED, EXPIRED","COMPLETED, DECLINED, CANCELLED, EXPIRED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_STATUS,온보딩 projection 상태,app_user,onboarding_status,COMPLETED,COMPLETED,온보딩 projection 상태의 COMPLETED 값,3,N,Y,IN_PROGRESS,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_STATUS,온보딩 projection 상태,app_user,onboarding_status,DECLINED,DECLINED,온보딩 projection 상태의 DECLINED 값,4,N,N,IN_PROGRESS,IN_PROGRESS,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_STATUS,온보딩 projection 상태,app_user,onboarding_status,CANCELLED,CANCELLED,온보딩 projection 상태의 CANCELLED 값,5,N,N,IN_PROGRESS,IN_PROGRESS,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_STATUS,온보딩 projection 상태,app_user,onboarding_status,EXPIRED,EXPIRED,온보딩 projection 상태의 EXPIRED 값,6,N,N,IN_PROGRESS,IN_PROGRESS,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_TARGET_TYPE,온보딩 반영 대상 유형,onboarding_answer,"extraction_jsonb, target_refs",APP_USER,APP USER,온보딩 반영 대상 유형의 APP_USER 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_TARGET_TYPE,온보딩 반영 대상 유형,onboarding_answer,"extraction_jsonb, target_refs",MEMORY,MEMORY,온보딩 반영 대상 유형의 MEMORY 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_TARGET_TYPE,온보딩 반영 대상 유형,onboarding_answer,"extraction_jsonb, target_refs",CARE_RECORD,CARE RECORD,온보딩 반영 대상 유형의 CARE_RECORD 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_VERIFICATION_STATUS,온보딩 답변 검증 상태,onboarding_answer,verification_status,UNVERIFIED,UNVERIFIED,온보딩 답변 검증 상태의 UNVERIFIED 값,1,Y,N,N/A,"USER_CONFIRMED, GUARDIAN_CONFIRMED, DOCUMENT_VERIFIED, REJECTED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_VERIFICATION_STATUS,온보딩 답변 검증 상태,onboarding_answer,verification_status,USER_CONFIRMED,USER CONFIRMED,온보딩 답변 검증 상태의 USER_CONFIRMED 값,2,N,Y,UNVERIFIED,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_VERIFICATION_STATUS,온보딩 답변 검증 상태,onboarding_answer,verification_status,GUARDIAN_CONFIRMED,GUARDIAN CONFIRMED,온보딩 답변 검증 상태의 GUARDIAN_CONFIRMED 값,3,N,Y,UNVERIFIED,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_VERIFICATION_STATUS,온보딩 답변 검증 상태,onboarding_answer,verification_status,DOCUMENT_VERIFIED,DOCUMENT VERIFIED,온보딩 답변 검증 상태의 DOCUMENT_VERIFIED 값,4,N,Y,UNVERIFIED,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ONBOARDING_VERIFICATION_STATUS,온보딩 답변 검증 상태,onboarding_answer,verification_status,REJECTED,REJECTED,온보딩 답변 검증 상태의 REJECTED 값,5,N,Y,UNVERIFIED,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RECURRENCE_FREQUENCY,반복 빈도,care_record,recurrence,DAILY,DAILY,반복 빈도의 DAILY 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RECURRENCE_FREQUENCY,반복 빈도,care_record,recurrence,WEEKLY,WEEKLY,반복 빈도의 WEEKLY 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RELATIONSHIP_PRIORITY,보호자 우선순위,care_relationship,priority,PRIMARY,PRIMARY,보호자 우선순위의 PRIMARY 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RELATIONSHIP_PRIORITY,보호자 우선순위,care_relationship,priority,SECONDARY,SECONDARY,보호자 우선순위의 SECONDARY 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RELATIONSHIP_STATUS,돌봄 관계 상태,care_relationship,status,PENDING,PENDING,돌봄 관계 상태의 PENDING 값,1,Y,N,"ENDED, REVOKED",ACTIVE,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RELATIONSHIP_STATUS,돌봄 관계 상태,care_relationship,status,ACTIVE,ACTIVE,돌봄 관계 상태의 ACTIVE 값,2,N,N,PENDING,"DISCONNECT_REQUESTED, REVOKED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RELATIONSHIP_STATUS,돌봄 관계 상태,care_relationship,status,DISCONNECT_REQUESTED,DISCONNECT REQUESTED,돌봄 관계 상태의 DISCONNECT_REQUESTED 값,3,N,N,ACTIVE,ENDED,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RELATIONSHIP_STATUS,돌봄 관계 상태,care_relationship,status,ENDED,ENDED,돌봄 관계 상태의 ENDED 값,4,N,N,DISCONNECT_REQUESTED,PENDING,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RELATIONSHIP_STATUS,돌봄 관계 상태,care_relationship,status,REVOKED,REVOKED,돌봄 관계 상태의 REVOKED 값,5,N,N,ACTIVE,PENDING,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_REST_STATE,휴식 상태,care_record,details.restState,RESTING,RESTING,휴식 상태의 RESTING 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_REST_STATE,휴식 상태,care_record,details.restState,AWAKE,AWAKE,휴식 상태의 AWAKE 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RETURN_STATUS,기본 위치 복귀 상태,scenario,return_status,NOT_EVALUATED,NOT EVALUATED,기본 위치 복귀 상태의 NOT_EVALUATED 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RETURN_STATUS,기본 위치 복귀 상태,scenario,return_status,READY,READY,기본 위치 복귀 상태의 READY 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RETURN_STATUS,기본 위치 복귀 상태,scenario,return_status,REQUESTED,REQUESTED,기본 위치 복귀 상태의 REQUESTED 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RETURN_STATUS,기본 위치 복귀 상태,scenario,return_status,IN_PROGRESS,IN PROGRESS,기본 위치 복귀 상태의 IN_PROGRESS 값,4,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RETURN_STATUS,기본 위치 복귀 상태,scenario,return_status,SUCCEEDED,SUCCEEDED,기본 위치 복귀 상태의 SUCCEEDED 값,5,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_RETURN_STATUS,기본 위치 복귀 상태,scenario,return_status,SAFE_STOP,SAFE STOP,기본 위치 복귀 상태의 SAFE_STOP 값,6,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ROBOT_MODE,로봇 업무 모드,robot,current_mode,IDLE,IDLE,로봇 업무 모드의 IDLE 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ROBOT_MODE,로봇 업무 모드,robot,current_mode,SCENARIO_ACTIVE,SCENARIO ACTIVE,로봇 업무 모드의 SCENARIO_ACTIVE 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ROBOT_MODE,로봇 업무 모드,robot,current_mode,REST_GUARD,REST GUARD,로봇 업무 모드의 REST_GUARD 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ROBOT_MODE,로봇 업무 모드,robot,current_mode,SAFE_STOP,SAFE STOP,로봇 업무 모드의 SAFE_STOP 값,4,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ROBOT_STATUS,로봇 수명 상태,robot,status,REGISTERED,REGISTERED,로봇 수명 상태의 REGISTERED 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ROBOT_STATUS,로봇 수명 상태,robot,status,ACTIVE,ACTIVE,로봇 수명 상태의 ACTIVE 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ROBOT_STATUS,로봇 수명 상태,robot,status,MAINTENANCE,MAINTENANCE,로봇 수명 상태의 MAINTENANCE 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_ROBOT_STATUS,로봇 수명 상태,robot,status,RETIRED,RETIRED,로봇 수명 상태의 RETIRED 값,4,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_SCENARIO_STATUS,시나리오 굵은 상태,scenario,status,RECEIVED,RECEIVED,시나리오 굵은 상태의 RECEIVED 값,1,Y,N,N/A,"MOVING_TO_ENTRANCE, CANCELLED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_SCENARIO_STATUS,시나리오 굵은 상태,scenario,status,MOVING_TO_ENTRANCE,MOVING TO ENTRANCE,시나리오 굵은 상태의 MOVING_TO_ENTRANCE 값,2,N,N,RECEIVED,"CHECKING_INTERACTION, FAILED, CANCELLED, TIMED_OUT",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_SCENARIO_STATUS,시나리오 굵은 상태,scenario,status,CHECKING_INTERACTION,CHECKING INTERACTION,시나리오 굵은 상태의 CHECKING_INTERACTION 값,3,N,N,MOVING_TO_ENTRANCE,"CONVERSING, RETURN_DECISION, CANCELLED, TIMED_OUT",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_SCENARIO_STATUS,시나리오 굵은 상태,scenario,status,CONVERSING,CONVERSING,시나리오 굵은 상태의 CONVERSING 값,4,N,N,CHECKING_INTERACTION,"RETURN_DECISION, FAILED, CANCELLED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_SCENARIO_STATUS,시나리오 굵은 상태,scenario,status,RETURN_DECISION,RETURN DECISION,시나리오 굵은 상태의 RETURN_DECISION 값,5,N,N,"CHECKING_INTERACTION, CONVERSING","RETURNING_TO_DEFAULT, COMPLETED",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_SCENARIO_STATUS,시나리오 굵은 상태,scenario,status,RETURNING_TO_DEFAULT,RETURNING TO DEFAULT,시나리오 굵은 상태의 RETURNING_TO_DEFAULT 값,6,N,N,RETURN_DECISION,"COMPLETED, CANCELLED, TIMED_OUT",Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_SCENARIO_STATUS,시나리오 굵은 상태,scenario,status,COMPLETED,COMPLETED,시나리오 굵은 상태의 COMPLETED 값,7,N,Y,"RETURN_DECISION, RETURNING_TO_DEFAULT",N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_SCENARIO_STATUS,시나리오 굵은 상태,scenario,status,FAILED,FAILED,시나리오 굵은 상태의 FAILED 값,8,N,Y,"MOVING_TO_ENTRANCE, CONVERSING",N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_SCENARIO_STATUS,시나리오 굵은 상태,scenario,status,CANCELLED,CANCELLED,시나리오 굵은 상태의 CANCELLED 값,9,N,Y,"RECEIVED, MOVING_TO_ENTRANCE, CHECKING_INTERACTION, CONVERSING, RETURNING_TO_DEFAULT",N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_SCENARIO_STATUS,시나리오 굵은 상태,scenario,status,TIMED_OUT,TIMED OUT,시나리오 굵은 상태의 TIMED_OUT 값,10,N,Y,"MOVING_TO_ENTRANCE, CHECKING_INTERACTION, RETURNING_TO_DEFAULT",N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_SCENARIO_TYPE,시나리오 유형,scenario,scenario_type,HOMECOMING,HOMECOMING,시나리오 유형의 HOMECOMING 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_SCENARIO_TYPE,시나리오 유형,scenario,scenario_type,FALL_RESPONSE,FALL RESPONSE,시나리오 유형의 FALL_RESPONSE 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_SCENARIO_TYPE,시나리오 유형,scenario,scenario_type,MANUAL_INTERACTION,MANUAL INTERACTION,시나리오 유형의 MANUAL_INTERACTION 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_USER_STATUS,사용자 상태,app_user,status,ACTIVE,ACTIVE,사용자 상태의 ACTIVE 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_USER_STATUS,사용자 상태,app_user,status,SUSPENDED,SUSPENDED,사용자 상태의 SUSPENDED 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_USER_STATUS,사용자 상태,app_user,status,WITHDRAWN,WITHDRAWN,사용자 상태의 WITHDRAWN 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_USER_TYPE,사용자 유형,app_user,user_type,SENIOR,SENIOR,사용자 유형의 SENIOR 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_USER_TYPE,사용자 유형,app_user,user_type,GUARDIAN,GUARDIAN,사용자 유형의 GUARDIAN 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_VISION_STATUS,Vision 상태,scenario,vision_status,REQUESTED,REQUESTED,Vision 상태의 REQUESTED 값,1,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_VISION_STATUS,Vision 상태,scenario,vision_status,IN_PROGRESS,IN PROGRESS,Vision 상태의 IN_PROGRESS 값,2,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_VISION_STATUS,Vision 상태,scenario,vision_status,SUCCEEDED,SUCCEEDED,Vision 상태의 SUCCEEDED 값,3,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_VISION_STATUS,Vision 상태,scenario,vision_status,NO_PERSON,NO PERSON,Vision 상태의 NO_PERSON 값,4,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_VISION_STATUS,Vision 상태,scenario,vision_status,NOT_ALLOWED,NOT ALLOWED,Vision 상태의 NOT_ALLOWED 값,5,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_VISION_STATUS,Vision 상태,scenario,vision_status,FAILED,FAILED,Vision 상태의 FAILED 값,6,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
-CODE_VISION_STATUS,Vision 상태,scenario,vision_status,TIMED_OUT,TIMED OUT,Vision 상태의 TIMED_OUT 값,7,N,N,N/A,N/A,Y,0.3.0,N/A,S15P11E102-84,원본 상태·코드 목록 기준
+﻿대상,코드값,뜻,언제 사용,주의
+app_user.user_type,SENIOR,BOMI의 돌봄·대화 대상인 시니어,시니어 가입과 관계의 senior_id 검증,연령만으로 자동 부여하지 않음
+app_user.user_type,GUARDIAN,시니어와 관계를 맺는 보호자,보호자 가입과 guardian_id 검증,특정 시니어 접근권한은 care_relationship로 판단
+app_user.status,ACTIVE,정상 사용 가능한 계정,일반 기능 허용,
+app_user.status,SUSPENDED,일시 정지된 계정,로그인 또는 업무 기능 제한,데이터 삭제 상태가 아님
+app_user.status,WITHDRAWN,탈퇴 처리된 계정,신규 기능 사용 차단,즉시 물리 삭제와 같은 뜻이 아님
+app_user.onboarding_status,NOT_STARTED,온보딩을 시작하지 않음,앱·로봇의 온보딩 시작과 재개 분기,
+app_user.onboarding_status,IN_PROGRESS,온보딩 진행 중,앱·로봇의 온보딩 시작과 재개 분기,
+app_user.onboarding_status,COMPLETED,필수 온보딩 정상 완료,앱·로봇의 온보딩 시작과 재개 분기,
+app_user.onboarding_status,DECLINED,사용자가 온보딩을 거절,앱·로봇의 온보딩 시작과 재개 분기,
+app_user.personalization_consent_status,NOT_ASKED,아직 목적별 동의를 묻지 않음,해당 목적의 데이터 처리 게이트,
+app_user.personalization_consent_status,GRANTED,해당 목적의 처리를 허용,해당 목적의 데이터 처리 게이트,다른 목적의 동의를 대신하지 않음
+app_user.personalization_consent_status,DENIED,동의를 거절,해당 목적의 데이터 처리 게이트,
+app_user.personalization_consent_status,REVOKED,이전에 준 동의를 철회,해당 목적의 데이터 처리 게이트,
+app_user.health_data_consent_status,NOT_ASKED,아직 목적별 동의를 묻지 않음,해당 목적의 데이터 처리 게이트,
+app_user.health_data_consent_status,GRANTED,해당 목적의 처리를 허용,해당 목적의 데이터 처리 게이트,다른 목적의 동의를 대신하지 않음
+app_user.health_data_consent_status,DENIED,동의를 거절,해당 목적의 데이터 처리 게이트,
+app_user.health_data_consent_status,REVOKED,이전에 준 동의를 철회,해당 목적의 데이터 처리 게이트,
+app_user.schedule_consent_status,NOT_ASKED,아직 목적별 동의를 묻지 않음,해당 목적의 데이터 처리 게이트,
+app_user.schedule_consent_status,GRANTED,해당 목적의 처리를 허용,해당 목적의 데이터 처리 게이트,다른 목적의 동의를 대신하지 않음
+app_user.schedule_consent_status,DENIED,동의를 거절,해당 목적의 데이터 처리 게이트,
+app_user.schedule_consent_status,REVOKED,이전에 준 동의를 철회,해당 목적의 데이터 처리 게이트,
+app_user.guardian_sharing_consent_status,NOT_ASKED,아직 목적별 동의를 묻지 않음,해당 목적의 데이터 처리 게이트,
+app_user.guardian_sharing_consent_status,GRANTED,해당 목적의 처리를 허용,해당 목적의 데이터 처리 게이트,다른 목적의 동의를 대신하지 않음
+app_user.guardian_sharing_consent_status,DENIED,동의를 거절,해당 목적의 데이터 처리 게이트,
+app_user.guardian_sharing_consent_status,REVOKED,이전에 준 동의를 철회,해당 목적의 데이터 처리 게이트,
+care_relationship.priority,PRIMARY,주 보호자,주 보호자 전용 공유와 우선 알림,
+care_relationship.priority,SECONDARY,보조 보호자,일반 보호자 공유,
+care_relationship.status,PENDING,연결 초대 대기,보호자 접근 후보 판단,공유 대상에서 제외
+care_relationship.status,ACTIVE,연결이 성립해 사용 가능,보호자 접근 후보 판단,동의와 공개범위를 추가 확인
+care_relationship.status,DISCONNECT_REQUESTED,연결 해제 요청 중,보호자 접근 후보 판단,공유 대상에서 제외
+care_relationship.status,ENDED,정상 종료,보호자 접근 후보 판단,공유 대상에서 제외
+care_relationship.status,REVOKED,관리·정책상 철회,보호자 접근 후보 판단,공유 대상에서 제외
+robot.current_mode,IDLE,일반 대기,새 동작 허용과 로봇 상태 표시,
+robot.current_mode,SCENARIO_ACTIVE,시나리오 수행 중,새 동작 허용과 로봇 상태 표시,
+robot.current_mode,REST_GUARD,휴식 보호 동작 중,새 동작 허용과 로봇 상태 표시,
+robot.current_mode,SAFE_STOP,안전 정지,새 동작 허용과 로봇 상태 표시,자동 복구로 위험 동작을 시작하지 않음
+conversation.status,OPEN,대화 진행 중,메시지 추가와 종료 후 처리 결정,
+conversation.status,COMPLETED,정상 종료,메시지 추가와 종료 후 처리 결정,
+conversation.status,FAILED,오류 종료,메시지 추가와 종료 후 처리 결정,
+conversation.status,CANCELLED,사용자·정책 취소,메시지 추가와 종료 후 처리 결정,
+conversation.messages[].role,SENIOR,시니어 발화,메시지 작성자 구분,
+conversation.messages[].role,ROBOT,로봇 발화,메시지 작성자 구분,
+scenario.scenario_type,HOMECOMING,귀가 환영,실행 핸들러와 허용 상태 전이 선택,
+scenario.scenario_type,FALL_RESPONSE,낙상 대응,실행 핸들러와 허용 상태 전이 선택,
+scenario.scenario_type,MANUAL_INTERACTION,수동 상호작용,실행 핸들러와 허용 상태 전이 선택,
+scenario.final_status,RECEIVED,시작 이벤트 수신,시나리오 진행·결과 표시,
+scenario.final_status,MOVING_TO_ENTRANCE,현관 이동 중,시나리오 진행·결과 표시,
+scenario.final_status,CHECKING_INTERACTION,사람·상호작용 확인 중,시나리오 진행·결과 표시,
+scenario.final_status,CONVERSING,대화 중,시나리오 진행·결과 표시,
+scenario.final_status,RETURN_DECISION,복귀 안전 판단 중,시나리오 진행·결과 표시,
+scenario.final_status,RETURNING_TO_DEFAULT,기본 위치 복귀 중,시나리오 진행·결과 표시,
+scenario.final_status,COMPLETED,정상 완료,시나리오 진행·결과 표시,종료 상태에서 일반 진행 상태로 되돌리지 않음
+scenario.final_status,FAILED,오류 종료,시나리오 진행·결과 표시,종료 상태에서 일반 진행 상태로 되돌리지 않음
+scenario.final_status,CANCELLED,취소 종료,시나리오 진행·결과 표시,종료 상태에서 일반 진행 상태로 되돌리지 않음
+scenario.final_status,TIMED_OUT,시간 초과 종료,시나리오 진행·결과 표시,종료 상태에서 일반 진행 상태로 되돌리지 않음
+memory.memory_type,PERSONAL_RELATIONSHIP,개인적 관계,기억 필터와 대화 문맥 구성,
+memory.memory_type,PREFERENCE,선호,기억 필터와 대화 문맥 구성,
+memory.memory_type,HOBBY,취미,기억 필터와 대화 문맥 구성,
+memory.memory_type,DAILY_ROUTINE,일상,기억 필터와 대화 문맥 구성,
+memory.memory_type,LIFE_EVENT,생애 사건,기억 필터와 대화 문맥 구성,
+memory.memory_type,FAMILY_MEMORY,가족 기억,기억 필터와 대화 문맥 구성,
+memory.memory_type,EMOTIONAL_EVENT,감정 사건,기억 필터와 대화 문맥 구성,
+memory.memory_type,CONVERSATION_SUMMARY,대화 요약,기억 필터와 대화 문맥 구성,
+memory.memory_type,OTHER,기타 개인화 사실,기억 필터와 대화 문맥 구성,OTHER 비율이 높으면 유형 재설계
+memory.verification_status,UNVERIFIED,아직 사람에게 확인하지 않음,최종 사용 가능 여부 판단,
+memory.verification_status,AUTO_ACCEPTED,정책상 자동 수용,최종 사용 가능 여부 판단,
+memory.verification_status,USER_CONFIRMED,시니어가 확인,최종 사용 가능 여부 판단,
+memory.verification_status,GUARDIAN_CONFIRMED,보호자가 확인,최종 사용 가능 여부 판단,
+memory.verification_status,REJECTED,틀리거나 사용하지 않기로 함,최종 사용 가능 여부 판단,검색·반영에서 제외
+onboarding_answer.verification_status,UNVERIFIED,아직 사람에게 확인하지 않음,최종 사용 가능 여부 판단,
+onboarding_answer.verification_status,AUTO_ACCEPTED,정책상 자동 수용,최종 사용 가능 여부 판단,
+onboarding_answer.verification_status,USER_CONFIRMED,시니어가 확인,최종 사용 가능 여부 판단,
+onboarding_answer.verification_status,GUARDIAN_CONFIRMED,보호자가 확인,최종 사용 가능 여부 판단,
+onboarding_answer.verification_status,REJECTED,틀리거나 사용하지 않기로 함,최종 사용 가능 여부 판단,검색·반영에서 제외
+memory.lifecycle_status,ACTIVE,현재 사용 가능한 기억,기억 검색 대상 결정,verification_status도 함께 검사
+memory.lifecycle_status,DISPUTED,내용에 이의가 제기됨,기억 검색 대상 결정,검색에서 제외
+memory.lifecycle_status,SUPERSEDED,새 기억으로 대체됨,기억 검색 대상 결정,검색에서 제외
+memory.lifecycle_status,EXPIRED,보존·유효 기간 만료,기억 검색 대상 결정,검색에서 제외
+memory.lifecycle_status,DELETED,삭제 처리됨,기억 검색 대상 결정,검색에서 제외
+memory.visibility,PRIVATE,시니어와 BOMI만 사용,보호자 기억 조회,보호자에게 노출하지 않음
+memory.visibility,SHARED_WITH_PRIMARY,주 보호자와 공유,보호자 기억 조회,공유 동의와 활성 관계를 추가 확인
+memory.visibility,SHARED_WITH_GUARDIANS,모든 활성 보호자와 공유,보호자 기억 조회,공유 동의와 활성 관계를 추가 확인
+care_record.record_type,HEALTH_CONDITION,건강 상태,details 구조와 처리기 선택,
+care_record.record_type,ALLERGY,알레르기,details 구조와 처리기 선택,
+care_record.record_type,PHYSICAL_LIMITATION,신체 제약,details 구조와 처리기 선택,
+care_record.record_type,MEDICATION,약 정보,details 구조와 처리기 선택,
+care_record.record_type,MEDICATION_SCHEDULE,복약 일정,details 구조와 처리기 선택,
+care_record.record_type,MEDICATION_REMINDER,복약 알림,details 구조와 처리기 선택,
+care_record.record_type,MEDICATION_TAKEN,복약 완료,details 구조와 처리기 선택,
+care_record.record_type,APPOINTMENT,병원·기관 예약,details 구조와 처리기 선택,
+care_record.record_type,PERSONAL_SCHEDULE,개인 일정,details 구조와 처리기 선택,
+care_record.record_type,HEALTH_OBSERVATION,건강 관찰,details 구조와 처리기 선택,
+care_record.record_type,REST_OBSERVATION,휴식 관찰,details 구조와 처리기 선택,
+care_record.record_type,ENVIRONMENT_OBSERVATION,환경 관찰,details 구조와 처리기 선택,
+care_record.record_type,COGNITIVE_ASSESSMENT,인지 평가,details 구조와 처리기 선택,
+care_record.record_type,GUARDIAN_NOTIFICATION,보호자 알림,details 구조와 처리기 선택,
+care_record.details.sourceType,USER,시니어 직접 진술,돌봄 기록의 출처 표시,
+care_record.details.sourceType,GUARDIAN,보호자 입력,돌봄 기록의 출처 표시,
+care_record.details.sourceType,ROBOT,로봇 관측,돌봄 기록의 출처 표시,
+care_record.details.sourceType,AI,AI 추출·판단,돌봄 기록의 출처 표시,자동으로 사람 확인을 의미하지 않음
+care_record.details.sourceType,SYSTEM,시스템 규칙 생성,돌봄 기록의 출처 표시,
+care_record.details.verificationStatus,UNVERIFIED,미확인,돌봄 사실의 확인 수준 표시,
+care_record.details.verificationStatus,USER_CONFIRMED,시니어 확인,돌봄 사실의 확인 수준 표시,
+care_record.details.verificationStatus,GUARDIAN_CONFIRMED,보호자 확인,돌봄 사실의 확인 수준 표시,
+care_record.details.verificationStatus,DOCUMENT_VERIFIED,문서로 확인,돌봄 사실의 확인 수준 표시,
+care_record.details.verificationStatus,REJECTED,거절·오류,돌봄 사실의 확인 수준 표시,
+care_record.details.restState,RESTING,휴식 중,REST_OBSERVATION 기록,
+care_record.details.restState,AWAKE,깨어 활동 중,REST_OBSERVATION 기록,
+care_record.details.comfortAssessment,TOO_HOT,너무 더움,ENVIRONMENT_OBSERVATION의 체감 평가,
+care_record.details.comfortAssessment,TOO_COLD,너무 추움,ENVIRONMENT_OBSERVATION의 체감 평가,
+care_record.details.comfortAssessment,TOO_HUMID,너무 습함,ENVIRONMENT_OBSERVATION의 체감 평가,
+care_record.details.comfortAssessment,TOO_DRY,너무 건조함,ENVIRONMENT_OBSERVATION의 체감 평가,
+care_record.details.comfortAssessment,COMFORTABLE,쾌적함,ENVIRONMENT_OBSERVATION의 체감 평가,
+care_record.recurrence.frequency,DAILY,매일 반복,복약·일정 반복 규칙,
+care_record.recurrence.frequency,WEEKLY,주 단위 반복,daysOfWeek와 함께 사용,
+care_record.status,TBD,ERD에 허용 코드가 아직 없음,첫 record_type 구현 전에 확정,임의 공통 상태를 만들지 않음

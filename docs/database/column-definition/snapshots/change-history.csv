@@ -1,4 +1,2 @@
-﻿문서 버전,변경일,Jira 번호,회의 일자,변경 유형,대상 유형,대상 ID,변경 전,변경 후,변경 사유,영향 영역,관련 API·MQTT·ROS 2,호환성,데이터 마이그레이션 필요 여부,Flyway 필요 여부,변경 담당자,검토자,승인자,승인 상태,Git 커밋,비고
-0.1.0,2026-07-22,S15P11E102-84,TBD,ADD,DOCUMENT,BOMI_컬럼정의서,N/A,승인 ERD 기반 최초 자동 생성; 176개 실제 컬럼,팀 공통 데이터 사전과 Git diff 체계 구축,"Backend, AI, Robot, DB","OpenAPI, MQTT, ROS 2/Nav2 문서",COMPATIBLE,N,N,TBD,TBD,TBD,DRAFT,c2e44f8 (source baseline),초기 버전
-0.2.0,2026-07-23,S15P11E102-84,TBD,UPDATE,SCHEMA,ONBOARDING_REST_AMBIENT,0.1.0,기존 8개 테이블을 유지하면서 192개 실제 컬럼으로 확장,"초기 설문·동의, 휴식 보호 모드, 온습도 최신값과 의미 있는 사건을 추적","Backend, AI, Vision, Robot, IoT, DB","MQTT topic-convention, 운영 정책",CONDITIONAL,Y,Y,TBD,TBD,TBD,DRAFT,e87de627bb8e591df82aeebb86e3061852ccafdc + WORKTREE,별도 설문 원장 없이 최종 사실 분해 저장
-0.3.0,2026-07-23,S15P11E102-84,TBD,ADD,SCHEMA,ONBOARDING_SESSION_ANSWER,0.2.0,온보딩 원장 2개를 추가한 10개 테이블·238개 실제 컬럼,문항별 재개·revision·검증·QoS 1 재전송·최종 사실 반영·단기 파기 추적 필요,"Backend, AI, Voice, Robot, MQTT, DB","MQTT ONBOARDING_ANSWER_CAPTURED, 프로필 조회 원칙",COMPATIBLE,Y,Y,TBD,TBD,TBD,DRAFT,e87de627bb8e591df82aeebb86e3061852ccafdc + WORKTREE,기존 Excel을 artifact-tool로 마이그레이션하고 CSV 재생성
+﻿변경일,변경 요약,영향,결정 이유
+2026-07-27,10테이블·238컬럼 문서를 이미지 기준 9테이블·74컬럼 최소 모델로 재작성,"문서, Excel, CSV, 온보딩·귀가·MQTT DB 매핑",로봇과 먼저 통신하고 실제 필요가 확인된 뒤 원장·감사·Outbox를 확장하기 위해
