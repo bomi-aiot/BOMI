@@ -4,7 +4,7 @@
 
 ## 현재 구현 범위
 
-현재는 AI 기능 구현 전의 프로젝트 초기 구조 단계다. Python 패키지, 개발 도구 설정, 가상환경 및 한국어 docstring 검사, 단위 테스트가 준비되어 있다. YOLO, ByteTrack, OpenCV, ROS2 기능은 아직 구현하지 않았다.
+현재 노트북 카메라 영상에서 YOLO11로 사람을 탐지하고 바운딩 박스와 신뢰도를 표시할 수 있다. 사람 추적, 보호대상자 선택, 상태 판단 및 ROS2 연동은 아직 구현하지 않았다.
 
 ## 디렉터리 구조
 
@@ -77,6 +77,43 @@ make clean
 
 GNU Make를 사용할 수 없는 Windows 환경에서는 Makefile에 표시된 `python -m ruff`, `python -m mypy`, `python -m pytest` 명령을 직접 실행할 수 있다. pytest는 editable install된 패키지를 검사하므로 테스트 전에 `python -m pip install -e ".[dev]"`가 필요하다.
 
+## 실시간 사람 탐지
+
+가상환경을 활성화한 뒤 개발 의존성을 포함해 설치한다.
+
+```bash
+python -m pip install -e ".[dev]"
+```
+
+프로젝트 표준 명령을 사용할 수도 있다.
+
+```bash
+make setup
+```
+
+기본 카메라와 설정으로 실행한다.
+
+```bash
+python -m bomi_vision.main
+```
+
+Windows Git Bash에서도 같은 명령을 사용하며 옵션은 한 줄로 지정할 수 있다.
+
+```bash
+python -m bomi_vision.main --model yolo11n.pt --camera 0 --confidence 0.5
+```
+
+처음 실행하면 Ultralytics가 모델 가중치를 내려받을 수 있으며 인터넷 연결이 필요하다. 운영체제에서 노트북 카메라 접근 권한도 허용해야 한다. 화면에 탐지된 모든 사람의 박스와 신뢰도가 표시되며 `q` 키를 누르면 종료한다. 기본 카메라가 열리지 않으면 `--camera 1`처럼 다른 인덱스를 지정한다.
+
+이번 기능은 사람 탐지만 수행한다. 사람 추적이나 보호대상자 선택은 포함하지 않으며, 여러 사람이 감지되면 특정 사용자를 임의로 선택하지 않고 모두 표시한다.
+
+### 문제 해결
+
+- `Failed to open camera index 0.`이 표시되면 카메라 권한과 다른 프로그램의 카메라 사용 여부를 확인하고 `--camera 1`을 시도한다.
+- 모델 다운로드가 실패하면 인터넷 연결과 방화벽을 확인한 뒤 다시 실행하거나 내려받은 모델 파일을 `--model`로 지정한다.
+- 화면이 나타나지 않으면 데스크톱 GUI 환경에서 실행 중인지, `opencv-python`이 정상 설치됐는지 확인한다.
+- 다른 카메라를 사용하려면 `--camera 1`, `--camera 2`처럼 운영체제에 등록된 인덱스를 지정한다.
+
 ## 주요 문서
 
 - [아키텍처](ARCHITECTURE.md)
@@ -87,4 +124,4 @@ GNU Make를 사용할 수 없는 Windows 환경에서는 Makefile에 표시된 `
 
 ## 후속 작업
 
-사람 탐지, ByteTrack 추적, 사람 수 상태 머신 등 실제 AI 비전 기능은 별도 이슈와 실행 계획에서 단계적으로 구현한다.
+ByteTrack 추적, 사람 수 상태 머신 등 후속 AI 비전 기능은 별도 이슈와 실행 계획에서 단계적으로 구현한다.
