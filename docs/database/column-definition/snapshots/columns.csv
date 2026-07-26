@@ -1,75 +1,152 @@
 ﻿테이블명,순번,컬럼명,한글명,타입,필수,키,참조,무엇을 저장하는가,언제 어떻게 쓰는가,주의할 점,예시
-app_user,1,id,사용자 ID,UUID,Y,PK,,시니어와 보호자를 내부에서 변하지 않게 식별한다.,모든 사용자 관계와 업무 데이터가 이 값을 참조한다.,이메일이나 이름을 FK 대신 쓰지 않는다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
-app_user,2,user_type,사용자 유형,VARCHAR(30),Y,,,사용자가 시니어인지 보호자인지 구분한다.,가입 흐름과 관계 생성 시 역할 검증에 사용한다.,권한 전체를 결정하는 전역 역할이 아니다.,SENIOR
-app_user,3,name,등록 이름,VARCHAR(100),Y,,,가입 시 확인한 사용자의 이름을 저장한다.,관리 화면과 본인 확인 문맥에서 사용한다.,로봇 호칭은 preferred_name을 우선한다.,김순희
-app_user,4,email,이메일,VARCHAR(255),조건부,,,로그인 또는 연락에 사용할 이메일 주소를 저장한다.,주로 보호자 계정의 로그인·알림 주소로 사용한다.,대소문자 정규화와 유일성은 회원가입 구현 전에 확정한다.,guardian@example.com
-app_user,5,preferred_name,선호 호칭,VARCHAR(100),N,,,로봇이 시니어를 부를 때 편한 호칭을 저장한다.,대화 생성 시 name보다 먼저 사용하고 없으면 name으로 대체한다.,실명으로 단정하거나 보호자 관계를 추론하지 않는다.,순희님
-app_user,6,conversation_preferences,대화 선호,JSONB,N,,,"말하기 속도, 음량, 반복 방식처럼 대화 스타일을 묶어 저장한다.",Voice 요청을 만들 때 사용자가 허용한 키만 전달한다.,건강·취미·가족 사실을 이 JSON에 섞지 않는다.,"{""speechRate"":""SLOW"",""volume"":""LOUD""}"
-app_user,7,onboarding_status,온보딩 상태,VARCHAR(30),Y,,,사용자의 현재 온보딩 진행 요약을 저장한다.,앱 진입과 로봇 질문 시작·재개 분기에 사용한다.,세션 이력을 대신하지 않으며 세션 시각과 같은 트랜잭션에서 바꾼다.,IN_PROGRESS
-app_user,8,time_zone,시간대,VARCHAR(50),Y,,,사용자의 날짜와 시각을 해석할 IANA 시간대를 저장한다.,"일정 생성, 알림 시각 계산, 화면 표시 변환에 사용한다.",UTC offset만 저장하면 서머타임 변경을 처리하기 어렵다.,Asia/Seoul
-app_user,9,personalization_consent_status,개인화 동의 상태,VARCHAR(30),Y,,,취향·일상·관계 기억을 저장하고 사용할 수 있는지 나타낸다.,memory 생성과 대화 개인화 전에 확인한다.,보호자 공유 동의나 건강 동의를 대신하지 않는다.,GRANTED
-app_user,10,health_data_consent_status,건강정보 동의 상태,VARCHAR(30),Y,,,건강·복약 정보를 처리할 수 있는지 나타낸다.,건강 질문과 관련 care_record 생성 전에 확인한다.,동의 철회 후 기존 데이터 처리 정책은 별도로 수행한다.,NOT_ASKED
-app_user,11,schedule_consent_status,일정 동의 상태,VARCHAR(30),Y,,,일정과 반복 알림을 저장할 수 있는지 나타낸다.,"APPOINTMENT, PERSONAL_SCHEDULE, 알림 관련 기록을 만들기 전에 확인한다.",건강 동의가 있어도 일정 동의가 자동 부여되지 않는다.,DENIED
-app_user,12,guardian_sharing_consent_status,보호자 공유 동의 상태,VARCHAR(30),Y,,,보호자에게 정보를 공유할 수 있는지 나타낸다.,보호자 조회·알림 전에 관계와 공개 범위와 함께 검사한다.,GRANTED만으로 모든 보호자에게 모든 데이터를 공개하지 않는다.,GRANTED
-app_user,13,status,계정 상태,VARCHAR(30),Y,,,"계정이 정상 사용, 정지, 탈퇴 상태인지 나타낸다.",인증 이후 업무 기능 허용 여부를 결정한다.,WITHDRAWN을 물리 삭제와 같은 뜻으로 해석하지 않는다.,ACTIVE
-app_user,14,created_at,생성 시각,TIMESTAMPTZ,Y,,,사용자 행이 처음 만들어진 시각을 저장한다.,가입·데이터 생성 순서 확인에 사용한다.,애플리케이션 저장 기준은 UTC로 통일한다.,UTC 2026-07-27 01:00:00
-app_user,15,updated_at,수정 시각,TIMESTAMPTZ,Y,,,사용자 프로필이나 상태가 마지막으로 바뀐 시각을 저장한다.,캐시 갱신과 변경 시점 확인에 사용한다.,관계나 동의의 상세 변경 이력을 대신하지 않는다.,UTC 2026-07-27 02:15:00
-care_relationship,1,id,관계 ID,UUID,Y,PK,,시니어-보호자 연결 한 건을 식별한다.,공유 판단과 관계 상태 변경의 기준으로 사용한다.,두 사용자 ID 조합을 외부 식별자로 노출하지 않는다.,b839bd4c-efeb-4c86-917c-51896392819e
-care_relationship,2,senior_id,시니어 ID,UUID,Y,FK,app_user.id,돌봄을 받는 시니어 사용자를 가리킨다.,보호자가 조회할 데이터의 소유자를 결정한다.,참조 사용자의 user_type이 SENIOR인지 서비스에서 검증한다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
-care_relationship,3,guardian_id,보호자 ID,UUID,Y,FK,app_user.id,시니어와 연결된 보호자 사용자를 가리킨다.,보호자 앱 조회와 알림 수신자 후보를 찾는다.,참조 사용자의 user_type이 GUARDIAN인지 검증한다.,8e1339cb-b0bf-42df-9a7f-f6592be3e84f
-care_relationship,4,priority,보호자 우선순위,VARCHAR(30),Y,,,주 보호자와 보조 보호자를 구분한다.,PRIMARY 전용 기억 공유와 알림 우선순위에 사용한다.,응급 연락 순서를 모두 표현한다고 가정하지 않는다.,PRIMARY
-care_relationship,5,status,관계 상태,VARCHAR(30),Y,,,초대부터 활성·연결 해제까지 현재 관계 상태를 나타낸다.,ACTIVE인 관계만 기본 공유 후보로 사용한다.,DISCONNECT_REQUESTED를 즉시 ENDED로 취급하지 않는다.,ACTIVE
-care_relationship,6,connected_at,연결 성립 시각,TIMESTAMPTZ,조건부,,,초대가 수락되어 실제 관계가 활성화된 시각을 저장한다.,관계 기간과 연결 시점을 확인할 때 사용한다.,PENDING 상태에서는 비어 있을 수 있다.,UTC 2026-07-20 03:30:00
-robot,1,id,로봇 ID,UUID,Y,PK,,등록된 로봇 한 대를 식별한다.,MQTT 토픽과 payload의 robotId에 UUID 문자열로 사용한다.,예전 등록 코드 robot-01과 혼용하지 않는다.,7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
-robot,2,senior_id,배정 시니어 ID,UUID,조건부,FK,app_user.id,현재 이 로봇을 사용하는 시니어를 가리킨다.,시나리오·온보딩 시작 전에 대상 사용자를 결정한다.,미배정 로봇을 허용할지 등록 정책에서 확정한다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
-robot,3,current_mode,현재 모드,VARCHAR(30),Y,,,"로봇이 일반 대기, 시나리오, 휴식 보호, 안전 정지 중 어디에 있는지 나타낸다.",새 명령 허용 여부와 UI 상태 표시에 사용한다.,세부 시나리오 단계나 ROS 노드 상태를 대신하지 않는다.,IDLE
-robot,4,ambient_temperature_c,최신 온도,"NUMERIC(5,2)",N,,,마지막으로 수신한 실내 온도를 섭씨로 저장한다.,현재 환경 안내와 의미 있는 환경 관찰 생성에 사용한다.,고빈도 시계열이 아니며 observed_at보다 오래된 값으로 덮지 않는다.,24.50
-robot,5,ambient_humidity_percent,최신 습도,"NUMERIC(5,2)",N,,,마지막으로 수신한 실내 상대습도를 퍼센트로 저장한다.,현재 환경 안내와 불쾌도 판단의 입력으로 사용한다.,0~100 범위를 검증하고 온도·관측 시각과 함께 갱신한다.,58.20
-robot,6,ambient_observed_at,환경 관측 시각,TIMESTAMPTZ,N,,,현재 온도와 습도가 실제 측정된 시각을 저장한다.,늦게 도착한 센서 이벤트가 최신값을 역덮어쓰지 않게 비교한다.,DB 수신 시각과 혼동하지 않는다.,UTC 2026-07-27 06:15:20
-robot,7,is_active,사용 가능 여부,BOOLEAN,Y,,,등록상 이 로봇을 서비스에 사용할 수 있는지 나타낸다.,비활성 로봇으로 온보딩·시나리오를 시작하지 않게 한다.,온라인 접속 여부나 배터리 상태가 아니다.,true
-onboarding_session,1,id,온보딩 세션 ID,UUID,Y,PK,,온보딩 한 번을 식별한다.,Robot과 Backend가 질문 진행을 연결하는 sessionId로 사용한다.,다른 시니어의 세션 ID를 재사용하지 않는다.,6c047625-c1d2-4e61-9e70-1c865ec6ac7f
-onboarding_session,2,senior_id,대상 시니어 ID,UUID,Y,FK,app_user.id,온보딩을 진행하는 시니어를 가리킨다.,동의와 최종 저장 대상을 찾는다.,user_type=SENIOR인지 시작 시 검증한다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
-onboarding_session,3,robot_id,진행 로봇 ID,UUID,Y,FK,robot.id,질문을 진행한 로봇을 가리킨다.,MQTT robotId가 세션의 로봇과 같은지 검사한다.,로봇 재배정 중인 세션 처리 규칙은 구현 전에 정한다.,7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
-onboarding_session,4,current_question_code,현재 질문 코드,VARCHAR(100),N,,,중단 후 재개할 질문 위치를 나타낸다.,다음 질문을 결정하고 앱에 진행 상황을 보여 준다.,질문 문구가 아니라 안정적인 코드만 저장한다.,Q04_DAILY_ROUTINE
-onboarding_session,5,started_at,시작 시각,TIMESTAMPTZ,Y,,,첫 질문을 시작한 시각을 저장한다.,진행 중 세션과 소요 시간을 판단한다.,행 생성 시각과 다를 수 있으므로 의미를 섞지 않는다.,UTC 2026-07-27 01:10:00
-onboarding_session,6,completed_at,정상 완료 시각,TIMESTAMPTZ,N,,,필수 질문을 정상 완료한 시각을 저장한다.,COMPLETED 상태를 검증하고 완료 화면을 표시한다.,거절·중단에서는 값을 넣지 않는다.,UTC 2026-07-27 01:30:00 (정상 완료)
-onboarding_session,7,ended_at,종료 시각,TIMESTAMPTZ,N,,,완료·거절·중단을 포함해 세션이 닫힌 시각을 저장한다.,더 이상 답변을 받지 않아야 하는 세션을 식별한다.,completed_at이 있으면 ended_at도 함께 있어야 한다.,UTC 2026-07-27 01:30:00 (세션 종료)
-onboarding_answer,1,id,답변 확인 ID,UUID,Y,PK,,질문 한 건의 확인 기록을 식별한다.,답변 확인 상태를 변경할 때 대상 행으로 사용한다.,이 ID가 원문 메시지 ID는 아니다.,066d8e53-5968-4ff7-8450-36fa672f653e
-onboarding_answer,2,session_id,세션 ID,UUID,Y,FK,onboarding_session.id,어느 온보딩 세션의 질문인지 가리킨다.,세션 대상 시니어와 로봇을 따라 답변을 검증한다.,종료된 세션에 새 답변을 추가하지 않는다.,6c047625-c1d2-4e61-9e70-1c865ec6ac7f
-onboarding_answer,3,source_conversation_id,출처 대화 ID,UUID,N,FK,conversation.id,실제 답변 발화가 들어 있는 대화를 가리킨다.,확인 화면이나 재처리에서 원문 근거를 찾는다.,답변 텍스트를 이 테이블에 복제하지 않는다.,1a4fe41a-6464-4e7e-b292-9a507333a3fa
-onboarding_answer,4,question_code,질문 코드,VARCHAR(100),Y,,,어떤 질문에 대한 답인지 식별하는 안정적인 코드를 저장한다.,질문 사전과 최종 저장 규칙을 찾는 키로 사용한다.,화면 문구나 질문 순번만 저장하지 않는다.,Q04_DAILY_ROUTINE
-onboarding_answer,5,verification_status,확인 상태,VARCHAR(30),Y,,,"답변이 미확인, 자동 수용, 사용자·보호자 확인, 거절 중 어디에 있는지 나타낸다.",최종 memory·care_record로 반영할 수 있는지 판단한다.,processing 상태나 저장 완료 상태로 해석하지 않는다.,USER_CONFIRMED
-scenario,1,id,시나리오 ID,UUID,Y,PK,,로봇 행동 흐름 한 번을 식별한다.,MQTT와 AI 요청이 같은 업무 흐름을 가리키는 scenarioId로 사용한다.,eventId나 commandId와 같은 값을 재사용하지 않는다.,6fd94c8c-3903-4a01-a82d-819e0c8edb12
-scenario,2,senior_id,대상 시니어 ID,UUID,Y,FK,app_user.id,시나리오가 돌보는 시니어를 가리킨다.,개인화 기억 조회와 대화 저장 대상을 결정한다.,로봇 배정 시니어와 일치하는지 시작 시 확인한다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
-scenario,3,robot_id,수행 로봇 ID,UUID,Y,FK,robot.id,시나리오를 수행하는 로봇을 가리킨다.,명령 토픽과 payload의 robotId를 검증한다.,시나리오 도중 로봇 변경을 허용하지 않는 것이 기본이다.,7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
-scenario,4,external_event_id,시작 외부 이벤트 ID,VARCHAR(255),N,,,이 시나리오를 시작시킨 외부 이벤트 ID를 저장한다.,같은 감지 사건으로 시나리오가 중복 생성되는지 확인할 때 사용한다.,진행·결과 MQTT eventId를 모두 이 컬럼에 덮어쓰지 않는다.,01K0M4W2C8P7A6Q5R9T3V1X4YZ
-scenario,5,scenario_type,시나리오 유형,VARCHAR(50),Y,,,"귀가 환영, 낙상 대응, 수동 상호작용을 구분한다.",허용 상태 전이와 실행 핸들러를 선택한다.,자유 문장이나 세부 오류 코드를 넣지 않는다.,HOMECOMING
-scenario,6,final_status,진행·결과 상태,VARCHAR(255),Y,,,시나리오가 현재 어느 굵은 단계에 있거나 어떻게 끝났는지 나타낸다.,중복 결과와 허용되지 않은 역전이를 막고 앱에 진행 상태를 표시한다.,컬럼명과 달리 진행 중 코드도 들어간다.,CONVERSING
-conversation,1,id,대화 ID,UUID,Y,PK,,대화 한 묶음을 식별한다.,"온보딩 답변, 기억, 돌봄 기록의 원문 출처로 연결한다.",메시지 하나의 ID와 혼동하지 않는다.,1a4fe41a-6464-4e7e-b292-9a507333a3fa
-conversation,2,senior_id,대화 시니어 ID,UUID,Y,FK,app_user.id,대화 상대인 시니어를 가리킨다.,접근 가능한 기억과 동의 상태를 조회한다.,보호자나 로봇 ID를 넣지 않는다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
-conversation,3,scenario_id,시나리오 ID,UUID,N,FK,scenario.id,대화를 발생시킨 시나리오를 가리킨다.,귀가·낙상 흐름에서 대화와 로봇 행동을 연결한다.,온보딩·수동 대화처럼 시나리오가 없으면 비워 둔다.,6fd94c8c-3903-4a01-a82d-819e0c8edb12
-conversation,4,status,대화 상태,VARCHAR(30),Y,,,대화가 진행 중인지 정상 완료·실패·취소됐는지 나타낸다.,추가 발화 허용과 종료 후 요약 처리를 결정한다.,시나리오 상태를 대신하지 않는다.,COMPLETED
-conversation,5,messages,메시지 배열,JSONB,Y,,,시니어와 로봇의 최종 텍스트 메시지를 시간 순서대로 저장한다.,대화 복원과 memory·care_record 근거 확인에 사용한다.,"음성 바이너리, 전체 프롬프트, 토큰, Vision 특징값을 넣지 않는다.","[{""id"":""..."",""role"":""SENIOR"",""content"":""조금 더웠어"",""occurredAt"":""...""}]"
-conversation,6,raw_messages_expires_at,원문 만료 예정 시각,TIMESTAMPTZ,N,,,원문 메시지를 삭제해야 할 예정 시각을 저장한다.,보존 배치가 만료 대화를 찾을 때 사용한다.,실제 삭제 완료 시각이나 실패 상태를 증명하지는 않는다.,UTC 2026-08-03 09:00:00
-memory,1,id,기억 ID,UUID,Y,PK,,개인화 사실 한 건을 식별한다.,검색 결과와 대체 관계를 안정적으로 연결한다.,한 행에 서로 다른 사실 여러 개를 합치지 않는다.,b7b2d681-84d9-4f4c-8f05-fd453bf96475
-memory,2,senior_id,시니어 ID,UUID,Y,FK,app_user.id,이 기억이 누구에 관한 것인지 가리킨다.,개인화 검색의 첫 필터로 사용한다.,다른 시니어의 기억을 교차 검색하지 않는다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
-memory,3,source_conversation_id,출처 대화 ID,UUID,N,FK,conversation.id,기억을 추출한 대화를 가리킨다.,사용자 확인이나 이의 제기 때 근거를 찾는다.,원문이 만료될 수 있으므로 content 자체는 독립적으로 이해 가능해야 한다.,1a4fe41a-6464-4e7e-b292-9a507333a3fa
-memory,4,superseded_by_id,대체 기억 ID,UUID,N,SELF FK,memory.id,이전 사실을 대신하는 최신 기억을 가리킨다.,선호나 일상이 바뀌었을 때 과거 행을 지우지 않고 연결한다.,자기 자신이나 순환 참조를 만들지 않는다.,cca05c0c-cea1-48d5-a842-1eb064b320d9
-memory,5,memory_type,기억 유형,VARCHAR(50),Y,,,"관계, 선호, 취미, 일상, 사건 등 기억의 성격을 구분한다.",검색 필터와 대화 문맥 구성을 조절한다.,건강·복약·일정은 care_record로 보낸다.,HOBBY
-memory,6,content,기억 내용,TEXT,조건부,,,다음 대화에서 바로 이해할 수 있는 짧은 사실을 저장한다.,임베딩 원문과 대화 컨텍스트로 사용한다.,삭제 처리 후 내용을 비울 수 있으며 원문 발화를 그대로 길게 복사하지 않는다.,시니어는 주말 아침에 화초를 돌보는 것을 좋아한다.
-memory,7,verification_status,확인 상태,VARCHAR(30),Y,,,사실이 어느 수준으로 확인됐는지 나타낸다.,자동 추출 후보의 사용 허용과 사용자 확인 UI에 사용한다.,lifecycle_status나 visibility와 별개다.,USER_CONFIRMED
-memory,8,lifecycle_status,수명 상태,VARCHAR(30),Y,,,"기억이 활성, 이의 제기, 대체, 만료, 삭제 중 어디에 있는지 나타낸다.",검색과 대화 사용 대상에서 오래된 사실을 제외한다.,검증된 기억도 ACTIVE가 아니면 사용하지 않는다.,ACTIVE
-memory,9,visibility,공개 범위,VARCHAR(30),Y,,,시니어 전용인지 주 보호자 또는 모든 활성 보호자와 공유할지 나타낸다.,보호자 조회 시 관계 priority와 함께 검사한다.,guardian_sharing 동의가 철회되면 공유 코드를 그대로 믿지 않는다.,SHARED_WITH_PRIMARY
-memory,10,embedding,의미 검색 벡터,VECTOR,N,,,memory.content를 의미 검색하기 위한 숫자 벡터를 저장한다.,비슷한 기억을 찾되 senior_id와 상태 필터를 먼저 적용한다.,모델·차원 확정 전 인덱스를 만들거나 서로 다른 모델 벡터를 섞지 않는다.,"[0.012, -0.044, ...]"
-care_record,1,id,돌봄 기록 ID,UUID,Y,PK,,구조화된 돌봄 기록 한 건을 식별한다.,후속 갱신·취소·완료 기록과 알림을 연결한다.,메시지 ID나 시나리오 ID를 대신하지 않는다.,9cb96325-303e-4772-8750-a24ea7e5fb92
-care_record,2,senior_id,대상 시니어 ID,UUID,Y,FK,app_user.id,이 돌봄 기록이 누구에 관한 것인지 가리킨다.,건강·일정 조회와 동의 검사의 소유자 기준으로 사용한다.,수신 보호자 ID를 이 컬럼에 넣지 않는다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
-care_record,3,parent_record_id,부모 기록 ID,UUID,N,SELF FK,care_record.id,이 기록이 갱신·취소·완료하는 이전 기록을 가리킨다.,복약 완료나 일정 취소처럼 사건의 연결을 표현한다.,순환 참조를 만들거나 같은 행을 가리키지 않는다.,a69186a2-8b3f-4eca-baa4-09e65ca246ce
-care_record,4,scenario_id,발생 시나리오 ID,UUID,N,FK,scenario.id,이 기록을 발생시킨 로봇 시나리오를 가리킨다.,귀가 중 환경 불편이나 낙상 대응 결과를 행동 흐름과 연결한다.,앱에서 직접 입력한 기록에는 없을 수 있다.,6fd94c8c-3903-4a01-a82d-819e0c8edb12
-care_record,5,source_conversation_id,근거 대화 ID,UUID,N,FK,conversation.id,돌봄 사실이 언급된 대화를 가리킨다.,확인·정정 화면에서 전체 대화 문맥을 찾는다.,대화 원문이 만료될 수 있으므로 details는 스스로 이해 가능해야 한다.,1a4fe41a-6464-4e7e-b292-9a507333a3fa
-care_record,6,source_message_id,근거 메시지 ID,UUID,N,논리 참조,conversation.messages[].id,돌봄 사실의 직접 근거가 된 메시지를 가리킨다.,한 대화 안에서 정확한 발화를 표시할 때 사용한다.,별도 메시지 테이블이 없어 DB FK를 만들 수 없으므로 서비스에서 존재를 확인한다.,67004f65-5567-48e9-a79c-2f4a43c2e934
-care_record,7,recipient_guardian_id,수신 보호자 ID,UUID,N,FK,app_user.id,보호자 알림을 받을 특정 보호자를 가리킨다.,GUARDIAN_NOTIFICATION 전달 대상과 조회 범위를 제한한다.,활성 care_relationship가 있는 GUARDIAN인지 확인한다.,8e1339cb-b0bf-42df-9a7f-f6592be3e84f
-care_record,8,created_by_user_id,작성 사용자 ID,UUID,N,FK,app_user.id,앱에서 직접 기록을 만든 시니어 또는 보호자를 가리킨다.,사람이 입력한 기록의 작성 주체를 보여 준다.,AI·Robot·System 출처는 details.sourceType으로 표현하고 가짜 사용자 행을 만들지 않는다.,8e1339cb-b0bf-42df-9a7f-f6592be3e84f
-care_record,9,record_type,기록 유형,VARCHAR(50),Y,,,"건강, 약, 일정, 관찰, 인지 평가, 보호자 알림 중 무엇인지 구분한다.",details 구조와 조회·알림 처리기를 선택한다.,하나의 행에 서로 다른 유형의 사실을 섞지 않는다.,ENVIRONMENT_OBSERVATION
-care_record,10,status,처리 상태,VARCHAR(30),조건부,,,기록 유형별 현재 처리 상태를 저장한다.,"일정 취소, 알림 전달, 복약 완료처럼 상태가 필요한 유형에 사용한다.",허용 코드가 ERD에 없으므로 구현 전 record_type별 어휘를 확정한다.,TBD
-care_record,11,details,상세 내용,JSONB,Y,,,기록 유형별 구조화 내용과 출처·확인 정보를 저장한다.,API 응답과 알림 문구를 만들 때 허용된 키만 읽는다.,"모델 원본 응답, 바이너리, 서로 무관한 필드를 임의로 넣지 않는다.","{""summary"":""실내가 덥다고 말함"",""sourceType"":""USER"",""comfortAssessment"":""TOO_HOT""}"
-care_record,12,recurrence,반복 규칙,JSONB,N,,,복약·일정처럼 반복되는 기록의 주기와 요일·시각을 저장한다.,다음 발생 시각과 알림 스케줄을 계산한다.,반복이 없으면 null로 두고 자유 문장 규칙을 저장하지 않는다.,"{""frequency"":""WEEKLY"",""daysOfWeek"":[""MON"",""THU""],""time"":""09:00""}"
+app_user,1,id,사용자 ID,UUID,Y,PK,,app_user.id에는 사용자를 변하지 않게 식별하는 값을 저장한다.,사용자 ID은(는) 사용자를 변하지 않게 식별할 때 조회·검증·갱신한다.,이메일·이름을 식별자로 쓰지 않는다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+app_user,2,user_type,사용자 유형,VARCHAR(30),Y,,,app_user.user_type에는 시니어와 보호자를 구분하는 값을 저장한다.,사용자 유형은(는) 시니어와 보호자를 구분할 때 조회·검증·갱신한다.,특정 시니어 권한은 관계에서 판단한다.,SENIOR
+app_user,3,name,등록 이름,VARCHAR(100),Y,,,app_user.name에는 가입 때 확인한 이름을 표시하는 값을 저장한다.,등록 이름은(는) 가입 때 확인한 이름을 표시할 때 조회·검증·갱신한다.,로봇 호칭은 preferred_name을 우선한다.,김순희
+app_user,4,email,이메일,VARCHAR(255),조건부,,,app_user.email에는 로그인 또는 연락 주소를 보관하는 값을 저장한다.,이메일은(는) 로그인 또는 연락 주소를 보관할 때 조회·검증·갱신한다.,정규화·유일성 정책은 구현 전에 확정한다.,guardian@example.com
+app_user,5,preferred_name,선호 호칭,VARCHAR(100),N,,,app_user.preferred_name에는 로봇이 부를 호칭을 제공하는 값을 저장한다.,선호 호칭은(는) 로봇이 부를 호칭을 제공할 때 조회·검증·갱신한다.,실명이나 보호자 관계를 추론하지 않는다.,순희님
+app_user,6,conversation_preferences,대화 선호,JSONB,N,,,app_user.conversation_preferences에는 말하기 속도·음량·반복 방식을 구조화하는 값을 저장한다.,대화 선호은(는) 말하기 속도·음량·반복 방식을 구조화할 때 조회·검증·갱신한다.,건강·취미·가족 사실을 섞지 않는다.,"{""speechRate"":""SLOW""}"
+app_user,7,onboarding_status,온보딩 현재 상태,VARCHAR(30),Y,,,app_user.onboarding_status에는 앱 진입과 온보딩 재개를 빠르게 분기하는 값을 저장한다.,온보딩 현재 상태은(는) 앱 진입과 온보딩 재개를 빠르게 분기할 때 조회·검증·갱신한다.,세션 상태와 같은 트랜잭션으로 바꾼다.,IN_PROGRESS
+app_user,8,time_zone,사용자 시간대,VARCHAR(50),Y,,,app_user.time_zone에는 일정·일간 요약의 현지 날짜를 계산하는 값을 저장한다.,사용자 시간대은(는) 일정·일간 요약의 현지 날짜를 계산할 때 조회·검증·갱신한다.,고정 UTC offset 대신 IANA 이름을 쓴다.,Asia/Seoul
+app_user,9,personalization_consent_status,개인화 동의 상태,VARCHAR(30),Y,,,app_user.personalization_consent_status에는 기억 저장·검색 허용 여부를 결정하는 값을 저장한다.,개인화 동의 상태은(는) 기억 저장·검색 허용 여부를 결정할 때 조회·검증·갱신한다.,다른 목적 동의를 대신하지 않는다.,GRANTED
+app_user,10,health_data_consent_status,건강정보 동의 상태,VARCHAR(30),Y,,,app_user.health_data_consent_status에는 건강·복약 처리 게이트를 제공하는 값을 저장한다.,건강정보 동의 상태은(는) 건강·복약 처리 게이트를 제공할 때 조회·검증·갱신한다.,철회 후 보존 처리는 별도 정책을 따른다.,GRANTED
+app_user,11,schedule_consent_status,일정 동의 상태,VARCHAR(30),Y,,,app_user.schedule_consent_status에는 병원·개인 일정 저장과 알림을 제어하는 값을 저장한다.,일정 동의 상태은(는) 병원·개인 일정 저장과 알림을 제어할 때 조회·검증·갱신한다.,건강정보 동의로 자동 허용하지 않는다.,GRANTED
+app_user,12,guardian_sharing_consent_status,보호자 공유 동의 상태,VARCHAR(30),Y,,,app_user.guardian_sharing_consent_status에는 보호자 공유의 사용자 동의를 표시하는 값을 저장한다.,보호자 공유 동의 상태은(는) 보호자 공유의 사용자 동의를 표시할 때 조회·검증·갱신한다.,관계·visibility·관리 권한도 별도 확인한다.,GRANTED
+app_user,13,status,계정 상태,VARCHAR(30),Y,,,app_user.status에는 정상·정지·탈퇴 계정을 구분하는 값을 저장한다.,계정 상태은(는) 정상·정지·탈퇴 계정을 구분할 때 조회·검증·갱신한다.,WITHDRAWN은 즉시 물리 삭제가 아니다.,ACTIVE
+app_user,14,created_at,생성 시각,TIMESTAMPTZ,Y,,,app_user.created_at에는 사용자 행 최초 생성 시각을 기록하는 값을 저장한다.,생성 시각은(는) 사용자 행 최초 생성 시각을 기록할 때 조회·검증·갱신한다.,저장 기준은 UTC로 통일한다.,UTC 2026-07-27T01:00:00Z
+app_user,15,updated_at,수정 시각,TIMESTAMPTZ,Y,,,app_user.updated_at에는 프로필·상태의 마지막 변경을 표시하는 값을 저장한다.,수정 시각은(는) 프로필·상태의 마지막 변경을 표시할 때 조회·검증·갱신한다.,동의·관계 상세 이력을 대신하지 않는다.,UTC 2026-07-27T02:15:00Z
+care_relationship,1,id,관계 ID,UUID,Y,PK,,care_relationship.id에는 시니어-보호자 연결을 식별하는 값을 저장한다.,관계 ID은(는) 시니어-보호자 연결을 식별할 때 조회·검증·갱신한다.,사용자 ID 조합을 외부 식별자로 쓰지 않는다.,b839bd4c-efeb-4c86-917c-51896392819e
+care_relationship,2,senior_id,시니어 ID,UUID,Y,FK,app_user.id,care_relationship.senior_id에는 돌봄 대상 시니어를 연결하는 값을 저장한다.,시니어 ID은(는) 돌봄 대상 시니어를 연결할 때 조회·검증·갱신한다.,참조 사용자가 SENIOR인지 검증한다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+care_relationship,3,guardian_id,보호자 ID,UUID,Y,FK,app_user.id,care_relationship.guardian_id에는 연결 보호자를 지정하는 값을 저장한다.,보호자 ID은(는) 연결 보호자를 지정할 때 조회·검증·갱신한다.,참조 사용자가 GUARDIAN인지 검증한다.,8e1339cb-b0bf-42df-9a7f-f6592be3e84f
+care_relationship,4,priority,보호자 우선순위,VARCHAR(30),Y,,,care_relationship.priority에는 PRIMARY와 SECONDARY를 구분하는 값을 저장한다.,보호자 우선순위은(는) PRIMARY와 SECONDARY를 구분할 때 조회·검증·갱신한다.,한 시니어의 활성 PRIMARY는 하나다.,PRIMARY
+care_relationship,5,status,관계 상태,VARCHAR(30),Y,,,care_relationship.status에는 초대·활성·해제 상태를 표시하는 값을 저장한다.,관계 상태은(는) 초대·활성·해제 상태를 표시할 때 조회·검증·갱신한다.,ACTIVE만 접근 후보로 삼는다.,ACTIVE
+care_relationship,6,connected_at,연결 성립 시각,TIMESTAMPTZ,조건부,,,care_relationship.connected_at에는 실제 관계가 활성화된 시점을 기록하는 값을 저장한다.,연결 성립 시각은(는) 실제 관계가 활성화된 시점을 기록할 때 조회·검증·갱신한다.,PENDING에서는 비어 있을 수 있다.,UTC 2026-07-20T03:30:00Z
+care_relationship,7,care_management_permission_status,돌봄 관리 권한 동의,VARCHAR(30),Y,,,care_relationship.care_management_permission_status에는 PRIMARY의 민감정보 대리 관리 허용을 표시하는 값을 저장한다.,돌봄 관리 권한 동의은(는) PRIMARY의 민감정보 대리 관리 허용을 표시할 때 조회·검증·갱신한다.,ACTIVE PRIMARY만 GRANTED일 수 있다.,GRANTED
+care_relationship,8,care_management_permission_updated_at,돌봄 관리 권한 변경 시각,TIMESTAMPTZ,N,,,care_relationship.care_management_permission_updated_at에는 관리 권한 동의가 마지막으로 바뀐 때를 기록하는 값을 저장한다.,돌봄 관리 권한 변경 시각은(는) 관리 권한 동의가 마지막으로 바뀐 때를 기록할 때 조회·검증·갱신한다.,관계 변경 시 기존 동의를 재사용하지 않는다.,UTC 2026-07-27T03:00:00Z
+care_relationship,9,care_management_permission_granted_by_user_id,돌봄 관리 권한 부여자,UUID,N,FK,app_user.id,care_relationship.care_management_permission_granted_by_user_id에는 권한을 명시적으로 부여한 시니어를 연결하는 값을 저장한다.,돌봄 관리 권한 부여자은(는) 권한을 명시적으로 부여한 시니어를 연결할 때 조회·검증·갱신한다.,GRANTED이면 대상 senior_id와 같은 사용자여야 한다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+robot,1,id,로봇 ID,UUID,Y,PK,,robot.id에는 로봇 한 대를 식별하는 값을 저장한다.,로봇 ID은(는) 로봇 한 대를 식별할 때 조회·검증·갱신한다.,MQTT robotId와 같은 UUID를 쓴다.,7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+robot,2,senior_id,배정 시니어 ID,UUID,조건부,FK,app_user.id,robot.senior_id에는 현재 로봇 사용자를 연결하는 값을 저장한다.,배정 시니어 ID은(는) 현재 로봇 사용자를 연결할 때 조회·검증·갱신한다.,미배정 허용 정책을 등록 단계에서 정한다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+robot,3,current_mode,현재 모드,VARCHAR(30),Y,,,robot.current_mode에는 명령 허용과 UI 상태를 결정하는 값을 저장한다.,현재 모드은(는) 명령 허용과 UI 상태를 결정할 때 조회·검증·갱신한다.,세부 ROS 상태를 대신하지 않는다.,IDLE
+robot,4,ambient_temperature_c,최신 온도,"NUMERIC(5,2)",N,,,robot.ambient_temperature_c에는 마지막 실내 온도를 섭씨로 보관하는 값을 저장한다.,최신 온도은(는) 마지막 실내 온도를 섭씨로 보관할 때 조회·검증·갱신한다.,고빈도 시계열이 아니다.,24.50
+robot,5,ambient_humidity_percent,최신 습도,"NUMERIC(5,2)",N,,,robot.ambient_humidity_percent에는 마지막 상대습도를 퍼센트로 보관하는 값을 저장한다.,최신 습도은(는) 마지막 상대습도를 퍼센트로 보관할 때 조회·검증·갱신한다.,0~100 범위를 검사한다.,58.20
+robot,6,ambient_observed_at,환경 관측 시각,TIMESTAMPTZ,N,,,robot.ambient_observed_at에는 최신값이 실제 측정된 시각을 기록하는 값을 저장한다.,환경 관측 시각은(는) 최신값이 실제 측정된 시각을 기록할 때 조회·검증·갱신한다.,늦게 온 과거 측정으로 역덮어쓰지 않는다.,UTC 2026-07-27T06:15:20Z
+robot,7,is_active,사용 가능 여부,BOOLEAN,Y,,,robot.is_active에는 등록상 서비스 가능한 로봇인지 표시하는 값을 저장한다.,사용 가능 여부은(는) 등록상 서비스 가능한 로봇인지 표시할 때 조회·검증·갱신한다.,온라인 접속 여부나 배터리 상태가 아니다.,true
+onboarding_session,1,id,온보딩 세션 ID,UUID,Y,PK,,onboarding_session.id에는 온보딩 한 번을 식별하는 값을 저장한다.,온보딩 세션 ID은(는) 온보딩 한 번을 식별할 때 조회·검증·갱신한다.,다른 시니어의 세션을 재사용하지 않는다.,6c047625-c1d2-4e61-9e70-1c865ec6ac7f
+onboarding_session,2,senior_id,대상 시니어 ID,UUID,Y,FK,app_user.id,onboarding_session.senior_id에는 온보딩 결과의 소유자를 연결하는 값을 저장한다.,대상 시니어 ID은(는) 온보딩 결과의 소유자를 연결할 때 조회·검증·갱신한다.,SENIOR 유형인지 확인한다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+onboarding_session,3,robot_id,진행 로봇 ID,UUID,조건부,FK,robot.id,onboarding_session.robot_id에는 로봇 시작·진행 시 수행 로봇을 연결하는 값을 저장한다.,진행 로봇 ID은(는) 로봇 시작·진행 시 수행 로봇을 연결할 때 조회·검증·갱신한다.,"앱 시작은 null, 로봇 시작은 필수다.",7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+onboarding_session,4,question_set_version,질문 세트 버전,VARCHAR(50),Y,,,onboarding_session.question_set_version에는 세션이 적용한 질문 계약 버전을 고정하는 값을 저장한다.,질문 세트 버전은(는) 세션이 적용한 질문 계약 버전을 고정할 때 조회·검증·갱신한다.,진행 중 버전을 조용히 바꾸지 않는다.,onboarding-v1
+onboarding_session,5,started_channel,최초 시작 채널,VARCHAR(20),Y,,,onboarding_session.started_channel에는 온보딩을 처음 연 APP 또는 ROBOT을 기록하는 값을 저장한다.,최초 시작 채널은(는) 온보딩을 처음 연 APP 또는 ROBOT을 기록할 때 조회·검증·갱신한다.,답변별 실제 채널과 혼동하지 않는다.,APP
+onboarding_session,6,status,세션 상태,VARCHAR(30),Y,,,onboarding_session.status에는 진행·완료·거절·취소·만료를 구분하는 값을 저장한다.,세션 상태은(는) 진행·완료·거절·취소·만료를 구분할 때 조회·검증·갱신한다.,COMPLETED는 필수 질문 경로 충족 후만 허용한다.,IN_PROGRESS
+onboarding_session,7,current_question_code,현재 질문 코드,VARCHAR(100),N,,,onboarding_session.current_question_code에는 중단 후 이어갈 질문 위치를 표시하는 값을 저장한다.,현재 질문 코드은(는) 중단 후 이어갈 질문 위치를 표시할 때 조회·검증·갱신한다.,문구·순번 대신 안정적 코드를 쓴다.,MEDICATION
+onboarding_session,8,started_at,시작 시각,TIMESTAMPTZ,Y,,,onboarding_session.started_at에는 첫 질문을 시작한 시각을 기록하는 값을 저장한다.,시작 시각은(는) 첫 질문을 시작한 시각을 기록할 때 조회·검증·갱신한다.,행 생성 시각과 같다고 가정하지 않는다.,UTC 2026-07-27T01:10:00Z
+onboarding_session,9,completed_at,정상 완료 시각,TIMESTAMPTZ,N,,,onboarding_session.completed_at에는 정상 완료한 경우의 완료 시각을 기록하는 값을 저장한다.,정상 완료 시각은(는) 정상 완료한 경우의 완료 시각을 기록할 때 조회·검증·갱신한다.,거절·취소·만료에는 넣지 않는다.,UTC 2026-07-27T01:30:00Z
+onboarding_session,10,ended_at,종료 시각,TIMESTAMPTZ,N,,,onboarding_session.ended_at에는 모든 종료 유형의 닫힌 시각을 기록하는 값을 저장한다.,종료 시각은(는) 모든 종료 유형의 닫힌 시각을 기록할 때 조회·검증·갱신한다.,완료 시 completed_at과 함께 존재해야 한다.,UTC 2026-07-27T01:30:00Z
+onboarding_answer,1,id,답변 ID,UUID,Y,PK,,onboarding_answer.id에는 질문별 현재 답변 행을 식별하는 값을 저장한다.,답변 ID은(는) 질문별 현재 답변 행을 식별할 때 조회·검증·갱신한다.,원문 메시지 ID와 혼동하지 않는다.,066d8e53-5968-4ff7-8450-36fa672f653e
+onboarding_answer,2,session_id,세션 ID,UUID,Y,FK,onboarding_session.id,onboarding_answer.session_id에는 답변이 속한 세션을 연결하는 값을 저장한다.,세션 ID은(는) 답변이 속한 세션을 연결할 때 조회·검증·갱신한다.,종료 세션에 새 답변을 받지 않는다.,6c047625-c1d2-4e61-9e70-1c865ec6ac7f
+onboarding_answer,3,question_code,질문 코드,VARCHAR(100),Y,,,onboarding_answer.question_code에는 버전 계약의 질문을 식별하는 값을 저장한다.,질문 코드은(는) 버전 계약의 질문을 식별할 때 조회·검증·갱신한다.,화면 문구나 배열 순번을 저장하지 않는다.,MEDICATION
+onboarding_answer,4,answer_value,정규화 답변,JSONB,Y,,,onboarding_answer.answer_value에는 앱·로봇 입력을 같은 질문별 JSON 구조로 저장하는 값을 저장한다.,정규화 답변은(는) 앱·로봇 입력을 같은 질문별 JSON 구조로 저장할 때 조회·검증·갱신한다.,최종 프로필 원본으로 조회하지 않는다.,"{""medicationName"":""아스피린"",""dose"":1,""doseUnit"":""정""}"
+onboarding_answer,5,answered_channel,답변 채널,VARCHAR(20),Y,,,onboarding_answer.answered_channel에는 실제 답변이 들어온 APP 또는 ROBOT을 기록하는 값을 저장한다.,답변 채널은(는) 실제 답변이 들어온 APP 또는 ROBOT을 기록할 때 조회·검증·갱신한다.,세션 최초 채널과 다를 수 있다.,ROBOT
+onboarding_answer,6,respondent_user_id,응답 사용자 ID,UUID,Y,FK,app_user.id,onboarding_answer.respondent_user_id에는 직접 답한 시니어 또는 보호자를 연결하는 값을 저장한다.,응답 사용자 ID은(는) 직접 답한 시니어 또는 보호자를 연결할 때 조회·검증·갱신한다.,민감 대리 응답은 허가된 PRIMARY인지 검사한다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+onboarding_answer,7,source_conversation_id,근거 대화 ID,UUID,N,FK,conversation.id,onboarding_answer.source_conversation_id에는 로봇 답변이 나온 대화를 연결하는 값을 저장한다.,근거 대화 ID은(는) 로봇 답변이 나온 대화를 연결할 때 조회·검증·갱신한다.,앱 답변에는 없을 수 있다.,1a4fe41a-6464-4e7e-b292-9a507333a3fa
+onboarding_answer,8,source_message_id,근거 메시지 ID,UUID,N,FK,conversation_message.id,onboarding_answer.source_message_id에는 정확한 로봇 답변 발화를 연결하는 값을 저장한다.,근거 메시지 ID은(는) 정확한 로봇 답변 발화를 연결할 때 조회·검증·갱신한다.,onboarding_answer 근거는 Raw 삭제 시 ON DELETE SET NULL로 비운다.,a6f8cb84-c91c-4a38-a7b6-386ce6aa027f
+onboarding_answer,9,verification_status,답변 확인 상태,VARCHAR(30),Y,,,onboarding_answer.verification_status에는 미확인·사람 확인·거절을 구분하는 값을 저장한다.,답변 확인 상태은(는) 미확인·사람 확인·거절을 구분할 때 조회·검증·갱신한다.,후보 처리·물리 반영 상태로 쓰지 않는다.,USER_CONFIRMED
+onboarding_answer,10,confirmed_by_user_id,확인 사용자 ID,UUID,N,FK,app_user.id,onboarding_answer.confirmed_by_user_id에는 정규화 답변을 최종 확인한 사람을 연결하는 값을 저장한다.,확인 사용자 ID은(는) 정규화 답변을 최종 확인한 사람을 연결할 때 조회·검증·갱신한다.,보호자면 활성 PRIMARY 관리 권한을 검증한다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+onboarding_answer,11,answered_at,답변 시각,TIMESTAMPTZ,Y,,,onboarding_answer.answered_at에는 답변이 실제 캡처된 시각을 기록하는 값을 저장한다.,답변 시각은(는) 답변이 실제 캡처된 시각을 기록할 때 조회·검증·갱신한다.,MQTT 수신 시각으로 대체하지 않는다.,UTC 2026-07-27T01:18:00Z
+onboarding_answer,12,confirmed_at,답변 확인 시각,TIMESTAMPTZ,N,,,onboarding_answer.confirmed_at에는 사용자가 정규화 값을 확인한 시각을 기록하는 값을 저장한다.,답변 확인 시각은(는) 사용자가 정규화 값을 확인한 시각을 기록할 때 조회·검증·갱신한다.,미확인·거절 흐름에서는 null일 수 있다.,UTC 2026-07-27T01:19:00Z
+onboarding_answer,13,updated_at,답변 수정 시각,TIMESTAMPTZ,Y,,,onboarding_answer.updated_at에는 현재 답변 행이 마지막으로 바뀐 시각을 기록하는 값을 저장한다.,답변 수정 시각은(는) 현재 답변 행이 마지막으로 바뀐 시각을 기록할 때 조회·검증·갱신한다.,후보·원문이 확인 과정을 별도로 보존한다.,UTC 2026-07-27T01:19:00Z
+scenario,1,id,시나리오 ID,UUID,Y,PK,,scenario.id에는 로봇 행동 흐름을 식별하는 값을 저장한다.,시나리오 ID은(는) 로봇 행동 흐름을 식별할 때 조회·검증·갱신한다.,eventId·commandId와 재사용하지 않는다.,6fd94c8c-3903-4a01-a82d-819e0c8edb12
+scenario,2,senior_id,대상 시니어 ID,UUID,Y,FK,app_user.id,scenario.senior_id에는 시나리오 대상 사용자를 연결하는 값을 저장한다.,대상 시니어 ID은(는) 시나리오 대상 사용자를 연결할 때 조회·검증·갱신한다.,로봇 배정 시니어와 일치시킨다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+scenario,3,robot_id,수행 로봇 ID,UUID,Y,FK,robot.id,scenario.robot_id에는 시나리오 수행 로봇을 연결하는 값을 저장한다.,수행 로봇 ID은(는) 시나리오 수행 로봇을 연결할 때 조회·검증·갱신한다.,도중 로봇 변경은 기본 허용하지 않는다.,7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+scenario,4,external_event_id,시작 외부 이벤트 ID,VARCHAR(255),N,,,scenario.external_event_id에는 시나리오를 시작한 사건의 멱등 키를 저장하는 값을 저장한다.,시작 외부 이벤트 ID은(는) 시나리오를 시작한 사건의 멱등 키를 저장할 때 조회·검증·갱신한다.,진행·결과 eventId로 덮어쓰지 않는다.,01K0M4W2C8P7A6Q5R9T3V1X4YZ
+scenario,5,scenario_type,시나리오 유형,VARCHAR(50),Y,,,scenario.scenario_type에는 귀가·낙상·수동 상호작용을 구분하는 값을 저장한다.,시나리오 유형은(는) 귀가·낙상·수동 상호작용을 구분할 때 조회·검증·갱신한다.,오류 코드나 자유 문장을 넣지 않는다.,HOMECOMING
+scenario,6,final_status,진행·결과 상태,VARCHAR(255),Y,,,scenario.final_status에는 굵은 진행 단계와 종료 결과를 표시하는 값을 저장한다.,진행·결과 상태은(는) 굵은 진행 단계와 종료 결과를 표시할 때 조회·검증·갱신한다.,종료 상태에서 진행 상태로 되돌리지 않는다.,CONVERSING
+conversation,1,id,대화 ID,UUID,Y,PK,,conversation.id에는 대화 묶음을 식별하는 값을 저장한다.,대화 ID은(는) 대화 묶음을 식별할 때 조회·검증·갱신한다.,메시지 ID와 혼동하지 않는다.,1a4fe41a-6464-4e7e-b292-9a507333a3fa
+conversation,2,senior_id,대화 시니어 ID,UUID,Y,FK,app_user.id,conversation.senior_id에는 대화 소유자를 연결하는 값을 저장한다.,대화 시니어 ID은(는) 대화 소유자를 연결할 때 조회·검증·갱신한다.,보호자·로봇 ID를 넣지 않는다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+conversation,3,scenario_id,시나리오 ID,UUID,N,FK,scenario.id,conversation.scenario_id에는 대화를 유발한 시나리오를 연결하는 값을 저장한다.,시나리오 ID은(는) 대화를 유발한 시나리오를 연결할 때 조회·검증·갱신한다.,온보딩·수동 대화는 없을 수 있다.,6fd94c8c-3903-4a01-a82d-819e0c8edb12
+conversation,4,status,대화 상태,VARCHAR(30),Y,,,conversation.status에는 진행·완료·실패·취소를 구분하는 값을 저장한다.,대화 상태은(는) 진행·완료·실패·취소를 구분할 때 조회·검증·갱신한다.,종료 뒤 새 메시지를 추가하지 않는다.,OPEN
+conversation,5,started_at,대화 시작 시각,TIMESTAMPTZ,Y,,,conversation.started_at에는 첫 실제 대화가 시작된 시각을 기록하는 값을 저장한다.,대화 시작 시각은(는) 첫 실제 대화가 시작된 시각을 기록할 때 조회·검증·갱신한다.,행 생성 시각으로 단정하지 않는다.,UTC 2026-07-27T10:00:00Z
+conversation,6,ended_at,대화 종료 시각,TIMESTAMPTZ,N,,,conversation.ended_at에는 정상·실패·취소를 포함한 종료 시각을 기록하는 값을 저장한다.,대화 종료 시각은(는) 정상·실패·취소를 포함한 종료 시각을 기록할 때 조회·검증·갱신한다.,Raw 삭제 예정 시각과 다르다.,UTC 2026-07-27T10:20:00Z
+conversation,7,raw_messages_expires_at,Raw 만료 예정 시각,TIMESTAMPTZ,N,,,conversation.raw_messages_expires_at에는 Raw 메시지 보존기간 종료 시점을 기록하는 값을 저장한다.,Raw 만료 예정 시각은(는) Raw 메시지 보존기간 종료 시점을 기록할 때 조회·검증·갱신한다.,삭제 조건 충족을 자동으로 증명하지 않는다.,UTC 2026-08-03T10:20:00Z
+conversation_message,1,id,메시지 ID,UUID,Y,PK,,conversation_message.id에는 실제 발화 한 번을 식별하는 값을 저장한다.,메시지 ID은(는) 실제 발화 한 번을 식별할 때 조회·검증·갱신한다.,외부 AI requestId로 대체하지 않는다.,a6f8cb84-c91c-4a38-a7b6-386ce6aa027f
+conversation_message,2,conversation_id,대화 ID,UUID,Y,FK,conversation.id,conversation_message.conversation_id에는 발화가 속한 대화를 연결하는 값을 저장한다.,대화 ID은(는) 발화가 속한 대화를 연결할 때 조회·검증·갱신한다.,대화 senior와 접근 대상을 일치시킨다.,1a4fe41a-6464-4e7e-b292-9a507333a3fa
+conversation_message,3,sequence_no,대화 내 순번,INTEGER,Y,,,conversation_message.sequence_no에는 같은 대화의 발화 순서를 안정적으로 지정하는 값을 저장한다.,대화 내 순번은(는) 같은 대화의 발화 순서를 안정적으로 지정할 때 조회·검증·갱신한다.,1부터 증가하고 대화 안에서 유일해야 한다.,7
+conversation_message,4,role,발화 역할,VARCHAR(20),Y,,,conversation_message.role에는 시니어와 로봇 발화를 구분하는 값을 저장한다.,발화 역할은(는) 시니어와 로봇 발화를 구분할 때 조회·검증·갱신한다.,SYSTEM·GUARDIAN을 임의 추가하지 않는다.,SENIOR
+conversation_message,5,content,최종 텍스트,TEXT,Y,,,conversation_message.content에는 실제로 사용한 최종 발화 텍스트를 저장하는 값을 저장한다.,최종 텍스트은(는) 실제로 사용한 최종 발화 텍스트를 저장할 때 조회·검증·갱신한다.,음성 바이너리·전체 프롬프트를 넣지 않는다.,내일 병원은 오후 세 시야
+conversation_message,6,occurred_at,발화 발생 시각,TIMESTAMPTZ,Y,,,conversation_message.occurred_at에는 발화가 실제 발생한 시각을 기록하는 값을 저장한다.,발화 발생 시각은(는) 발화가 실제 발생한 시각을 기록할 때 조회·검증·갱신한다.,DB 수신·행 생성 시각과 구분한다.,UTC 2026-07-27T10:12:30Z
+conversation_message,7,created_at,행 생성 시각,TIMESTAMPTZ,Y,,,conversation_message.created_at에는 메시지 행이 DB에 생성된 시각을 기록하는 값을 저장한다.,행 생성 시각은(는) 메시지 행이 DB에 생성된 시각을 기록할 때 조회·검증·갱신한다.,발화 시간 정렬에는 occurred_at을 쓴다.,UTC 2026-07-27T10:12:31Z
+conversation_summary,1,id,요약 ID,UUID,Y,PK,,conversation_summary.id에는 요약 버전 한 건을 식별하는 값을 저장한다.,요약 ID은(는) 요약 버전 한 건을 식별할 때 조회·검증·갱신한다.,기간 키를 외부 식별자로 노출하지 않는다.,9cd9cbdd-1e7c-4cbb-9014-4ddfb82b73e0
+conversation_summary,2,senior_id,시니어 ID,UUID,Y,FK,app_user.id,conversation_summary.senior_id에는 요약 소유자를 연결하는 값을 저장한다.,시니어 ID은(는) 요약 소유자를 연결할 때 조회·검증·갱신한다.,다른 시니어의 메시지를 섞지 않는다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+conversation_summary,3,conversation_id,대화 ID,UUID,N,FK,conversation.id,conversation_summary.conversation_id에는 CONVERSATION 요약의 대상 대화를 연결하는 값을 저장한다.,대화 ID은(는) CONVERSATION 요약의 대상 대화를 연결할 때 조회·검증·갱신한다.,DAILY 요약은 null이어야 한다.,1a4fe41a-6464-4e7e-b292-9a507333a3fa
+conversation_summary,4,summary_type,요약 유형,VARCHAR(30),Y,,,conversation_summary.summary_type에는 대화 단위와 일간 요약을 구분하는 값을 저장한다.,요약 유형은(는) 대화 단위와 일간 요약을 구분할 때 조회·검증·갱신한다.,TIME_WINDOW는 MVP에 쓰지 않는다.,CONVERSATION
+conversation_summary,5,period_started_at,요약 구간 시작,TIMESTAMPTZ,Y,,,conversation_summary.period_started_at에는 요약에 포함된 첫 시간 경계를 기록하는 값을 저장한다.,요약 구간 시작은(는) 요약에 포함된 첫 시간 경계를 기록할 때 조회·검증·갱신한다.,사용자 현지 구간을 UTC로 변환해 저장한다.,UTC 2026-07-27T00:00:00Z
+conversation_summary,6,period_ended_at,요약 구간 종료,TIMESTAMPTZ,Y,,,conversation_summary.period_ended_at에는 요약에 포함된 끝 시간 경계를 기록하는 값을 저장한다.,요약 구간 종료은(는) 요약에 포함된 끝 시간 경계를 기록할 때 조회·검증·갱신한다.,시작보다 늦어야 하고 경계 규칙을 일관되게 쓴다.,UTC 2026-07-27T10:20:00Z
+conversation_summary,7,content,요약 내용,TEXT,Y,,,conversation_summary.content에는 대화 문맥을 압축한 텍스트를 저장하는 값을 저장한다.,요약 내용은(는) 대화 문맥을 압축한 텍스트를 저장할 때 조회·검증·갱신한다.,장기 사실 전문이나 근거 발화를 복제하지 않는다.,병원 일정과 저녁 복약 시간을 확인했다.
+conversation_summary,8,source_message_count,원본 메시지 수,INTEGER,Y,,,conversation_summary.source_message_count에는 요약에 실제 사용한 Raw 발화 수를 기록하는 값을 저장한다.,원본 메시지 수은(는) 요약에 실제 사용한 Raw 발화 수를 기록할 때 조회·검증·갱신한다.,0보다 커야 하며 품질 점검에 사용한다.,18
+conversation_summary,9,generated_at,요약 생성 시각,TIMESTAMPTZ,Y,,,conversation_summary.generated_at에는 요약 결과가 생성된 시각을 기록하는 값을 저장한다.,요약 생성 시각은(는) 요약 결과가 생성된 시각을 기록할 때 조회·검증·갱신한다.,period_ended_at과 의미가 다르다.,UTC 2026-07-27T10:21:00Z
+conversation_summary,10,superseded_by_id,대체 요약 ID,UUID,N,SELF FK,conversation_summary.id,conversation_summary.superseded_by_id에는 재생성된 새 요약을 연결하는 값을 저장한다.,대체 요약 ID은(는) 재생성된 새 요약을 연결할 때 조회·검증·갱신한다.,요약 자기 참조와 순환을 금지한다.,f3d0dd43-e3dc-4079-9a84-4186c4775327
+conversation_summary,11,embedding,요약 임베딩,VECTOR,N,,,conversation_summary.embedding에는 관련 요약 의미 검색용 벡터를 저장하는 값을 저장한다.,요약 임베딩은(는) 관련 요약 의미 검색용 벡터를 저장할 때 조회·검증·갱신한다.,모델·차원·인덱스는 아직 TBD다.,TBD
+fact_candidate,1,id,후보 ID,UUID,Y,PK,,fact_candidate.id에는 미확정 사실 후보를 식별하는 값을 저장한다.,후보 ID은(는) 미확정 사실 후보를 식별할 때 조회·검증·갱신한다.,최종 업무 ID로 재사용하지 않는다.,dcd1c7f7-ce8a-405f-a3a5-f2bb25eaac31
+fact_candidate,2,senior_id,시니어 ID,UUID,Y,FK,app_user.id,fact_candidate.senior_id에는 후보의 최종 데이터 소유자를 연결하는 값을 저장한다.,시니어 ID은(는) 후보의 최종 데이터 소유자를 연결할 때 조회·검증·갱신한다.,소스 대화·답변의 시니어와 일치시킨다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+fact_candidate,3,source_type,출처 유형,VARCHAR(40),Y,,,fact_candidate.source_type에는 온보딩 답변과 대화 메시지 출처를 구분하는 값을 저장한다.,출처 유형은(는) 온보딩 답변과 대화 메시지 출처를 구분할 때 조회·검증·갱신한다.,필수 출처 FK와 CHECK로 묶는다.,CONVERSATION_MESSAGE
+fact_candidate,4,onboarding_answer_id,출처 답변 ID,UUID,N,FK,onboarding_answer.id,fact_candidate.onboarding_answer_id에는 온보딩에서 나온 후보의 답변을 연결하는 값을 저장한다.,출처 답변 ID은(는) 온보딩에서 나온 후보의 답변을 연결할 때 조회·검증·갱신한다.,source_type이 ONBOARDING_ANSWER일 때 필수다.,066d8e53-5968-4ff7-8450-36fa672f653e
+fact_candidate,5,conversation_id,출처 대화 ID,UUID,N,FK,conversation.id,fact_candidate.conversation_id에는 대화에서 나온 후보의 대화를 연결하는 값을 저장한다.,출처 대화 ID은(는) 대화에서 나온 후보의 대화를 연결할 때 조회·검증·갱신한다.,메시지의 conversation과 일치해야 한다.,1a4fe41a-6464-4e7e-b292-9a507333a3fa
+fact_candidate,6,source_message_id,출처 메시지 ID,UUID,N,FK,conversation_message.id,fact_candidate.source_message_id에는 후보를 만든 정확한 발화를 연결하는 값을 저장한다.,출처 메시지 ID은(는) 후보를 만든 정확한 발화를 연결할 때 조회·검증·갱신한다.,fact_candidate 근거는 Raw 삭제 시 ON DELETE SET NULL로 비운다.,a6f8cb84-c91c-4a38-a7b6-386ce6aa027f
+fact_candidate,7,target_domain,대상 도메인,VARCHAR(40),Y,,,fact_candidate.target_domain에는 PROFILE·관계·기억·돌봄 대상을 구분하는 값을 저장한다.,대상 도메인은(는) PROFILE·관계·기억·돌봄 대상을 구분할 때 조회·검증·갱신한다.,다형성 ID 검증의 기준이다.,CARE_RECORD
+fact_candidate,8,fact_type,사실 유형,VARCHAR(80),Y,,,fact_candidate.fact_type에는 질문 계약과 JSON Schema를 선택하는 값을 저장한다.,사실 유형은(는) 질문 계약과 JSON Schema를 선택할 때 조회·검증·갱신한다.,자유 문장 대신 안정적 코드를 쓴다.,MEDICATION_SCHEDULE
+fact_candidate,9,operation,요청 연산,VARCHAR(20),Y,,,fact_candidate.operation에는 생성·변경·취소 요청을 구분하는 값을 저장한다.,요청 연산은(는) 생성·변경·취소 요청을 구분할 때 조회·검증·갱신한다.,UPDATE/CANCEL은 대상 엔터티가 필요하다.,UPDATE
+fact_candidate,10,target_entity_id,변경 대상 ID,UUID,N,논리 참조,,fact_candidate.target_entity_id에는 갱신·취소할 최종 행을 논리적으로 가리킴하는 값을 저장한다.,변경 대상 ID은(는) 갱신·취소할 최종 행을 논리적으로 가리킴할 때 조회·검증·갱신한다.,여러 테이블 대상이므로 물리 FK라고 주장하지 않는다.,8f3de8c7-7a04-4c74-977b-223a096dc589
+fact_candidate,11,proposed_value,제안 값,JSONB,Y,,,fact_candidate.proposed_value에는 추출·입력한 아직 미확정 구조화 값을 저장하는 값을 저장한다.,제안 값은(는) 추출·입력한 아직 미확정 구조화 값을 저장할 때 조회·검증·갱신한다.,민감 중간 값은 반영 후 무기한 보존하지 않는다.,"{""localTime"":""15:00"",""timeZone"":""Asia/Seoul""}"
+fact_candidate,12,confirmed_value,확정 값,JSONB,N,,,fact_candidate.confirmed_value에는 사용자가 최종 확인한 정규화 값을 저장하는 값을 저장한다.,확정 값은(는) 사용자가 최종 확인한 정규화 값을 저장할 때 조회·검증·갱신한다.,이 값만 최종 원본에 반영한다.,"{""localTime"":""15:00"",""timeZone"":""Asia/Seoul""}"
+fact_candidate,13,missing_fields,누락 필드 목록,TEXT[],Y,,,fact_candidate.missing_fields에는 재질의가 필요한 JSON 필드명을 저장하는 값을 저장한다.,누락 필드 목록은(는) 재질의가 필요한 JSON 필드명을 저장할 때 조회·검증·갱신한다.,질문 문장이나 사람이 읽는 설명을 넣지 않는다.,"[""doseUnit""]"
+fact_candidate,14,risk_level,위험 수준,VARCHAR(20),Y,,,fact_candidate.risk_level에는 일반·민감·고위험 처리 강도를 구분하는 값을 저장한다.,위험 수준은(는) 일반·민감·고위험 처리 강도를 구분할 때 조회·검증·갱신한다.,민감 이상은 명확해도 최종 확인한다.,SENSITIVE
+fact_candidate,15,status,후보 처리 상태,VARCHAR(40),Y,,,fact_candidate.status에는 캡처부터 물리 반영까지 처리 단계를 표시하는 값을 저장한다.,후보 처리 상태은(는) 캡처부터 물리 반영까지 처리 단계를 표시할 때 조회·검증·갱신한다.,협의 결과 상태를 대신하지 않는다.,NEEDS_CONFIRMATION
+fact_candidate,16,clarification_reason,재질의 사유,VARCHAR(60),N,,,fact_candidate.clarification_reason에는 누락·모호·낮은 신뢰·충돌·민감 확인을 구분하는 값을 저장한다.,재질의 사유은(는) 누락·모호·낮은 신뢰·충돌·민감 확인을 구분할 때 조회·검증·갱신한다.,복수 원인 중 현재 질문의 직접 원인을 둔다.,MISSING_REQUIRED_FIELD
+fact_candidate,17,clarification_count,재질의 횟수,INTEGER,Y,,,fact_candidate.clarification_count에는 같은 후보에 수행한 재질의 횟수를 기록하는 값을 저장한다.,재질의 횟수은(는) 같은 후보에 수행한 재질의 횟수를 기록할 때 조회·검증·갱신한다.,음수가 될 수 없고 무한 반복을 막는다.,1
+fact_candidate,18,initiated_by_user_id,요청 시작 사용자,UUID,N,FK,app_user.id,fact_candidate.initiated_by_user_id에는 등록·변경을 시작한 사람을 연결하는 값을 저장한다.,요청 시작 사용자은(는) 등록·변경을 시작한 사람을 연결할 때 조회·검증·갱신한다.,AI·시스템 추출이면 null일 수 있다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+fact_candidate,19,confirmed_by_user_id,최종 확인 사용자,UUID,N,FK,app_user.id,fact_candidate.confirmed_by_user_id에는 confirmed_value를 승인한 사람을 연결하는 값을 저장한다.,최종 확인 사용자은(는) confirmed_value를 승인한 사람을 연결할 때 조회·검증·갱신한다.,보호자면 활성 PRIMARY 권한을 검사한다.,8e1339cb-b0bf-42df-9a7f-f6592be3e84f
+fact_candidate,20,requires_coordination,협의 필요 여부,BOOLEAN,Y,,,fact_candidate.requires_coordination에는 시니어·PRIMARY 충돌 절차 필요성을 표시하는 값을 저장한다.,협의 필요 여부은(는) 시니어·PRIMARY 충돌 절차 필요성을 표시할 때 조회·검증·갱신한다.,coordination_status와 모순되지 않아야 한다.,true
+fact_candidate,21,coordination_status,협의 상태,VARCHAR(50),Y,,,fact_candidate.coordination_status에는 양쪽 협의의 진행·결과를 별도 축으로 기록하는 값을 저장한다.,협의 상태은(는) 양쪽 협의의 진행·결과를 별도 축으로 기록할 때 조회·검증·갱신한다.,후보 materialization 상태로 쓰지 않는다.,WAITING_PRIMARY_GUARDIAN
+fact_candidate,22,senior_position,시니어 입장,VARCHAR(30),Y,,,fact_candidate.senior_position에는 시니어의 동의·반대·연락불가를 보존하는 값을 저장한다.,시니어 입장은(는) 시니어의 동의·반대·연락불가를 보존할 때 조회·검증·갱신한다.,PRIMARY 우선 처리 후에도 반대를 AGREED로 바꾸지 않는다.,DISAGREED
+fact_candidate,23,primary_guardian_decision,PRIMARY 결정,VARCHAR(50),Y,,,fact_candidate.primary_guardian_decision에는 기존값·제안값·수정값·취소 중 최종 방향을 기록하는 값을 저장한다.,PRIMARY 결정은(는) 기존값·제안값·수정값·취소 중 최종 방향을 기록할 때 조회·검증·갱신한다.,활성 PRIMARY의 명시적 확인만 허용한다.,REVISED_VALUE
+fact_candidate,24,primary_guardian_id,PRIMARY 보호자 ID,UUID,N,FK,app_user.id,fact_candidate.primary_guardian_id에는 협의를 책임진 PRIMARY를 연결하는 값을 저장한다.,PRIMARY 보호자 ID은(는) 협의를 책임진 PRIMARY를 연결할 때 조회·검증·갱신한다.,관계가 ACTIVE·PRIMARY·GRANTED인지 검증한다.,8e1339cb-b0bf-42df-9a7f-f6592be3e84f
+fact_candidate,25,contact_attempt_count,연락 시도 횟수,INTEGER,Y,,,fact_candidate.contact_attempt_count에는 시니어 또는 보호자 연락 시도 수를 기록하는 값을 저장한다.,연락 시도 횟수은(는) 시니어 또는 보호자 연락 시도 수를 기록할 때 조회·검증·갱신한다.,실제 통화 성공을 증명하는 값이 아니다.,2
+fact_candidate,26,last_contact_attempted_at,최근 연락 시도 시각,TIMESTAMPTZ,N,,,fact_candidate.last_contact_attempted_at에는 마지막 디지털·전화 연락 시도 시점을 기록하는 값을 저장한다.,최근 연락 시도 시각은(는) 마지막 디지털·전화 연락 시도 시점을 기록할 때 조회·검증·갱신한다.,통화 내용이나 녹음을 저장하지 않는다.,UTC 2026-07-27T11:00:00Z
+fact_candidate,27,unreachable_reason,연락 불가 사유,VARCHAR(50),N,,,fact_candidate.unreachable_reason에는 연락이 안 된 운영 사유를 코드로 기록하는 값을 저장한다.,연락 불가 사유은(는) 연락이 안 된 운영 사유를 코드로 기록할 때 조회·검증·갱신한다.,추측한 의학적 진단을 넣지 않는다.,NO_RESPONSE
+fact_candidate,28,coordination_deadline_at,협의 기한,TIMESTAMPTZ,N,,,fact_candidate.coordination_deadline_at에는 후보를 방치하지 않을 처리 기한을 기록하는 값을 저장한다.,협의 기한은(는) 후보를 방치하지 않을 처리 기한을 기록할 때 조회·검증·갱신한다.,의학적 긴급도 판단을 자동 생성하지 않는다.,UTC 2026-07-28T11:00:00Z
+fact_candidate,29,coordination_completed_at,협의 완료 시각,TIMESTAMPTZ,N,,,fact_candidate.coordination_completed_at에는 디지털 협의 절차가 끝난 시각을 기록하는 값을 저장한다.,협의 완료 시각은(는) 디지털 협의 절차가 끝난 시각을 기록할 때 조회·검증·갱신한다.,통화 사실 증명 시각으로 표현하지 않는다.,UTC 2026-07-27T11:30:00Z
+fact_candidate,30,coordination_note,협의 메모,TEXT,N,,,fact_candidate.coordination_note에는 최종 결정에 필요한 짧은 운영 맥락을 기록하는 값을 저장한다.,협의 메모은(는) 최종 결정에 필요한 짧은 운영 맥락을 기록할 때 조회·검증·갱신한다.,민감 원문·통화 녹취·불필요한 자유 서술을 넣지 않는다.,"시니어 반대 보존, PRIMARY 책임 재확인"
+fact_candidate,31,materialized_target_id,반영 대상 ID,UUID,N,논리 참조,,fact_candidate.materialized_target_id에는 실제로 생성된 최종 원본 행을 논리적으로 가리킴하는 값을 저장한다.,반영 대상 ID은(는) 실제로 생성된 최종 원본 행을 논리적으로 가리킴할 때 조회·검증·갱신한다.,target_domain에 따라 서비스가 존재를 검증한다.,8f3de8c7-7a04-4c74-977b-223a096dc589
+fact_candidate,32,materialized_at,물리 반영 시각,TIMESTAMPTZ,N,,,fact_candidate.materialized_at에는 최종 원본에 한 번 반영된 시각을 기록하는 값을 저장한다.,물리 반영 시각은(는) 최종 원본에 한 번 반영된 시각을 기록할 때 조회·검증·갱신한다.,재시도는 null 여부와 대상 유일성을 함께 확인한다.,UTC 2026-07-27T11:31:00Z
+fact_candidate,33,created_at,후보 생성 시각,TIMESTAMPTZ,Y,,,fact_candidate.created_at에는 후보가 처음 포착된 시각을 기록하는 값을 저장한다.,후보 생성 시각은(는) 후보가 처음 포착된 시각을 기록할 때 조회·검증·갱신한다.,source_message occurred_at과 다를 수 있다.,UTC 2026-07-27T10:12:32Z
+fact_candidate,34,updated_at,후보 수정 시각,TIMESTAMPTZ,Y,,,fact_candidate.updated_at에는 재질의·협의·상태의 마지막 변경을 기록하는 값을 저장한다.,후보 수정 시각은(는) 재질의·협의·상태의 마지막 변경을 기록할 때 조회·검증·갱신한다.,상세 이벤트 원장을 대신하지 않는다.,UTC 2026-07-27T11:31:00Z
+fact_candidate,35,confirmed_at,후보 확인 시각,TIMESTAMPTZ,N,,,fact_candidate.confirmed_at에는 confirmed_value가 확정된 시각을 기록하는 값을 저장한다.,후보 확인 시각은(는) confirmed_value가 확정된 시각을 기록할 때 조회·검증·갱신한다.,materialized_at과 의미가 다르다.,UTC 2026-07-27T11:29:00Z
+fact_candidate,36,expires_at,후보 만료 시각,TIMESTAMPTZ,N,,,fact_candidate.expires_at에는 미완료 후보를 만료시킬 예정 시각을 기록하는 값을 저장한다.,후보 만료 시각은(는) 미완료 후보를 만료시킬 예정 시각을 기록할 때 조회·검증·갱신한다.,협의 중 후보를 무조건 자동 삭제하지 않는다.,UTC 2026-08-03T10:12:32Z
+memory,1,id,기억 ID,UUID,Y,PK,,memory.id에는 장기 개인화 사실을 식별하는 값을 저장한다.,기억 ID은(는) 장기 개인화 사실을 식별할 때 조회·검증·갱신한다.,원문 메시지 ID를 재사용하지 않는다.,536df5e2-82a0-43ff-9ed8-41933c9f96f0
+memory,2,senior_id,시니어 ID,UUID,Y,FK,app_user.id,memory.senior_id에는 기억의 소유자를 연결하는 값을 저장한다.,시니어 ID은(는) 기억의 소유자를 연결할 때 조회·검증·갱신한다.,다른 시니어 검색에서 제외한다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+memory,3,source_conversation_id,출처 대화 ID,UUID,N,FK,conversation.id,memory.source_conversation_id에는 사실을 처음 관찰한 대화를 연결하는 값을 저장한다.,출처 대화 ID은(는) 사실을 처음 관찰한 대화를 연결할 때 조회·검증·갱신한다.,대화가 삭제되어도 사실 의미는 독립적이어야 한다.,1a4fe41a-6464-4e7e-b292-9a507333a3fa
+memory,4,superseded_by_id,대체 기억 ID,UUID,N,SELF FK,memory.id,memory.superseded_by_id에는 수정된 새 기억을 연결하는 값을 저장한다.,대체 기억 ID은(는) 수정된 새 기억을 연결할 때 조회·검증·갱신한다.,기억 자기 참조와 순환을 금지한다.,950db0a5-782a-40af-939a-f276660289bb
+memory,5,memory_type,기억 유형,VARCHAR(50),Y,,,memory.memory_type에는 관계·선호·취미·일상 등 사실을 구분하는 값을 저장한다.,기억 유형은(는) 관계·선호·취미·일상 등 사실을 구분할 때 조회·검증·갱신한다.,대화 요약을 장기 기억 유형으로 쓰지 않는다.,PREFERENCE
+memory,6,content,독립 사실 내용,TEXT,Y,,,memory.content에는 대화 없이 이해되는 사실 하나를 저장하는 값을 저장한다.,독립 사실 내용은(는) 대화 없이 이해되는 사실 하나를 저장할 때 조회·검증·갱신한다.,Raw·일간 요약 전문을 복사하지 않는다.,시니어는 따뜻한 보리차를 좋아한다.
+memory,7,verification_status,기억 확인 상태,VARCHAR(30),Y,,,memory.verification_status에는 확인 수준과 거절 여부를 표시하는 값을 저장한다.,기억 확인 상태은(는) 확인 수준과 거절 여부를 표시할 때 조회·검증·갱신한다.,REJECTED는 검색에서 제외한다.,USER_CONFIRMED
+memory,8,lifecycle_status,기억 수명 상태,VARCHAR(30),Y,,,memory.lifecycle_status에는 활성·분쟁·대체·만료·삭제를 구분하는 값을 저장한다.,기억 수명 상태은(는) 활성·분쟁·대체·만료·삭제를 구분할 때 조회·검증·갱신한다.,ACTIVE만 검색 후보로 사용한다.,ACTIVE
+memory,9,visibility,기억 공개 범위,VARCHAR(40),Y,,,memory.visibility에는 시니어 전용·PRIMARY·전체 보호자 공유를 구분하는 값을 저장한다.,기억 공개 범위은(는) 시니어 전용·PRIMARY·전체 보호자 공유를 구분할 때 조회·검증·갱신한다.,공유 동의와 활성 관계도 함께 검사한다.,PRIVATE
+memory,10,embedding,기억 임베딩,VECTOR,N,,,memory.embedding에는 의미 유사 기억 검색 벡터를 저장하는 값을 저장한다.,기억 임베딩은(는) 의미 유사 기억 검색 벡터를 저장할 때 조회·검증·갱신한다.,모델·차원은 TBD이고 혼합 모델을 금지한다.,TBD
+memory,11,source_summary_id,출처 요약 ID,UUID,N,FK,conversation_summary.id,memory.source_summary_id에는 기억을 뒷받침한 대화·일간 요약을 연결하는 값을 저장한다.,출처 요약 ID은(는) 기억을 뒷받침한 대화·일간 요약을 연결할 때 조회·검증·갱신한다.,요약 전문을 content에 복제하지 않는다.,9cd9cbdd-1e7c-4cbb-9014-4ddfb82b73e0
+memory,12,source_candidate_id,출처 후보 ID,UUID,N,FK,fact_candidate.id,memory.source_candidate_id에는 확인·반영을 통과한 후보를 연결하는 값을 저장한다.,출처 후보 ID은(는) 확인·반영을 통과한 후보를 연결할 때 조회·검증·갱신한다.,유일성으로 중복 기억 생성을 막는다.,dcd1c7f7-ce8a-405f-a3a5-f2bb25eaac31
+memory,13,keywords,정확 검색 키워드,TEXT[],Y,,,memory.keywords에는 이름·음식·장소 등 정확 일치 단어를 저장하는 값을 저장한다.,정확 검색 키워드은(는) 이름·음식·장소 등 정확 일치 단어를 저장할 때 조회·검증·갱신한다.,민감 원문 전문이나 무의미한 토큰을 넣지 않는다.,"[""보리차"",""따뜻한 음료""]"
+memory,14,importance,기억 중요도,SMALLINT,Y,,,memory.importance에는 재정렬에 사용할 1~5 중요도를 저장하는 값을 저장한다.,기억 중요도은(는) 재정렬에 사용할 1~5 중요도를 저장할 때 조회·검증·갱신한다.,주관값 하나로 검색 순위를 독점하지 않게 한다.,4
+memory,15,first_observed_at,최초 관찰 시각,TIMESTAMPTZ,Y,,,memory.first_observed_at에는 사실을 처음 알게 된 시각을 기록하는 값을 저장한다.,최초 관찰 시각은(는) 사실을 처음 알게 된 시각을 기록할 때 조회·검증·갱신한다.,기억 행 생성 시각과 다를 수 있다.,UTC 2026-07-20T10:00:00Z
+memory,16,last_confirmed_at,최근 확인 시각,TIMESTAMPTZ,N,,,memory.last_confirmed_at에는 사실을 마지막으로 재확인한 때를 기록하는 값을 저장한다.,최근 확인 시각은(는) 사실을 마지막으로 재확인한 때를 기록할 때 조회·검증·갱신한다.,단순 검색·사용 시각으로 갱신하지 않는다.,UTC 2026-07-27T10:15:00Z
+memory,17,last_used_at,최근 사용 시각,TIMESTAMPTZ,N,,,memory.last_used_at에는 대화 문맥에 실제 채택된 최근 시각을 기록하는 값을 저장한다.,최근 사용 시각은(는) 대화 문맥에 실제 채택된 최근 시각을 기록할 때 조회·검증·갱신한다.,검색 후보였다는 이유만으로 갱신하지 않는다.,UTC 2026-07-27T12:00:00Z
+care_record,1,id,돌봄 기록 ID,UUID,Y,PK,,care_record.id에는 확정된 돌봄 사실 버전을 식별하는 값을 저장한다.,돌봄 기록 ID은(는) 확정된 돌봄 사실 버전을 식별할 때 조회·검증·갱신한다.,같은 의미라도 변경 시 새 ID를 만든다.,8f3de8c7-7a04-4c74-977b-223a096dc589
+care_record,2,senior_id,시니어 ID,UUID,Y,FK,app_user.id,care_record.senior_id에는 돌봄 사실의 소유자를 연결하는 값을 저장한다.,시니어 ID은(는) 돌봄 사실의 소유자를 연결할 때 조회·검증·갱신한다.,후보·대화 소유자와 일치시킨다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+care_record,3,parent_record_id,이전 기록 ID,UUID,N,SELF FK,care_record.id,care_record.parent_record_id에는 변경·취소된 이전 버전을 연결하는 값을 저장한다.,이전 기록 ID은(는) 변경·취소된 이전 버전을 연결할 때 조회·검증·갱신한다.,기존 돌봄 기록을 덮어쓰지 않고 버전 순환을 금지한다.,3f08933a-76c4-4226-809c-f1efcbe47824
+care_record,4,scenario_id,발생 시나리오 ID,UUID,N,FK,scenario.id,care_record.scenario_id에는 관찰·알림이 생긴 로봇 흐름을 연결하는 값을 저장한다.,발생 시나리오 ID은(는) 관찰·알림이 생긴 로봇 흐름을 연결할 때 조회·검증·갱신한다.,온보딩·앱 입력에는 없을 수 있다.,6fd94c8c-3903-4a01-a82d-819e0c8edb12
+care_record,5,source_conversation_id,근거 대화 ID,UUID,N,FK,conversation.id,care_record.source_conversation_id에는 사실을 확인한 대화를 연결하는 값을 저장한다.,근거 대화 ID은(는) 사실을 확인한 대화를 연결할 때 조회·검증·갱신한다.,앱 직접 입력에는 없을 수 있다.,1a4fe41a-6464-4e7e-b292-9a507333a3fa
+care_record,6,source_message_id,근거 메시지 ID,UUID,N,FK,conversation_message.id,care_record.source_message_id에는 정확한 근거 발화를 연결하는 값을 저장한다.,근거 메시지 ID은(는) 정확한 근거 발화를 연결할 때 조회·검증·갱신한다.,care_record 근거는 Raw 삭제 시 ON DELETE SET NULL로 비운다.,a6f8cb84-c91c-4a38-a7b6-386ce6aa027f
+care_record,7,recipient_guardian_id,수신 보호자 ID,UUID,N,FK,app_user.id,care_record.recipient_guardian_id에는 보호자 알림의 지정 수신자를 연결하는 값을 저장한다.,수신 보호자 ID은(는) 보호자 알림의 지정 수신자를 연결할 때 조회·검증·갱신한다.,활성 관계·공유 동의·권한을 검증한다.,8e1339cb-b0bf-42df-9a7f-f6592be3e84f
+care_record,8,created_by_user_id,작성 사용자 ID,UUID,N,FK,app_user.id,care_record.created_by_user_id에는 직접 입력한 시니어 또는 보호자를 연결하는 값을 저장한다.,작성 사용자 ID은(는) 직접 입력한 시니어 또는 보호자를 연결할 때 조회·검증·갱신한다.,AI·로봇·시스템 생성이면 null일 수 있다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
+care_record,9,record_type,돌봄 기록 유형,VARCHAR(50),Y,,,care_record.record_type에는 건강·약·일정·관찰·알림 구조를 선택하는 값을 저장한다.,돌봄 기록 유형은(는) 건강·약·일정·관찰·알림 구조를 선택할 때 조회·검증·갱신한다.,details JSON Schema와 반드시 일치시킨다.,MEDICATION_SCHEDULE
+care_record,10,status,돌봄 기록 상태,VARCHAR(30),Y,,,care_record.status에는 유효·완료·취소·대체를 구분하는 값을 저장한다.,돌봄 기록 상태은(는) 유효·완료·취소·대체를 구분할 때 조회·검증·갱신한다.,SUPERSEDED 기록을 현재값으로 조회하지 않는다.,ACTIVE
+care_record,11,details,돌봄 상세,JSONB,Y,,,care_record.details에는 record_type별 확인된 구조화 사실을 저장하는 값을 저장한다.,돌봄 상세은(는) record_type별 확인된 구조화 사실을 저장할 때 조회·검증·갱신한다.,외부 응답 전문·미확정 값·의학적 계산을 넣지 않는다.,"{""medicationName"":""아스피린"",""localTime"":""09:00""}"
+care_record,12,recurrence,반복 규칙,JSONB,N,,,care_record.recurrence에는 복약·일정의 반복 패턴을 구조화하는 값을 저장한다.,반복 규칙은(는) 복약·일정의 반복 패턴을 구조화할 때 조회·검증·갱신한다.,반복이 없으면 null이고 미래 발생분을 전부 펼치지 않는다.,"{""frequency"":""DAILY"",""time"":""09:00""}"
+care_record,13,source_candidate_id,출처 후보 ID,UUID,N,FK,fact_candidate.id,care_record.source_candidate_id에는 최종 반영을 만든 후보를 연결하는 값을 저장한다.,출처 후보 ID은(는) 최종 반영을 만든 후보를 연결할 때 조회·검증·갱신한다.,유일성으로 중복 돌봄 기록 생성을 막는다.,dcd1c7f7-ce8a-405f-a3a5-f2bb25eaac31

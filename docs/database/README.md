@@ -1,16 +1,6 @@
-# Database
+# BOMI 데이터베이스 문서
 
-## 기준
-
-BOMI의 중앙 데이터베이스는 PostgreSQL 17과 pgvector를 사용한다.
-
-- 관계형 데이터와 트랜잭션: PostgreSQL
-- 기억 임베딩 저장과 의미 검색: pgvector
-- 운영 이미지: `pgvector/pgvector:0.8.5-pg17`
-- 문자 인코딩: UTF-8
-- 저장 시각: `TIMESTAMPTZ`, 애플리케이션 저장 기준 UTC
-
-첫 로봇 연동을 위한 물리 모델은 9개 테이블이다.
+현재 기준은 PostgreSQL + pgvector, 물리 테이블 12개, 컬럼 151개다. Raw 발화, 대화·일간 요약, 장기 기억을 분리하고 앱과 로봇의 온보딩을 같은 질문 계약으로 처리한다. 확인 전 사실은 `fact_candidate`에서 재질의·민감정보 확인·PRIMARY 보호자 협의를 거친다.
 
 ```text
 app_user
@@ -20,69 +10,67 @@ onboarding_session
 onboarding_answer
 scenario
 conversation
+conversation_message
+conversation_summary
+fact_candidate
 memory
 care_record
 ```
 
-ENUM 도형은 별도 테이블이 아니라 `VARCHAR` 컬럼의 허용 값 사전이다. 전체 PostgreSQL DDL과 JPA Entity는 아직 이 문서 범위가 아니다.
+최종 서비스 조회 원본은 `app_user`, `care_relationship`, `memory`, `care_record`다. 최근 대화와 하루치 대화는 별도 테이블이 아니라 `conversation_message`의 조회 범위다.
 
-## 문서별 역할
+## 문서
 
-| 문서 | 답하는 질문 |
-|---|---|
-| [`mvp-erd.md`](./mvp-erd.md) | 어떤 테이블과 컬럼을 왜 남겼고, 관계와 코드값은 무엇인가? |
-| [`onboarding-rest-environment-design.md`](./onboarding-rest-environment-design.md) | 온보딩·휴식·온습도 데이터를 9개 테이블 안에서 어떻게 흐르게 하는가? |
-| `column-definition/BOMI_컬럼정의서.xlsx` | 각 컬럼을 언제 어떻게 쓰며 무엇을 넣으면 안 되는가? |
-| `column-definition/snapshots/*.csv` | 컬럼정의서 변경을 Git diff로 어떻게 검토하는가? |
+| 문서 | 목적 |
+| --- | --- |
+| [`mvp-erd.md`](./mvp-erd.md) | 12개 테이블의 컬럼·관계·제약·정책 |
+| [`onboarding-question-set-v1.json`](./onboarding-question-set-v1.json) | 앱·로봇 공용 질문·검증·정규화·최종 매핑 |
+| [`onboarding-rest-environment-design.md`](./onboarding-rest-environment-design.md) | 온보딩·후보·대화·휴식·환경 처리 흐름 |
+| [`column-definition/BOMI_컬럼정의서.xlsx`](./column-definition/BOMI_컬럼정의서.xlsx) | 사람이 읽는 테이블·컬럼·코드·제약 정의 |
+| [`column-definition/snapshots/`](./column-definition/snapshots/) | Excel과 동일한 Git diff용 CSV 9개 |
 
-엑셀은 사람이 편집하는 원본이고 CSV는 리뷰용 산출물이다. 엑셀에서 DDL이나 Flyway SQL을 자동 생성하지 않는다.
+관련 문서는 [`../architecture/system-overview.md`](../architecture/system-overview.md), [`../scenario/homecoming-welcome.md`](../scenario/homecoming-welcome.md), [`../mqtt/topic-convention.md`](../mqtt/topic-convention.md)다.
 
-## 저장 경계
+## 생명주기
 
-중앙 DB에는 업무에 재사용할 최종 상태와 필요한 근거만 저장한다.
+```mermaid
+flowchart LR
+  Input["앱 답변·로봇 발화"] --> Raw["onboarding_answer / conversation_message"]
+  Raw --> Candidate["fact_candidate"]
+  Candidate --> Verify["재질의·확인·PRIMARY 협의"]
+  Verify --> Final["app_user / care_relationship / memory / care_record"]
+  Raw --> Summary["conversation_summary"]
+  Summary --> Context["선별된 대화 문맥"]
+  Final --> Context
+  Raw -->|요약·후보·반영·만료 조건 충족| Delete["Raw 삭제 가능"]
+```
 
-- 저장: 사용자·관계, 로봇의 최신 상태, 시나리오, 대화 텍스트, 검증된 기억, 구조화된 돌봄 기록
-- 저장하지 않음: 음성·영상 원본, 고빈도 센서 시계열, MQTT 전체 송수신 로그, 외부 API 응답 전문
-- 현재 미포함: Outbox, 수신 중복 제거 원장, 감사 로그, AI 실행 추적
+Raw 근거 FK는 삭제 시 `SET NULL`이므로 최종 업무 데이터가 함께 삭제되지 않는다.
 
-미포함 항목은 불필요하다는 뜻이 아니다. 첫 연동에서 실제 장애와 조회 패턴을 확인한 뒤 별도 생명주기가 필요할 때 추가한다.
+## 권한
 
-## 연결 원칙
+- `user_type=GUARDIAN`만으로 특정 시니어에게 접근할 수 없다.
+- 조회는 활성 관계, 목적별 동의, 데이터 공개 범위를 함께 적용한다.
+- 민감정보 대리 확인·변경은 `ACTIVE + PRIMARY + care_management_permission_status=GRANTED` 한 명만 가능하다.
+- SECONDARY는 허용 범위에서 조회만 가능하다.
+- 충돌 시 양쪽에 알리고 협의를 유도한다. 통화 사실은 증명하지 않고 디지털 입장·연락 시도·최종 결정만 기록한다.
+- 시니어 반대·연락 불가를 보존한 채 PRIMARY가 2차 책임 확인을 완료하면 보호자 결정값을 적용할 수 있다.
 
-- 운영 DB는 인터넷에 공개하지 않는다.
-- Spring Backend만 Docker 내부 네트워크에서 DB에 접근한다.
-- 운영 접속 주소는 `jdbc:postgresql://postgres:5432/bomi`다.
-- 로컬 개발에서만 `127.0.0.1:5432`를 사용한다.
-- 실제 비밀번호는 Git에 저장하지 않는다.
+## 컬럼정의서 운영
 
-## 스키마 관리
+Excel은 설명 원본이고 CSV는 리뷰 표면이다. Excel에서 DDL·Flyway SQL을 생성하지 않는다. Jira·승인자·검토자·형식용 검증 시트는 두지 않는다.
 
-초기 인프라에서는 pgvector 확장만 최초 초기화 SQL로 활성화한다. 업무 테이블 구현을 시작하면 Flyway로 다음을 버전 관리한다.
+```powershell
+python docs/database/column-definition/scripts/export-column-definition-csv.py
+python docs/database/column-definition/scripts/validate-column-definition.py
+```
 
-- 테이블·컬럼·인덱스
-- FK와 확정된 `CHECK` 제약조건
-- pgvector 컬럼과 벡터 인덱스
-- 코드값 변경에 필요한 마이그레이션
+## TBD
 
-Hibernate가 운영 스키마를 임의 변경하지 않도록 `spring.jpa.hibernate.ddl-auto=validate`를 유지한다.
+- 요약·기억 embedding 모델·차원과 벡터 인덱스
+- 반복 협의가 필요할 때의 `care_coordination_event`
+- 긴 대화 중간 압축이 필요할 때의 `TIME_WINDOW`
+- 운영 중 무배포 질문 편집이 필요할 때의 `onboarding_question`
+- 수신 이벤트 원장, Outbox, 감사 로그
 
-ERD에 표시되지 않은 이메일 유일성, FK 삭제 정책, 활성 로봇 수 같은 제약은 DDL 작성 전에 결정한다. 컬럼정의서의 미결정 표시를 임의 기본값으로 바꾸지 않는다.
-
-## pgvector 원칙
-
-`memory.embedding`의 모델과 차원은 검색 기능 구현 전에 확정한다. 그 전까지 타입은 `VECTOR`로만 기록한다.
-
-- `memory.content`를 임베딩 원문으로 사용한다.
-- `ACTIVE`이고 `REJECTED`가 아닌 기억만 검색 후보로 삼는다.
-- 삭제·만료·대체된 기억은 검색에서 제외한다.
-- 초기에는 정확 검색을 사용하고, 데이터 규모와 지연시간을 측정한 뒤 HNSW 또는 IVFFlat을 선택한다.
-
-## 백업
-
-- 운영 데이터 경로: `/home/ubuntu/bomi/data/postgres`
-- 논리 백업 형식: `pg_dump -Fc`
-- 백업 경로: `/home/ubuntu/bomi/backup`
-- 컨테이너 삭제와 데이터 삭제를 별개 작업으로 취급한다.
-- 백업 파일 생성뿐 아니라 실제 복구 가능 여부를 정기적으로 검증한다.
-
-실행, 점검, 백업 절차는 `infra/README.md`를 따른다.
+문서의 제약은 구현 계약이며 코드·DDL이 이미 존재한다는 뜻이 아니다.

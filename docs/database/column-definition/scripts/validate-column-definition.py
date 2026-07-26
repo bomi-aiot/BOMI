@@ -7,6 +7,7 @@ from pathlib import Path
 import csv
 import importlib.util
 import io
+import json
 import re
 import sys
 from zipfile import BadZipFile, ZipFile
@@ -42,36 +43,69 @@ EXPECTED_COLUMNS = {
     ],
     "care_relationship": [
         "id", "senior_id", "guardian_id", "priority", "status", "connected_at",
+        "care_management_permission_status",
+        "care_management_permission_updated_at",
+        "care_management_permission_granted_by_user_id",
     ],
     "robot": [
         "id", "senior_id", "current_mode", "ambient_temperature_c",
         "ambient_humidity_percent", "ambient_observed_at", "is_active",
     ],
     "onboarding_session": [
-        "id", "senior_id", "robot_id", "current_question_code", "started_at",
+        "id", "senior_id", "robot_id", "question_set_version",
+        "started_channel", "status", "current_question_code", "started_at",
         "completed_at", "ended_at",
     ],
     "onboarding_answer": [
-        "id", "session_id", "source_conversation_id", "question_code",
-        "verification_status",
+        "id", "session_id", "question_code", "answer_value",
+        "answered_channel", "respondent_user_id", "source_conversation_id",
+        "source_message_id", "verification_status", "confirmed_by_user_id",
+        "answered_at", "confirmed_at", "updated_at",
     ],
     "scenario": [
         "id", "senior_id", "robot_id", "external_event_id", "scenario_type",
         "final_status",
     ],
     "conversation": [
-        "id", "senior_id", "scenario_id", "status", "messages",
-        "raw_messages_expires_at",
+        "id", "senior_id", "scenario_id", "status", "started_at",
+        "ended_at", "raw_messages_expires_at",
+    ],
+    "conversation_message": [
+        "id", "conversation_id", "sequence_no", "role", "content",
+        "occurred_at", "created_at",
+    ],
+    "conversation_summary": [
+        "id", "senior_id", "conversation_id", "summary_type",
+        "period_started_at", "period_ended_at", "content",
+        "source_message_count", "generated_at", "superseded_by_id",
+        "embedding",
+    ],
+    "fact_candidate": [
+        "id", "senior_id", "source_type", "onboarding_answer_id",
+        "conversation_id", "source_message_id", "target_domain", "fact_type",
+        "operation", "target_entity_id", "proposed_value", "confirmed_value",
+        "missing_fields", "risk_level", "status", "clarification_reason",
+        "clarification_count", "initiated_by_user_id", "confirmed_by_user_id",
+        "requires_coordination", "coordination_status", "senior_position",
+        "primary_guardian_decision", "primary_guardian_id",
+        "contact_attempt_count", "last_contact_attempted_at",
+        "unreachable_reason", "coordination_deadline_at",
+        "coordination_completed_at", "coordination_note",
+        "materialized_target_id", "materialized_at", "created_at", "updated_at",
+        "confirmed_at", "expires_at",
     ],
     "memory": [
         "id", "senior_id", "source_conversation_id", "superseded_by_id",
         "memory_type", "content", "verification_status", "lifecycle_status",
-        "visibility", "embedding",
+        "visibility", "embedding", "source_summary_id", "source_candidate_id",
+        "keywords", "importance", "first_observed_at", "last_confirmed_at",
+        "last_used_at",
     ],
     "care_record": [
         "id", "senior_id", "parent_record_id", "scenario_id",
         "source_conversation_id", "source_message_id", "recipient_guardian_id",
         "created_by_user_id", "record_type", "status", "details", "recurrence",
+        "source_candidate_id",
     ],
 }
 EXPECTED_HEADERS = {
@@ -97,7 +131,8 @@ FORBIDDEN_FORMALISM = {
 }
 FORBIDDEN_STALE_TERMS = {
     "audit_log", "client_event_id", "materialization_key",
-    "question_set_version", "processing_status", "robot.serial_number",
+    "processing_status", "robot.serial_number", "conversation.messages",
+    "CONVERSATION_SUMMARY",
 }
 
 _exporter_path = SCRIPT_DIR / "export-column-definition-csv.py"
@@ -194,8 +229,8 @@ def main() -> int:
     }
     if "02_컬럼정의" in tables_by_sheet:
         headers, column_rows = tables_by_sheet["02_컬럼정의"]
-        if len(column_rows) != 74:
-            fail(errors, f"컬럼 수가 74가 아닙니다: {len(column_rows)}")
+        if len(column_rows) != 151:
+            fail(errors, f"컬럼 수가 151이 아닙니다: {len(column_rows)}")
         actual_by_table: dict[str, list[str]] = {name: [] for name in EXPECTED_COLUMNS}
         seen_pairs: list[str] = []
         required_description_indexes = [headers.index(name) for name in ["무엇을 저장하는가", "언제 어떻게 쓰는가", "주의할 점", "예시"]]
@@ -251,16 +286,25 @@ def main() -> int:
         _, rows = tables_by_sheet["05_JSONB정의"]
         targets = {row[0] for row in rows}
         expected = {
-            "app_user.conversation_preferences", "conversation.messages",
-            "care_record.details", "care_record.recurrence",
+            "app_user.conversation_preferences",
+            "onboarding_answer.answer_value",
+            "fact_candidate.proposed_value",
+            "fact_candidate.confirmed_value",
+            "care_record.details",
+            "care_record.recurrence",
         }
         if targets != expected:
             fail(errors, f"JSONB 대상이 다릅니다: {sorted(targets)}")
 
     if "06_벡터정의" in tables_by_sheet:
         _, rows = tables_by_sheet["06_벡터정의"]
-        if len(rows) != 1 or rows[0][0] != "memory.embedding" or rows[0][3] != "TBD":
-            fail(errors, "memory.embedding 한 건과 차원 TBD가 정확히 정의되어야 합니다.")
+        expected_vectors = {
+            "conversation_summary.embedding": "TBD",
+            "memory.embedding": "TBD",
+        }
+        actual_vectors = {row[0]: row[3] for row in rows}
+        if actual_vectors != expected_vectors:
+            fail(errors, f"벡터 정의가 다릅니다: {actual_vectors}")
 
     if "07_코드정의" in tables_by_sheet:
         _, code_rows = tables_by_sheet["07_코드정의"]
@@ -274,8 +318,56 @@ def main() -> int:
             "app_user.user_type": {"SENIOR", "GUARDIAN"},
             "robot.current_mode": {"IDLE", "SCENARIO_ACTIVE", "REST_GUARD", "SAFE_STOP"},
             "scenario.scenario_type": {"HOMECOMING", "FALL_RESPONSE", "MANUAL_INTERACTION"},
-            "conversation.messages[].role": {"SENIOR", "ROBOT"},
-            "care_record.status": {"TBD"},
+            "conversation_message.role": {"SENIOR", "ROBOT"},
+            "conversation_summary.summary_type": {"CONVERSATION", "DAILY"},
+            "onboarding_session.started_channel": {"APP", "ROBOT"},
+            "onboarding_session.status": {
+                "IN_PROGRESS", "COMPLETED", "DECLINED", "CANCELLED", "EXPIRED",
+            },
+            "fact_candidate.status": {
+                "CAPTURED", "NEEDS_CLARIFICATION", "NEEDS_CONFIRMATION",
+                "COORDINATION_REQUIRED", "CONFIRMED", "MATERIALIZED",
+                "REJECTED", "EXPIRED",
+            },
+            "fact_candidate.source_type": {
+                "ONBOARDING_ANSWER", "CONVERSATION_MESSAGE",
+            },
+            "fact_candidate.target_domain": {
+                "PROFILE", "CARE_RELATIONSHIP", "MEMORY", "CARE_RECORD",
+            },
+            "fact_candidate.operation": {"CREATE", "UPDATE", "CANCEL"},
+            "fact_candidate.risk_level": {"NORMAL", "SENSITIVE", "HIGH"},
+            "fact_candidate.clarification_reason": {
+                "MISSING_REQUIRED_FIELD", "AMBIGUOUS_VALUE",
+                "LOW_RECOGNITION_CONFIDENCE", "CONFLICT_WITH_EXISTING_DATA",
+                "SENSITIVE_INFORMATION_CONFIRMATION",
+            },
+            "fact_candidate.coordination_status": {
+                "NOT_REQUIRED", "COORDINATION_REQUIRED",
+                "WAITING_PRIMARY_GUARDIAN", "WAITING_SENIOR", "AGREED",
+                "DISAGREED", "SENIOR_UNREACHABLE",
+                "GUARDIAN_OVERRIDE_CONFIRMED", "COMPLETED",
+            },
+            "fact_candidate.senior_position": {
+                "NOT_REQUESTED", "PENDING", "AGREED", "DISAGREED",
+                "UNREACHABLE",
+            },
+            "fact_candidate.primary_guardian_decision": {
+                "PENDING", "CONFIRMED_EXISTING_VALUE",
+                "CONFIRMED_PROPOSED_VALUE", "REVISED_VALUE",
+                "CANCELLED_CHANGE",
+            },
+            "fact_candidate.unreachable_reason": {
+                "NO_RESPONSE", "PHONE_UNAVAILABLE",
+                "TEMPORARY_HEALTH_CONDITION", "COMMUNICATION_DIFFICULTY",
+                "OTHER",
+            },
+            "care_relationship.care_management_permission_status": {
+                "NOT_ASKED", "GRANTED", "DENIED", "REVOKED",
+            },
+            "care_record.status": {
+                "ACTIVE", "COMPLETED", "CANCELLED", "SUPERSEDED",
+            },
         }
         for target, expected in required_codes.items():
             if code_map.get(target) != expected:
@@ -286,7 +378,10 @@ def main() -> int:
         mapping_text = "\n".join("\t".join(row) for row in rows)
         if "robot.id" not in mapping_text or "scenario.external_event_id" not in mapping_text:
             fail(errors, "robotId와 시작 eventId의 DB 매핑이 없습니다.")
-        for stale in ["robot.serial_number", "client_event_id", "materialization_key"]:
+        for stale in [
+            "robot.serial_number", "client_event_id", "materialization_key",
+            "conversation.messages",
+        ]:
             if stale in mapping_text:
                 fail(errors, f"삭제된 매핑이 남아 있습니다: {stale}")
 
@@ -303,6 +398,23 @@ def main() -> int:
             fail(errors, f"이전 10테이블 모델 용어가 남아 있습니다: {term}")
     if workbook_has_formulas(workbook):
         fail(errors, "컬럼정의서에 수식이 있습니다. 이 문서는 설명 원본이며 수식에 의존하지 않습니다.")
+
+    if "02_컬럼정의" in tables_by_sheet:
+        _, column_rows = tables_by_sheet["02_컬럼정의"]
+        key_by_column = {f"{row[0]}.{row[2]}": row[6] for row in column_rows}
+        for logical_column in [
+            "fact_candidate.target_entity_id",
+            "fact_candidate.materialized_target_id",
+        ]:
+            if key_by_column.get(logical_column) != "논리 참조":
+                fail(errors, f"다형성 대상이 논리 참조가 아닙니다: {logical_column}")
+        for message_fk in [
+            "onboarding_answer.source_message_id",
+            "fact_candidate.source_message_id",
+            "care_record.source_message_id",
+        ]:
+            if key_by_column.get(message_fk) != "FK":
+                fail(errors, f"메시지 근거가 물리 FK가 아닙니다: {message_fk}")
 
     erd_path = DATABASE_DIR / "mvp-erd.md"
     if not erd_path.exists():
@@ -345,11 +457,70 @@ def main() -> int:
         "robot.serial_number",
         "`scenario.status`",
         "onboarding_answer.client_event_id",
-        "10테이블 MVP",
-        "10개 테이블",
+        "9테이블",
+        "9개 테이블",
+        "74컬럼",
+        "conversation.messages",
     ]:
         if stale in contract_text:
             fail(errors, f"연계 문서에 이전 DB 매핑이 남아 있습니다: {stale}")
+
+    question_set_path = DATABASE_DIR / "onboarding-question-set-v1.json"
+    if not question_set_path.exists():
+        fail(errors, f"온보딩 질문 계약이 없습니다: {question_set_path}")
+    else:
+        try:
+            question_set = json.loads(question_set_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            fail(errors, f"온보딩 질문 JSON을 파싱할 수 없습니다: {exc}")
+        else:
+            if question_set.get("version") != "onboarding-v1":
+                fail(errors, "질문 계약 version이 onboarding-v1이 아닙니다.")
+            questions = question_set.get("questions") or []
+            question_codes = [question.get("code") for question in questions]
+            if duplicate_values(question_codes):
+                fail(errors, f"중복 질문 코드가 있습니다: {sorted(duplicate_values(question_codes))}")
+            required_fields = {
+                "code", "required", "channels", "targetDomain", "targetType",
+                "requiredFields", "sensitive", "requiresConfirmation",
+                "prerequisiteConsent", "appControl", "robotPrompt",
+                "clarification", "answerSchema", "materialization",
+            }
+            for question in questions:
+                missing = required_fields - set(question)
+                if missing:
+                    fail(errors, f"질문 속성 누락: {question.get('code')}: {sorted(missing)}")
+                if set(question.get("channels") or []) != {"APP", "ROBOT"}:
+                    fail(errors, f"양 채널을 허용하지 않는 질문: {question.get('code')}")
+                if question.get("sensitive") and not question.get("requiresConfirmation"):
+                    fail(errors, f"민감 질문이 최종 확인을 요구하지 않음: {question.get('code')}")
+            required_codes = {
+                "PERSONALIZATION_CONSENT", "HEALTH_DATA_CONSENT",
+                "SCHEDULE_CONSENT", "GUARDIAN_SHARING_CONSENT",
+                "PREFERRED_NAME", "DAILY_ROUTINE", "MEDICATION",
+                "MEDICATION_SCHEDULE", "APPOINTMENT",
+                "PRIMARY_GUARDIAN_CARE_MANAGEMENT_CONSENT",
+            }
+            if set(question_codes) != required_codes:
+                fail(errors, f"질문 코드 목록이 다릅니다: {sorted(question_codes)}")
+
+    policy_tokens = {
+        "앱·로봇 채널 전환": ["started_channel", "answered_channel"],
+        "질문 세트 버전": ["question_set_version", "onboarding-v1"],
+        "PRIMARY 전용 권한": ["care_management_permission_status", "SECONDARY"],
+        "충돌 협의": ["GUARDIAN_OVERRIDE_CONFIRMED", "senior_position"],
+        "연락 불가": ["unreachable_reason", "contact_attempt_count"],
+        "민감정보 확인": ["SENSITIVE_INFORMATION_CONFIRMATION", "confirmed_value"],
+        "중복 반영 방지": ["source_candidate_id", "materialized_at"],
+        "Raw 삭제 안전": ["ON DELETE SET NULL", "보존기간"],
+    }
+    policy_text = workbook_text + "\n" + contract_text
+    if question_set_path.exists():
+        policy_text += "\n" + question_set_path.read_text(encoding="utf-8")
+    for policy, tokens in policy_tokens.items():
+        missing = [token for token in tokens if token not in policy_text]
+        if missing:
+            fail(errors, f"정책 추적 근거 부족({policy}): {missing}")
 
     try:
         expected_snapshots = build_snapshots(workbook)
@@ -392,8 +563,8 @@ def main() -> int:
 
     print("컬럼정의서 검증 완료")
     print("- 시트 10개")
-    print("- 물리 테이블 9개")
-    print("- 컬럼 74개")
+    print("- 물리 테이블 12개")
+    print("- 컬럼 151개")
     print("- 목적형 CSV 스냅샷 9개")
     print("- Jira·승인·입력목록·검증결과 시트 없음")
     print("- 컬럼별 의미·사용 맥락·주의·예시 누락 및 동일 문장 반복 없음")

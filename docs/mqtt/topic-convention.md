@@ -61,7 +61,7 @@ bomi/v1/robot/+/results
 
 `scenarioId`와 `robotId`는 각각 PostgreSQL `scenario.id`, `robot.id` UUID의 표준 문자열 표현입니다. `eventId`와 `commandId`는 생산자가 만든 최대 64자의 불투명 식별자로, 팀이 확정한 UUIDv4/v7 또는 ULID 형식을 사용하고 재전송 시 원문을 유지합니다. 서로 다른 종류의 ID를 같은 값으로 재사용하지 않습니다.
 
-현재 9테이블 ERD에는 모든 `eventId`, `commandId`, 진행 `sequence`를 저장할 원장이 없습니다. 시나리오 시작 이벤트만 `scenario.external_event_id`에 보관합니다. 따라서 아래 식별자 규칙은 통신 계약이며, Backend 재시작을 넘어선 전역 중복 제거까지 DB가 보장한다는 뜻은 아닙니다.
+현재 12테이블 ERD에도 모든 `eventId`, `commandId`, 진행 `sequence`를 저장할 통신 원장은 없습니다. 시나리오 시작 이벤트만 `scenario.external_event_id`에 보관합니다. `fact_candidate`의 물리 반영 멱등성은 후보 잠금, `materialized_at`, 최종 테이블 `source_candidate_id` 유일성으로 보장하지만 MQTT 수신 원장을 대신하지 않습니다. 따라서 아래 식별자 규칙은 통신 계약이며 Backend 재시작을 넘어선 모든 메시지 중복 제거를 DB가 보장한다는 뜻은 아닙니다.
 
 ## 5. IoT 센서 이벤트
 
@@ -378,19 +378,19 @@ Backend는 `(commandId, sequence)`를 기준으로 진행 상태를 적용합니
 
 | 필드 | 필수 | 설명 |
 | --- | --- | --- |
-| `eventId` | 예 | 같은 답변 전송을 식별하는 통신 ID. 현재 최소 ERD에는 저장 컬럼이 없음 |
+| `eventId` | 예 | 같은 답변 전송을 식별하는 통신 ID. 현재 12테이블 ERD에는 수신 이벤트 원장 컬럼이 없음 |
 | `robotId` | 예 | 토픽의 `{robotId}`와 동일하며 세션의 배정 로봇과 일치 |
 | `type` | 예 | `ONBOARDING_ANSWER_CAPTURED` 고정 |
-| `occurredAt` | 예 | 답변이 캡처된 시각. 현재 최소 ERD에는 별도 저장 컬럼이 없음 |
+| `occurredAt` | 예 | 답변이 캡처된 시각. 검증 후 `onboarding_answer.answered_at`에 저장 |
 | `payload.sessionId` | 예 | `onboarding_session.id` UUID |
-| `payload.questionCode` | 예 | 애플리케이션 질문 사전의 허용 문항 코드 |
+| `payload.questionCode` | 예 | 세션의 버전 관리 질문 계약에 정의된 문항 코드 |
 | `payload.sourceConversationId` | 아니오 | 단기 원문 출처 conversation UUID |
-| `payload.sourceMessageId` | 아니오 | conversation JSON의 논리 messageId |
+| `payload.sourceMessageId` | 아니오 | `conversation_message.id` UUID. Raw 삭제 시 답변 FK는 `SET NULL` |
 | `payload.verificationStatus` | 예 | `UNVERIFIED`, `AUTO_ACCEPTED`, `USER_CONFIRMED`, `GUARDIAN_CONFIRMED`, `REJECTED` |
 
-Backend는 토픽/메시지 `robotId`가 세션의 `robot_id`와 일치하고 세션이 아직 종료되지 않았는지 먼저 검사합니다. 저장할 때 `session_id`, `source_conversation_id`, `question_code`, `verification_status`만 `onboarding_answer`에 반영합니다. 현재 ERD에는 `eventId`와 수정 순번 컬럼이 없으므로 재시작을 넘어선 답변 멱등성과 수정 이력은 보장하지 않습니다.
+Backend는 토픽/메시지 `robotId`가 세션의 `robot_id`와 일치하고 세션이 `IN_PROGRESS`인지 먼저 검사합니다. 질문 코드는 `question_set_version`의 질문 계약에서 검증합니다. 실제 답변은 앱과 같은 JSON 구조로 정규화해 `onboarding_answer.answer_value`에 반영하고 채널·응답자·근거·확인 시각을 함께 기록합니다. `UNIQUE(session_id, question_code)`로 질문별 현재 답변 하나를 유지합니다. MQTT `eventId` 수신 원장이 없으므로 이벤트 자체의 재시작 후 전역 중복 제거는 보장하지 않습니다.
 
-전체 STT, 원본·인코딩 음성, 토큰, 전체 프롬프트·모델 응답은 MQTT에 포함하지 않습니다. 실제 답변 텍스트는 `sourceConversationId`와 `sourceMessageId`로 `conversation.messages`에서 찾습니다.
+전체 STT, 원본·인코딩 음성, 토큰, 전체 프롬프트·모델 응답은 MQTT에 포함하지 않습니다. 실제 답변 텍스트는 `sourceConversationId`와 `sourceMessageId`로 `conversation_message`에서 찾습니다. 민감정보이거나 누락·모호·낮은 인식 신뢰도가 있는 값은 `fact_candidate`로 보내고 최종 확인된 `confirmed_value`만 업무 원본에 반영합니다.
 
 ## 9. Robot 최종 결과
 
@@ -495,8 +495,8 @@ Backend는 `CANCEL_RESULT`를 별도 명령 결과로 기록하고 시나리오�
 - 알 수 없는 `type`, `status`, `outcome`은 임의로 성공 처리하지 않습니다.
 - `occurredAt`이 파싱되지 않거나 필수 필드가 없으면 오류 로그를 남기고 폐기합니다.
 - 생산자는 같은 논리 사건을 재전송할 때 같은 `eventId`를 유지합니다.
-- Backend는 시나리오 시작 이벤트의 `eventId`를 `scenario.external_event_id`에 저장합니다. 다른 이벤트는 현재 최소 ERD에 보존하지 않습니다.
-- Backend는 온보딩 세션의 `robot_id`, `senior_id`, 종료 시각과 애플리케이션 질문 사전의 허용 코드를 검증한 뒤 답변을 저장합니다.
+- Backend는 시나리오 시작 이벤트의 `eventId`를 `scenario.external_event_id`에 저장합니다. 다른 통신 이벤트는 현재 12테이블 ERD에 수신 원장으로 보존하지 않습니다.
+- Backend는 온보딩 세션의 `robot_id`, `senior_id`, `status`, `question_set_version`과 해당 버전 질문 계약의 허용 코드를 검증한 뒤 답변을 저장합니다.
 - 로그에 전체 `audioUri`, 인증 토큰이나 개인정보를 기록하지 않습니다.
 - 운영 MQTT는 인증과 TLS를 적용합니다. 실제 인증정보는 저장소에 커밋하지 않습니다.
 - Robot은 이미 처리한 `commandId`를 재실행하지 않습니다. Backend의 재시작을 넘어선 QoS 1 중복 제거는 별도 원장을 추가하기 전에는 보장하지 않습니다.
@@ -519,7 +519,7 @@ Backend는 `CANCEL_RESULT`를 별도 명령 결과로 기록하고 시나리오�
 - [ ] 네 구독 패턴과 Robot 명령 토픽을 설정함
 - [ ] `robotId`가 `robot.id` UUID와 일치하는지 검증함
 - [ ] 시나리오 시작 `eventId`를 `scenario.external_event_id`에 연결함
-- [ ] 현재 9테이블 모델에서 저장하지 않는 `commandId`, 기타 `eventId`, `sequence`를 영속화했다고 가정하지 않음
+- [ ] 현재 12테이블 모델에서도 저장하지 않는 `commandId`, 기타 `eventId`, `sequence`를 영속화했다고 가정하지 않음
 - [ ] 온보딩 세션의 로봇·시니어·종료 시각·question code를 검증함
 - [ ] 재시작 후 중복·재발행 시험에서 필요성이 확인되면 Outbox와 수신 이벤트 원장을 추가함
 - [ ] 만료·실패·순서 역전 결과를 처리함

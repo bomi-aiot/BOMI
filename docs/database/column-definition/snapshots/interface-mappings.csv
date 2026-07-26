@@ -1,14 +1,16 @@
 ﻿계약 필드,방향,의미,DB 매핑,저장 여부,메모
-robotId,Robot ↔ Backend,대상 로봇 식별,robot.id,저장,UUID 표준 문자열. 토픽과 payload가 같아야 함
-scenarioId,Backend ↔ Robot/AI,시나리오 전체 상관관계,scenario.id,저장,UUID 표준 문자열
-시작 eventId,IoT → Backend,시나리오를 만든 감지 이벤트,scenario.external_event_id,저장,같은 시작 사건 재전송 시 같은 값
-기타 eventId,Robot/IoT → Backend,진행·결과 메시지 식별,매핑 없음,미저장,현재 최소 ERD는 재시작 후 전역 중복 제거를 보장하지 않음
-commandId,Backend ↔ Robot,명령과 결과 상관관계,매핑 없음,미저장,Robot은 자체 중복 방지. Backend 영속 Outbox는 FUTURE
-requestId,Backend ↔ AI,외부 AI 작업 상관관계,매핑 없음,미저장,AI 서비스가 자체 중복 요청을 식별
-sessionId,Robot ↔ Backend,온보딩 진행 상관관계,onboarding_session.id,저장,UUID 표준 문자열
-questionCode,Robot → Backend,온보딩 질문 식별,onboarding_answer.question_code,저장,문구가 아닌 애플리케이션 질문 사전 코드
-sourceConversationId,Robot/Backend,답변·기억·돌봄의 근거 대화,onboarding_answer/memory/care_record.source_conversation_id,저장,conversation.id UUID
-sourceMessageId,Robot/Backend,정확한 근거 발화,care_record.source_message_id,조건부 저장,conversation.messages[].id 논리 참조
-temperatureC,Robot/IoT → Backend,최신 실내 온도,robot.ambient_temperature_c,최신값 저장,ambient_observed_at보다 오래된 값은 무시
-humidityPercent,Robot/IoT → Backend,최신 실내 습도,robot.ambient_humidity_percent,최신값 저장,온도·관측 시각과 한 스냅샷으로 갱신
-최종 대화 텍스트,Backend ↔ Robot/AI,시니어·로봇 발화,conversation.messages,저장,음성 바이너리·전체 모델 응답은 미저장
+robotId,Robot ↔ Backend,대상 로봇 식별,robot.id,저장,토픽과 payload UUID 일치
+scenarioId,Backend ↔ Robot/AI,시나리오 상관관계,scenario.id,저장,UUID 표준 문자열
+시작 eventId,IoT → Backend,시나리오 시작 사건,scenario.external_event_id,저장,같은 사건 재전송은 같은 값
+기타 eventId·commandId·sequence,Robot/IoT ↔ Backend,통신 멱등·순서 키,매핑 없음,미저장,현재 수신 원장·Outbox 없음
+sessionId,App/Robot ↔ Backend,온보딩 진행,onboarding_session.id,저장,양 채널이 같은 세션 재개
+questionSetVersion,Backend → App/Robot,질문 계약 버전,onboarding_session.question_set_version,저장,onboarding-question-set-v1.json
+questionCode,App/Robot → Backend,질문 식별,onboarding_answer.question_code,저장,양 채널 동일 코드
+answerValue,App/Robot → Backend,정규화 답변,onboarding_answer.answer_value,저장,질문별 동일 JSON Schema
+sourceConversationId,Robot/Backend,근거 대화,onboarding_answer/fact_candidate/memory/care_record.source_conversation_id,조건부 저장,conversation.id
+sourceMessageId,Robot/Backend,근거 발화,onboarding_answer/fact_candidate/care_record.source_message_id,조건부 저장,conversation_message.id; Raw 삭제 SET NULL
+최종 대화 텍스트,Robot/AI → Backend,한 번의 발화,conversation_message.content,저장,음성·전체 프롬프트 미저장
+대화 요약,Backend/AI,대화·일간 문맥 압축,conversation_summary.content,저장,CONVERSATION 또는 DAILY
+확인 전 추출 사실,App/AI → Backend,재질의·확인 대상,fact_candidate.proposed_value,임시 저장,confirmed_value만 최종 반영
+temperatureC,Robot/IoT → Backend,최신 실내 온도,robot.ambient_temperature_c,최신값 저장,과거 관측 역덮어쓰기 금지
+humidityPercent,Robot/IoT → Backend,최신 실내 습도,robot.ambient_humidity_percent,최신값 저장,온도·관측시각과 함께 갱신
