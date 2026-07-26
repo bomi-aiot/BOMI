@@ -1,0 +1,20 @@
+# Profile-scoped test configuration ("datajpa"): an in-memory H2 database
+# (PostgreSQL compatibility mode) so @DataJpaTest slices can validate JPA
+# mappings without a live PostgreSQL instance. Activated only on tests annotated
+# with @ActiveProfiles("datajpa"); it is layered ON TOP of the base
+# application.yml so the main springdoc/etc. configuration is preserved for other
+# tests (e.g. OpenApiDocumentationTest). See notes on H2/PostgreSQL type
+# differences in the PR.
+spring:
+  datasource:
+    url: jdbc:h2:mem:bomi;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
