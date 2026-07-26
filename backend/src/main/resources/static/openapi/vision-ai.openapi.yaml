@@ -38,7 +38,7 @@ paths:
                 summary: 현관 사람 인식 요청
                 value:
                   requestId: 01K0M50M89A3C7D2F5G8H1J4NP
-                  scenarioId: 01K0M4Y80XD4J7C2H6P9N5Q3RS
+                  scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
                   robotId: robot-01
                   scenarioType: HOMECOMING_WELCOME
                   requestedAt: '2026-07-21T10:30:16+09:00'
@@ -54,7 +54,7 @@ paths:
                 accepted:
                   value:
                     requestId: 01K0M50M89A3C7D2F5G8H1J4NP
-                    scenarioId: 01K0M4Y80XD4J7C2H6P9N5Q3RS
+                    scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
                     acceptedAt: '2026-07-21T10:30:16.120+09:00'
                     duplicate: false
         '400':
@@ -107,10 +107,11 @@ components:
           example: 01K0M50M89A3C7D2F5G8H1J4NP
         scenarioId:
           type: string
+          format: uuid
           minLength: 1
           maxLength: 64
           description: 귀가 환영 시나리오 식별자
-          example: 01K0M4Y80XD4J7C2H6P9N5Q3RS
+          example: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
         robotId:
           type: string
           minLength: 1
@@ -142,6 +143,7 @@ components:
           type: string
         scenarioId:
           type: string
+          format: uuid
         acceptedAt:
           type: string
           format: date-time

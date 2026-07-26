@@ -1,0 +1,2 @@
+﻿벡터 정의 ID,테이블명,컬럼명,PostgreSQL 타입,벡터 차원,차원 확정 여부,임베딩 대상,임베딩 모델명,모델 버전,거리 함수,정규화 여부,인덱스 유형,operator class,재생성 가능 여부,원본 데이터 참조,민감정보 여부,보존 정책,삭제 연계 정책,객체 상태,최초 도입 버전,최종 변경 Jira,비고
+VEC_MEMORY_EMBEDDING,memory,embedding,vector(<EMBEDDING_DIM>),TBD,N,memory.content의 허용된 자연어 기억,TBD,TBD,TBD,TBD,NONE(정확 검색),N/A,Y,memory.id 및 content,Y,기억 정책,기억 삭제 시 벡터를 NULL 처리하고 purged_at 기록,PLANNED,0.3.0,S15P11E102-84,주소·전화·약 복용량·인증정보·로봇 좌표·생체정보 임베딩 금지

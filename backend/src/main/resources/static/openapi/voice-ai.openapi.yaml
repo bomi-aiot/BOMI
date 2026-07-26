@@ -38,7 +38,7 @@ paths:
                 summary: 사용자 귀가 환영 문장 생성
                 value:
                   requestId: 01K0M517K2B6D9F4G8H1J3N5QR
-                  scenarioId: 01K0M4Y80XD4J7C2H6P9N5Q3RS
+                  scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
                   robotId: robot-01
                   scenarioType: HOMECOMING_WELCOME
                   locale: ko-KR
@@ -58,7 +58,7 @@ paths:
                 generated:
                   value:
                     requestId: 01K0M517K2B6D9F4G8H1J3N5QR
-                    scenarioId: 01K0M4Y80XD4J7C2H6P9N5Q3RS
+                    scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
                     utteranceId: utt-01K0M519WQ
                     text: 길동님, 어서 오세요.
                     generatedAt: '2026-07-21T10:30:20+09:00'
@@ -180,6 +180,7 @@ components:
           description: Backend가 생성하는 대화·음성 HTTP 요청 멱등 키
         scenarioId:
           type: string
+          format: uuid
           minLength: 1
           maxLength: 64
         robotId:
@@ -237,6 +238,7 @@ components:
           description: 요청의 `requestId`와 동일
         scenarioId:
           type: string
+          format: uuid
         utteranceId:
           type: string
           minLength: 1
