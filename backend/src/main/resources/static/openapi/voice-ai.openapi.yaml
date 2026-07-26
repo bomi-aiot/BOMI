@@ -39,12 +39,12 @@ paths:
                 value:
                   requestId: 01K0M517K2B6D9F4G8H1J3N5QR
                   scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
-                  robotId: robot-01
+                  robotId: 7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
                   scenarioType: HOMECOMING_WELCOME
                   locale: ko-KR
                   requestedAt: '2026-07-21T10:30:19+09:00'
                   context:
-                    userId: user-3
+                    userId: a2b64af3-5ee5-42ea-98c5-35ac9de10570
                     displayName: 길동
                     location: ENTRANCE
       responses:
@@ -185,6 +185,7 @@ components:
           maxLength: 64
         robotId:
           type: string
+          format: uuid
           minLength: 1
           maxLength: 64
           description: 음성을 재생할 Robot 식별자
@@ -210,6 +211,7 @@ components:
       properties:
         userId:
           type: string
+          format: uuid
           nullable: true
           description: 사용자를 식별한 경우의 내부 사용자 ID
         displayName:

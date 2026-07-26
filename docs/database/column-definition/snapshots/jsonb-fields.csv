@@ -1,5 +1,7 @@
 ﻿대상 컬럼,용도,기본 구조,필수 키,허용 값·예시,금지 데이터,변경 규칙
-app_user.conversation_preferences,대화 스타일 선호,"{""speechRate"":""SLOW"",""volume"":""LOUD"",""repeatWhenUnclear"":true}",없음; 허용 키만 사용,"speechRate, volume 등 제품 정책 코드","건강·취미·가족 사실, 인증정보",새 키는 소비 API와 기본값을 함께 정의
-conversation.messages,순서가 있는 최종 텍스트 발화,"[{""id"":""UUID"",""role"":""SENIOR"",""content"":""..."",""occurredAt"":""ISO-8601""}]","각 항목 id, role, content, occurredAt",role=SENIOR|ROBOT,"음성·영상 바이너리, 전체 프롬프트, 토큰",메시지 구조 변경 시 기존 대화 읽기 호환성 유지
-care_record.details,record_type별 구조화 내용과 출처·확인 정보,"{""summary"":""..."",""sourceType"":""USER"",""verificationStatus"":""USER_CONFIRMED""}",summary; 유형에 따라 sourceType·observedAt 등,"sourceType, verificationStatus, restState, comfortAssessment","외부 API 전문, 모델 원본, 무관한 임의 필드",record_type별 JSON Schema를 API 구현과 함께 관리
-care_record.recurrence,반복 일정 규칙,"{""frequency"":""WEEKLY"",""daysOfWeek"":[""MON"",""THU""],""time"":""09:00""}",frequency; 주간이면 daysOfWeek,frequency=DAILY|WEEKLY,"자유 문장 반복 규칙, 이미 계산된 모든 미래 일정",반복 없는 기록은 빈 객체가 아니라 null
+app_user.conversation_preferences,대화 스타일,"{""speechRate"":""SLOW"",""volume"":""LOUD"",""repeatWhenUnclear"":true}",없음; 허용 키만 사용,speechRate·volume 등 제품 코드,건강·취미·가족 사실·인증정보,소비 API와 기본값을 함께 변경
+onboarding_answer.answer_value,질문별 채널 독립 정규화 답변,질문 계약 answerSchema,계약의 requiredFields,질문 코드별 JSON Schema,음성·전체 STT·무관한 후보 상태,앱과 로봇이 같은 구조 사용
+fact_candidate.proposed_value,아직 확인 전 구조화 후보,fact_type별 JSON Schema,추출 가능한 필드,질문 계약·care record schema,전체 대화·의학적 계산 결과,최종 반영 뒤 보존·비식별 정책 적용
+fact_candidate.confirmed_value,사람이 최종 확인한 값,proposed_value와 같은 fact_type schema,최종 저장 필수 필드,확인자가 승인한 정규화 값,확인 전 값·협의 메모,이 값만 최종 원본에 반영
+care_record.details,record_type별 확정 돌봄 사실,"{""medicationName"":""..."",""dose"":1,""doseUnit"":""정""}",record_type별 필수 키,sourceType·verificationStatus 등,외부 API 전문·모델 원본·미확정 값,record_type별 JSON Schema 관리
+care_record.recurrence,반복 일정 규칙,"{""frequency"":""WEEKLY"",""daysOfWeek"":[""MON""],""time"":""09:00""}",frequency; 유형별 보조 키,DAILY·WEEKLY,모든 미래 일정을 펼친 배열,반복 없으면 null
