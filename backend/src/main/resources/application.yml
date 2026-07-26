@@ -26,17 +26,22 @@ management:
 springdoc:
   api-docs:
     enabled: true
-  enable-default-api-docs: false
+  group-configs:
+    - group: bomi-backend
+      display-name: BOMI Backend API
+      packages-to-scan: com.ssafy.bomi
   swagger-ui:
     enabled: true
     path: /swagger-ui.html
     disable-swagger-default-url: true
     supported-submit-methods: []
     urls:
+      - name: BOMI Backend API
+        url: /v3/api-docs/bomi-backend
       - name: AI Vision Recognition API
         url: /openapi/vision-ai.openapi.yaml
       - name: AI Vision Result Callback API
         url: /openapi/vision-callback.openapi.yaml
       - name: Conversation and Voice AI API
         url: /openapi/voice-ai.openapi.yaml
-    urls-primary-name: AI Vision Recognition API
+    urls-primary-name: BOMI Backend API
