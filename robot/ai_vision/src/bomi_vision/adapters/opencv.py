@@ -7,7 +7,11 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from bomi_vision.domain import PersonDetection
+from bomi_vision.domain import (
+    PersonDetection,
+    VisionPositionResult,
+    VisionResultStatus,
+)
 
 Frame = NDArray[np.uint8]
 
@@ -59,12 +63,18 @@ class OpenCVDebugView:
         """
         self._window_name = window_name
 
-    def show(self, frame: Frame, detections: Sequence[PersonDetection]) -> bool:
+    def show(
+        self,
+        frame: Frame,
+        detections: Sequence[PersonDetection],
+        result: VisionPositionResult,
+    ) -> bool:
         """현재 프레임에 모든 사람의 박스와 신뢰도를 표시한다.
 
         Args:
             frame: 표시할 OpenCV BGR 이미지.
             detections: 화면에 그릴 모든 사람 탐지 결과.
+            result: 사람 수 상태와 한 명일 때의 화면 기준 위치.
 
         Returns:
             사용자가 ``q`` 키를 눌렀으면 ``False``, 아니면 ``True``.
@@ -87,8 +97,41 @@ class OpenCVDebugView:
                 2,
                 cv2.LINE_AA,
             )
+        self._draw_position_result(frame, result)
         cv2.imshow(self._window_name, frame)
         return cv2.waitKey(1) & 0xFF != ord("q")
+
+    @staticmethod
+    def _draw_position_result(
+        frame: Frame,
+        result: VisionPositionResult,
+    ) -> None:
+        """상태와 사용 가능한 위치값을 디버그 프레임에 표시한다."""
+        lines = [f"status: {result.status.value}"]
+        if result.status is VisionResultStatus.USER_DETECTED:
+            if result.position is None:
+                raise ValueError("Detected user result must include a position.")
+            lines.extend(
+                [
+                    f"offset_x: {result.position.offset_x:.2f}",
+                    f"offset_y: {result.position.offset_y:.2f}",
+                    f"height_ratio: {result.position.height_ratio:.2f}",
+                ]
+            )
+        elif result.status is VisionResultStatus.MULTIPLE_PEOPLE:
+            lines.append(f"person_count: {result.person_count}")
+
+        for line_index, line in enumerate(lines):
+            cv2.putText(
+                frame,
+                line,
+                (10, 25 + line_index * 24),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
 
     def close(self) -> None:
         """이 프로세스가 생성한 모든 OpenCV 창을 닫는다."""
