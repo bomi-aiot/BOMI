@@ -26,6 +26,16 @@ API_EXAMPLES = {
         "밤에 잠이 안 와서 힘들어", "혼자 있으니 쓸쓸하네",
         "누구랑 얘기라도 하고 싶은데", "얘기할 사람이 없네", "말동무가 없어서 심심해",
     ],
+    "medical_lookup": [
+        "타이레놀 먹어도 되나요", "이 약 노인이 먹어도 되나",
+        "이 약이랑 저 약 같이 먹어도 되나요", "약 같이 먹어도 괜찮은지 봐줘",
+        "혈압약이랑 이거 같이 먹어도 돼?", "이 약 먹고 저것도 먹어도 되나",
+        "근처 병원 좀 알려줘", "여기서 가까운 병원 어디야",
+        "약국 어디 있어", "제일 가까운 약국 알려줘",
+        "동네 병원 좀 찾아줘", "병원 위치 좀 알려줄래",
+        "이 약 부작용 있어?", "이 약 먹어도 안전한가",
+        "약 처방받은 거 확인 좀 해줘",
+    ],
 }
 
 _category_embeddings = {
@@ -36,18 +46,16 @@ _category_embeddings = {
 THRESHOLD = 0.6  # 테스트하면서 조정
 
 
-def choose_backend(text: str) -> tuple[str, float]:
-    """텍스트를 보고 'local' 또는 'api'를 반환한다."""
-    # 1차: 날씨/시간/날짜는 판단 없이 바로 로컬
+def choose_backend(text: str) -> tuple[str, str | None, float]:
+    """텍스트를 보고 (backend, category, score)를 반환한다."""
     if any(kw in text for kw in DETERMINISTIC_KEYWORDS):
-        return "local", 0.0
+        return "local", None, 0.0
 
-    # 2차: 나머지는 유사도 매칭
     text_emb = _model.encode(text, convert_to_tensor=True)
     best_sim = 0.0
     for cat, cat_embs in _category_embeddings.items():
         max_sim = util.cos_sim(text_emb, cat_embs).max().item()
         if max_sim >= THRESHOLD:
-            return "api", max_sim
+            return "api", cat, max_sim
         best_sim = max(best_sim, max_sim)
-    return "local", best_sim
+    return "local", None, best_sim
