@@ -3,11 +3,12 @@ package com.ssafy.bomi.user.domain;
 /**
  * Onboarding progress of an {@link AppUser}.
  *
- * <p>Only {@code NOT_STARTED} is confirmed by the SQL default; the remaining
- * values are provisional and must be reconciled with the finalized ERD.</p>
+ * <p>Values follow the {@code APP_USER_ENUM} code dictionary of the MVP ERD
+ * ({@code onboarding_status}); {@code NOT_STARTED} is the SQL default.</p>
  */
 public enum OnboardingStatus {
     NOT_STARTED,
     IN_PROGRESS,
-    COMPLETED
+    COMPLETED,
+    DECLINED
 }
