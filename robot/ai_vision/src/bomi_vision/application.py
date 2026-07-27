@@ -2,6 +2,7 @@
 
 from bomi_vision.adapters.detection import UltralyticsPersonDetector
 from bomi_vision.adapters.opencv import OpenCVCamera, OpenCVDebugView
+from bomi_vision.position import calculate_vision_position
 
 
 def run_person_detection(
@@ -21,12 +22,22 @@ def run_person_detection(
 
     Side Effects:
         카메라를 읽고 화면을 표시하며, 종료 시 모든 자원을 정리한다.
+
+    Note:
+        카메라에서 읽은 원본 프레임을 좌우 반전하지 않고 탐지, 위치 계산,
+        디버그 표시에 동일하게 사용한다.
     """
     try:
         while True:
             frame = camera.read()
             detections = detector.detect(frame)
-            if not view.show(frame, detections):
+            frame_height, frame_width = frame.shape[:2]
+            result = calculate_vision_position(
+                detections,
+                frame_width=frame_width,
+                frame_height=frame_height,
+            )
+            if not view.show(frame, detections, result):
                 break
     finally:
         camera.release()
