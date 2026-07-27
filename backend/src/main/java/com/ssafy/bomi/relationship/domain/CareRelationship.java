@@ -19,7 +19,14 @@ import lombok.NoArgsConstructor;
  * {@code care_relationship}).
  *
  * <p>Aggregate root. {@code senior_id} and {@code guardian_id} are role-named raw
- * {@link UUID} references to {@code app_user}; the SQL declares no foreign key.</p>
+ * {@link UUID} references to {@code app_user}; no physical foreign key is
+ * declared, per the raw-UUID convention.</p>
+ *
+ * <p>The care-management permission (§7 of the MVP ERD) governs delegated
+ * confirmation of sensitive information: sensitive proxy actions require a
+ * relationship that is {@code status=ACTIVE}, {@code priority=PRIMARY} and
+ * {@code careManagementPermissionStatus=GRANTED}. A PRIMARY change does not
+ * inherit the previous grant.</p>
  */
 @Entity
 @Table(name = "care_relationship")
@@ -49,6 +56,18 @@ public class CareRelationship {
     @Column(name = "connected_at", nullable = false)
     private OffsetDateTime connectedAt;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "care_management_permission_status", nullable = false, length = 30)
+    private CareManagementPermissionStatus careManagementPermissionStatus =
+        CareManagementPermissionStatus.NOT_ASKED;
+
+    @Column(name = "care_management_permission_updated_at")
+    private OffsetDateTime careManagementPermissionUpdatedAt;
+
+    /** Logical {@code app_user} reference to whoever granted the permission (nullable). */
+    @Column(name = "care_management_permission_granted_by_user_id")
+    private UUID careManagementPermissionGrantedByUserId;
+
     private CareRelationship(UUID seniorId, UUID guardianId, RelationshipPriority priority) {
         this.seniorId = requireNonNull(seniorId, "seniorId");
         this.guardianId = requireNonNull(guardianId, "guardianId");
@@ -66,6 +85,19 @@ public class CareRelationship {
 
     public void changeStatus(RelationshipStatus status) {
         this.status = requireNonNull(status, "status");
+    }
+
+    /** Grants delegated care-management permission, recording who granted it and when. */
+    public void grantCareManagementPermission(UUID grantedByUserId) {
+        this.careManagementPermissionStatus = CareManagementPermissionStatus.GRANTED;
+        this.careManagementPermissionGrantedByUserId = requireNonNull(grantedByUserId, "grantedByUserId");
+        this.careManagementPermissionUpdatedAt = OffsetDateTime.now();
+    }
+
+    /** Updates the permission status (e.g. DENIED / REVOKED), stamping the change time. */
+    public void changeCareManagementPermission(CareManagementPermissionStatus status) {
+        this.careManagementPermissionStatus = requireNonNull(status, "careManagementPermissionStatus");
+        this.careManagementPermissionUpdatedAt = OffsetDateTime.now();
     }
 
     private static <T> T requireNonNull(T value, String field) {

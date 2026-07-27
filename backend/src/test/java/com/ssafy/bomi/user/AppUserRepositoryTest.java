@@ -49,7 +49,7 @@ class AppUserRepositoryTest {
     @Test
     void enumIsStoredAsString() {
         AppUser user = AppUser.create("GUARDIAN", "이보호");
-        user.changeStatus(UserStatus.INACTIVE);
+        user.changeStatus(UserStatus.SUSPENDED);
         AppUser saved = appUserRepository.saveAndFlush(user);
         em.clear();
 
@@ -57,6 +57,6 @@ class AppUserRepositoryTest {
             .createNativeQuery("select status from app_user where id = ?1")
             .setParameter(1, saved.getId())
             .getSingleResult();
-        assertThat(raw.toString()).isEqualTo("INACTIVE");
+        assertThat(raw.toString()).isEqualTo("SUSPENDED");
     }
 }

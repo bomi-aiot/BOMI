@@ -38,14 +38,14 @@ class RobotRepositoryTest {
     @Test
     void recordsAmbientReading() {
         Robot robot = Robot.create(UUID.randomUUID());
-        robot.changeMode(RobotMode.ACTIVE);
+        robot.changeMode(RobotMode.SCENARIO_ACTIVE);
         robot.recordAmbient(new BigDecimal("23.50"), new BigDecimal("48.20"), OffsetDateTime.now());
         Robot saved = robotRepository.saveAndFlush(robot);
         em.clear();
 
         Robot found = robotRepository.findById(saved.getId()).orElseThrow();
         assertThat(found.getSeniorId()).isNotNull();
-        assertThat(found.getCurrentMode()).isEqualTo(RobotMode.ACTIVE);
+        assertThat(found.getCurrentMode()).isEqualTo(RobotMode.SCENARIO_ACTIVE);
         assertThat(found.getAmbientTemperatureC()).isEqualByComparingTo("23.50");
         assertThat(found.getAmbientObservedAt()).isNotNull();
     }

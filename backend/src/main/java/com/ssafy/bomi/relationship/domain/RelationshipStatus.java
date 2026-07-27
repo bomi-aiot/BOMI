@@ -3,10 +3,13 @@ package com.ssafy.bomi.relationship.domain;
 /**
  * Lifecycle status of a {@link CareRelationship}.
  *
- * <p>Only {@code ACTIVE} is confirmed by the SQL default; additional values are
- * provisional and must be reconciled with the finalized ERD.</p>
+ * <p>Values follow the {@code CARE_RELATIONSHIP_ENUM} code dictionary of the MVP
+ * ERD ({@code status}); {@code ACTIVE} is the SQL default.</p>
  */
 public enum RelationshipStatus {
+    PENDING,
     ACTIVE,
-    INACTIVE
+    DISCONNECT_REQUESTED,
+    ENDED,
+    REVOKED
 }
