@@ -6,6 +6,7 @@ from bomi_vision.adapters.detection import validate_confidence
 from bomi_vision.adapters.opencv import OpenCVCamera, OpenCVDebugView
 from bomi_vision.adapters.tracking import UltralyticsByteTracker
 from bomi_vision.application import run_person_tracking
+from bomi_vision.follow import FollowCommandGenerator
 from bomi_vision.tracking import UserTrackingService
 
 # YOLO11의 가장 작은 사전 학습 모델로 노트북 MVP에서 빠른 확인을 우선한다.
@@ -18,6 +19,10 @@ DEFAULT_CONFIDENCE = 0.5
 DEFAULT_TRACKER = "bytetrack.yaml"
 # 30 FPS 기준 약 0.1초의 순간 누락을 흡수하되 오래된 대상을 유지하지 않는다.
 DEFAULT_LOST_TOLERANCE_FRAMES = 3
+# 실제 카메라에서 조정할 초기 수평 중앙 허용 범위다.
+DEFAULT_HORIZONTAL_DEAD_ZONE = 0.15
+# 실제 장비에서 조정할 초기 전진 정지용 화면 높이 비율이다.
+DEFAULT_FORWARD_THRESHOLD = 0.45
 
 
 def parse_camera_index(value: str) -> int:
@@ -71,6 +76,26 @@ def parse_lost_tolerance_frames(value: str) -> int:
     return frames
 
 
+def parse_horizontal_dead_zone(value: str) -> float:
+    """0.0 이상 1.0 미만의 수평 중앙 허용 범위를 파싱한다."""
+    try:
+        dead_zone = float(value)
+        FollowCommandGenerator(dead_zone, DEFAULT_FORWARD_THRESHOLD)
+        return dead_zone
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def parse_forward_threshold(value: str) -> float:
+    """0.0 이상 1.0 이하의 전진 정지 임계값을 파싱한다."""
+    try:
+        threshold = float(value)
+        FollowCommandGenerator(DEFAULT_HORIZONTAL_DEAD_ZONE, threshold)
+        return threshold
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
 def build_parser() -> argparse.ArgumentParser:
     """사람 탐지 실행에 필요한 명령행 파서를 생성한다."""
     parser = argparse.ArgumentParser(description="Detect people from a laptop camera.")
@@ -98,6 +123,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=parse_confidence,
         help="Detection confidence from 0.0 to 1.0 (default: 0.5).",
     )
+    parser.add_argument(
+        "--horizontal-dead-zone",
+        default=DEFAULT_HORIZONTAL_DEAD_ZONE,
+        type=parse_horizontal_dead_zone,
+        help="Centered horizontal offset range (default: 0.15).",
+    )
+    parser.add_argument(
+        "--forward-threshold",
+        default=DEFAULT_FORWARD_THRESHOLD,
+        type=parse_forward_threshold,
+        help="Centered forward stop height ratio (default: 0.45).",
+    )
     return parser
 
 
@@ -112,8 +149,18 @@ def main() -> int:
     try:
         tracker = UltralyticsByteTracker(args.model, args.confidence, args.tracker)
         tracking_service = UserTrackingService(args.lost_tolerance_frames)
+        follow_command_generator = FollowCommandGenerator(
+            args.horizontal_dead_zone,
+            args.forward_threshold,
+        )
         camera = OpenCVCamera(args.camera)
-        run_person_tracking(tracker, tracking_service, camera, OpenCVDebugView())
+        run_person_tracking(
+            tracker,
+            tracking_service,
+            follow_command_generator,
+            camera,
+            OpenCVDebugView(),
+        )
     except (RuntimeError, ValueError) as error:
         # CLI 경계에서 간결한 메시지로 바꾸되 원인은 adapter 예외 연결에 보존한다.
         print(f"Error: {error}")

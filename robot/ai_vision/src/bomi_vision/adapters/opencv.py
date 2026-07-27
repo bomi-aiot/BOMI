@@ -8,6 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from bomi_vision.domain import (
+    FollowCommandResult,
     TrackedPerson,
     TrackingResult,
     TrackingResultStatus,
@@ -68,6 +69,7 @@ class OpenCVDebugView:
         frame: Frame,
         tracked_people: Sequence[TrackedPerson],
         result: TrackingResult,
+        follow_result: FollowCommandResult,
     ) -> bool:
         """현재 프레임에 모든 사람의 박스와 신뢰도를 표시한다.
 
@@ -75,6 +77,7 @@ class OpenCVDebugView:
             frame: 표시할 OpenCV BGR 이미지.
             tracked_people: 화면에 그릴 모든 사람 추적 결과.
             result: 사람 수 상태와 한 명일 때의 화면 기준 위치.
+            follow_result: 실제 모터를 제어하지 않는 추종 희망 명령.
 
         Returns:
             사용자가 ``q`` 키를 눌렀으면 ``False``, 아니면 ``True``.
@@ -97,7 +100,7 @@ class OpenCVDebugView:
                 2,
                 cv2.LINE_AA,
             )
-        self._draw_position_result(frame, result)
+        self._draw_position_result(frame, result, follow_result)
         cv2.imshow(self._window_name, frame)
         return cv2.waitKey(1) & 0xFF != ord("q")
 
@@ -105,9 +108,14 @@ class OpenCVDebugView:
     def _draw_position_result(
         frame: Frame,
         result: TrackingResult,
+        follow_result: FollowCommandResult,
     ) -> None:
         """상태와 사용 가능한 위치값을 디버그 프레임에 표시한다."""
-        lines = [f"status: {result.status.value}"]
+        lines = [
+            f"status: {result.status.value}",
+            f"follow_command: {follow_result.command.value}",
+            f"follow_reason: {follow_result.reason}",
+        ]
         if result.status is TrackingResultStatus.TRACKING:
             if result.position is None:
                 raise ValueError("Tracking result must include a position.")

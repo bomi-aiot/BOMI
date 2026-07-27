@@ -7,6 +7,8 @@ import pytest
 from bomi_vision.main import (
     parse_camera_index,
     parse_confidence,
+    parse_forward_threshold,
+    parse_horizontal_dead_zone,
     parse_lost_tolerance_frames,
 )
 
@@ -50,3 +52,29 @@ def test_rejects_invalid_lost_tolerance(value: str) -> None:
     """음수이거나 정수가 아닌 누락 허용 프레임 수를 거부한다."""
     with pytest.raises(argparse.ArgumentTypeError):
         parse_lost_tolerance_frames(value)
+
+
+@pytest.mark.parametrize("value", ["0", "0.15", "0.999"])
+def test_accepts_horizontal_dead_zone(value: str) -> None:
+    """0.0 이상 1.0 미만인 수평 중앙 범위를 허용한다."""
+    assert parse_horizontal_dead_zone(value) == float(value)
+
+
+@pytest.mark.parametrize("value", ["-0.1", "1", "wide"])
+def test_rejects_invalid_horizontal_dead_zone(value: str) -> None:
+    """범위 밖이거나 숫자가 아닌 수평 중앙 범위를 거부한다."""
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_horizontal_dead_zone(value)
+
+
+@pytest.mark.parametrize("value", ["0", "0.45", "1"])
+def test_accepts_forward_threshold(value: str) -> None:
+    """경곗값을 포함한 유효한 전진 정지 임계값을 허용한다."""
+    assert parse_forward_threshold(value) == float(value)
+
+
+@pytest.mark.parametrize("value", ["-0.1", "1.1", "near"])
+def test_rejects_invalid_forward_threshold(value: str) -> None:
+    """범위 밖이거나 숫자가 아닌 전진 정지 임계값을 거부한다."""
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_forward_threshold(value)
