@@ -11,6 +11,7 @@ import com.ssafy.bomi.mqtt.outbound.RobotCommand;
 import com.ssafy.bomi.mqtt.outbound.RobotCommandPublisher;
 import com.ssafy.bomi.mqtt.outbound.RobotCommandType;
 import com.ssafy.bomi.robot.domain.Robot;
+import com.ssafy.bomi.robot.domain.RobotMode;
 import com.ssafy.bomi.robot.repository.RobotRepository;
 import com.ssafy.bomi.scenario.config.HomecomingProperties;
 import com.ssafy.bomi.scenario.domain.Scenario;
@@ -141,11 +142,15 @@ class HomecomingOrchestratorTest {
     void arrivalAfterReturnCompletesScenario() {
         Scenario scenario = scenarioAt(ScenarioStatus.RETURNING_TO_DEFAULT);
         UUID scenarioId = scenario.getId();
+        Robot robot = robot();
+        robot.changeMode(RobotMode.SCENARIO_ACTIVE);
         when(scenarioRepository.findById(scenarioId)).thenReturn(Optional.of(scenario));
+        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot));
 
         orchestrator.onRobotArrived(scenarioId);
 
         assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.COMPLETED);
+        assertThat(robot.getCurrentMode()).isEqualTo(RobotMode.IDLE); // mode synced on completion
         verifyNoInteractions(commandPublisher);
     }
 
