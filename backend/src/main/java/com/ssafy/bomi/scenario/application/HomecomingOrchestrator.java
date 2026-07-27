@@ -69,6 +69,7 @@ public class HomecomingOrchestrator {
         Scenario scenario = Scenario.create(seniorId, robot.getId(), ScenarioType.HOMECOMING, sensorId);
         scenario.beginMovingToEntrance();
         scenarioRepository.save(scenario);
+        syncRobotMode(robot, scenario);
 
         publishNavigate(scenario.getId(), robot, HomecomingContract.TARGET_ENTRANCE);
         log.info("Homecoming started: scenarioId={}, seniorId={}, robot={}",
@@ -91,11 +92,14 @@ public class HomecomingOrchestrator {
                 publishSpeak(scenario.getId(), robot, DEFAULT_GREETING);
                 scenario.beginConversation();
                 scenarioRepository.save(scenario);
+                syncRobotMode(robot, scenario);
                 conversationGateway.startConversation(scenario.getId(), scenario.getSeniorId());
             }
             case RETURNING_TO_DEFAULT -> {
+                Robot robot = requireRobot(scenario.getRobotId());
                 scenario.complete();
                 scenarioRepository.save(scenario);
+                syncRobotMode(robot, scenario);
                 log.info("Homecoming completed: scenarioId={}", scenario.getId());
             }
             default -> log.warn("Arrival ignored for scenario in status {}: scenarioId={}",
@@ -115,7 +119,14 @@ public class HomecomingOrchestrator {
         scenario.decideReturn();
         scenario.returnToDefault();
         scenarioRepository.save(scenario);
+        syncRobotMode(robot, scenario);
         publishNavigate(scenario.getId(), robot, HomecomingContract.TARGET_DEFAULT);
+    }
+
+    /** Keeps the robot mode in step with the scenario status (SCENARIO_ACTIVE/IDLE/SAFE_STOP). */
+    private void syncRobotMode(Robot robot, Scenario scenario) {
+        robot.changeMode(RobotModePolicy.forScenario(scenario.getFinalStatus()));
+        robotRepository.save(robot);
     }
 
     private Robot requireRobot(UUID robotId) {
