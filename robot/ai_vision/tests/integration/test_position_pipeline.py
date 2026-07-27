@@ -11,10 +11,13 @@ from bomi_vision.adapters.opencv import OpenCVCamera, OpenCVDebugView
 from bomi_vision.adapters.tracking import UltralyticsByteTracker
 from bomi_vision.application import run_person_tracking
 from bomi_vision.domain import (
+    FollowCommand,
+    FollowCommandResult,
     TrackedPerson,
     TrackingResult,
     TrackingResultStatus,
 )
+from bomi_vision.follow import FollowCommandGenerator
 from bomi_vision.tracking import UserTrackingService
 
 pytestmark = pytest.mark.integration
@@ -60,6 +63,7 @@ class RecordingView:
     def __init__(self) -> None:
         """결과와 종료 상태를 초기화한다."""
         self.result: TrackingResult | None = None
+        self.follow_result: FollowCommandResult | None = None
         self.observed_frame: Frame | None = None
         self.closed = False
 
@@ -68,10 +72,12 @@ class RecordingView:
         frame: Frame,
         tracked_people: Sequence[TrackedPerson],
         result: TrackingResult,
+        follow_result: FollowCommandResult,
     ) -> bool:
         """첫 결과를 기록하고 반복을 종료한다."""
         self.observed_frame = frame
         self.result = result
+        self.follow_result = follow_result
         return False
 
     def close(self) -> None:
@@ -88,6 +94,7 @@ def test_pipeline_delivers_position_result_and_releases_resources() -> None:
     run_person_tracking(
         cast(UltralyticsByteTracker, tracker),
         UserTrackingService(2),
+        FollowCommandGenerator(0.15, 0.45),
         cast(OpenCVCamera, camera),
         cast(OpenCVDebugView, view),
     )
@@ -97,6 +104,9 @@ def test_pipeline_delivers_position_result_and_releases_resources() -> None:
     assert view.result.track_id == 5
     assert view.result.position is not None
     assert view.result.position.offset_x == pytest.approx(0.0)
+    assert view.follow_result is not None
+    assert view.follow_result.command is FollowCommand.MOVE_FORWARD
+    assert view.follow_result.track_id == 5
     assert camera.released is True
     assert view.closed is True
 
@@ -110,6 +120,7 @@ def test_pipeline_uses_unflipped_camera_frame_for_detection_and_view() -> None:
     run_person_tracking(
         cast(UltralyticsByteTracker, tracker),
         UserTrackingService(2),
+        FollowCommandGenerator(0.15, 0.45),
         cast(OpenCVCamera, camera),
         cast(OpenCVDebugView, view),
     )
