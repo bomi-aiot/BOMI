@@ -8,9 +8,9 @@ import numpy as np
 from numpy.typing import NDArray
 
 from bomi_vision.domain import (
-    PersonDetection,
-    VisionPositionResult,
-    VisionResultStatus,
+    TrackedPerson,
+    TrackingResult,
+    TrackingResultStatus,
 )
 
 Frame = NDArray[np.uint8]
@@ -66,14 +66,14 @@ class OpenCVDebugView:
     def show(
         self,
         frame: Frame,
-        detections: Sequence[PersonDetection],
-        result: VisionPositionResult,
+        tracked_people: Sequence[TrackedPerson],
+        result: TrackingResult,
     ) -> bool:
         """현재 프레임에 모든 사람의 박스와 신뢰도를 표시한다.
 
         Args:
             frame: 표시할 OpenCV BGR 이미지.
-            detections: 화면에 그릴 모든 사람 탐지 결과.
+            tracked_people: 화면에 그릴 모든 사람 추적 결과.
             result: 사람 수 상태와 한 명일 때의 화면 기준 위치.
 
         Returns:
@@ -82,14 +82,14 @@ class OpenCVDebugView:
         Side Effects:
             입력 프레임에 주석을 그리고 OpenCV 창을 갱신한다.
         """
-        for detection in detections:
-            top_left = (round(detection.x1), round(detection.y1))
-            bottom_right = (round(detection.x2), round(detection.y2))
+        for person in tracked_people:
+            top_left = (round(person.x1), round(person.y1))
+            bottom_right = (round(person.x2), round(person.y2))
             cv2.rectangle(frame, top_left, bottom_right, (0, 255, 0), 2)
             label_position = (top_left[0], max(20, top_left[1] - 8))
             cv2.putText(
                 frame,
-                f"person {detection.confidence:.2f}",
+                f"track_id: {person.track_id} person {person.confidence:.2f}",
                 label_position,
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
@@ -104,21 +104,22 @@ class OpenCVDebugView:
     @staticmethod
     def _draw_position_result(
         frame: Frame,
-        result: VisionPositionResult,
+        result: TrackingResult,
     ) -> None:
         """상태와 사용 가능한 위치값을 디버그 프레임에 표시한다."""
         lines = [f"status: {result.status.value}"]
-        if result.status is VisionResultStatus.USER_DETECTED:
+        if result.status is TrackingResultStatus.TRACKING:
             if result.position is None:
-                raise ValueError("Detected user result must include a position.")
+                raise ValueError("Tracking result must include a position.")
             lines.extend(
                 [
+                    f"track_id: {result.track_id}",
                     f"offset_x: {result.position.offset_x:.2f}",
                     f"offset_y: {result.position.offset_y:.2f}",
                     f"height_ratio: {result.position.height_ratio:.2f}",
                 ]
             )
-        elif result.status is VisionResultStatus.MULTIPLE_PEOPLE:
+        elif result.status is TrackingResultStatus.MULTIPLE_PEOPLE:
             lines.append(f"person_count: {result.person_count}")
 
         for line_index, line in enumerate(lines):

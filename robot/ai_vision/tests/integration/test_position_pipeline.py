@@ -1,4 +1,4 @@
-"""가짜 프레임 경계로 탐지부터 위치 결과 전달까지의 연결을 검증한다."""
+"""가짜 프레임 경계로 추적부터 위치 결과 전달까지의 연결을 검증한다."""
 
 from collections.abc import Sequence
 from typing import cast
@@ -7,31 +7,32 @@ import numpy as np
 from numpy.typing import NDArray
 import pytest
 
-from bomi_vision.adapters.detection import UltralyticsPersonDetector
 from bomi_vision.adapters.opencv import OpenCVCamera, OpenCVDebugView
-from bomi_vision.application import run_person_detection
+from bomi_vision.adapters.tracking import UltralyticsByteTracker
+from bomi_vision.application import run_person_tracking
 from bomi_vision.domain import (
-    PersonDetection,
-    VisionPositionResult,
-    VisionResultStatus,
+    TrackedPerson,
+    TrackingResult,
+    TrackingResultStatus,
 )
+from bomi_vision.tracking import UserTrackingService
 
 pytestmark = pytest.mark.integration
 
 Frame = NDArray[np.uint8]
 
 
-class FakeDetector:
-    """모델 없이 정해진 사람 탐지 결과를 반환한다."""
+class FakeTracker:
+    """모델 없이 정해진 사람 추적 결과를 반환한다."""
 
     def __init__(self) -> None:
         """탐지기에 전달된 프레임을 기록할 공간을 초기화한다."""
         self.observed_frame: object | None = None
 
-    def detect(self, frame: object) -> list[PersonDetection]:
-        """프레임 중앙의 한 사람을 반환한다."""
+    def track(self, frame: object) -> list[TrackedPerson]:
+        """프레임 중앙의 한 사람과 임시 Track ID를 반환한다."""
         self.observed_frame = frame
-        return [PersonDetection(0.9, 270.0, 140.0, 370.0, 340.0)]
+        return [TrackedPerson(5, 0.9, 270.0, 140.0, 370.0, 340.0)]
 
 
 class FakeCamera:
@@ -58,15 +59,15 @@ class RecordingView:
 
     def __init__(self) -> None:
         """결과와 종료 상태를 초기화한다."""
-        self.result: VisionPositionResult | None = None
+        self.result: TrackingResult | None = None
         self.observed_frame: Frame | None = None
         self.closed = False
 
     def show(
         self,
         frame: Frame,
-        detections: Sequence[PersonDetection],
-        result: VisionPositionResult,
+        tracked_people: Sequence[TrackedPerson],
+        result: TrackingResult,
     ) -> bool:
         """첫 결과를 기록하고 반복을 종료한다."""
         self.observed_frame = frame
@@ -81,17 +82,19 @@ class RecordingView:
 def test_pipeline_delivers_position_result_and_releases_resources() -> None:
     """탐지 결과가 위치 결과로 전달되고 모든 자원이 정리된다."""
     camera = FakeCamera()
-    detector = FakeDetector()
+    tracker = FakeTracker()
     view = RecordingView()
 
-    run_person_detection(
-        cast(UltralyticsPersonDetector, detector),
+    run_person_tracking(
+        cast(UltralyticsByteTracker, tracker),
+        UserTrackingService(2),
         cast(OpenCVCamera, camera),
         cast(OpenCVDebugView, view),
     )
 
     assert view.result is not None
-    assert view.result.status is VisionResultStatus.USER_DETECTED
+    assert view.result.status is TrackingResultStatus.TRACKING
+    assert view.result.track_id == 5
     assert view.result.position is not None
     assert view.result.position.offset_x == pytest.approx(0.0)
     assert camera.released is True
@@ -101,16 +104,17 @@ def test_pipeline_delivers_position_result_and_releases_resources() -> None:
 def test_pipeline_uses_unflipped_camera_frame_for_detection_and_view() -> None:
     """탐지와 디버그 표시가 좌우 반전하지 않은 동일 원본 프레임을 사용한다."""
     camera = FakeCamera()
-    detector = FakeDetector()
+    tracker = FakeTracker()
     view = RecordingView()
 
-    run_person_detection(
-        cast(UltralyticsPersonDetector, detector),
+    run_person_tracking(
+        cast(UltralyticsByteTracker, tracker),
+        UserTrackingService(2),
         cast(OpenCVCamera, camera),
         cast(OpenCVDebugView, view),
     )
 
-    assert detector.observed_frame is camera.frame
+    assert tracker.observed_frame is camera.frame
     assert view.observed_frame is camera.frame
     assert camera.frame[0, 0, 0] == 10
     assert camera.frame[0, -1, 0] == 200

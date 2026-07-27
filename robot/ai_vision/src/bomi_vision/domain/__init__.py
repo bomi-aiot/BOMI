@@ -6,9 +6,17 @@ from bomi_vision.domain.position import (
     VisionPositionResult,
     VisionResultStatus,
 )
+from bomi_vision.domain.tracking import (
+    TrackedPerson,
+    TrackingResult,
+    TrackingResultStatus,
+)
 
 __all__ = [
     "PersonDetection",
+    "TrackedPerson",
+    "TrackingResult",
+    "TrackingResultStatus",
     "UserPosition",
     "VisionPositionResult",
     "VisionResultStatus",
