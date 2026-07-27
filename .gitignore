@@ -6,6 +6,8 @@ application-local.yml
 application-secret.yml
 **/config/*.yaml
 !**/config/*.example.yaml
+!robot/ros2_ws/src/mapping/config/
+!robot/ros2_ws/src/mapping/config/slam_toolbox.yaml
 *.pem
 *.key
 
