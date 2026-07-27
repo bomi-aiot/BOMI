@@ -4,7 +4,11 @@ import argparse
 
 import pytest
 
-from bomi_vision.main import parse_camera_index, parse_confidence
+from bomi_vision.main import (
+    parse_camera_index,
+    parse_confidence,
+    parse_lost_tolerance_frames,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -33,3 +37,16 @@ def test_rejects_invalid_confidence(value: str) -> None:
     """숫자가 아니거나 허용 범위 밖인 신뢰도를 거부한다."""
     with pytest.raises(argparse.ArgumentTypeError):
         parse_confidence(value)
+
+
+@pytest.mark.parametrize("value", ["0", "3"])
+def test_accepts_non_negative_lost_tolerance(value: str) -> None:
+    """0 이상의 누락 허용 프레임 수를 허용한다."""
+    assert parse_lost_tolerance_frames(value) == int(value)
+
+
+@pytest.mark.parametrize("value", ["-1", "short"])
+def test_rejects_invalid_lost_tolerance(value: str) -> None:
+    """음수이거나 정수가 아닌 누락 허용 프레임 수를 거부한다."""
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_lost_tolerance_frames(value)

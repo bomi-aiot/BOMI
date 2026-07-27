@@ -1,13 +1,12 @@
-"""명령행 설정으로 BOMI 실시간 사람 탐지 애플리케이션을 실행한다."""
+"""명령행 설정으로 BOMI 실시간 사람 추적 애플리케이션을 실행한다."""
 
 import argparse
 
-from bomi_vision.adapters.detection import (
-    UltralyticsPersonDetector,
-    validate_confidence,
-)
+from bomi_vision.adapters.detection import validate_confidence
 from bomi_vision.adapters.opencv import OpenCVCamera, OpenCVDebugView
-from bomi_vision.application import run_person_detection
+from bomi_vision.adapters.tracking import UltralyticsByteTracker
+from bomi_vision.application import run_person_tracking
+from bomi_vision.tracking import UserTrackingService
 
 # YOLO11의 가장 작은 사전 학습 모델로 노트북 MVP에서 빠른 확인을 우선한다.
 DEFAULT_MODEL = "yolo11n.pt"
@@ -15,6 +14,10 @@ DEFAULT_MODEL = "yolo11n.pt"
 DEFAULT_CAMERA_INDEX = 0
 # 지나치게 불확실한 박스를 줄이면서 기본 탐지를 쉽게 확인할 수 있는 시작값이다.
 DEFAULT_CONFIDENCE = 0.5
+# Ultralytics가 제공하는 공식 ByteTrack 기본 설정을 사용한다.
+DEFAULT_TRACKER = "bytetrack.yaml"
+# 30 FPS 기준 약 0.1초의 순간 누락을 흡수하되 오래된 대상을 유지하지 않는다.
+DEFAULT_LOST_TOLERANCE_FRAMES = 3
 
 
 def parse_camera_index(value: str) -> int:
@@ -57,6 +60,17 @@ def parse_confidence(value: str) -> float:
         raise argparse.ArgumentTypeError(str(error)) from error
 
 
+def parse_lost_tolerance_frames(value: str) -> int:
+    """0 이상의 추적 누락 허용 프레임 수를 파싱한다."""
+    try:
+        frames = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("Lost tolerance must be an integer.") from error
+    if frames < 0:
+        raise argparse.ArgumentTypeError("Lost tolerance must be zero or greater.")
+    return frames
+
+
 def build_parser() -> argparse.ArgumentParser:
     """사람 탐지 실행에 필요한 명령행 파서를 생성한다."""
     parser = argparse.ArgumentParser(description="Detect people from a laptop camera.")
@@ -66,6 +80,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_CAMERA_INDEX,
         type=parse_camera_index,
         help="Camera index (default: 0).",
+    )
+    parser.add_argument(
+        "--tracker",
+        default=DEFAULT_TRACKER,
+        help="Ultralytics tracker configuration (default: bytetrack.yaml).",
+    )
+    parser.add_argument(
+        "--lost-tolerance-frames",
+        default=DEFAULT_LOST_TOLERANCE_FRAMES,
+        type=parse_lost_tolerance_frames,
+        help="Temporary tracking loss tolerance in frames (default: 3).",
     )
     parser.add_argument(
         "--confidence",
@@ -85,9 +110,10 @@ def main() -> int:
     args = build_parser().parse_args()
     camera: OpenCVCamera | None = None
     try:
-        detector = UltralyticsPersonDetector(args.model, args.confidence)
+        tracker = UltralyticsByteTracker(args.model, args.confidence, args.tracker)
+        tracking_service = UserTrackingService(args.lost_tolerance_frames)
         camera = OpenCVCamera(args.camera)
-        run_person_detection(detector, camera, OpenCVDebugView())
+        run_person_tracking(tracker, tracking_service, camera, OpenCVDebugView())
     except (RuntimeError, ValueError) as error:
         # CLI 경계에서 간결한 메시지로 바꾸되 원인은 adapter 예외 연결에 보존한다.
         print(f"Error: {error}")
