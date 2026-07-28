@@ -4,8 +4,14 @@ BEGIN;
 
 DO $$
 BEGIN
-    IF to_regnamespace('public_data_raw') IS NOT NULL THEN
-        RAISE EXCEPTION 'Target schema public_data_raw already exists; refusing to overwrite it';
+    IF current_database() = 'bomi' THEN
+        RAISE EXCEPTION 'Refusing to create public-health staging tables in the bomi database';
+    END IF;
+
+    IF to_regclass('public.hospital') IS NOT NULL
+        OR to_regclass('public.drug_permit') IS NOT NULL
+        OR to_regclass('public.pharmacy') IS NOT NULL THEN
+        RAISE EXCEPTION 'One or more target tables already exist in the public schema';
     END IF;
 
     IF to_regnamespace('public_data_raw_load_20260727') IS NOT NULL THEN
@@ -17,7 +23,7 @@ $$;
 CREATE SCHEMA public_data_raw_load_20260727;
 
 COMMENT ON SCHEMA public_data_raw_load_20260727 IS
-    'One-time staging schema for 2026-07-27 hospital, drug permit, and pharmacy public data import';
+    'One-time staging schema before promotion into the public schema';
 
 CREATE TABLE public_data_raw_load_20260727.hospital (
     addr text,
