@@ -8,8 +8,14 @@ DECLARE
     drug_permit_count bigint;
     pharmacy_count bigint;
 BEGIN
-    IF to_regnamespace('public_data_raw') IS NOT NULL THEN
-        RAISE EXCEPTION 'Target schema public_data_raw already exists; refusing to overwrite it';
+    IF current_database() = 'bomi' THEN
+        RAISE EXCEPTION 'Refusing to promote public-health tables in the bomi database';
+    END IF;
+
+    IF to_regclass('public.hospital') IS NOT NULL
+        OR to_regclass('public.drug_permit') IS NOT NULL
+        OR to_regclass('public.pharmacy') IS NOT NULL THEN
+        RAISE EXCEPTION 'One or more target tables already exist in the public schema';
     END IF;
 
     IF to_regnamespace('public_data_raw_load_20260727') IS NULL THEN
@@ -48,11 +54,19 @@ CREATE INDEX drug_permit_item_seq_idx
 CREATE INDEX pharmacy_ykiho_idx
     ON public_data_raw_load_20260727.pharmacy (ykiho);
 
-ALTER SCHEMA public_data_raw_load_20260727
-    RENAME TO public_data_raw;
+ALTER TABLE public_data_raw_load_20260727.hospital
+    SET SCHEMA public;
+
+ALTER TABLE public_data_raw_load_20260727.drug_permit
+    SET SCHEMA public;
+
+ALTER TABLE public_data_raw_load_20260727.pharmacy
+    SET SCHEMA public;
+
+DROP SCHEMA public_data_raw_load_20260727;
 
 COMMIT;
 
-ANALYZE public_data_raw.hospital;
-ANALYZE public_data_raw.drug_permit;
-ANALYZE public_data_raw.pharmacy;
+ANALYZE public.hospital;
+ANALYZE public.drug_permit;
+ANALYZE public.pharmacy;

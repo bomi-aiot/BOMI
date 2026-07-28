@@ -1,18 +1,35 @@
 # Public health data one-time import
 
 This runbook imports the 2026-07-27 hospital, drug permit, and pharmacy
-spreadsheets into an isolated PostgreSQL schema without uploading the source
-XLSX files to EC2.
+spreadsheets into the `public` schema of a separate PostgreSQL database named
+`public_health_temp`.
+
+The BOMI application database remains `bomi`; these scripts never change the
+Backend `POSTGRES_DB` setting.
 
 ## Safety boundary
 
-- Source XLSX files are read only and stay on the local machine.
-- EC2 receives three generated UTF-8 CSV files and these SQL scripts only.
-- PostgreSQL is backed up before schema creation.
-- Data is loaded into `public_data_raw_load_20260727` first.
+- Source XLSX files are read only and are not uploaded to EC2 or committed.
+- EC2 receives three generated UTF-8 CSV files and the import scripts only.
+- PostgreSQL is backed up before database creation.
+- `00_create_database.sh` refuses to overwrite an existing database.
+- Data is loaded into `public_data_raw_load_20260727` inside the target
+  database first.
 - `02_promote.sql` refuses promotion unless all three row counts match.
-- An existing `public_data_raw` schema is never overwritten.
+- Existing `public.hospital`, `public.drug_permit`, or `public.pharmacy`
+  tables are never overwritten.
 - EC2 import files are removed only after final verification succeeds.
+
+## Final database structure
+
+```text
+database: public_health_temp
+schema: public
+tables:
+  - hospital
+  - drug_permit
+  - pharmacy
+```
 
 ## Expected source shape
 
@@ -31,5 +48,37 @@ and `YYYYMMDD` source values are not changed during the raw import.
 /home/ubuntu/bomi/import/public-health-20260727/
 ```
 
-After successful verification, remove only the seven known temporary files and
-then remove the empty directory.
+## Execution order
+
+Run these commands on EC2 after the CSV and script files are present in the
+temporary path.
+
+```bash
+bash /home/ubuntu/bomi/import/public-health-20260727/00_create_database.sh
+
+bash /home/ubuntu/bomi/import/public-health-20260727/04_load_stage.sh
+
+postgres_user="$(docker exec bomi-postgres printenv POSTGRES_USER)"
+
+docker exec -i bomi-postgres \
+  psql -v ON_ERROR_STOP=1 \
+  -U "$postgres_user" \
+  -d public_health_temp \
+  < /home/ubuntu/bomi/import/public-health-20260727/02_promote.sql
+
+docker exec -i bomi-postgres \
+  psql -v ON_ERROR_STOP=1 \
+  -U "$postgres_user" \
+  -d public_health_temp \
+  < /home/ubuntu/bomi/import/public-health-20260727/03_verify.sql
+```
+
+The database name can be overridden for an isolated verification run:
+
+```bash
+PUBLIC_HEALTH_DB_NAME=public_health_script_test \
+  bash /home/ubuntu/bomi/import/public-health-20260727/00_create_database.sh
+```
+
+After successful verification, remove only the eight known temporary files
+and then remove the empty import directory.
