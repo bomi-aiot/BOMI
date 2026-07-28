@@ -8,6 +8,7 @@ application-secret.yml
 !**/config/*.example.yaml
 !robot/ros2_ws/src/mapping/config/
 !robot/ros2_ws/src/mapping/config/slam_toolbox.yaml
+!**/bomi_lidar/config/x4_pro.yaml
 *.pem
 *.key
 
