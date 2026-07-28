@@ -42,6 +42,11 @@ services:
         -XX:MaxRAMPercentage=75.0
         -XX:+ExitOnOutOfMemoryError
         -Duser.timezone=UTC
+      MQTT_ENABLED: "true"
+      MQTT_BROKER_URL: tcp://mosquitto:1883
+      MQTT_CLIENT_ID_PREFIX: bomi-backend-prod
+      MQTT_USERNAME: ${MQTT_USERNAME:?MQTT_USERNAME is required}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD is required}
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:8080/actuator/health"]
       interval: 10s
@@ -59,6 +64,7 @@ services:
     networks:
       - backend-net
       - proxy-net
+      - bomi-mqtt-net
 
   frontend:
     build:
@@ -180,3 +186,6 @@ networks:
     internal: true
   proxy-net:
     name: bomi-proxy-net
+  bomi-mqtt-net:
+    external: true
+    name: bomi-mqtt-net
