@@ -1,9 +1,9 @@
-"""STT -> 라우팅 -> LLM/API -> TTS 파이프라인."""
+"""STT -> LLM/API -> TTS 파이프라인 (단일 API LLM 체제)."""
 
 from src.audio_io.base import AudioInput, AudioOutput
 from src.stt.client import STTClient
 from src.llm.client import LLMClient
-from src.llm.router import choose_backend
+from src.llm.router import is_medical_query
 from src.llm.medical_flow import handle_medical_query
 from src.tts.client import TTSClient
 from src.weather.client import WeatherClient, CITY_GRID
@@ -32,17 +32,9 @@ class ConversationPipeline:
         text = self.stt.transcribe(audio)
         print(f"[STT] 인식된 텍스트: {text}")
 
-        backend, category, score = choose_backend(text)
-        print(f"[라우팅] backend={backend}, category={category}, score={score:.2f}")
-
-        if backend == "api":
-            if category == "medical_lookup":
-                response = handle_medical_query(text)
-            else:
-                # personal_context / emotional_health 전용 핸들러는 아직 미구현.
-                # 일단 기존 로컬 LLM 호출로 폴백 — 핸들러 생기면 이 분기 교체 필요.
-                response = self.llm.generate(text, weather_data=None)
-            print(f"[API] 응답: {response}")
+        if is_medical_query(text):
+            response = handle_medical_query(text)
+            print(f"[의료 API] 응답: {response}")
         else:
             weather_data = None
             if "날씨" in text:
