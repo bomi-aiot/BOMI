@@ -6,6 +6,10 @@
 # tests (e.g. OpenApiDocumentationTest). See notes on H2/PostgreSQL type
 # differences in the PR.
 spring:
+  # H2 slice tests keep using Hibernate schema generation; Flyway (Postgres DDL)
+  # must stay off here or it would run the Postgres-specific V1 against H2.
+  flyway:
+    enabled: false
   datasource:
     url: jdbc:h2:mem:bomi;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
     driver-class-name: org.h2.Driver

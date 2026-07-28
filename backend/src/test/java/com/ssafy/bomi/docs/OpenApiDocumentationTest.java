@@ -71,13 +71,20 @@ class OpenApiDocumentationTest {
     void swaggerConfigListsEveryStaticSpec() throws Exception {
         String config = mockMvc.perform(get("/v3/api-docs/swagger-config"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.urls.length()").value(SPECS.size()))
-            .andExpect(jsonPath("$['urls.primaryName']").value("AI Vision Recognition API"))
+            // The config also exposes the live backend API group ("bomi-backend") as the
+            // primary document alongside the static specs. The exact url count is a springdoc
+            // implementation detail (groups may be merged), so assert a lower bound plus the
+            // concrete presence of every expected entry below rather than an exact size.
+            .andExpect(jsonPath("$.urls.length()")
+                .value(org.hamcrest.Matchers.greaterThanOrEqualTo(SPECS.size() + 1)))
+            .andExpect(jsonPath("$['urls.primaryName']").value("BOMI Backend API"))
             .andExpect(jsonPath("$.supportedSubmitMethods").isEmpty())
             .andReturn()
             .getResponse()
             .getContentAsString();
 
+        assertThat(config).contains("BOMI Backend API");
+        assertThat(config).contains("/v3/api-docs/bomi-backend");
         for (OpenApiSpec spec : SPECS) {
             assertThat(config).contains(spec.name());
             assertThat(config).contains("/openapi/" + spec.fileName());
@@ -99,8 +106,11 @@ class OpenApiDocumentationTest {
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("openapi: 3.0.3")));
         }
 
-        mockMvc.perform(get("/v3/api-docs"))
-            .andExpect(status().isNotFound());
+        // The live backend API group is now generated and served from the application code
+        // (springdoc.api-docs.enabled=true + group-configs "bomi-backend").
+        mockMvc.perform(get("/v3/api-docs/bomi-backend"))
+            .andExpect(status().isOk())
+            .andExpect(content().string(org.hamcrest.Matchers.containsString("openapi")));
     }
 
     @Test

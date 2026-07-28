@@ -36,6 +36,14 @@ public class Robot {
     @Column(name = "senior_id")
     private UUID seniorId;
 
+    /**
+     * Stable device identifier used on MQTT topics (e.g. {@code "robot-01"}), used
+     * to resolve this robot from inbound messages and to address outbound commands.
+     * Nullable so pre-existing rows / test fixtures without a device stay valid.
+     */
+    @Column(name = "device_id", unique = true, length = 64)
+    private String deviceId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "current_mode", nullable = false, length = 30)
     private RobotMode currentMode = RobotMode.IDLE;
@@ -59,6 +67,21 @@ public class Robot {
     /** Creates a robot, optionally already assigned to a senior (may be {@code null}). */
     public static Robot create(UUID seniorId) {
         return new Robot(seniorId);
+    }
+
+    /** Creates a robot with its MQTT device identifier already registered. */
+    public static Robot create(UUID seniorId, String deviceId) {
+        Robot robot = new Robot(seniorId);
+        robot.registerDevice(deviceId);
+        return robot;
+    }
+
+    /** Registers/updates the MQTT device identifier for this robot. */
+    public void registerDevice(String deviceId) {
+        if (deviceId == null || deviceId.isBlank()) {
+            throw new IllegalArgumentException("deviceId must not be blank");
+        }
+        this.deviceId = deviceId;
     }
 
     public void assignSenior(UUID seniorId) {

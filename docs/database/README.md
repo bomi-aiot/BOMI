@@ -1,69 +1,76 @@
-# Database
+# BOMI 데이터베이스 문서
 
-## 기술 선택
+현재 기준은 PostgreSQL + pgvector, 물리 테이블 12개, 컬럼 151개다. Raw 발화, 대화·일간 요약, 장기 기억을 분리하고 앱과 로봇의 온보딩을 같은 질문 계약으로 처리한다. 확인 전 사실은 `fact_candidate`에서 재질의·민감정보 확인·PRIMARY 보호자 협의를 거친다.
 
-BOMI의 중앙 데이터베이스는 PostgreSQL 17과 pgvector를 사용합니다.
+```text
+app_user
+care_relationship
+robot
+onboarding_session
+onboarding_answer
+scenario
+conversation
+conversation_message
+conversation_summary
+fact_candidate
+memory
+care_record
+```
 
-- 관계형 데이터와 트랜잭션: PostgreSQL
-- 임베딩 저장 및 유사도 검색: pgvector
-- 운영 이미지: `pgvector/pgvector:0.8.5-pg17`
-- 문자 인코딩: UTF-8
-- 저장 시각 기준: UTC
+최종 서비스 조회 원본은 `app_user`, `care_relationship`, `memory`, `care_record`다. 최근 대화와 하루치 대화는 별도 테이블이 아니라 `conversation_message`의 조회 범위다.
 
-귀가 환영 및 맞춤 대화 MVP의 1차 물리 모델은
-[`mvp-erd.md`](./mvp-erd.md)에 정의합니다. 현재 ERD는 기존 8개 도메인 테이블에
-온보딩 처리 원장 2개를 추가한 10개 테이블이며,
-벡터 차원은 임베딩 모델 확정 전까지 `<EMBEDDING_DIM>` 자리표시자로 유지합니다.
-전체 PostgreSQL DDL과 JPA Entity는 아직 이 문서의 범위가 아닙니다.
+## 문서
 
-초기 설문 적용 판단, 동의 게이트, 휴식 상태 인지와 온습도 저장 경계는
-[`onboarding-rest-environment-design.md`](./onboarding-rest-environment-design.md)에
-정리합니다. `onboarding_session`과 `onboarding_answer`는 진행·검증·수정·멱등 반영
-원장이며 프로필 조회 원본은 아닙니다. 확인된 최종 사실은 `app_user`, `memory`,
-`care_record`에 반영하고, 휴식·온습도는 별도 센서 시계열 테이블 없이 최신 상태와
-의미 있는 사건만 저장합니다.
+| 문서 | 목적 |
+| --- | --- |
+| [`mvp-erd.md`](./mvp-erd.md) | 12개 테이블의 컬럼·관계·제약·정책 |
+| [`onboarding-question-set-v1.json`](./onboarding-question-set-v1.json) | 앱·로봇 공용 질문·검증·정규화·최종 매핑 |
+| [`onboarding-rest-environment-design.md`](./onboarding-rest-environment-design.md) | 온보딩·후보·대화·휴식·환경 처리 흐름 |
+| [`column-definition/BOMI_컬럼정의서.xlsx`](./column-definition/BOMI_컬럼정의서.xlsx) | 사람이 읽는 테이블·컬럼·코드·제약 정의 |
+| [`column-definition/snapshots/`](./column-definition/snapshots/) | Excel과 동일한 Git diff용 CSV 9개 |
 
-## 연결 원칙
+관련 문서는 [`../architecture/system-overview.md`](../architecture/system-overview.md), [`../scenario/homecoming-welcome.md`](../scenario/homecoming-welcome.md), [`../mqtt/topic-convention.md`](../mqtt/topic-convention.md)다.
 
-- 운영 DB는 인터넷에 공개하지 않습니다.
-- Spring Backend만 Docker 내부 네트워크에서 DB에 접근합니다.
-- 운영 접속 주소는 `jdbc:postgresql://postgres:5432/bomi`입니다.
-- 로컬 개발에서만 `127.0.0.1:5432`를 사용합니다.
-- 실제 비밀번호는 Git에 저장하지 않습니다.
+## 생명주기
 
-## 스키마 관리
+```mermaid
+flowchart LR
+  Input["앱 답변·로봇 발화"] --> Raw["onboarding_answer / conversation_message"]
+  Raw --> Candidate["fact_candidate"]
+  Candidate --> Verify["재질의·확인·PRIMARY 협의"]
+  Verify --> Final["app_user / care_relationship / memory / care_record"]
+  Raw --> Summary["conversation_summary"]
+  Summary --> Context["선별된 대화 문맥"]
+  Final --> Context
+  Raw -->|요약·후보·반영·만료 조건 충족| Delete["Raw 삭제 가능"]
+```
 
-현재는 초기 인프라 단계이므로 pgvector 확장만 최초 초기화 SQL로 활성화합니다.
-업무 테이블이 추가되기 시작하면 Flyway를 도입하여 다음 항목을 버전 관리합니다.
+Raw 근거 FK는 삭제 시 `SET NULL`이므로 최종 업무 데이터가 함께 삭제되지 않는다.
 
-- 테이블과 인덱스 생성
-- 제약조건 변경
-- pgvector 컬럼과 벡터 인덱스
-- 기준 데이터 변경
+## 권한
 
-운영 환경에서 Hibernate가 임의로 스키마를 변경하지 않도록
-`spring.jpa.hibernate.ddl-auto=validate`를 유지합니다.
+- `user_type=GUARDIAN`만으로 특정 시니어에게 접근할 수 없다.
+- 조회는 활성 관계, 목적별 동의, 데이터 공개 범위를 함께 적용한다.
+- 민감정보 대리 확인·변경은 `ACTIVE + PRIMARY + care_management_permission_status=GRANTED` 한 명만 가능하다.
+- SECONDARY는 허용 범위에서 조회만 가능하다.
+- 충돌 시 양쪽에 알리고 협의를 유도한다. 통화 사실은 증명하지 않고 디지털 입장·연락 시도·최종 결정만 기록한다.
+- 시니어 반대·연락 불가를 보존한 채 PRIMARY가 2차 책임 확인을 완료하면 보호자 결정값을 적용할 수 있다.
 
-## pgvector 사용 원칙
+## 컬럼정의서 운영
 
-벡터 컬럼의 차원은 사용할 임베딩 모델이 확정된 후 정합니다. 모델이 달라지면 벡터
-차원과 의미가 달라질 수 있으므로 각 임베딩에는 최소한 다음 정보를 함께 관리합니다.
+Excel은 설명 원본이고 CSV는 리뷰 표면이다. Excel에서 DDL·Flyway SQL을 생성하지 않는다. Jira·승인자·검토자·형식용 검증 시트는 두지 않는다.
 
-- 임베딩 모델 이름과 버전
-- 벡터 차원
-- 원본 데이터 식별자
-- 생성 시각
-- 재생성 여부를 판단할 버전 정보
+```powershell
+python docs/database/column-definition/scripts/export-column-definition-csv.py
+python docs/database/column-definition/scripts/validate-column-definition.py
+```
 
-초기 데이터가 적을 때는 정확 검색을 우선하고, 데이터 규모와 조회 패턴을 측정한 뒤
-HNSW 또는 IVFFlat 인덱스를 선택합니다.
+## TBD
 
-## 영속성 및 백업
+- 요약·기억 embedding 모델·차원과 벡터 인덱스
+- 반복 협의가 필요할 때의 `care_coordination_event`
+- 긴 대화 중간 압축이 필요할 때의 `TIME_WINDOW`
+- 운영 중 무배포 질문 편집이 필요할 때의 `onboarding_question`
+- 수신 이벤트 원장, Outbox, 감사 로그
 
-- 운영 데이터 경로: `/home/ubuntu/bomi/data/postgres`
-- 논리 백업 형식: `pg_dump -Fc`
-- 백업 경로: `/home/ubuntu/bomi/backup`
-- 컨테이너 삭제와 데이터 삭제를 별개의 작업으로 취급합니다.
-- 백업 성공 여부뿐 아니라 실제 복구 가능 여부를 정기적으로 검증합니다.
-
-실행, 점검, 백업 절차는 `infra/README.md`를 따릅니다.
+문서의 제약은 구현 계약이며 코드·DDL이 이미 존재한다는 뜻이 아니다.

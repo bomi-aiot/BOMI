@@ -11,3 +11,7 @@ management:
   health:
     db:
       enabled: false
+
+bomi:
+  mqtt:
+    enabled: false

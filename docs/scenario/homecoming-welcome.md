@@ -1,317 +1,57 @@
-# 귀가 환영 시나리오 계약
+# 귀가 환영 시나리오
 
-## 1. 문서 목적
+문 열림 또는 방향이 확인된 사람 감지로 로봇이 현관으로 이동하고, 시니어를 확인한 뒤 대화하고 안전하게 기본 위치로 복귀한다.
 
-이 문서는 귀가 환영 시나리오의 E2E 흐름, 참여 시스템의 책임, 상태 전이와 실패 정책을 정의합니다.
-IoT, Backend, Robot, AI Vision, 대화·음성 AI 담당자는 이 문서를 공통 기준으로 사용합니다.
+## 참여 시스템
 
-관련 상세 계약은 다음 문서를 참고합니다.
-
-- MQTT 토픽과 메시지: [`../mqtt/topic-convention.md`](../mqtt/topic-convention.md)
-- 8개 테이블 MVP 물리 ERD: [`../database/mvp-erd.md`](../database/mvp-erd.md)
-- AI Vision 인식 요청 API: [`../../backend/src/main/resources/static/openapi/vision-ai.openapi.yaml`](../../backend/src/main/resources/static/openapi/vision-ai.openapi.yaml)
-- AI Vision Callback API: [`../../backend/src/main/resources/static/openapi/vision-callback.openapi.yaml`](../../backend/src/main/resources/static/openapi/vision-callback.openapi.yaml)
-- 대화·음성 AI API: [`../../backend/src/main/resources/static/openapi/voice-ai.openapi.yaml`](../../backend/src/main/resources/static/openapi/voice-ai.openapi.yaml)
-- OpenAPI 확인 방법: [`../api/README.md`](../api/README.md)
-
-## 2. 이번 이슈의 범위
-
-### 포함
-
-- 현관 센서 감지부터 개인화 대화·요약·허용 정보 대시보드 조회와 기본 위치 복귀/안전 정지까지의 Happy Path
-- Backend가 관리하는 시나리오 상태와 전이 조건
-- MQTT와 REST 사이의 상관관계 식별자
-- 중복 메시지, 실패, 타임아웃 처리 기준
-- 실제 장비가 없어도 Mock으로 검증할 수 있는 입출력 계약
-
-### 제외
-
-- ROS 2 내부의 주행, 장애물 회피 및 모터 제어
-- 카메라 스트림의 전송 프로토콜과 영상 프레임 형식
-- AI 모델, STT, LLM, TTS의 내부 구현
-- 미디어 장기 보관과 S3 연동
-- 사용자 인증 및 보호자 화면 구현
-
-## 3. 참여 시스템과 책임
-
-| 시스템 | 책임 | 하지 않는 일 |
-| --- | --- | --- |
-| IoT 센서 | 현관 센서 신호를 수집하고 사람의 이동 방향을 판정해 이벤트를 발행 | 로봇 목적지나 시나리오 상태 결정 |
-| Spring Boot | 시나리오 생성, 명령 발행, 상태 전이, 실패 처리 및 기록 | 실시간 센서·카메라 데이터 처리 |
-| MQTT Broker | IoT·Backend·Robot 간 비동기 JSON 메시지 전달 | ROS 2 토픽이나 카메라 스트림 중계 |
-| Robot MQTT Bridge | MQTT 명령을 ROS 2 동작으로 변환하고 결과를 MQTT로 보고 | 비즈니스 시나리오 결정 |
-| ROS 2 Robot | Nav2 기반 이동과 스피커 재생 | 전체 시나리오 상태 관리 |
-| AI Vision | 카메라 프레임에서 사람을 인식하고 결과를 Backend에 전달 | 로봇 이동과 대화 시작 결정 |
-| 대화·음성 AI | 상황에 맞는 응답 문장과 TTS 음성을 생성 | Robot에 직접 명령 발행 |
-| 보호자 대시보드 | WebSocket 변경 알림 후 REST로 허용된 요약·기억·업무 결과 조회 | 대화 원문 기본 조회, 관계 권한 우회, 시나리오 상태 결정 |
-
-## 4. E2E Happy Path
+- IoT → Backend: `DOOR_OPENED` 또는 `PRESENCE_DETECTED`
+- Backend ↔ Robot: MQTT 명령·상태·결과
+- Robot ↔ Vision/Voice/대화 AI: 인식·음성·대화
+- Backend → PostgreSQL: `scenario`, `conversation`, `conversation_message`, 필요 시 `conversation_summary`, `fact_candidate`, `memory`, `care_record`
 
 ```mermaid
 sequenceDiagram
-    participant IoT as IoT 센서
-    participant MQTT as MQTT Broker
-    participant BE as Spring Boot
-    participant Robot as Robot MQTT Bridge
-    participant Vision as AI Vision
-    participant Voice as 대화·음성 AI
-    participant FE as 보호자 대시보드
-
-    IoT->>MQTT: PRESENCE_DETECTED
-    MQTT->>BE: 센서 이벤트 전달
-    BE->>BE: 시나리오 생성(DETECTED)
-    BE->>BE: NAVIGATING + commandId·발행 대기 상태 저장
-    BE->>MQTT: NAVIGATE
-    MQTT->>Robot: 이동 명령 전달
-    Robot->>MQTT: NAVIGATION_STATUS
-    MQTT->>BE: 이동 상태 전달
-    Robot->>MQTT: NAVIGATION_RESULT(ARRIVED)
-    MQTT->>BE: 도착 결과 전달
-    BE->>BE: ARRIVED → RECOGNIZING(requestId 저장)
-    BE->>Vision: 사람 인식 시작 요청
-    Vision-->>BE: 인식 요청 수락
-    Vision->>BE: PERSON_DETECTED
-    BE->>BE: PERSON_FOUND → GENERATING_RESPONSE(requestId 저장)
-    BE->>Voice: 대화·음성 생성 요청
-    Voice-->>BE: 응답 문장·음성 정보
-    BE->>BE: SPEAKING + commandId·발행 대기 상태 저장
-    BE->>MQTT: SPEAK
-    MQTT->>Robot: 재생 명령 전달
-    Robot->>MQTT: SPEAK_RESULT(COMPLETED)
-    MQTT->>BE: 재생 완료 결과 전달
-    loop 개인화 대화(최근 12턴 + 허용된 기억)
-        BE->>Voice: 어르신 최종 발화와 허용 문맥으로 응답 요청
-        Voice-->>BE: 응답 문장·음성 정보
-        BE->>MQTT: 같은 scenarioId의 SPEAK
-        MQTT->>Robot: 음성 재생
-        Robot->>MQTT: SPEAK_RESULT
-        MQTT->>BE: 메시지·재생 최종 결과 저장
+    participant IoT
+    participant BE as Backend
+    participant DB as PostgreSQL
+    participant R as Robot
+    participant AI
+    IoT->>BE: 감지(eventId)
+    BE->>DB: scenario(RECEIVED)
+    BE->>R: NAVIGATE(commandId, scenarioId)
+    R-->>BE: 진행·도착 결과
+    R->>AI: 시니어 확인
+    BE->>DB: scenario=CONVERSING, conversation OPEN
+    loop 실제 발화
+        R->>AI: 음성 처리
+        AI-->>R: 최종 텍스트
+        R->>BE: 대화 텍스트
+        BE->>DB: conversation_message 한 행
     end
-    BE->>BE: 롤링/최종 요약과 미확정 기억 후보 생성
-    BE-->>FE: WebSocket 변경 알림(본문 없음)
-    FE->>BE: REST 관계 기반 조회
-    BE-->>FE: 공유 허용 요약·기억·시나리오 결과
-    BE->>BE: 복귀 안전 조건 확인
-    alt 사람·장애물·센서·지도 상태 안전
-        BE->>MQTT: NAVIGATE(DEFAULT_POSITION)
-        MQTT->>Robot: 기본 위치 복귀 명령
-        Robot->>MQTT: NAVIGATION_RESULT(ARRIVED)
-        MQTT->>BE: 기본 위치 도착 결과
-        BE->>BE: returnStatus=SUCCEEDED, COMPLETED
-    else 불확실 또는 안전하지 않음
-        BE->>MQTT: 진행 중 동작 취소/안전 정지
-        BE->>BE: returnStatus=SAFE_STOP, COMPLETED
+    BE->>DB: conversation 종료·요약 생성 예약
+    opt 사실 추출
+        BE->>DB: fact_candidate
+        BE->>R: 한 필드 재질의 또는 전체 확인
+        R-->>BE: 확인 답변
+        BE->>DB: confirmed_value만 최종 반영
     end
+    BE->>R: 기본 위치 복귀
+    BE->>DB: scenario=COMPLETED
 ```
 
-### 단계별 처리
+## 저장·실패 규칙
 
-1. IoT 센서가 `PRESENCE_DETECTED`를 발행합니다.
-2. Backend는 `eventId` 중복 여부를 확인하고 시나리오를 `DETECTED`로 생성합니다.
-3. Backend는 Robot `commandId`를 생성하고 시나리오의 `NAVIGATING` 상태, `navigationCommandId`, `navigationStatus=REQUESTED`를 하나의 DB 트랜잭션으로 저장합니다.
-4. 트랜잭션이 커밋되면 Publisher가 발행 대기 상태의 `NAVIGATE` 명령을 MQTT로 발행합니다. 발행이 실패하면 새 명령을 만들지 않고 같은 `commandId`로 해당 시나리오 행을 재조회해 재발행합니다.
-5. Robot은 명령 수신과 진행 상태를 보고하고, 도착하면 `NAVIGATION_RESULT`를 발행합니다.
-6. Backend는 도착 결과를 확인해 `ARRIVED`를 기록한 뒤 `requestId`를 생성하고 `RECOGNIZING` 상태를 먼저 저장합니다.
-7. Backend는 `scenarioId`와 저장된 `requestId`로 AI Vision에 인식 시작을 요청하고, AI Vision은 처리 결과를 Callback API로 보냅니다.
-8. Backend는 사람 감지 결과를 저장하고 대화·음성 AI용 `requestId`와 `GENERATING_RESPONSE` 상태를 먼저 저장합니다.
-9. Backend는 저장된 `requestId`로 대화·음성 생성을 요청합니다.
-10. Backend는 AI 응답을 저장한 뒤 Robot용 새 `commandId`, `SPEAKING` 상태와 대화 메시지의 발행 대기 메타데이터를 하나의 DB 트랜잭션으로 저장합니다.
-11. Publisher는 대화 메시지에 저장된 같은 `commandId`로 `SPEAK`를 발행·재발행합니다.
-12. Robot은 음성을 재생한 뒤 `SPEAK_RESULT`를 발행합니다.
-13. 대화가 이어지면 Backend는 최근 12턴, 현재 요약, 접근 가능한 기억만 사용해 같은 방식으로 응답·재생을 반복하고 각 최종 텍스트 메시지를 `conversation.messages`에 저장합니다.
-14. 대화 종료 시 Backend는 롤링/최종 요약과 미확정 기억 후보를 만들며, 대화에서 언급된 건강·약물 정보로 확정 기록을 자동 변경하지 않습니다.
-15. Backend는 본문 없는 WebSocket 변경 알림을 보내고, 보호자 REST 재조회에서는 활성 관계·priority·permissions·memory visibility를 다시 확인해 공유 허용 요약·기억·시나리오 결과만 반환합니다. 대화 원문 전체는 기본 반환하지 않습니다.
-16. Backend는 사람·장애물·센서·지도 상태가 모두 확실한지 확인합니다.
-17. 안전하면 사전 등록된 `DEFAULT_POSITION`으로 복귀 명령을 보내고 성공 결과를 저장합니다. 충전소로 복귀하지 않습니다.
-18. 하나라도 불확실하면 복귀 명령을 만들지 않고 안전 정지합니다. 복귀 중 불확실해지면 취소를 시도하고 안전 정지합니다.
-19. Backend는 `returnStatus=SUCCEEDED` 또는 `SAFE_STOP` 결과를 저장한 뒤 시나리오를 `COMPLETED`로 종료합니다.
+1. 시작 `eventId`만 `scenario.external_event_id`에 연결한다.
+2. 실제 텍스트 발화마다 `conversation_message.sequence_no`를 증가시킨다.
+3. 음성 바이너리·전체 프롬프트·모델 원응답은 저장하지 않는다.
+4. 종료 또는 무응답 뒤 `CONVERSATION` 요약을 만든다.
+5. 추출 사실은 먼저 `fact_candidate`로 보내고 민감정보는 명시적으로 확인한다.
+6. 확인된 변경은 새 `care_record`와 `parent_record_id`로 버전 연결한다.
+7. 재질의 중 종료된 미확정 값은 최종 원본에 반영하지 않는다.
+8. 시니어·PRIMARY 충돌은 협의 상태로 보내고 책임 재확인 전 반영하지 않는다.
+9. `DETECTED`, `ARRIVED`, `RECOGNIZING`, `PERSON_FOUND`, `SPEAKING`은 통신·애플리케이션 체크포인트이며 DB에는 굵은 `scenario.final_status`만 둔다.
+10. DB `scenario.scenario_type=HOMECOMING`은 Voice AI 요청을 만들 때 기존 계약값 `scenarioType=HOMECOMING_WELCOME`으로 변환한다.
 
-## 5. 공통 식별자
+문맥은 최근 Raw 6~12개, 관련 요약, 상위 장기 기억, 동의된 돌봄 기록만 사용한다. 별도 최근·하루 Raw 테이블은 없다.
 
-공통 식별자는 같은 값을 복사해 쓰는 범용 필드가 아니라 각 메시지와 요청을 연결하기 위한 공통 용어입니다.
-메시지별 필수 여부는 MQTT 및 OpenAPI 계약에서 별도로 정의합니다.
-
-| 필드 | 생성 주체 | 의미 | 유일성 및 재시도 규칙 |
-| --- | --- | --- | --- |
-| `eventId` | 이벤트 생산자 | 한 번 발생한 논리 이벤트 또는 결과 메시지의 식별자 | BOMI 시스템 전체에서 유일해야 하며 동일 이벤트 재전송 시 같은 값 유지 |
-| `scenarioId` | Backend | `scenario.id` UUID의 표준 문자열 표현 | 최초 센서 이벤트에는 없으며 Backend가 생성 후 전달 |
-| `requestId` | Backend | Vision 또는 대화·음성 AI에 보낸 하나의 HTTP 작업 요청 식별자 | 같은 작업 재시도 시 같은 값을 사용하고 서로 다른 작업에는 새 값을 사용 |
-| `commandId` | Backend | Robot에 보낸 하나의 MQTT 명령 식별자 | 같은 명령 재발행 시 같은 값을 사용하고 서로 다른 명령에는 새 값을 사용 |
-| `robotId` | 장치 등록 시스템 | DB `robot.serial_number`와 매핑되는 외부 등록 코드 | MQTT 토픽의 Robot ID와 본문 값이 일치해야 함 |
-| `occurredAt` | 이벤트 생산자 | 실제 사건이 발생한 시각 | 타임존을 포함한 ISO 8601 문자열 |
-
-외부 `eventId`, `requestId`, `commandId`는 최대 64자의 불투명 문자열로 취급하고 UUIDv4/v7 또는 ULID 중 팀이 확정한 형식을 사용합니다. `scenarioId`는 내부 UUID PK를 표준 문자열로 직렬화합니다. 특히 `eventId`는 생산자 내부가 아니라 BOMI 시스템 전체에서 충돌하지 않아야 합니다.
-
-하나의 이벤트를 네트워크 오류로 재전송할 때는 같은 `eventId`를 사용합니다. 같은 작업에서 `ACCEPTED`, `MOVING`, `NAVIGATION_RESULT`처럼 서로 다른 사건이 발생하면 각각 새로운 `eventId`를 생성합니다.
-
-대화·음성 AI HTTP 요청은 `requestId`를 사용하고 Robot `SPEAK` MQTT 명령은 별도의 `commandId`를 사용합니다. 두 작업은 같은 `scenarioId`와 AI가 반환한 `utteranceId`로 연결합니다.
-
-Backend는 생산자가 보낸 `occurredAt`과 별도로 실제 수신 시각인 `receivedAt`을 기록합니다. 장치 시계 오차가 있을 수 있으므로 `occurredAt`만으로 중복 여부나 메시지 처리 순서를 판단하지 않습니다.
-
-### 5.1 8개 테이블 ERD 저장 매핑
-
-통합 계약의 상세 체크포인트 이름과 DB의 굵은 업무 상태는 다음처럼 매핑합니다.
-
-| 통합 체크포인트 | `scenario.status` | 하위 저장 위치 |
-| --- | --- | --- |
-| `DETECTED` | `RECEIVED` | trigger, external event, occurred/received 시각 |
-| `NAVIGATING`, `ARRIVED` | `MOVING_TO_ENTRANCE` | navigation 상태·command ID·시작/완료 시각 |
-| `RECOGNIZING`, `PERSON_FOUND` | `CHECKING_INTERACTION` | Vision 상태·request ID·최종 판정 |
-| `GENERATING_RESPONSE`, `SPEAKING` | `CONVERSING` | conversation 생성 상태와 messages item |
-| `CHECKING_RETURN_SAFETY` | `CONVERSING` | `returnStatus=READY` 또는 `SAFE_STOP`, timeline |
-| `RETURNING_TO_DEFAULT` | `RETURNING_TO_DEFAULT` | return 상태·command ID·목적지 |
-| 상세 실패/취소/타임아웃 | `FAILED`, `CANCELLED`, `TIMED_OUT` | failure code/message와 하위 최종 상태 |
-| 안전 복귀 또는 안전 정지 완료 | `COMPLETED` | `returnStatus=SUCCEEDED` 또는 `SAFE_STOP` |
-
-1차 물리 ERD에는 별도 Outbox 테이블이 없다. `scenario`의 navigation/return command ID와 상태, `conversation.messages`의 speech command ID와 발행 상태를 업무 행과 같은 트랜잭션으로 저장하고 Publisher가 발행 대기 항목을 재조회한다. 여러 메시지·채널·장기 재시도로 누락 또는 잠금 경합이 실제 관측되면 그때 `outbox_message` 분리를 검토한다.
-
-## 6. 시나리오 상태
-
-### 정상 상태
-
-| 상태 | 의미 | 진입 조건 |
-| --- | --- | --- |
-| `DETECTED` | 유효한 센서 이벤트로 시나리오가 생성됨 | 중복이 아닌 `PRESENCE_DETECTED` 수신 |
-| `NAVIGATING` | 이동 명령 ID가 저장됐고 발행 대기 또는 Robot 실행 중 | `navigationStatus=REQUESTED` 커밋 완료 |
-| `ARRIVED` | Robot이 목적지에 도착함 | 성공한 `NAVIGATION_RESULT` 수신 |
-| `RECOGNIZING` | AI Vision 인식 요청을 시작했거나 결과를 기다리는 중 | `requestId` 생성과 상태 저장 완료 |
-| `PERSON_FOUND` | AI Vision이 사람을 감지함 | 유효한 `PERSON_DETECTED` 수신 |
-| `GENERATING_RESPONSE` | 대화·음성 AI 요청이 저장됐고 응답을 기다리는 중 | Voice `requestId`와 상태 저장 완료 |
-| `SPEAKING` | 음성 재생 명령 ID가 저장됐고 발행 대기 또는 Robot 실행 중 | 대화 메시지 발행 대기 상태 커밋 완료 |
-| `CHECKING_RETURN_SAFETY` | 기본 위치 복귀 전에 사람·장애물·센서·지도 상태를 확인함 | 성공한 `SPEAK_RESULT` 수신 |
-| `RETURNING_TO_DEFAULT` | 사전 등록된 기본 위치로 복귀 중 | 모든 안전 조건 충족 후 복귀 명령 저장 |
-| `COMPLETED` | 귀가 환영 시나리오가 안전 결과와 함께 종료됨 | 기본 위치 도착 또는 `SAFE_STOP` 확정 |
-
-`ARRIVED`와 `PERSON_FOUND`는 감사와 장애 분석을 위해 기록하는 체크포인트 상태입니다. Backend는 해당 상태를 저장한 뒤 다음 작업을 시작하면서 후속 상태로 전환합니다.
-
-### 실패 및 종료 상태
-
-| 상태 | 진입 조건 | Backend 처리 |
-| --- | --- | --- |
-| `NAVIGATION_FAILED` | Robot 이동 실패 결과 수신 | 실패 사유 저장, 시나리오 종료 |
-| `PERSON_NOT_FOUND` | Vision이 제한 시간 안에 사람을 찾지 못함 | 미감지 사유 저장, 시나리오 종료 |
-| `VISION_FAILED` | Vision 요청 거부·서버 오류 또는 `INFERENCE_FAILED` 수신 | 오류 코드 저장, 시나리오 종료 |
-| `AI_REQUEST_FAILED` | 대화·음성 AI 호출 실패 또는 유효하지 않은 응답 | 오류 코드 저장, 시나리오 종료 |
-| `SPEAK_FAILED` | Robot 음성 다운로드 또는 재생 실패 | 실패 사유 저장, 시나리오 종료 |
-| `RETURN_FAILED` | 기본 위치 복귀 명령이 실패하거나 복귀 중 안전 상태가 불확실해짐 | 취소·안전 정지 시도, 실패 사유와 최종 위치 상태 저장 |
-| `TIMED_OUT` | 현재 단계의 제한 시간 초과 | 실행 중 Robot 명령 취소 시도, 타임아웃 단계 저장 |
-| `CANCELLED` | 사용자 또는 운영 정책에 의해 취소됨 | 실행 중 Robot 명령 취소 시도, 취소 사유 저장 |
-
-종료 상태에서는 늦게 도착한 결과로 상태를 다시 변경하지 않습니다. 늦은 결과는 상관관계 식별자와 함께 로그만 남깁니다.
-
-## 7. 상태 전이표
-
-| 현재 상태 | 입력 또는 작업 결과 | 다음 상태 | 주요 부수 효과 |
-| --- | --- | --- | --- |
-| 없음 | `PRESENCE_DETECTED` | `DETECTED` | 이벤트·시나리오 생성 |
-| `DETECTED` | 이동 command ID·발행 대기 상태 저장 | `NAVIGATING` | 커밋 후 MQTT 발행 |
-| `NAVIGATING` | `NAVIGATION_RESULT: ARRIVED` | `ARRIVED` | 명령 성공 처리 |
-| `ARRIVED` | Vision `requestId` 생성 및 저장 | `RECOGNIZING` | 인식 타이머 시작 후 Vision API 호출 |
-| `RECOGNIZING` | `PERSON_DETECTED` | `PERSON_FOUND` | 인식 결과 저장 |
-| `PERSON_FOUND` | Voice `requestId` 생성 및 저장 | `GENERATING_RESPONSE` | 커밋 후 Voice API 호출 |
-| `GENERATING_RESPONSE` | AI 응답 및 `SPEAK` command ID 저장 | `SPEAKING` | 커밋 후 MQTT 발행 |
-| `SPEAKING` | 재생 완료 후 다음 어르신 발화 확정 | `GENERATING_RESPONSE` | 최근 12턴·요약·허용 기억으로 다음 응답 생성 |
-| `SPEAKING` | 마지막 `SPEAK_RESULT: COMPLETED`과 대화 종료 | `CHECKING_RETURN_SAFETY` | 요약·기억 후보 생성 후 복귀 안전 조건 평가 |
-| `CHECKING_RETURN_SAFETY` | 모든 안전 조건 충족 | `RETURNING_TO_DEFAULT` | `DEFAULT_POSITION` 이동 command ID 저장 후 발행 |
-| `CHECKING_RETURN_SAFETY` | 하나 이상 불확실/위험 | `COMPLETED` | 복귀 명령 없이 `returnStatus=SAFE_STOP` 저장 |
-| `RETURNING_TO_DEFAULT` | `NAVIGATION_RESULT: ARRIVED` | `COMPLETED` | `returnStatus=SUCCEEDED`, 완료 시각 저장 |
-| `RETURNING_TO_DEFAULT` | 이동 실패 또는 안전 불확실 | `RETURN_FAILED` | 취소·안전 정지 및 실패 근거 저장 |
-| `NAVIGATING` | 이동 실패 | `NAVIGATION_FAILED` | 실패 사유 저장 |
-| `RECOGNIZING` | 명시적 미감지 결과 | `PERSON_NOT_FOUND` | 미감지 사유 저장 |
-| `RECOGNIZING` | Vision 요청 실패 또는 `INFERENCE_FAILED` | `VISION_FAILED` | 오류 코드 저장 |
-| `GENERATING_RESPONSE` | AI 호출 실패 | `AI_REQUEST_FAILED` | 오류 코드 저장 |
-| `SPEAKING` | 재생 실패 | `SPEAK_FAILED` | 오류 코드 저장 |
-| 진행 상태 | 해당 단계 시간 초과 | `TIMED_OUT` | 타임아웃 단계 저장 |
-| 종료 전 상태 | 취소 요청 | `CANCELLED` | 취소 사유 저장 |
-
-## 8. 초기 타임아웃 정책
-
-아래 값은 E2E 통합을 위한 초기 기본값입니다. 코드에 하드코딩하지 않고 환경별 설정으로 관리하며 실제 장비 테스트 결과에 따라 조정합니다.
-
-| 단계 | 기본값 | 시작 시점 | 만료 처리 |
-| --- | ---: | --- | --- |
-| Robot 현관 이동 | 60초 | 이동 command ID와 발행 대기 상태 저장 | `TIMED_OUT` (`timeoutStage=NAVIGATING`) |
-| 사람 인식 | 15초 | `requestId`와 `RECOGNIZING` 상태 저장 | `PERSON_NOT_FOUND` |
-| 대화·음성 생성 | 10초 | Voice `requestId`와 `GENERATING_RESPONSE` 상태 저장 | 1회 제한 재시도 후 `AI_REQUEST_FAILED` |
-| 음성 재생 | 30초 | `SPEAK` command ID와 발행 대기 상태 저장 | `TIMED_OUT` (`timeoutStage=SPEAKING`) |
-| 기본 위치 복귀 | 60초 | 복귀 command ID와 발행 대기 상태 저장 | 취소·안전 정지 후 `RETURN_FAILED` |
-
-Backend의 HTTP 타임아웃은 이 시나리오 타임아웃보다 짧아야 합니다. 재시도로 전체 시나리오 제한 시간을 넘기지 않습니다.
-
-## 9. 중복·순서 역전·재시도 정책
-
-### 이벤트 전달 중복
-
-- IoT, Robot, Vision이 동일한 논리 이벤트를 재전송할 때는 같은 `eventId`를 사용합니다.
-- Backend는 이미 처리한 `eventId`의 부수 효과를 다시 실행하지 않습니다.
-- 같은 `eventId`의 Vision Callback이 다시 도착하면 현재 시나리오 상태와 관계없이 기존 처리 결과를 조회해 `202 duplicate=true`를 반환합니다.
-- `eventId` 중복 검사는 시나리오 상태 검사보다 먼저 수행합니다.
-
-### Vision 작업 중복
-
-- `eventId`는 Callback 전달 중복을 식별하고 `requestId`는 Vision 작업 자체를 식별합니다.
-- 하나의 Vision `requestId`에는 하나의 최종 결과만 적용합니다.
-- Backend는 Vision 최종 결과 저장 시 `requestId`에 unique constraint를 적용하거나 원자적인 상태 전이를 수행합니다.
-- 서로 다른 `eventId`가 같은 `requestId`의 최종 결과로 도착하면 최초 결과만 적용합니다. 후속 결과가 저장된 결과와 같으면 `202 duplicate=true`, 충돌하면 `409 VISION_REQUEST_ALREADY_COMPLETED`를 반환하고 상태를 변경하지 않습니다.
-
-### Robot 명령 중복
-
-- Robot 상태와 결과의 동일 메시지 재전송은 `eventId`로 제거합니다.
-- 하나의 `commandId`에는 하나의 최종 결과만 적용합니다.
-- 완료된 `commandId`에 다른 최종 결과가 도착하면 기존 결과를 유지하고 경고 로그를 남깁니다.
-
-- 사람 존재 여부와 `detectionConfidence` 판정, 사용자 식별 결과와 `identificationConfidence` 산출은 AI Vision이 책임집니다.
-- Backend는 사용자 설정, 시나리오 상태와 대화 허용 정책을 확인해 능동 대화 시작 여부를 결정합니다. AI Vision은 `interactionAllowed` 같은 비즈니스 정책 결과를 결정하지 않습니다.
-- Vision 및 대화·음성 AI HTTP 요청은 `requestId`를 멱등 키로 사용합니다. 제한적 재시도에서도 같은 논리 요청에는 같은 값을 사용합니다.
-- AI 서비스는 이미 처리한 `requestId`를 다시 받으면 새 작업을 만들지 않고 기존 접수 또는 생성 결과를 반환합니다.
-- 현재 상태에서 허용되지 않은 이전 단계 결과는 상태를 바꾸지 않고 경고 로그를 남깁니다.
-- MQTT QoS 1의 중복 전달을 정상 상황으로 간주합니다.
-- Backend 재시작 후에도 DB에 저장된 `eventId`, `requestId`, `commandId`로 처리를 이어갑니다.
-- Backend는 Vision API 호출 전에 `requestId`와 `RECOGNIZING` 상태를 저장합니다. 따라서 AI Vision이 `202` 응답보다 Callback을 먼저 보내도 정상적으로 연결할 수 있습니다.
-
-## 10. 취소 정책
-
-- `NAVIGATING`, `SPEAKING` 또는 `RETURNING_TO_DEFAULT` 중 타임아웃·사용자 취소·안전 불확실이 발생하면 Backend는 Robot에 `CANCEL` 명령을 발행합니다.
-- `CANCEL`은 대상 작업의 `commandId`를 payload의 `targetCommandId`로 지정합니다.
-- Robot MQTT Bridge는 ROS 2/Nav2 또는 음성 재생 노드에 취소를 요청하고 `CANCEL_RESULT`를 반환합니다.
-- 시나리오의 최종 상태는 원래 원인인 `TIMED_OUT` 또는 `CANCELLED`로 유지하며 취소 결과를 별도로 기록합니다.
-- 취소 명령 자체가 실패하거나 제한 시간 안에 결과가 없으면 운영 경고를 남깁니다. 실패했다고 원래 작업을 성공으로 간주하지 않습니다.
-
-## 11. 데이터 전송 원칙
-
-- MQTT에는 JSON 명령, 상태, 결과만 전송합니다.
-- LiDAR, IMU, 모터 제어값과 ROS 2 내부 토픽은 Backend로 보내지 않습니다.
-- 카메라 스트림은 Robot과 AI Vision 사이에서 직접 전달합니다.
-- 음성 바이너리를 MQTT payload에 Base64로 넣지 않습니다.
-- `SPEAK`에는 문장과 AI 서버에서 제공한 내부 음성 URI·메타데이터만 포함합니다.
-- 평상시 카메라 프레임은 추론 후 폐기하며 이번 시나리오에서는 장기 저장하지 않습니다.
-- 복귀 목적지는 충전소가 아니라 Robot에 사전 등록된 `DEFAULT_POSITION` waypoint입니다. 실제 pose와 경로 계산 원본은 ROS 2/Nav2에 두고 Backend에는 복귀 목적과 최종 결과만 저장합니다.
-
-실패 상태를 저장할 때는 최종 상태만 기록하지 않고 `failureStage`, 표준화된 `failureCode`, 선택적인 `failureMessage`를 함께 기록합니다.
-
-## 12. E2E 완료 조건
-
-실제 장비 또는 Mock으로 다음 항목을 모두 확인해야 합니다.
-
-- IoT가 문서의 JSON으로 센서 이벤트를 발행할 수 있습니다.
-- Backend가 중복 없이 시나리오를 생성하고 이동 명령을 발행합니다.
-- Robot MQTT Bridge가 `NAVIGATE`와 `SPEAK`를 해석하고 결과를 반환합니다.
-- AI Vision이 OpenAPI 계약에 맞는 사람 인식 결과를 보냅니다.
-- 대화·음성 AI가 OpenAPI 계약에 맞는 문장과 음성 정보를 반환합니다.
-- Backend가 각 결과를 같은 `scenarioId`로 연결합니다.
-- 최근 12턴과 롤링/최종 요약이 저장되고 미확정 기억 후보가 원문과 논리적으로 연결됩니다.
-- 보호자 대시보드는 활성 관계와 공개 범위를 통과한 요약·기억만 조회하며 대화 원문 전체를 기본 조회하지 못합니다.
-- 최종 상태와 완료 시각이 `COMPLETED`로 기록됩니다.
-- 안전 조건을 만족하면 `DEFAULT_POSITION` 복귀 성공이 기록되고, 불확실하면 복귀를 시도하지 않은 `SAFE_STOP` 근거가 기록됩니다.
-- 타임아웃과 중복 메시지가 시나리오를 이중 실행시키지 않습니다.
-
-## 13. 담당자 합의 체크리스트
-
-- [ ] IoT: `PRESENCE_DETECTED` 방향 판정에 사용하는 센서 조합과 발생 조건 확인
-- [ ] Robot: 명령·상태·결과 토픽과 MQTT Bridge 변환 규칙 확인
-- [ ] AI Vision: Callback API 필드와 `detectionConfidence`, `identificationConfidence` 의미 확인
-- [ ] 대화·음성 AI: 생성 API와 음성 URI의 접근 방식 확인
-- [ ] Backend: 상태 전이, 멱등성, 타임아웃 및 오류 코드 확인
-- [ ] Robot/Backend: `DEFAULT_POSITION` waypoint와 복귀 전 안전 조건, `SAFE_STOP` 결과 계약 확인
-- [ ] Backend: 상세 통합 체크포인트와 8테이블 ERD의 굵은 상태 매핑 확인
-- [ ] 전체: 샘플 식별자와 시간 형식으로 Mock E2E 수행
+Raw는 요약 생성, 활성 후보 해소, 확정 반영, 보존기간 만료 후 삭제한다. 세 `source_message_id` FK는 `ON DELETE SET NULL`이므로 답변·후보 결과·최종 돌봄 사실은 남는다.

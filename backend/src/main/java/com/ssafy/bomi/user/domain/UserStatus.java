@@ -3,10 +3,11 @@ package com.ssafy.bomi.user.domain;
 /**
  * Lifecycle status of an {@link AppUser}.
  *
- * <p>Only {@code ACTIVE} is confirmed by the SQL default. Additional values are
- * provisional and must be reconciled with the finalized ERD.</p>
+ * <p>Values follow the {@code APP_USER_ENUM} code dictionary of the MVP ERD
+ * ({@code status}); {@code ACTIVE} is the SQL default.</p>
  */
 public enum UserStatus {
     ACTIVE,
-    INACTIVE
+    SUSPENDED,
+    WITHDRAWN
 }

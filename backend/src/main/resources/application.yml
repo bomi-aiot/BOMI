@@ -11,12 +11,14 @@ spring:
     password: ${POSTGRES_PASSWORD:change-me}
   jpa:
     hibernate:
-      ddl-auto: update
+      # Flyway owns the schema; Hibernate only checks entity↔schema alignment.
+      ddl-auto: validate
     open-in-view: false
-  integration:
-    mqtt:
-      broker-url: tcp://${MQTT_BROKER_HOST:localhost}:${MQTT_BROKER_PORT:1883}
-
+  flyway:
+    enabled: true
+    # Assumes a fresh (empty) database. If deploying onto an existing schema,
+    # set this true so Flyway baselines the current state instead of failing.
+    baseline-on-migrate: false
 management:
   endpoints:
     web:
@@ -45,3 +47,14 @@ springdoc:
       - name: Conversation and Voice AI API
         url: /openapi/voice-ai.openapi.yaml
     urls-primary-name: BOMI Backend API
+
+bomi:
+  mqtt:
+    enabled: ${MQTT_ENABLED:false}
+    broker-url: ${MQTT_BROKER_URL:tcp://${MQTT_BROKER_HOST:localhost}:${MQTT_BROKER_PORT:1883}}
+    client-id-prefix: ${MQTT_CLIENT_ID_PREFIX:bomi-backend}
+    username: ${MQTT_USERNAME:}
+    password: ${MQTT_PASSWORD:}
+    qos: 1
+    connection-timeout: 10s
+    completion-timeout: 5s

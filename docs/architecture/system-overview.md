@@ -1,28 +1,43 @@
 # 시스템 개요
 
-BOMI 백엔드는 이벤트, 시나리오, 기록, 상태, 알림을 중앙 관리합니다. 단, 장애물 회피·경로 추종·음성 스트리밍·프레임별 자세 판정·고빈도 온습도 측정처럼 즉시성이 높거나 원시 데이터 양이 큰 처리는 로봇·센서 또는 AI 시스템 내부에서 직접 수행하고 주요 결과와 최신값만 백엔드에 기록합니다.
+BOMI 백엔드는 사용자 동의, 로봇 상태, 시나리오, 대화 문맥, 확정된 개인화·돌봄 사실을 중앙 관리한다. 장애물 회피·경로 추종·음성 스트리밍·프레임별 Vision 판정·고빈도 센서 측정은 로봇 또는 AI 내부에서 처리하고 업무에 필요한 결과만 전달한다.
 
 ```mermaid
 flowchart LR
-  IoT["주거 공간 IoT·온습도 센서"] -->|MQTT 이벤트| BE["Spring Boot 백엔드"]
-  BE -->|MQTT 명령| Robot["ROS 2 로봇"]
-  Robot -->|상태·결과·휴식 전이·온보딩 답변 이벤트| BE
+  IoT["주거 공간 IoT·센서"] -->|MQTT 사건| BE["Spring Boot Backend"]
+  BE -->|MQTT 명령| Robot["ROS 2 Robot"]
+  Robot -->|상태·결과·온보딩 메타데이터| BE
   Robot <-->|REST/stream| AI["Vision·대화·음성 AI"]
-  BE <-->|REST/WebSocket| FE["React 보호자 대시보드"]
-  BE --> DB[(PostgreSQL + pgvector)]
+  BE <-->|REST/WebSocket| App["시니어·보호자 앱"]
+  BE --> DB[("PostgreSQL + pgvector")]
 ```
 
-## 통신 기준
+## 통신
 
-- MQTT: IoT/로봇 이벤트, 명령, 상태
-- REST: 명확한 요청·응답 및 조회
-- WebSocket: 백엔드에서 대시보드로 실시간 상태 전달
-- GPIO/UART/I2C: 장치와 센서의 하드웨어 통신
+- MQTT: IoT·로봇 사건, 명령, 진행 상태, 최종 결과
+- REST: 앱 입력, 명확한 요청·응답과 조회
+- WebSocket: 백엔드에서 앱으로 상태·알림 전달
+- Robot–AI 직접 통신: 중앙 DB에 보존하지 않는 음성·영상
 
-## 추가 기능의 책임 경계
+## 데이터 책임
 
-- 초기 설문은 Backend의 `onboarding_session`이 진행 원본, `app_user`가 현재 상태 projection을 맡고 두 상태를 같은 트랜잭션에서 갱신합니다. `onboarding_answer`는 문항별 처리·검증·revision·재전송·최종 반영 원장이며, 대화 AI는 한 번에 한 질문과 후속 질문을 수행합니다.
-- 로봇은 동일 답변 재전송에 같은 `eventId`를 사용합니다. Backend는 `client_event_id`와 `materialization_key`로 답변 저장과 최종 사실 반영을 각각 멱등 처리하고, 프로필은 `app_user`, `memory`, `care_record`만 조회합니다.
-- Vision은 일정 시간 이상 누움이 확정됐을 때만 휴식 전이를 내보냅니다. 카메라 프레임·관절 좌표·초당 자세 분류는 중앙 DB에 저장하지 않습니다.
-- Robot은 휴식 중 `REST_GUARD`로 일반 능동 기능을 억제하지만 호출 감지·안전 감지·긴급 대응과 호출 시 안전한 접근은 유지합니다.
-- 온습도 센서는 최신값과 임계 사건만 Backend에 전달합니다. 중앙 DB는 `robot` 최신 스냅샷과 의미 있는 `care_record`만 보존합니다.
+| 책임 | 저장 위치 |
+| --- | --- |
+| 사용자·동의 | `app_user` |
+| 보호자 연결·PRIMARY 관리 권한 | `care_relationship` |
+| 로봇 배정·모드·최신 환경 | `robot` |
+| 앱·로봇 공용 온보딩 | `onboarding_session`, `onboarding_answer` |
+| 로봇 행동 | `scenario` |
+| Raw 발화 | `conversation`, `conversation_message` |
+| 대화·일간 요약 | `conversation_summary` |
+| 재질의·민감정보 확인·협의 | `fact_candidate` |
+| 장기 개인화 사실 | `memory` |
+| 확정 돌봄 사실 | `care_record` |
+
+앱과 로봇은 [`../database/onboarding-question-set-v1.json`](../database/onboarding-question-set-v1.json)을 공유한다. UI와 자연어 질문 방식은 달라도 질문 코드, 필수 필드, 동의 게이트, 정규화 JSON, 최종 매핑은 같다.
+
+대화 문맥은 현재 발화, 최근 Raw 6~12개, 관련 요약, 허용된 장기 기억 3~10개, 동의된 관련 돌봄 기록만 조립한다. 기억은 사용자·수명·확인·공개 범위를 먼저 필터링한 뒤 키워드와 벡터 결과를 합친다.
+
+민감정보는 명확해도 최종 확인한다. 누락·모호·낮은 인식 신뢰도는 한 필드씩 재질의한다. 대리 관리는 활성 PRIMARY 보호자 한 명만 가능하고 SECONDARY는 변경할 수 없다.
+
+음성·영상, 전체 프롬프트·모델 응답, 토큰, Vision 특징값은 중앙 DB에 저장하지 않는다. 휴식은 지속시간을 만족한 최종 전이만, 온습도는 최신 스냅샷과 의미 있는 관찰만 보존한다. 모든 MQTT ID·sequence의 수신 원장은 아직 없다.
