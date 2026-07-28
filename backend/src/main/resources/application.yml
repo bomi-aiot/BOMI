@@ -11,8 +11,14 @@ spring:
     password: ${POSTGRES_PASSWORD:change-me}
   jpa:
     hibernate:
-      ddl-auto: update
+      # Flyway owns the schema; Hibernate only checks entity↔schema alignment.
+      ddl-auto: validate
     open-in-view: false
+  flyway:
+    enabled: true
+    # Assumes a fresh (empty) database. If deploying onto an existing schema,
+    # set this true so Flyway baselines the current state instead of failing.
+    baseline-on-migrate: false
 management:
   endpoints:
     web:
