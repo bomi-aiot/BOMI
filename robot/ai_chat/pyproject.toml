@@ -12,6 +12,8 @@ dependencies = [
     "noisereduce",
     'xmltodict',
     'psycopg2-binary',
+    'sshtunnel',
+    "paramiko<3.0",
 ]
 
 [project.optional-dependencies]
