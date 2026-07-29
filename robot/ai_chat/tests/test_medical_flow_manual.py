@@ -1,28 +1,21 @@
 # robot/ai_chat/tests/test_medical_flow_manual.py
-"""medical_lookup 흐름(라우팅 → Gemini tool 호출 → 응답 생성) 수동 테스트."""
-import sys
-import os
-
+import sys, os, time
 SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 sys.path.append(os.path.abspath(SRC_DIR))
 
-from llm.router import choose_backend
 from llm.medical_flow import handle_medical_query
 
+questions = [
+    "부산에 있는 병원 알려줘",       # region만 있는 케이스
+    "서울대병원 어디야",             # facility_name만 있는 케이스
+    '서울대학교병원 어디야',
+    "부산 서면에 약국 좀 찾아줘",     # region(약국) 케이스
+    "타이레놀 있어?",                # 의약품 정확한 이름
+    "타이레롤 있어?",                # 의약품 오타
+    "타이네롤 있어?",                # 의약품 심한 오타 -> 되묻기 확인
+]
 
-def test(text: str):
-    print(f"\n입력: {text}")
-    backend, category, score = choose_backend(text)
-    print(f"라우팅 결과: backend={backend}, category={category}, score={score:.2f}")
-
-    if backend == "api" and category == "medical_lookup":
-        response = handle_medical_query(text)
-        print(f"최종 응답: {response}")
-    else:
-        print("→ medical_lookup으로 안 빠짐 (라우팅부터 확인 필요)")
-
-
-if __name__ == "__main__":
-    test("타이레놀 노인이 먹어도 되나요?")
-    test("근처 병원 좀 알려줘")
-    test("이 약이랑 아미트리프틸린 같이 먹어도 돼?")
+for q in questions:
+    print(f"\n[질문] {q}")
+    print(f"[응답] {handle_medical_query(q)}")
+    time.sleep(3)  # 연속 요청으로 인한 rate limit(429) 방지
