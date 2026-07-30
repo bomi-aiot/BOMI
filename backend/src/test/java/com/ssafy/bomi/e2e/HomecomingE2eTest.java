@@ -28,6 +28,7 @@ import com.ssafy.bomi.scenario.application.HomecomingOrchestrator;
 import com.ssafy.bomi.scenario.config.HomecomingProperties;
 import com.ssafy.bomi.scenario.domain.Scenario;
 import com.ssafy.bomi.scenario.domain.ScenarioStatus;
+import com.ssafy.bomi.scenario.inbound.ConversationEndedHandler;
 import com.ssafy.bomi.scenario.inbound.DoorOpenedHandler;
 import com.ssafy.bomi.scenario.inbound.NavigationResultHandler;
 import com.ssafy.bomi.scenario.repository.ScenarioRepository;
@@ -100,6 +101,7 @@ class HomecomingE2eTest {
         List<MqttMessageHandler> handlers = List.of(
             new DoorOpenedHandler(orchestrator),
             new NavigationResultHandler(orchestrator),
+            new ConversationEndedHandler(orchestrator),
             new RestStateChangedHandler(observationService),
             new AmbientObservedHandler(observationService),
             new NavigationStatusHandler());
@@ -130,8 +132,8 @@ class HomecomingE2eTest {
         assertThat(gateway.startedScenarioIds).containsExactly(scenarioId);
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.CONVERSING);
 
-        // 3) Conversation ends (out-of-band, voice side) → NAVIGATE(default).
-        orchestrator.onConversationEnded(scenarioId);
+        // 3) Voice side publishes CONVERSATION_ENDED → NAVIGATE(default).
+        dispatcher.dispatch(conversationEnded("conv-1", scenarioId));
         sync();
 
         RobotCommand navHome = publisher.commands.get(2);
@@ -155,6 +157,89 @@ class HomecomingE2eTest {
         sync();
 
         assertThat(scenarioRepository.findAll()).hasSize(1);
+        assertThat(publisher.commands).hasSize(1);
+    }
+
+    @Test
+    void conversationEndedIgnoredWhenNotConversing() {
+        // Door opened → scenario is MOVING_TO_ENTRANCE, not CONVERSING yet.
+        dispatcher.dispatch(doorOpened("door-1"));
+        sync();
+        UUID scenarioId = publisher.commands.get(0).scenarioId();
+
+        // A CONVERSATION_ENDED arriving now must be ignored by the status guard.
+        dispatcher.dispatch(conversationEnded("conv-early", scenarioId));
+        sync();
+
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.MOVING_TO_ENTRANCE);
+        assertThat(publisher.commands).hasSize(1); // still only NAVIGATE(ENTRANCE)
+    }
+
+    @Test
+    void lateConversationEndedIgnoredAfterReturnStarted() {
+        dispatcher.dispatch(doorOpened("door-1"));
+        sync();
+        UUID scenarioId = publisher.commands.get(0).scenarioId();
+        dispatcher.dispatch(navigationResult("nav-1", scenarioId));
+        sync();
+        dispatcher.dispatch(conversationEnded("conv-1", scenarioId)); // → NAVIGATE(default)
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
+        assertThat(publisher.commands).hasSize(3);
+
+        // A late CONVERSATION_ENDED with a NEW eventId passes idempotency but the
+        // status guard ignores it (no longer CONVERSING): no extra command.
+        dispatcher.dispatch(conversationEnded("conv-2", scenarioId));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
+        assertThat(publisher.commands).hasSize(3);
+    }
+
+    @Test
+    void navigationFailureStopsScenarioAndSafeStops() {
+        dispatcher.dispatch(doorOpened("door-1"));
+        sync();
+        UUID scenarioId = publisher.commands.get(0).scenarioId();
+
+        // Robot fails to reach the entrance → scenario FAILED, robot SAFE_STOP, no SPEAK.
+        dispatcher.dispatch(navigationResult("nav-1", scenarioId, "FAILED"));
+        sync();
+
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.FAILED);
+        assertThat(mode()).isEqualTo(RobotMode.SAFE_STOP);
+        assertThat(publisher.commands).hasSize(1); // only NAVIGATE(ENTRANCE), no SPEAK
+    }
+
+    @Test
+    void navigationResultWithoutStatusIsIgnoredNotTreatedAsArrival() {
+        dispatcher.dispatch(doorOpened("door-1"));
+        sync();
+        UUID scenarioId = publisher.commands.get(0).scenarioId();
+
+        // A result missing 'status' must NOT be treated as arrival: state unchanged.
+        ObjectNode body = objectMapper.createObjectNode();
+        body.putObject("payload").put("scenarioId", scenarioId.toString());
+        dispatcher.dispatch(message(
+            MqttInboundCategory.ROBOT_RESULT, "NAVIGATION_RESULT", DEVICE_ID, "nav-nostatus", body));
+        sync();
+
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.MOVING_TO_ENTRANCE);
+        assertThat(publisher.commands).hasSize(1);
+    }
+
+    @Test
+    void lateNavigationFailureIgnoredAfterTerminal() {
+        dispatcher.dispatch(doorOpened("door-1"));
+        sync();
+        UUID scenarioId = publisher.commands.get(0).scenarioId();
+        dispatcher.dispatch(navigationResult("nav-1", scenarioId, "FAILED"));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.FAILED);
+
+        // A late failure with a new eventId must be ignored (already terminal).
+        dispatcher.dispatch(navigationResult("nav-2", scenarioId, "FAILED"));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.FAILED);
         assertThat(publisher.commands).hasSize(1);
     }
 
@@ -196,9 +281,21 @@ class HomecomingE2eTest {
     }
 
     private MqttInboundMessage navigationResult(String eventId, UUID scenarioId) {
+        return navigationResult(eventId, scenarioId, "ARRIVED");
+    }
+
+    private MqttInboundMessage navigationResult(String eventId, UUID scenarioId, String status) {
+        ObjectNode body = objectMapper.createObjectNode();
+        ObjectNode payload = body.putObject("payload");
+        payload.put("scenarioId", scenarioId.toString());
+        payload.put("status", status);
+        return message(MqttInboundCategory.ROBOT_RESULT, "NAVIGATION_RESULT", DEVICE_ID, eventId, body);
+    }
+
+    private MqttInboundMessage conversationEnded(String eventId, UUID scenarioId) {
         ObjectNode body = objectMapper.createObjectNode();
         body.putObject("payload").put("scenarioId", scenarioId.toString());
-        return message(MqttInboundCategory.ROBOT_RESULT, "NAVIGATION_RESULT", DEVICE_ID, eventId, body);
+        return message(MqttInboundCategory.ROBOT_EVENT, "CONVERSATION_ENDED", DEVICE_ID, eventId, body);
     }
 
     private MqttInboundMessage restState(String eventId, String state) {

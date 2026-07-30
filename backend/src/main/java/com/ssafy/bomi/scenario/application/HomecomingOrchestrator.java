@@ -7,6 +7,7 @@ import com.ssafy.bomi.robot.domain.Robot;
 import com.ssafy.bomi.robot.repository.RobotRepository;
 import com.ssafy.bomi.scenario.config.HomecomingProperties;
 import com.ssafy.bomi.scenario.domain.Scenario;
+import com.ssafy.bomi.scenario.domain.ScenarioStatus;
 import com.ssafy.bomi.scenario.domain.ScenarioType;
 import com.ssafy.bomi.scenario.repository.ScenarioRepository;
 import java.time.Duration;
@@ -107,12 +108,44 @@ public class HomecomingOrchestrator {
         }
     }
 
+    /**
+     * Robot reported a navigation failure (e.g. PATH_BLOCKED): stop the scenario.
+     *
+     * <p>Fails the scenario and forces the robot to {@code SAFE_STOP}. Unknown or
+     * already-terminated scenarios are ignored so a duplicate or late failure
+     * stays idempotent.</p>
+     */
+    @Transactional
+    public void onNavigationFailed(UUID scenarioId) {
+        Scenario scenario = scenarioRepository.findById(scenarioId).orElse(null);
+        if (scenario == null) {
+            log.warn("Navigation failure for unknown scenario; ignoring: scenarioId={}", scenarioId);
+            return;
+        }
+        if (scenario.isTerminated()) {
+            log.warn("Navigation failure ignored for already-terminated scenario {}: scenarioId={}",
+                scenario.getFinalStatus(), scenario.getId());
+            return;
+        }
+        Robot robot = requireRobot(scenario.getRobotId());
+        scenario.fail();
+        scenarioRepository.save(scenario);
+        syncRobotMode(robot, scenario);
+        log.warn("Navigation failed; scenario marked FAILED: scenarioId={}", scenario.getId());
+    }
+
     /** Conversation finished (called by the voice side): send the robot back home. */
     @Transactional
     public void onConversationEnded(UUID scenarioId) {
         Scenario scenario = scenarioRepository.findById(scenarioId).orElse(null);
         if (scenario == null) {
             log.warn("Conversation end for unknown scenario; ignoring: scenarioId={}", scenarioId);
+            return;
+        }
+        if (scenario.getFinalStatus() != ScenarioStatus.CONVERSING) {
+            // Late or duplicate signal (or wrong state): stay idempotent, do not re-drive.
+            log.warn("Conversation end ignored for scenario in status {}: scenarioId={}",
+                scenario.getFinalStatus(), scenario.getId());
             return;
         }
         Robot robot = requireRobot(scenario.getRobotId());

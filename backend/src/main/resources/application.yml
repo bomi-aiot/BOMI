@@ -49,6 +49,12 @@ springdoc:
     urls-primary-name: BOMI Backend API
 
 bomi:
+  homecoming:
+    # 문 센서(디바이스 id) → 어르신(UUID) 매핑. IoT 번역기가 발행하는
+    # DOOR_OPENED의 sourceId를 해당 어르신 시나리오로 연결한다.
+    # 값은 seed-kim-sunja.sql 기준 김순자 UUID.
+    sensor-to-senior:
+      door_sensor: 10000000-0000-4000-8000-000000000001
   mqtt:
     enabled: ${MQTT_ENABLED:false}
     broker-url: ${MQTT_BROKER_URL:tcp://${MQTT_BROKER_HOST:localhost}:${MQTT_BROKER_PORT:1883}}
