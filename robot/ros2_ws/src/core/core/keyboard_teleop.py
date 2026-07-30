@@ -1,3 +1,5 @@
+"""키보드 입력을 Twist 이동 명령으로 발행하는 노드."""
+
 import select
 import sys
 import termios
@@ -27,9 +29,10 @@ x     : 종료
 
 
 class KeyboardTeleop(Node):
-    """키보드 입력을 /cmd_vel 토픽으로 발행하는 테스트 노드."""
+    """키보드 입력을 /cmd_vel로 발행하는 테스트 노드."""
 
     def __init__(self) -> None:
+        """키보드 입력과 publisher를 초기화한다."""
         super().__init__("keyboard_teleop")
 
         self.publisher = self.create_publisher(
@@ -68,6 +71,7 @@ class KeyboardTeleop(Node):
         return key
 
     def create_twist(self, key: str) -> Twist:
+        """입력 키를 Twist 명령으로 변환한다."""
         message = Twist()
 
         commands = {
@@ -90,10 +94,12 @@ class KeyboardTeleop(Node):
         return message
 
     def publish_stop(self) -> None:
+        """정지 Twist 명령을 발행한다."""
         self.publisher.publish(Twist())
         self.get_logger().info("정지 명령 발행")
 
     def run(self) -> None:
+        """키보드 입력을 읽고 이동 명령을 발행한다."""
         try:
             while rclpy.ok():
                 key = self.read_key()
@@ -124,6 +130,7 @@ class KeyboardTeleop(Node):
 
 
 def main(args=None) -> None:
+    """키보드 조종 노드를 실행한다."""
     rclpy.init(args=args)
     node = KeyboardTeleop()
 
