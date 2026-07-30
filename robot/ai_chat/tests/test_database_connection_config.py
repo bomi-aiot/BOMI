@@ -2,32 +2,11 @@
 
 from unittest.mock import Mock
 
-from bomi_ai_chat.config import Settings
 from bomi_ai_chat.db import medical_repository
 
 
-def settings_from_env(monkeypatch, **values: str) -> Settings:
-    variables = (
-        "DB_CONNECTION_MODE",
-        "DATABASE_URL",
-        "DB_HOST",
-        "DB_PORT",
-        "DB_NAME",
-        "DB_USER",
-        "DB_PASSWORD",
-        "EC2_HOST",
-        "SSH_KEY_PATH",
-    )
-    for variable in variables:
-        monkeypatch.delenv(variable, raising=False)
-    for name, value in values.items():
-        monkeypatch.setenv(name, value)
-    return Settings.from_env(load_env_file=False)
-
-
-def test_direct_mode_uses_database_url(monkeypatch):
-    settings = settings_from_env(
-        monkeypatch,
+def test_direct_mode_uses_database_url(monkeypatch, settings_factory):
+    settings = settings_factory(
         DB_CONNECTION_MODE="direct",
         DATABASE_URL="postgresql://user:password@db:5432/bomi",
     )
@@ -43,9 +22,11 @@ def test_direct_mode_uses_database_url(monkeypatch):
     )
 
 
-def test_direct_mode_uses_individual_database_values(monkeypatch):
-    settings = settings_from_env(
-        monkeypatch,
+def test_direct_mode_uses_individual_database_values(
+    monkeypatch,
+    settings_factory,
+):
+    settings = settings_factory(
         DB_CONNECTION_MODE="direct",
         DB_HOST="database.internal",
         DB_PORT="6432",
@@ -69,9 +50,8 @@ def test_direct_mode_uses_individual_database_values(monkeypatch):
     )
 
 
-def test_ssh_mode_uses_forwarded_local_port(monkeypatch):
-    settings = settings_from_env(
-        monkeypatch,
+def test_ssh_mode_uses_forwarded_local_port(monkeypatch, settings_factory):
+    settings = settings_factory(
         DB_NAME="bomi",
         DB_USER="app",
         DB_PASSWORD="secret",

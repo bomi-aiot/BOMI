@@ -8,36 +8,6 @@ from bomi_ai_chat.config import (
     Settings,
 )
 
-SETTING_VARIABLES = [
-    "RTZR_CLIENT_ID",
-    "RTZR_CLIENT_SECRET",
-    "GEMINI_API_KEY",
-    "TYPECAST_API_KEY",
-    "TYPECAST_VOICE_ID",
-    "KMA_API_KEY",
-    "HIRA_HOSPITAL_API_KEY",
-    "HIRA_PHARMACY_API_KEY",
-    "DUR_PRDLST_API_KEY",
-    "DB_CONNECTION_MODE",
-    "DATABASE_URL",
-    "DB_HOST",
-    "DB_PORT",
-    "DB_NAME",
-    "DB_USER",
-    "DB_PASSWORD",
-    "EC2_HOST",
-    "EC2_SSH_USER",
-    "SSH_KEY_PATH",
-    "REMOTE_DB_HOST",
-    "REMOTE_DB_PORT",
-]
-
-
-@pytest.fixture(autouse=True)
-def clear_setting_variables(monkeypatch):
-    for variable in SETTING_VARIABLES:
-        monkeypatch.delenv(variable, raising=False)
-
 
 def load_settings() -> Settings:
     return Settings.from_env(load_env_file=False)
