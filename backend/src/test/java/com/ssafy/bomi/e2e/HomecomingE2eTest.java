@@ -196,6 +196,54 @@ class HomecomingE2eTest {
     }
 
     @Test
+    void navigationFailureStopsScenarioAndSafeStops() {
+        dispatcher.dispatch(doorOpened("door-1"));
+        sync();
+        UUID scenarioId = publisher.commands.get(0).scenarioId();
+
+        // Robot fails to reach the entrance → scenario FAILED, robot SAFE_STOP, no SPEAK.
+        dispatcher.dispatch(navigationResult("nav-1", scenarioId, "FAILED"));
+        sync();
+
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.FAILED);
+        assertThat(mode()).isEqualTo(RobotMode.SAFE_STOP);
+        assertThat(publisher.commands).hasSize(1); // only NAVIGATE(ENTRANCE), no SPEAK
+    }
+
+    @Test
+    void navigationResultWithoutStatusIsIgnoredNotTreatedAsArrival() {
+        dispatcher.dispatch(doorOpened("door-1"));
+        sync();
+        UUID scenarioId = publisher.commands.get(0).scenarioId();
+
+        // A result missing 'status' must NOT be treated as arrival: state unchanged.
+        ObjectNode body = objectMapper.createObjectNode();
+        body.putObject("payload").put("scenarioId", scenarioId.toString());
+        dispatcher.dispatch(message(
+            MqttInboundCategory.ROBOT_RESULT, "NAVIGATION_RESULT", DEVICE_ID, "nav-nostatus", body));
+        sync();
+
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.MOVING_TO_ENTRANCE);
+        assertThat(publisher.commands).hasSize(1);
+    }
+
+    @Test
+    void lateNavigationFailureIgnoredAfterTerminal() {
+        dispatcher.dispatch(doorOpened("door-1"));
+        sync();
+        UUID scenarioId = publisher.commands.get(0).scenarioId();
+        dispatcher.dispatch(navigationResult("nav-1", scenarioId, "FAILED"));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.FAILED);
+
+        // A late failure with a new eventId must be ignored (already terminal).
+        dispatcher.dispatch(navigationResult("nav-2", scenarioId, "FAILED"));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.FAILED);
+        assertThat(publisher.commands).hasSize(1);
+    }
+
+    @Test
     void restStateChangeRecordsObservationAndEntersRestGuard() {
         dispatcher.dispatch(restState("rest-1", "RESTING"));
         sync();
@@ -233,8 +281,14 @@ class HomecomingE2eTest {
     }
 
     private MqttInboundMessage navigationResult(String eventId, UUID scenarioId) {
+        return navigationResult(eventId, scenarioId, "ARRIVED");
+    }
+
+    private MqttInboundMessage navigationResult(String eventId, UUID scenarioId, String status) {
         ObjectNode body = objectMapper.createObjectNode();
-        body.putObject("payload").put("scenarioId", scenarioId.toString());
+        ObjectNode payload = body.putObject("payload");
+        payload.put("scenarioId", scenarioId.toString());
+        payload.put("status", status);
         return message(MqttInboundCategory.ROBOT_RESULT, "NAVIGATION_RESULT", DEVICE_ID, eventId, body);
     }
 

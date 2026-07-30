@@ -433,7 +433,7 @@ Backend는 `scenarioId`로 시나리오를 찾아 `CONVERSING` 상태일 때만 
   "type": "NAVIGATION_RESULT",
   "occurredAt": "2026-07-21T10:30:15+09:00",
   "payload": {
-    "outcome": "ARRIVED",
+    "status": "ARRIVED",
     "location": "ENTRANCE"
   }
 }
@@ -450,12 +450,14 @@ Backend는 `scenarioId`로 시나리오를 찾아 `CONVERSING` 상태일 때만 
   "type": "NAVIGATION_RESULT",
   "occurredAt": "2026-07-21T10:30:15+09:00",
   "payload": {
-    "outcome": "FAILED",
+    "status": "FAILED",
     "reasonCode": "PATH_BLOCKED",
     "message": "목적지까지 안전한 경로를 찾지 못했습니다."
   }
 }
 ```
+
+결과 판정 키는 `payload.status`를 사용합니다(로봇 결과의 공통 필드). Backend는 `status`가 `ARRIVED`일 때만 시나리오를 진행하고, `FAILED`이면 시나리오를 `FAILED`로 종료하며 로봇을 `SAFE_STOP`으로 전환합니다. `status`가 없거나 알 수 없는 값이면 도착으로 처리하지 않고 무시합니다. `reasonCode`와 `message`는 선택 진단 정보이며 현재 Backend는 사용하지 않습니다.
 
 ### `SPEAK_RESULT`
 
@@ -468,12 +470,12 @@ Backend는 `scenarioId`로 시나리오를 찾아 `CONVERSING` 상태일 때만 
   "type": "SPEAK_RESULT",
   "occurredAt": "2026-07-21T10:30:25+09:00",
   "payload": {
-    "outcome": "COMPLETED"
+    "status": "DONE"
   }
 }
 ```
 
-실패 시 `payload.outcome=FAILED`와 `reasonCode`, `message`를 포함합니다.
+실패 시 `payload.status=FAILED`와 `reasonCode`, `message`를 포함합니다.
 
 ### `CANCEL_RESULT`
 
@@ -486,13 +488,13 @@ Backend는 `scenarioId`로 시나리오를 찾아 `CONVERSING` 상태일 때만 
   "type": "CANCEL_RESULT",
   "occurredAt": "2026-07-21T10:31:02+09:00",
   "payload": {
-    "outcome": "CANCELLED",
+    "status": "CANCELLED",
     "targetCommandId": "01K0M4Y8B7F5M2N1Q9R6S3T8VX"
   }
 }
 ```
 
-`payload.outcome`은 다음 중 하나입니다.
+`payload.status`는 다음 중 하나입니다.
 
 | 값 | 의미 |
 | --- | --- |
@@ -518,7 +520,7 @@ Backend는 `CANCEL_RESULT`를 별도 명령 결과로 기록하고 시나리오�
 ## 10. 유효성 및 보안
 
 - 토픽의 `{deviceId}` 또는 `{robotId}`와 payload의 식별자가 다르면 메시지를 거부합니다.
-- 알 수 없는 `type`, `status`, `outcome`은 임의로 성공 처리하지 않습니다.
+- 알 수 없는 `type`이나 `status`는 임의로 성공 처리하지 않습니다.
 - `occurredAt`이 파싱되지 않거나 필수 필드가 없으면 오류 로그를 남기고 폐기합니다.
 - 생산자는 같은 논리 사건을 재전송할 때 같은 `eventId`를 유지합니다.
 - Backend는 시나리오 시작 이벤트의 `eventId`를 `scenario.external_event_id`에 저장합니다. 다른 통신 이벤트는 현재 12테이블 ERD에 수신 원장으로 보존하지 않습니다.

@@ -47,7 +47,9 @@ class ScenarioMqttHandlersTest {
         UUID scenarioId = UUID.randomUUID();
 
         ObjectNode body = objectMapper.createObjectNode();
-        body.putObject("payload").put("scenarioId", scenarioId.toString());
+        ObjectNode payload = body.putObject("payload");
+        payload.put("scenarioId", scenarioId.toString());
+        payload.put("status", "ARRIVED");
         MqttInboundMessage result =
             message(MqttInboundCategory.ROBOT_RESULT, "NAVIGATION_RESULT", body, "robot-01");
 
@@ -57,5 +59,20 @@ class ScenarioMqttHandlersTest {
 
         handler.handle(result);
         verify(orchestrator).onRobotArrived(scenarioId);
+    }
+
+    @Test
+    void navigationResultHandlerFailsScenarioOnFailedStatus() {
+        NavigationResultHandler handler = new NavigationResultHandler(orchestrator);
+        UUID scenarioId = UUID.randomUUID();
+
+        ObjectNode body = objectMapper.createObjectNode();
+        ObjectNode payload = body.putObject("payload");
+        payload.put("scenarioId", scenarioId.toString());
+        payload.put("status", "FAILED");
+
+        handler.handle(
+            message(MqttInboundCategory.ROBOT_RESULT, "NAVIGATION_RESULT", body, "robot-01"));
+        verify(orchestrator).onNavigationFailed(scenarioId);
     }
 }
