@@ -25,7 +25,7 @@ Ubuntu 22.04, ROS 2 Humble, Python 3.10을 기준으로 하는 로봇 워크스�
 
 ## SLAM 지도 기반 waypoint 순찰
 
-`nav2_waypoint_patrol`은 SLAM으로 생성한 지도 위의 고정 지점들을 Nav2 목표로 순서대로 보내는 노드입니다. 이 노드는 모터를 직접 제어하지 않고, Nav2의 `navigate_to_pose` 액션 서버에 목표 pose만 전달합니다. 실제 `/cmd_vel` 생성, 경로 계획과 장애물 회피는 Nav2가 담당합니다.
+`nav2_waypoint_patrol`은 SLAM으로 생성한 지도 위의 고정 지점들을 Nav2 목표로 순서대로 보내는 노드입니다. 이 노드는 모터를 직접 제어하지 않고, Nav2의 `navigate_to_pose` 액션 서버에 목표 pose만 전달합니다. 전역 경로는 NavFn Planner의 A* 탐색으로 계산하며, 실제 `/cmd_vel` 생성과 장애물 회피는 Nav2가 담당합니다.
 
 기본 waypoint 예시는 `ros2_ws/src/core/config/room_waypoints.yaml`에 있습니다.
 
