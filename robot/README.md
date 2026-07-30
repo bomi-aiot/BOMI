@@ -19,8 +19,169 @@ Ubuntu 22.04, ROS 2 Humble, Python 3.10을 기준으로 하는 로봇 워크스�
 | `ros2 run core status_publisher` | `/bomi/status`에 `bomi is ready`를 1초마다 발행 |
 | `ros2 run core keyboard_teleop` | 키보드 입력을 `/cmd_vel`의 `geometry_msgs/Twist`로 발행 |
 | `ros2 run core mock_motor_driver` | `/cmd_vel`을 구독해 값을 로그로 출력 |
+| `ros2 run core nav2_waypoint_patrol` | YAML 순찰 지점을 Nav2 `NavigateToPose` 목표로 순서대로 전송 |
 
 현재 차량은 GA25-370 모터 1개와 MG996R 조향 서보 1개를 사용하는 자동차형 구조입니다. 4개 엔코더 모터, MDD10A와 Pico H를 사용하는 차동구동 장비는 개조를 위한 목표 구성으로, 아직 장착 및 검증이 완료되지 않았습니다. 자세한 하드웨어 구성과 안전한 검증 순서는 [`docs/hardware-control.md`](docs/hardware-control.md)를 참고하세요.
+
+## SLAM 지도 기반 waypoint 순찰
+
+`nav2_waypoint_patrol`은 SLAM으로 생성한 지도 위의 고정 지점들을 Nav2 목표로 순서대로 보내는 노드입니다. 이 노드는 모터를 직접 제어하지 않고, Nav2의 `navigate_to_pose` 액션 서버에 목표 pose만 전달합니다. 실제 `/cmd_vel` 생성, 경로 계획과 장애물 회피는 Nav2가 담당합니다.
+
+기본 waypoint 예시는 `ros2_ws/src/core/config/room_waypoints.yaml`에 있습니다.
+
+```yaml
+waypoints:
+  - name: sofa
+    x: 0.0
+    y: 0.0
+    yaw: 0.0
+loop: true
+max_goal_retries: 3
+goal_retry_delay_sec: 5.0
+```
+
+Nav2 목표가 실패하거나 거부되면 같은 waypoint를 5초 간격으로
+최대 3회 재시도하며, 모두 실패하면 안전을 위해 해당 지점에서
+순찰을 정지합니다.
+
+실행 전에는 팀원이 SLAM으로 만든 `map.yaml`, `map.pgm`을 Nav2에 로드하고, 로봇의 위치 추정과 `navigate_to_pose` 액션 서버가 준비되어 있어야 합니다.
+
+```bash
+ros2 run core nav2_waypoint_patrol
+```
+
+다른 waypoint 파일을 사용하려면 다음처럼 파라미터를 넘깁니다.
+
+```bash
+ros2 run core nav2_waypoint_patrol --ros-args \
+  -p waypoint_file:=/path/to/room_waypoints.yaml
+```
+
+### TurtleBot3 Nav2 통합 시뮬레이션 실행
+
+`nav2_patrol_sim.launch.py`는 Gazebo Classic의 TurtleBot3 Waffle,
+저장 지도, AMCL, Nav2, RViz와 waypoint 순찰 노드를 한 번에
+실행합니다. 기본 지도와 월드는 `nav2_bringup`이 제공하는
+TurtleBot3 샘플이며 BOMI 전용 지도나 시뮬레이션은 아닙니다.
+
+처음 실행할 때 의존성을 설치하고 `core`를 빌드합니다.
+
+```bash
+cd /mnt/c/ssafy/kh/S15P11E102/robot/ros2_ws
+source /opt/ros/humble/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install --packages-select core
+source install/setup.bash
+```
+
+#### WSL에서 안전하게 실행
+
+첫 번째 WSL 터미널에서는 Gazebo와 RViz GUI를 모두 끄고,
+Gazebo 서버에 소프트웨어 렌더링을 적용해 시뮬레이션을
+실행합니다. 이 구성은 WSL의 D3D12 장치 초기화 실패를 피하면서
+GUI 렌더링 부하는 만들지 않습니다.
+
+```bash
+ros2 launch core nav2_patrol_sim.launch.py \
+  headless:=True \
+  use_rviz:=False \
+  force_software_rendering:=True
+```
+
+첫 번째 터미널에서 다음 로그가 순서대로 나올 때까지 기다립니다.
+
+```text
+Nav2 bt_navigator 활성화 대기 중
+Nav2 bt_navigator 활성화 완료
+목표 전송: sofa
+```
+
+그다음 두 번째 WSL 터미널을 열고 RViz만 별도로 실행합니다.
+RViz에도 Gazebo와 같은 시뮬레이션 시간을 적용해야 지도와 TF가
+표시됩니다. `LP_NUM_THREADS`와 `nice`는 소프트웨어 렌더링이
+컴퓨터 전체를 느리게 만들지 않도록 부하를 제한합니다.
+
+```bash
+source /opt/ros/humble/setup.bash
+source /mnt/c/ssafy/kh/S15P11E102/robot/ros2_ws/install/setup.bash
+
+LIBGL_ALWAYS_SOFTWARE=1 \
+GALLIUM_DRIVER=llvmpipe \
+LP_NUM_THREADS=2 \
+QT_XCB_GL_INTEGRATION=none \
+nice -n 10 \
+rviz2 -d /opt/ros/humble/share/nav2_bringup/rviz/nav2_default_view.rviz \
+  --ros-args -p use_sim_time:=True
+```
+
+RViz가 열리면 `Global Options`의 `Frame Rate`를 `10`으로
+낮춥니다. 종료할 때는 RViz 터미널을 먼저 `Ctrl+C`로 종료하고,
+그다음 시뮬레이션 터미널을 `Ctrl+C`로 종료합니다.
+
+그래픽 가속이 안정적인 네이티브 Linux 환경에서는 RViz를
+통합 실행할 수 있습니다.
+
+```bash
+ros2 launch core nav2_patrol_sim.launch.py \
+  headless:=True \
+  use_rviz:=True
+```
+
+Gazebo GUI와 RViz를 모두 표시하려면 `headless:=False`를
+사용합니다. WSL에서는 그래픽 부하가 매우 커질 수 있으므로
+권장하지 않습니다.
+
+기본값은 시스템 그래픽 드라이버를 사용합니다. 검은 화면,
+OpenGL 초기화 오류 또는 `D3D12: Removing Device`가 발생하는
+환경에서만 `force_software_rendering:=True`를 사용합니다. 이
+옵션을 Gazebo GUI나 RViz와 함께 사용하면 CPU 사용량이 크게
+높아질 수 있으므로 WSL의 최초 검증에서는 위의 GUI 없는 명령만
+사용합니다.
+
+Gazebo가 `/spawn_entity` 서비스를 준비한 뒤 TurtleBot3와 Nav2가
+순서대로 실행됩니다. TurtleBot3 생성이 끝난 뒤에만 Nav2를
+시작하여 `odom`과 TF 준비 전 lifecycle 전환을 방지합니다. 순찰
+노드는 `/bt_navigator`가 `active` 상태인지 ROS 2 서비스로 직접
+확인합니다. AMCL 초기 위치는 시뮬레이션 시간으로 5회 발행하며,
+Nav2가 활성화된 뒤에만 첫 목표를 전송하므로 첫 목표 전송까지
+시간이 걸릴 수 있습니다. 새 터미널에서 실행할 때마다 ROS 2와
+워크스페이스 환경을 다시 적용해야 합니다.
+
+```bash
+source /opt/ros/humble/setup.bash
+source /mnt/c/ssafy/kh/S15P11E102/robot/ros2_ws/install/setup.bash
+```
+
+사용자 지도, Gazebo 월드와 waypoint를 검증하려면 서로 같은
+좌표계를 사용하는 파일의 절대 경로를 전달합니다.
+
+```bash
+ros2 launch core nav2_patrol_sim.launch.py \
+  headless:=True \
+  use_rviz:=False \
+  force_software_rendering:=True \
+  map:=/absolute/path/to/map.yaml \
+  world:=/absolute/path/to/world.model \
+  waypoint_file:=/absolute/path/to/room_waypoints.yaml
+```
+
+`map.yaml`과 Gazebo 월드가 일치하지 않으면 RViz의 장애물 위치와
+Gazebo의 실제 장애물 위치가 달라져 정상적인 경로 검증이
+불가능합니다.
+
+### 시뮬레이션 없이 테스트
+
+시뮬레이션 없이 waypoint 파일 검증, 순찰 순서, 목표 재시도와
+yaw 변환을 확인할 수 있습니다.
+
+```bash
+cd /mnt/c/ssafy/kh/S15P11E102/robot/ros2_ws
+source /opt/ros/humble/setup.bash
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install --packages-select core
+colcon test --packages-select core
+colcon test-result --verbose
+```
 
 ## 처음 개발 환경 설정하기
 

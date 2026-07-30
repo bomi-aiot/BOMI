@@ -1,0 +1,59 @@
+<!--
+  주행 중에는 1Hz로 경로를 다시 계산한다.
+  경로를 찾지 못하면 코스트맵 초기화와 대기만 수행한다.
+  위험할 수 있는 Spin, BackUp 복구 동작은 사용하지 않는다.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="4" name="NavigateSafeRecovery">
+
+      <PipelineSequence name="NavigateWithReplanning">
+
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose
+              goal="{goal}"
+              path="{path}"
+              planner_id="GridBased"/>
+
+            <ClearEntireCostmap
+              name="ClearGlobalCostmapContext"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+
+        <RecoveryNode number_of_retries="1" name="FollowPath">
+          <FollowPath
+            path="{path}"
+            controller_id="FollowPath"/>
+
+          <ClearEntireCostmap
+            name="ClearLocalCostmapContext"
+            service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+
+      </PipelineSequence>
+
+      <ReactiveFallback name="SafeRecoveryFallback">
+        <GoalUpdated/>
+
+        <RoundRobin name="SafeRecoveryActions">
+          <Sequence name="ClearCostmaps">
+            <ClearEntireCostmap
+              name="ClearLocalCostmap"
+              service_name="local_costmap/clear_entirely_local_costmap"/>
+
+            <ClearEntireCostmap
+              name="ClearGlobalCostmap"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+
+          <Wait
+            name="WaitBeforeReplanning"
+            wait_duration="5"/>
+        </RoundRobin>
+      </ReactiveFallback>
+
+    </RecoveryNode>
+  </BehaviorTree>
+</root>
