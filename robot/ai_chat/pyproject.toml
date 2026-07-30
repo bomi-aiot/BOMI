@@ -10,9 +10,8 @@ dependencies = [
     "numpy",
     "sentence-transformers>=2.2.0",
     "noisereduce",
-    'xmltodict',
-    'psycopg2-binary',
-    'sshtunnel',
+    "psycopg2-binary",
+    "sshtunnel",
     "paramiko<3.0",
 ]
 

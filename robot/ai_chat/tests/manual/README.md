@@ -20,11 +20,18 @@ python tests/manual/weather_smoke.py
 python tests/manual/llm_smoke.py
 python tests/manual/db_connection_smoke.py
 python tests/manual/ec2_query_smoke.py
-python tests/manual/medical_apis_smoke.py
 python tests/manual/medical_flow_smoke.py
 python tests/manual/rtzr_token_smoke.py
 ```
 
+`audio_smoke.py`는 `.env`의 `AUDIO_MODE`를 따른다. `laptop`은 장치를
+비워두면 운영체제 기본 장치를 사용한다. `robot`은 대상 Jetson에서 확인한
+`AUDIO_INPUT_DEVICE`와 `AUDIO_OUTPUT_DEVICE`를 반드시 지정해야 한다.
+
 각 스크립트는 첫 외부 동작 전에 필수 설정을 확인한다. 하드웨어 점검은
 운영자가 지켜보는 상태에서 실행하고, 실행하지 않은 점검은 통과로 기록하지
 않는다.
+
+공공 의료데이터 수집 코드는 AI Chat 런타임 소유가 아니므로 제거했다.
+원천 데이터 갱신이 다시 필요하면 별도 적재 작업과 소유자를 정한 뒤
+AI Chat 패키지 밖에서 운영한다.
