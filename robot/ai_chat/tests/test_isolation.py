@@ -13,7 +13,6 @@ EXPECTED_MANUAL_SCRIPTS = {
     "db_connection_smoke.py",
     "ec2_query_smoke.py",
     "llm_smoke.py",
-    "medical_apis_smoke.py",
     "medical_flow_smoke.py",
     "rtzr_token_smoke.py",
     "stt_smoke.py",

@@ -98,9 +98,6 @@ class Settings:
     typecast_api_key: str | None
     typecast_voice_id: str
     kma_api_key: str | None
-    hira_hospital_api_key: str | None
-    hira_pharmacy_api_key: str | None
-    dur_prdlst_api_key: str | None
 
     audio_mode: str
     audio_input_device: int | str | None
@@ -176,9 +173,6 @@ class Settings:
                 or DEFAULT_TYPECAST_VOICE_ID
             ),
             kma_api_key=_optional_env("KMA_API_KEY"),
-            hira_hospital_api_key=_optional_env("HIRA_HOSPITAL_API_KEY"),
-            hira_pharmacy_api_key=_optional_env("HIRA_PHARMACY_API_KEY"),
-            dur_prdlst_api_key=_optional_env("DUR_PRDLST_API_KEY"),
             audio_mode=audio_mode,
             audio_input_device=_audio_device_env("AUDIO_INPUT_DEVICE"),
             audio_output_device=_audio_device_env("AUDIO_OUTPUT_DEVICE"),
