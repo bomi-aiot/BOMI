@@ -3,4 +3,4 @@
 from bomi_ai_chat.main import main
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

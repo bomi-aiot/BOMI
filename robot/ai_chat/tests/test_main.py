@@ -1,0 +1,90 @@
+"""CLI의 단발·반복 실행 모드 회귀 테스트."""
+
+import sys
+from types import ModuleType, SimpleNamespace
+
+from bomi_ai_chat import main
+
+
+def install_runtime_stubs(monkeypatch, *, once_succeeded=True):
+    laptop_module = ModuleType("bomi_ai_chat.audio_io.laptop")
+    laptop_module.LaptopMicInput = type("LaptopMicInput", (), {})
+    laptop_module.LaptopSpeakerOutput = type("LaptopSpeakerOutput", (), {})
+
+    calls = []
+
+    class StubPipeline:
+        def __init__(self, *, audio_in, audio_out, settings):
+            calls.append(("init", audio_in, audio_out, settings))
+
+        def run_once(self):
+            calls.append(("run_once",))
+            return SimpleNamespace(succeeded=once_succeeded)
+
+        def run(self):
+            calls.append(("run",))
+
+    pipeline_module = ModuleType("bomi_ai_chat.pipeline")
+    pipeline_module.ConversationPipeline = StubPipeline
+    monkeypatch.setitem(
+        sys.modules,
+        "bomi_ai_chat.audio_io.laptop",
+        laptop_module,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "bomi_ai_chat.pipeline",
+        pipeline_module,
+    )
+    return calls
+
+
+def valid_settings(settings_factory):
+    return settings_factory(
+        RTZR_CLIENT_ID="id",
+        RTZR_CLIENT_SECRET="secret",
+        GEMINI_API_KEY="gemini",
+        TYPECAST_API_KEY="typecast",
+    )
+
+
+def test_once_option_runs_one_turn(
+    monkeypatch,
+    settings_factory,
+):
+    settings = valid_settings(settings_factory)
+    monkeypatch.setattr(main, "get_settings", lambda: settings)
+    calls = install_runtime_stubs(monkeypatch)
+
+    exit_code = main.main(["--once"])
+
+    assert exit_code == 0
+    assert [call[0] for call in calls] == ["init", "run_once"]
+
+
+def test_once_option_returns_failure_exit_code(
+    monkeypatch,
+    settings_factory,
+):
+    settings = valid_settings(settings_factory)
+    monkeypatch.setattr(main, "get_settings", lambda: settings)
+    calls = install_runtime_stubs(monkeypatch, once_succeeded=False)
+
+    exit_code = main.main(["--once"])
+
+    assert exit_code == 1
+    assert [call[0] for call in calls] == ["init", "run_once"]
+
+
+def test_default_mode_runs_conversation_loop(
+    monkeypatch,
+    settings_factory,
+):
+    settings = valid_settings(settings_factory)
+    monkeypatch.setattr(main, "get_settings", lambda: settings)
+    calls = install_runtime_stubs(monkeypatch)
+
+    exit_code = main.main([])
+
+    assert exit_code == 0
+    assert [call[0] for call in calls] == ["init", "run"]

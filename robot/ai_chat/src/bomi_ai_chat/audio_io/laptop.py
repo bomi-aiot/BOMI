@@ -30,27 +30,31 @@ class LaptopMicInput(AudioInput):
         max_chunks = int(MAX_SECONDS / CHUNK_SECONDS)
 
         stream = sd.InputStream(
-            samplerate=SAMPLE_RATE, channels=CHANNELS, dtype="int16"
+            samplerate=SAMPLE_RATE,
+            channels=CHANNELS,
+            dtype="int16",
         )
-        stream.start()
+        try:
+            stream.start()
+            try:
+                for _ in range(max_chunks):
+                    chunk, _ = stream.read(chunk_frame_count)
+                    frames.append(chunk.copy())
 
-        for _ in range(max_chunks):
-            chunk, _ = stream.read(chunk_frame_count)
-            frames.append(chunk.copy())
+                    volume = np.abs(chunk).mean()
+                    print(f"volume: {volume:.1f}")
 
-            volume = np.abs(chunk).mean()
-            print(f"volume: {volume:.1f}")
+                    if volume < SILENCE_THRESHOLD:
+                        silence_chunks += 1
+                    else:
+                        silence_chunks = 0
 
-            if volume < SILENCE_THRESHOLD:
-                silence_chunks += 1
-            else:
-                silence_chunks = 0
-
-            if silence_chunks >= silence_chunk_limit:
-                break
-
-        stream.stop()
-        stream.close()
+                    if silence_chunks >= silence_chunk_limit:
+                        break
+            finally:
+                stream.stop()
+        finally:
+            stream.close()
 
         print("[녹음 종료]")
         recording = np.concatenate(frames).flatten()
@@ -92,5 +96,8 @@ class LaptopSpeakerOutput(AudioOutput):
             frames = wav_file.readframes(wav_file.getnframes())
             data = np.frombuffer(frames, dtype="int16")
 
-        sd.play(data, samplerate=sample_rate)
-        sd.wait()
+        try:
+            sd.play(data, samplerate=sample_rate)
+            sd.wait()
+        finally:
+            sd.stop()

@@ -31,6 +31,6 @@ def test_entrypoint_fails_before_runtime_import_when_settings_are_missing(
     monkeypatch.setattr(main, "get_settings", lambda: settings)
 
     with pytest.raises(SystemExit, match="설정 오류:.*RTZR_CLIENT_ID"):
-        main.main()
+        main.main([])
 
     assert "bomi_ai_chat.llm.router" not in sys.modules
