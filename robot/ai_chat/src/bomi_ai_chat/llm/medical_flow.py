@@ -1,15 +1,24 @@
+import logging
 import time
+from collections.abc import Callable
+from typing import Any
 
 import requests
 
-from bomi_ai_chat.config import get_settings
+from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.db.medical_repository import (
     find_drug_info,
     find_hospitals,
     find_pharmacies,
 )
+from bomi_ai_chat.http import (
+    ExternalServiceError,
+    decode_json_object,
+    request_with_retry,
+)
 
 GEMINI_URL = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+LOGGER = logging.getLogger(__name__)
 
 TOOLS = [{
     "function_declarations": [
@@ -111,36 +120,34 @@ def execute_tool(name: str, args: dict) -> dict:
     return {"error": f"unknown tool: {name}"}
 
 
-def _call_gemini(contents: list, max_retries: int = 2) -> dict:
-    """
-    503(서버 과부하)/429(요청 과다)는 일시적 장애일 가능성이 높아 잠깐 대기 후
-    재시도한다. 429는 요청 빈도 제한이라 503보다 좀 더 여유 있게 기다린다.
-    그 외 에러(401 인증 실패, 400 잘못된 요청 등)는 재시도해도 소용없으므로
-    바로 예외를 올린다.
-    """
-    for attempt in range(max_retries + 1):
-        try:
-            resp = requests.post(
-                GEMINI_URL,
-                params={"key": get_settings().gemini_api_key},
-                json={
-                    "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-                    "contents": contents,
-                    "tools": TOOLS,
-                },
-                timeout=15,
-            )
-            resp.raise_for_status()
-            return resp.json()
-        except requests.exceptions.HTTPError as e:
-            status = e.response.status_code if e.response is not None else None
-            if status == 429 and attempt < max_retries:
-                time.sleep(3 * (attempt + 1))
-                continue
-            if status == 503 and attempt < max_retries:
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            raise
+def _call_gemini(
+    contents: list,
+    *,
+    settings: Settings | None = None,
+    session: Any = requests,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict:
+    """공통 외부 HTTP 정책으로 의료 Gemini를 호출한다."""
+
+    settings = settings or get_settings()
+    response = request_with_retry(
+        "POST",
+        GEMINI_URL,
+        service="Gemini 의료",
+        timeout_seconds=settings.http_timeout_seconds,
+        max_attempts=settings.http_max_attempts,
+        backoff_seconds=settings.http_backoff_seconds,
+        max_backoff_seconds=settings.http_max_backoff_seconds,
+        session=session,
+        sleep=sleep,
+        params={"key": settings.gemini_api_key},
+        json={
+            "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+            "contents": contents,
+            "tools": TOOLS,
+        },
+    )
+    return decode_json_object(response, service="Gemini 의료")
 
 
 def _extract_part(data: dict) -> dict | None:
@@ -162,7 +169,9 @@ def _extract_part(data: dict) -> dict | None:
 FALLBACK_MESSAGE = "죄송해요, 잘 이해하지 못했어요. 다시 한번 말씀해주시겠어요?"
 
 
-RATE_LIMIT_MESSAGE = "지금 응답이 조금 늦어지고 있어요. 잠시 후 다시 말씀해주시겠어요?"
+SERVICE_UNAVAILABLE_MESSAGE = (
+    "지금 의료 정보를 확인하기 어렵습니다. 잠시 후 다시 말씀해주시겠어요?"
+)
 
 
 NOT_FOUND_MESSAGES = {
@@ -251,8 +260,9 @@ def handle_medical_query(user_text: str) -> str:
 
     try:
         data = _call_gemini(contents)
-    except requests.exceptions.HTTPError:
-        return RATE_LIMIT_MESSAGE
+    except ExternalServiceError:
+        LOGGER.exception("의료 Gemini 첫 번째 호출 실패")
+        return SERVICE_UNAVAILABLE_MESSAGE
 
     part = _extract_part(data)
     if part is None:
@@ -303,8 +313,9 @@ def handle_medical_query(user_text: str) -> str:
 
     try:
         data2 = _call_gemini(contents)
-    except requests.exceptions.HTTPError:
-        return RATE_LIMIT_MESSAGE
+    except ExternalServiceError:
+        LOGGER.exception("의료 Gemini 두 번째 호출 실패")
+        return SERVICE_UNAVAILABLE_MESSAGE
 
     part2 = _extract_part(data2)
     if part2 is None:

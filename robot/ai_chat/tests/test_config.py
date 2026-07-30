@@ -23,6 +23,13 @@ def test_defaults_are_explicit():
     assert settings.ec2_ssh_user == "ec2-user"
     assert settings.remote_db_host == "localhost"
     assert settings.remote_db_port == 5432
+    assert settings.http_timeout_seconds == 10.0
+    assert settings.http_max_attempts == 3
+    assert settings.http_backoff_seconds == 0.5
+    assert settings.http_max_backoff_seconds == 2.0
+    assert settings.stt_poll_interval_seconds == 0.5
+    assert settings.stt_poll_timeout_seconds == 60.0
+    assert settings.stt_token_ttl_seconds == 3000.0
 
 
 def test_invalid_database_mode_is_rejected(monkeypatch):
@@ -36,6 +43,29 @@ def test_invalid_integer_setting_is_rejected(monkeypatch):
     monkeypatch.setenv("DB_PORT", "not-a-number")
 
     with pytest.raises(ConfigurationError, match="DB_PORT"):
+        load_settings()
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("HTTP_TIMEOUT_SECONDS", "0"),
+        ("HTTP_MAX_ATTEMPTS", "-1"),
+        ("HTTP_BACKOFF_SECONDS", "-0.1"),
+        ("HTTP_MAX_BACKOFF_SECONDS", "-0.1"),
+        ("STT_POLL_INTERVAL_SECONDS", "not-a-number"),
+        ("STT_POLL_TIMEOUT_SECONDS", "0"),
+        ("STT_TOKEN_TTL_SECONDS", "-5"),
+    ],
+)
+def test_invalid_external_client_setting_is_rejected(
+    monkeypatch,
+    name,
+    value,
+):
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ConfigurationError, match=name):
         load_settings()
 
 
