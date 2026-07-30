@@ -1,12 +1,13 @@
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import requests
 
 from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.db.medical_repository import (
+    MedicalRepositoryError,
     find_drug_info,
     find_hospitals,
     find_pharmacies,
@@ -43,7 +44,11 @@ TOOLS = [{
         },
         {
             "name": "check_pill_info",
-            "description": "특정 의약품의 이름, 종류(정제/캡슐/주사제 등), 용법용량, 보관법, 전문/일반 구분, 제조사 정보를 조회한다.",
+            "description": (
+                "의약품 허가 데이터에서 제품명, 업체명, 허가일, "
+                "원료성분명, 품목구분을 조회한다. 복용법, 보관법, "
+                "효능, 부작용, 병용 가능 여부는 이 도구로 판단할 수 없다."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -56,9 +61,11 @@ TOOLS = [{
 }]
 
 SYSTEM_PROMPT = """당신은 노인 돌봄 로봇 '보미'입니다.
-사용자가 병원/약국을 찾거나 약 정보를 물으면 반드시 제공된 도구를 사용해서 확인한 뒤에만 답변하세요.
-도구 없이 추측으로 답하지 마세요.
+사용자가 병원/약국을 찾거나 약 정보를 물으면 반드시 제공된 도구 중 하나를 호출하세요.
+의료 지식을 직접 답하거나 도구 조회 결과를 추측해서 텍스트로 답하지 마세요.
 병원/약국을 찾을 때 지역명(region)과 특정 시설 이름(facility_name)은 서로 다른 값이니 절대 섞지 말고 각각 맞는 자리에 채우세요.
+지역과 시설 이름을 모두 알 수 없다면 임의 값을 만들지 말고 facility_type만 전달하세요. 애플리케이션이 사용자에게 위치를 다시 묻습니다.
+의약품 이름을 알 수 없다면 임의로 보정하거나 다른 제품명을 만들지 마세요.
 
 말투 규칙(반드시 지킬 것):
 - 항상 존댓말을 사용하세요. 반말은 절대 쓰지 마세요.
@@ -66,58 +73,258 @@ SYSTEM_PROMPT = """당신은 노인 돌봄 로봇 '보미'입니다.
 - "삐삐삐" 같은 로봇 효과음, 의성어, 장난스러운 감탄사를 넣지 마세요.
 - 감정을 과장하거나 지나치게 발랄한 말투를 쓰지 말고, 차분하고 신뢰감 있게 답하세요.
 
-응답 형식 규칙(반드시 지킬 것) — 이 답변은 화면에 뜨는 게 아니라 음성(TTS)으로 그대로 읽힙니다:
-- 조회 결과가 여러 건이면 전체 주소나 전화번호를 나열하지 말고, 이름 위주로 2~3개만 간단히 말하고 "더 자세히 알려드릴까요?"처럼 되물으세요.
-- 목록이나 별표(*), 특수기호를 쓰지 마세요. 음성으로 읽었을 때 자연스러운 문장으로만 답하세요.
-- 사용자가 특정 한 곳을 더 자세히 물어봤을 때만 상세 정보를 말하세요.
-
-병원/약국을 찾았는데 도구 조회 결과가 비어 있을 때(find_medical_facility 결과 없음):
-- 절대로 스스로 알고 있는 지식(정식 명칭, 주소 등)으로 답을 지어내지 마세요. 반드시 도구 조회 결과만 근거로 답해야 합니다.
-- 사용자가 말한 이름이 줄임말이거나 애칭일 가능성이 있으면(예: '서울대병원'처럼 정식 명칭이 아닐 수 있는 경우), "찾지 못했습니다"라고 말한 뒤 "정식 명칭으로 다시 한번 말씀해주시겠어요?"처럼 정중하게 다시 물어보세요.
-- 절대 사용자가 말한 이름 대신 다른 이름(정식 명칭 등)을 확인 없이 검색 결과인 것처럼 답하지 마세요.
-
-find_medical_facility 결과에 match_type이 "exact"로 표시된 경우에만 사용자가 말한 이름과 정확히 일치하는 것이니, 그 정보를 바탕으로 답하세요."""
+도구 호출 뒤의 사용자 안내는 애플리케이션 코드가 DB 결과만으로 생성합니다.
+따라서 도구 호출 이후의 자연어 답변을 미리 작성하지 마세요."""
 
 
-def execute_tool(name: str, args: dict) -> dict:
-    if name == "find_medical_facility":
-        region = args.get("region")
-        facility_name = args.get("facility_name")
+MAX_TOOL_ARGUMENT_LENGTH = 100
+VALID_FACILITY_TYPES = frozenset({"병원", "약국"})
+RELATIVE_LOCATION_TERMS = frozenset(
+    {
+        "근처",
+        "내근처",
+        "이근처",
+        "주변",
+        "내주변",
+        "여기",
+        "현재위치",
+        "가까운곳",
+        "근방",
+        "우리동네",
+    }
+)
+GENERIC_FACILITY_NAMES = frozenset(
+    {
+        "병원",
+        "약국",
+        "의원",
+        "의료기관",
+        "근처병원",
+        "근처약국",
+        "가까운병원",
+        "가까운약국",
+    }
+)
+GENERIC_DRUG_NAMES = frozenset({"약", "약품", "의약품", "알약", "이약", "그약"})
 
-        if args.get("facility_type") == "약국":
-            rows = find_pharmacies(name=facility_name, region=region)
+
+class ToolArgumentError(ValueError):
+    """Gemini functionCall의 이름이나 인자가 계약과 다를 때 발생한다."""
+
+
+def _text_argument(
+    args: Mapping[str, Any],
+    name: str,
+    *,
+    required: bool = False,
+) -> str | None:
+    if name not in args or args[name] is None:
+        if required:
+            raise ToolArgumentError(f"{name} 값이 필요합니다.")
+        return None
+
+    value = args[name]
+    if not isinstance(value, str):
+        raise ToolArgumentError(f"{name}은 문자열이어야 합니다.")
+    value = " ".join(value.split())
+    if not value:
+        if required:
+            raise ToolArgumentError(f"{name}은 비어 있을 수 없습니다.")
+        return None
+    if len(value) > MAX_TOOL_ARGUMENT_LENGTH:
+        raise ToolArgumentError(f"{name}이 너무 깁니다.")
+    return value
+
+
+def _invalid_tool_result(reason: str) -> dict:
+    return {
+        "status": "invalid",
+        "reason": reason,
+        "results": [],
+    }
+
+
+def _normalized_term(value: str) -> str:
+    return "".join(value.split()).casefold()
+
+
+def _database_error_result() -> dict:
+    return {
+        "status": "database_error",
+        "results": [],
+    }
+
+
+def _valid_rows(rows: Any, *, name_field: str) -> list[Mapping[str, Any]]:
+    if not isinstance(rows, list):
+        raise MedicalRepositoryError("의료 DB 결과가 목록이 아닙니다.")
+    valid_rows = []
+    for row in rows:
+        if not isinstance(row, Mapping):
+            raise MedicalRepositoryError("의료 DB 행이 객체가 아닙니다.")
+        value = row.get(name_field)
+        if not isinstance(value, str) or not value.strip():
+            raise MedicalRepositoryError(
+                f"의료 DB 행에 {name_field} 값이 없습니다."
+            )
+        valid_rows.append(row)
+    return valid_rows
+
+
+def _deduplicate_rows(
+    rows: list[Mapping[str, Any]],
+    *,
+    fields: tuple[str, ...],
+) -> list[Mapping[str, Any]]:
+    unique_rows = []
+    seen = set()
+    for row in rows:
+        signature = tuple(_spoken_value(row.get(field)) for field in fields)
+        if signature not in seen:
+            seen.add(signature)
+            unique_rows.append(row)
+    return unique_rows
+
+
+def _execute_facility_tool(args: Mapping[str, Any]) -> dict:
+    unexpected = set(args) - {"facility_type", "region", "facility_name"}
+    if unexpected:
+        raise ToolArgumentError("지원하지 않는 시설 검색 인자가 있습니다.")
+
+    facility_type = _text_argument(args, "facility_type", required=True)
+    if facility_type not in VALID_FACILITY_TYPES:
+        raise ToolArgumentError("facility_type은 병원 또는 약국이어야 합니다.")
+    region = _text_argument(args, "region")
+    facility_name = _text_argument(args, "facility_name")
+    if region and _normalized_term(region) in RELATIVE_LOCATION_TERMS:
+        region = None
+    if (
+        facility_name
+        and _normalized_term(facility_name) in GENERIC_FACILITY_NAMES
+    ):
+        facility_name = None
+    if not region and not facility_name:
+        return {
+            "status": "needs_location",
+            "facility_type": facility_type,
+            "results": [],
+        }
+
+    if facility_type == "약국":
+        rows = find_pharmacies(name=facility_name, region=region)
+    else:
+        rows = find_hospitals(name=facility_name, region=region)
+    rows = _valid_rows(rows, name_field="yadm_nm")
+
+    if not rows:
+        return {
+            "status": "not_found",
+            "facility_type": facility_type,
+            "region": region,
+            "facility_name": facility_name,
+            "results": [],
+        }
+
+    match_type = "regional"
+    status = "ok"
+    if facility_name:
+        normalized_input = "".join(facility_name.split()).casefold()
+        exact_rows = [
+            row
+            for row in rows
+            if "".join(row["yadm_nm"].split()).casefold()
+            == normalized_input
+        ]
+        if exact_rows:
+            rows = _deduplicate_rows(
+                exact_rows,
+                fields=("yadm_nm", "addr", "cl_cd_nm", "telno"),
+            )
+            match_type = "exact"
+            if len(rows) > 1:
+                status = "needs_facility_selection"
         else:
-            rows = find_hospitals(name=facility_name, region=region)
+            match_type = "partial"
+            status = "needs_confirmation"
 
-        # facility_name으로 검색했는데 결과의 실제 이름이 사용자가 말한
-        # 이름과 정확히 같지 않으면(부분 일치로만 걸린 경우), 이걸 확신
-        # 있게 정답으로 취급하지 않도록 match_type을 표시한다.
-        # 위치 오안내는 실제 피해로 이어질 수 있어, 이 경우 LLM이 반드시
-        # 사용자에게 "맞으신가요?" 확인을 받도록 유도한다.
-        # 비교 시 공백 차이(STT 인식 오차 등)는 무시하도록 정규화한다.
-        match_type = None
-        if facility_name and rows:
-            normalized_input = "".join(facility_name.split())
-            exact_rows = [
-                r for r in rows
-                if "".join(r["yadm_nm"].split()) == normalized_input
-            ]
-            if exact_rows:
-                match_type = "exact"
-                # 정확히 일치하는 곳만 남기고 나머지(부분 일치로 같이
-                # 걸린 계열/지점 등)는 LLM에게 넘기지 않는다. LLM이
-                # 알아서 골라 말하도록 맡기면 관계없는 곳까지 섞어
-                # 설명하는 경우가 실제로 관측되었기 때문이다.
-                rows = exact_rows
-            else:
-                match_type = "partial"
+    return {
+        "status": status,
+        "facility_type": facility_type,
+        "region": region,
+        "facility_name": facility_name,
+        "match_type": match_type,
+        "results": rows,
+    }
 
-        return {"results": rows, "match_type": match_type}
 
-    elif name == "check_pill_info":
-        return find_drug_info(args.get("item_name"))
+def _execute_drug_tool(args: Mapping[str, Any]) -> dict:
+    unexpected = set(args) - {"item_name"}
+    if unexpected:
+        raise ToolArgumentError("지원하지 않는 의약품 검색 인자가 있습니다.")
 
-    return {"error": f"unknown tool: {name}"}
+    item_name = _text_argument(args, "item_name")
+    if not item_name or _normalized_term(item_name) in GENERIC_DRUG_NAMES:
+        return {
+            "status": "needs_drug_name",
+            "results": [],
+        }
+    result = find_drug_info(item_name)
+    if not isinstance(result, Mapping):
+        raise MedicalRepositoryError("의약품 DB 결과가 객체가 아닙니다.")
+    rows = _valid_rows(result.get("results"), name_field="item_name")
+    match_type = result.get("match_type")
+
+    if not rows:
+        return {
+            "status": "not_found",
+            "item_name": item_name,
+            "match_type": None,
+            "results": [],
+        }
+    if match_type == "exact":
+        rows = _deduplicate_rows(
+            rows,
+            fields=(
+                "item_name",
+                "entp_name",
+                "item_permit_date",
+                "item_ingr_name",
+                "prduct_type",
+            ),
+        )
+        status = "ok" if len(rows) == 1 else "needs_drug_selection"
+    elif match_type == "corrected":
+        status = "needs_confirmation"
+    else:
+        raise MedicalRepositoryError("알 수 없는 의약품 일치 상태입니다.")
+
+    return {
+        "status": status,
+        "item_name": item_name,
+        "match_type": match_type,
+        "results": rows,
+    }
+
+
+def execute_tool(name: str, args: Any) -> dict:
+    """Gemini 도구 호출을 검증하고 DB 상태를 명시적으로 구분한다."""
+
+    if not isinstance(name, str):
+        return _invalid_tool_result("도구 이름은 문자열이어야 합니다.")
+    if not isinstance(args, Mapping):
+        return _invalid_tool_result("도구 인자는 객체여야 합니다.")
+
+    try:
+        if name == "find_medical_facility":
+            return _execute_facility_tool(args)
+        if name == "check_pill_info":
+            return _execute_drug_tool(args)
+        return _invalid_tool_result("지원하지 않는 의료 도구입니다.")
+    except ToolArgumentError as exc:
+        return _invalid_tool_result(str(exc))
+    except MedicalRepositoryError:
+        LOGGER.exception("의료 DB 조회 실패: tool=%s", name)
+        return _database_error_result()
 
 
 def _call_gemini(
@@ -157,13 +364,21 @@ def _extract_part(data: dict) -> dict | None:
     (예: 안전 필터에 걸리거나 finishReason이 다르게 오는 경우) 방어적으로 처리한다.
     """
     candidates = data.get("candidates") or []
-    if not candidates:
+    if not isinstance(candidates, list) or not candidates:
         return None
-    content = candidates[0].get("content") or {}
+    candidate = candidates[0]
+    if not isinstance(candidate, Mapping):
+        return None
+    content = candidate.get("content") or {}
+    if not isinstance(content, Mapping):
+        return None
     parts = content.get("parts") or []
-    if not parts:
+    if not isinstance(parts, list) or not parts:
         return None
-    return parts[0]
+    part = parts[0]
+    if not isinstance(part, Mapping):
+        return None
+    return dict(part)
 
 
 FALLBACK_MESSAGE = "죄송해요, 잘 이해하지 못했어요. 다시 한번 말씀해주시겠어요?"
@@ -174,10 +389,32 @@ SERVICE_UNAVAILABLE_MESSAGE = (
 )
 
 
-NOT_FOUND_MESSAGES = {
-    "find_medical_facility": "찾으시는 곳을 확인하지 못했습니다. 정식 명칭으로 다시 한번 말씀해주시겠어요?",
-    "check_pill_info": "찾으시는 약을 확인하지 못했습니다. 약 이름을 다시 한번 말씀해주시겠어요?",
-}
+INVALID_TOOL_MESSAGE = (
+    "의료 요청을 정확히 확인하지 못했습니다. 다시 한번 말씀해주시겠어요?"
+)
+LOCATION_REQUIRED_MESSAGE = (
+    "병원이나 약국을 찾으려면 지역명이나 정확한 기관 이름을 말씀해주세요."
+)
+DRUG_NAME_REQUIRED_MESSAGE = "확인할 약의 정확한 이름을 말씀해주세요."
+FACILITY_SELECTION_REQUIRED_MESSAGE = (
+    "같은 이름의 기관이 여러 곳 확인됐습니다. 찾는 지역을 함께 말씀해주세요."
+)
+DRUG_SELECTION_REQUIRED_MESSAGE = (
+    "같은 이름의 의약품이 여러 건 확인됐습니다. "
+    "포장에 적힌 제조사를 확인해주시거나 약사에게 문의해주세요."
+)
+DATABASE_ERROR_MESSAGE = (
+    "지금 의료 정보 데이터베이스를 확인하기 어렵습니다. "
+    "잠시 후 다시 말씀해주시겠어요?"
+)
+FACILITY_NOT_FOUND_MESSAGE = (
+    "찾으시는 곳을 확인하지 못했습니다. "
+    "지역이나 정식 기관 이름을 다시 말씀해주시겠어요?"
+)
+DRUG_NOT_FOUND_MESSAGE = (
+    "찾으시는 약을 확인하지 못했습니다. "
+    "약 이름을 다시 한번 말씀해주시겠어요?"
+)
 
 
 def _josa_eul_reul(word: str) -> str:
@@ -205,7 +442,7 @@ def _build_partial_match_message(tool_result: dict) -> str:
     확인도 받기 전에 상세 정보를 흘리면 되묻기 자체가 무의미해지기 때문이다.
     """
     rows = tool_result.get("results", [])
-    names = list(dict.fromkeys(r["yadm_nm"] for r in rows))  # 순서 유지 + 중복 제거
+    names = list(dict.fromkeys(row["yadm_nm"] for row in rows))
     guidance = " 만약 아니라면 줄임말이 아닌 정식 명칭으로 다시 말씀해주세요."
     if len(names) == 1:
         name = names[0]
@@ -225,7 +462,7 @@ def _build_drug_confirmation_message(tool_result: dict) -> str:
     받는다.
     """
     rows = tool_result.get("results", [])
-    names = list(dict.fromkeys(r["item_name"] for r in rows))
+    names = list(dict.fromkeys(row["item_name"] for row in rows))
     guidance = " 아니라면 정확한 약 이름으로 다시 한번 말씀해주세요."
     if len(names) == 1:
         name = names[0]
@@ -234,25 +471,102 @@ def _build_drug_confirmation_message(tool_result: dict) -> str:
     return f"{names_str} 중에 찾으시는 약이 있으신가요?{guidance}"
 
 
-def _is_empty_result(tool_result: dict) -> bool:
-    """도구 조회 결과가 비어 있는지(찾은 게 없는지) 확인한다."""
-    if "error" in tool_result:
-        return True
-    results = tool_result.get("results")
-    return not results  # None, [], {} 모두 True
+def _spoken_value(value: Any) -> str | None:
+    if value is None or isinstance(value, (Mapping, list, tuple, set)):
+        return None
+    text = " ".join(str(value).split())
+    return text or None
 
 
-def _is_valid_spoken_text(text: str) -> bool:
-    """
-    Gemini가 실제 functionCall 대신 도구 호출을 파이썬 코드처럼 흉내 낸
-    텍스트(예: '<tool_code>print(default_api.find_...)')를 그대로
-    답변으로 내놓는 경우가 있다. 이런 텍스트는 TTS로 그대로 읽히면
-    안 되므로, 코드처럼 보이는 패턴이 있으면 유효하지 않은 답변으로 판단한다.
-    """
-    if not text:
-        return False
-    suspicious_markers = ["<tool_code", "```", "default_api.", "print(", "```python"]
-    return not any(marker in text for marker in suspicious_markers)
+def _build_facility_result_message(tool_result: dict) -> str:
+    rows = tool_result["results"]
+    if tool_result.get("match_type") == "regional":
+        names = list(dict.fromkeys(row["yadm_nm"] for row in rows))[:3]
+        return (
+            f"검색된 {tool_result['facility_type']}은 "
+            f"{', '.join(names)}입니다. 어느 곳을 자세히 알려드릴까요?"
+        )
+
+    row = rows[0]
+    name = row["yadm_nm"]
+    address = _spoken_value(row.get("addr"))
+    if tool_result["facility_type"] == "약국":
+        telephone = _spoken_value(row.get("telno"))
+        message = f"{name}"
+        if address:
+            message += f"은 {address}에 있습니다"
+        else:
+            message += "을 확인했습니다"
+        if telephone:
+            message += f". 전화번호는 {telephone}입니다"
+        return message + "."
+
+    category = _spoken_value(row.get("cl_cd_nm"))
+    message = f"{name}"
+    if address:
+        message += f"은 {address}에 있습니다"
+    else:
+        message += "을 확인했습니다"
+    if category:
+        message += f". 기관 구분은 {category}입니다"
+    return message + "."
+
+
+def _build_exact_drug_message(tool_result: dict) -> str:
+    row = tool_result["results"][0]
+    name = row["item_name"]
+    company = _spoken_value(row.get("entp_name"))
+    product_type = _spoken_value(row.get("prduct_type"))
+
+    details = []
+    if company:
+        details.append(f"업체는 {company}")
+    if product_type:
+        details.append(f"품목 구분은 {product_type}")
+
+    if details:
+        verified = f"{name} 제품은 DB에서 확인됐고, {', '.join(details)}입니다."
+    else:
+        verified = f"{name} 제품은 DB에서 확인됐습니다."
+    return (
+        f"{verified} 이 자료만으로 복용 가능 여부나 용법을 판단할 수 없으니 "
+        "의사나 약사에게 확인해주세요."
+    )
+
+
+def _tool_result_message(name: str, tool_result: dict) -> str:
+    status = tool_result.get("status")
+    if status == "invalid":
+        LOGGER.warning(
+            "의료 도구 호출 거부: tool=%s reason=%s",
+            name,
+            tool_result.get("reason"),
+        )
+        return INVALID_TOOL_MESSAGE
+    if status == "needs_location":
+        return LOCATION_REQUIRED_MESSAGE
+    if status == "needs_drug_name":
+        return DRUG_NAME_REQUIRED_MESSAGE
+    if status == "needs_facility_selection":
+        return FACILITY_SELECTION_REQUIRED_MESSAGE
+    if status == "needs_drug_selection":
+        return DRUG_SELECTION_REQUIRED_MESSAGE
+    if status == "database_error":
+        return DATABASE_ERROR_MESSAGE
+    if status == "not_found":
+        if name == "check_pill_info":
+            return DRUG_NOT_FOUND_MESSAGE
+        return FACILITY_NOT_FOUND_MESSAGE
+    if status == "needs_confirmation":
+        if name == "check_pill_info":
+            return _build_drug_confirmation_message(tool_result)
+        return _build_partial_match_message(tool_result)
+    if status == "ok":
+        if name == "check_pill_info":
+            return _build_exact_drug_message(tool_result)
+        if name == "find_medical_facility":
+            return _build_facility_result_message(tool_result)
+    return FALLBACK_MESSAGE
 
 
 def handle_medical_query(user_text: str) -> str:
@@ -268,58 +582,13 @@ def handle_medical_query(user_text: str) -> str:
     if part is None:
         return FALLBACK_MESSAGE
 
-    if "functionCall" not in part:
-        text = part.get("text", "")
-        return text if _is_valid_spoken_text(text) else FALLBACK_MESSAGE
-
-    fc = part["functionCall"]
-    print(f"[디버그] 함수 호출: {fc['name']}, 인자: {fc.get('args', {})}")
-    tool_result = execute_tool(fc["name"], fc.get("args", {}))
-
-    # 조회 결과가 비어 있으면, LLM에게 답변 생성을 맡기지 않고
-    # 코드에서 바로 고정 문구를 반환한다. LLM은 "결과 없음"을 근거로
-    # 스스로 아는 지식을 지어내 답하는 경우가 실제로 관측되었기 때문에
-    # (예: DB에 없는 병원의 주소를 확신 있게 답변), 이 경로에서는
-    # LLM의 프롬프트 준수 여부에 의존하지 않고 원천적으로 차단한다.
-    if _is_empty_result(tool_result):
-        return NOT_FOUND_MESSAGES.get(fc["name"], FALLBACK_MESSAGE)
-
-    # match_type이 partial(정확히 일치하지 않는 곳)이면, 그 이름으로
-    # 확인 질문을 하되 "혹시 아니라면 정식 명칭으로 다시 말해달라"는
-    # 안내를 함께 붙인다. LLM에게 맡기지 않고 코드에서 바로 반환하는 이유는,
-    # 프롬프트 지시만으로는 LLM이 확인을 물으면서도 동시에 주소를
-    # 흘려버리는 경우가 실제로 관측되었기 때문이다.
-    if tool_result.get("match_type") == "partial":
-        return _build_partial_match_message(tool_result)
-
-    # 의약품도 마찬가지: match_type이 corrected(자모 유사도 보정을 거쳐
-    # 찾은 것)면 성분/제형 등 상세 정보를 바로 주지 않고 확인만 한다.
-    # STT가 첫 글자부터 잘못 알아들으면 보정이 완전히 다른 약(예:
-    # 전문의약품/주사제)으로 튈 수 있는데, 이를 확신 있게 답하면
-    # 실제 위해로 이어질 수 있다.
-    if fc["name"] == "check_pill_info" and tool_result.get("match_type") == "corrected":
-        return _build_drug_confirmation_message(tool_result)
-
-    contents.append({"role": "model", "parts": [part]})
-    contents.append({
-        "role": "user",
-        "parts": [{
-            "functionResponse": {
-                "name": fc["name"],
-                "response": {"result": tool_result},
-            }
-        }],
-    })
-
-    try:
-        data2 = _call_gemini(contents)
-    except ExternalServiceError:
-        LOGGER.exception("의료 Gemini 두 번째 호출 실패")
-        return SERVICE_UNAVAILABLE_MESSAGE
-
-    part2 = _extract_part(data2)
-    if part2 is None:
+    function_call = part.get("functionCall")
+    if not isinstance(function_call, Mapping):
+        LOGGER.warning("의료 Gemini가 functionCall 없이 응답했습니다.")
         return FALLBACK_MESSAGE
 
-    text2 = part2.get("text", "")
-    return text2 if _is_valid_spoken_text(text2) else FALLBACK_MESSAGE
+    name = function_call.get("name")
+    args = function_call.get("args", {})
+    LOGGER.info("의료 도구 호출: %s", name)
+    tool_result = execute_tool(name, args)
+    return _tool_result_message(name if isinstance(name, str) else "", tool_result)
