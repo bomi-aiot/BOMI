@@ -1,8 +1,11 @@
 import os
 from glob import glob
+
 from setuptools import find_packages, setup
 
+
 package_name = 'core'
+
 
 setup(
     name=package_name,
@@ -18,16 +21,16 @@ setup(
             ['package.xml'],
         ),
         (
+            os.path.join('share', package_name, 'launch'),
+            glob('launch/*.launch.py'),
+        ),
+        (
             os.path.join('share', package_name, 'config'),
             glob('config/*.yaml'),
         ),
         (
             os.path.join('share', package_name, 'behavior_trees'),
             glob('behavior_trees/*.xml'),
-        ),
-        (
-            os.path.join('share', package_name, 'launch'),
-            glob('launch/*.launch.py'),
         ),
     ],
     install_requires=['setuptools'],
@@ -42,11 +45,12 @@ setup(
         ],
     },
     entry_points={
-        "console_scripts": [
-            "status_publisher = core.status_publisher:main",
-            "mock_motor_driver = core.mock_motor_driver:main",
-            "keyboard_teleop = core.keyboard_teleop:main",
-            "nav2_waypoint_patrol = core.nav2_waypoint_patrol:main",
+        'console_scripts': [
+            'status_publisher = core.status_publisher:main',
+            'mock_motor_driver = core.mock_motor_driver:main',
+            'keyboard_teleop = core.keyboard_teleop:main',
+            'joy_cmd_filter = core.joy_cmd_filter:main',
+            'nav2_waypoint_patrol = core.nav2_waypoint_patrol:main',
         ],
     },
 )

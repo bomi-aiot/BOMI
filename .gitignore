@@ -7,6 +7,9 @@ application-secret.yml
 **/config/*.yaml
 !robot/ros2_ws/src/core/config/nav2_safe_params.yaml
 !**/config/*.example.yaml
+!robot/ros2_ws/src/bomi_core/config/xbox360_sim.yaml
+!robot/ros2_ws/src/core/config/xbox360_sim.yaml
+!robot/ros2_ws/src/core/config/twist_mux.yaml
 !robot/ros2_ws/src/mapping/config/
 !robot/ros2_ws/src/mapping/config/slam_toolbox.yaml
 !**/bomi_lidar/config/x4_pro.yaml

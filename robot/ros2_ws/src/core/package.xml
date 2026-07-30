@@ -22,12 +22,21 @@
   <depend>lifecycle_msgs</depend>
   <depend>nav2_msgs</depend>
 
-  <!-- 실행할 때 필요한 의존성 -->
+  <!-- 로봇 수동 조작에 필요한 실행 의존성 -->
+  <exec_depend>twist_mux</exec_depend>
+  <exec_depend>joy_linux</exec_depend>
+  <exec_depend>teleop_twist_joy</exec_depend>
+
+  <!-- ROS 2 launch 실행에 필요한 의존성 -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <!-- 자율주행 및 설정 파일 처리에 필요한 실행 의존성 -->
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>nav2_bringup</exec_depend>
   <exec_depend>nav2_common</exec_depend>
-  <exec_depend>launch</exec_depend>
-  <exec_depend>launch_ros</exec_depend>
+
+  <!-- Gazebo 시뮬레이션 및 시각화에 필요한 실행 의존성 -->
   <exec_depend>gazebo_ros</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>rviz2</exec_depend>
