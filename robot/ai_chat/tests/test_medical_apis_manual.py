@@ -10,7 +10,7 @@ import os
 SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 sys.path.append(os.path.abspath(SRC_DIR))
 
-from apis.medical_apis import MedicalDataClient
+from bomi_ai_chat.apis.medical_apis import MedicalDataClient
 
 
 def main():

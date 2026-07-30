@@ -4,7 +4,7 @@ import sys, os
 SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 sys.path.append(os.path.abspath(SRC_DIR))
 
-from db.medical_repository import _get_conn
+from bomi_ai_chat.db.medical_repository import _get_conn
 
 try:
     conn = _get_conn()

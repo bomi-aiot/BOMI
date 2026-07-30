@@ -1,5 +1,9 @@
 import unicodedata, difflib
-from db.medical_repository import _get_conn, find_closest_value, find_drug_info
+from bomi_ai_chat.db.medical_repository import (
+    _get_conn,
+    find_closest_value,
+    find_drug_info,
+)
 import psycopg2.extras
 
 def debug_candidates(input_value, table="drug_permit", column="item_name",

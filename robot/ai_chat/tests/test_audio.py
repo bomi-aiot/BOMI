@@ -1,4 +1,4 @@
-from src.audio_io.laptop import LaptopMicInput, LaptopSpeakerOutput
+from bomi_ai_chat.audio_io.laptop import LaptopMicInput, LaptopSpeakerOutput
 
 mic = LaptopMicInput(duration_seconds=3)
 speaker = LaptopSpeakerOutput()

@@ -2,8 +2,8 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.weather.client import WeatherClient
-from src.llm.client import LLMClient
+from bomi_ai_chat.llm.client import LLMClient
+from bomi_ai_chat.weather.client import WeatherClient
 
 weather = WeatherClient()
 llm = LLMClient()
