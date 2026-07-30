@@ -13,7 +13,7 @@ def generate_launch_description() -> LaunchDescription:
     """X4-PRO 드라이버와 base_link 기준 LiDAR 좌표계를 실행한다.
 
     입력:
-        launch 인자 port를 통해 LiDAR 시리얼 장치 경로를 전달받는다.
+        launch 인자로 LiDAR 시리얼 경로, scan 토픽과 TF 프레임을 받는다.
 
     출력:
         YDLIDAR 드라이버 노드와 base_link → laser_frame 정적 TF 노드를
@@ -28,9 +28,11 @@ def generate_launch_description() -> LaunchDescription:
     package_share = Path(get_package_share_directory("bomi_lidar"))
     parameter_file = package_share / "config" / "x4_pro.yaml"
 
-    # 실행 시 변경 가능한 LiDAR 시리얼 포트 경로이다.
-    # 별도 인자를 지정하지 않으면 /dev/ttyUSB0을 사용한다.
+    # 실행 환경에 따라 장치 경로와 ROS 인터페이스를 변경할 수 있다.
     lidar_port = LaunchConfiguration("port")
+    scan_topic = LaunchConfiguration("scan_topic")
+    base_frame = LaunchConfiguration("base_frame")
+    laser_frame = LaunchConfiguration("laser_frame")
 
     # YDLIDAR X4-PRO 드라이버 노드이다.
     # YAML 설정을 먼저 적용하고 launch 인자로 전달된 port 값을 덮어쓴다.
@@ -43,7 +45,11 @@ def generate_launch_description() -> LaunchDescription:
             str(parameter_file),
             {
                 "port": lidar_port,
+                "frame_id": laser_frame,
             },
+        ],
+        remappings=[
+            ("scan", scan_topic),
         ],
     )
 
@@ -68,9 +74,9 @@ def generate_launch_description() -> LaunchDescription:
             "--yaw",
             "0",
             "--frame-id",
-            "base_link",
+            base_frame,
             "--child-frame-id",
-            "laser_frame",
+            laser_frame,
         ],
     )
 
@@ -81,6 +87,21 @@ def generate_launch_description() -> LaunchDescription:
                 "port",
                 default_value="/dev/ttyUSB0",
                 description="YDLIDAR가 연결된 시리얼 장치 경로",
+            ),
+            DeclareLaunchArgument(
+                "scan_topic",
+                default_value="/scan",
+                description="LaserScan을 발행할 ROS 2 토픽",
+            ),
+            DeclareLaunchArgument(
+                "base_frame",
+                default_value="base_link",
+                description="LiDAR 정적 TF의 부모 프레임",
+            ),
+            DeclareLaunchArgument(
+                "laser_frame",
+                default_value="laser_frame",
+                description="LaserScan과 정적 TF에서 사용할 LiDAR 프레임",
             ),
             lidar_driver,
             lidar_static_transform,

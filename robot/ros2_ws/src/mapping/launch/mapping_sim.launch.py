@@ -27,11 +27,11 @@ def generate_launch_description() -> LaunchDescription:
         / "config"
         / "slam_toolbox.yaml"
     )
-    
+
     rviz_config = (
-	mapping_share
-	/ "rviz"
-	/ "mapping.rviz"
+        mapping_share
+        / "rviz"
+        / "mapping.rviz"
     )
 
     simulation = IncludeLaunchDescription(
@@ -55,19 +55,19 @@ def generate_launch_description() -> LaunchDescription:
         period=5.0,
         actions=[slam_toolbox],
     )
-    
+
     rviz = Node(
-	package="rviz2",
-	executable="rviz2",
-	name="rviz2",
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
         arguments=[
-	    "-d",
-	    str(rviz_config),
-	],
+            "-d",
+            str(rviz_config),
+        ],
         parameters=[
-  	    {"use_sim_time": True},
-	],
-	output="screen",
+            {"use_sim_time": True},
+        ],
+        output="screen",
     )
 
     return LaunchDescription(
