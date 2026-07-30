@@ -13,6 +13,34 @@ import psycopg2.extras
 from bomi_ai_chat.config import get_settings
 from bomi_ai_chat.db.ssh_tunnel import get_local_port
 
+SEARCHABLE_COLUMNS = frozenset({("drug_permit", "item_name")})
+
+
+class MedicalRepositoryError(RuntimeError):
+    """의료 DB 연결·쿼리 실패를 검색 결과 없음과 구분한다."""
+
+
+def _fetch_all(query, params):
+    try:
+        with _get_conn() as conn:
+            with conn.cursor(
+                cursor_factory=psycopg2.extras.RealDictCursor
+            ) as cur:
+                cur.execute(query, params)
+                return cur.fetchall()
+    except Exception as exc:
+        raise MedicalRepositoryError("의료 DB 조회에 실패했습니다.") from exc
+
+
+def _bounded_limit(limit, *, maximum=20):
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        raise ValueError("limit은 0보다 큰 정수여야 합니다.")
+    return min(limit, maximum)
+
+
+def _escape_ilike(value):
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
 
 def _get_conn():
     settings = get_settings()
@@ -80,19 +108,24 @@ def find_closest_value(table, column, input_value, threshold=0.05,
     과정에서 공백이 엉뚱하게 끼어들 수 있어서). 단, 실제로 반환하는 값은
     DB에 저장된 원본 문자열 그대로다 — 정규화는 비교 목적으로만 쓰인다.
     """
+    if (table, column) not in SEARCHABLE_COLUMNS:
+        raise ValueError("허용되지 않은 유사 검색 대상입니다.")
+    if not isinstance(input_value, str) or not input_value.strip():
+        raise ValueError("유사 검색 입력값은 비어 있지 않은 문자열이어야 합니다.")
+    candidate_count = _bounded_limit(candidate_count, maximum=100)
     normalized_input = "".join(input_value.split())
 
     query = f"""
         SELECT {column}, word_similarity(%s, {column}) AS score
         FROM {table}
         WHERE word_similarity(%s, {column}) > %s
-        ORDER BY score DESC
+        ORDER BY score DESC, LOWER({column}) ASC
         LIMIT %s
     """
-    with _get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(query, (normalized_input, normalized_input, threshold, candidate_count))
-            rows = cur.fetchall()
+    rows = _fetch_all(
+        query,
+        (normalized_input, normalized_input, threshold, candidate_count),
+    )
 
     if not rows:
         return None
@@ -105,7 +138,13 @@ def find_closest_value(table, column, input_value, threshold=0.05,
         candidate_prefix = normalized_candidate[: input_len + 2]
         jamo_score = _jamo_similarity(normalized_input, candidate_prefix)
         scored.append((candidate, jamo_score))  # candidate는 원본 유지(반환용)
-    scored.sort(key=lambda x: x[1], reverse=True)
+    scored.sort(
+        key=lambda item: (
+            -item[1],
+            "".join(item[0].split()).casefold(),
+            item[0],
+        )
+    )
 
     top_candidate, top_score = scored[0]
 
@@ -127,8 +166,10 @@ def _multi_token_ilike(column, value):
     tokens = [t for t in value.split() if t]
     if not tokens:
         return "TRUE", []
-    conditions = " AND ".join([f"{column} ILIKE %s" for _ in tokens])
-    params = [f"%{t}%" for t in tokens]
+    conditions = " AND ".join(
+        [f"{column} ILIKE %s ESCAPE E'\\\\'" for _ in tokens]
+    )
+    params = [f"%{_escape_ilike(token)}%" for token in tokens]
     return conditions, params
 
 
@@ -145,25 +186,30 @@ def find_hospitals(name=None, region=None, department=None, limit=5):
     위험이 크다. 위치 정보 오안내는 실제 안전 문제로 이어질 수 있어,
     정확/부분 일치가 없으면 "찾을 수 없음"으로 정직하게 답하는 쪽을 택한다.
     """
+    limit = _bounded_limit(limit)
     query = "SELECT DISTINCT yadm_nm, addr, cl_cd_nm FROM hospital WHERE 1=1"
     params = []
     if name:
-        query += " AND yadm_nm ILIKE %s"
-        params.append(f"%{name}%")
+        query += " AND yadm_nm ILIKE %s ESCAPE E'\\\\'"
+        params.append(f"%{_escape_ilike(name)}%")
     if region:
         condition, region_params = _multi_token_ilike("addr", region)
         query += f" AND ({condition})"
         params.extend(region_params)
     if department:
-        query += " AND cl_cd_nm ILIKE %s"
-        params.append(f"%{department}%")
-    query += " LIMIT %s"
+        query += " AND cl_cd_nm ILIKE %s ESCAPE E'\\\\'"
+        params.append(f"%{_escape_ilike(department)}%")
+    query = (
+        "SELECT yadm_nm, addr, cl_cd_nm FROM "
+        f"({query}) AS matched_hospitals"
+    )
+    query += (
+        " ORDER BY LOWER(yadm_nm) ASC, LOWER(addr) ASC, "
+        "LOWER(cl_cd_nm) ASC LIMIT %s"
+    )
     params.append(limit)
 
-    with _get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(query, params)
-            return cur.fetchall()
+    return _fetch_all(query, params)
 
 
 def find_pharmacies(name=None, region=None, limit=5):
@@ -171,22 +217,23 @@ def find_pharmacies(name=None, region=None, limit=5):
     region: 여러 단어(예: '부산 서면')가 들어올 수 있어 토큰별로 나눠 매칭한다.
     name에는 자모 유사도 보정을 적용하지 않는다 (이유는 find_hospitals 참고).
     """
+    limit = _bounded_limit(limit)
     query = "SELECT yadm_nm, addr, telno FROM pharmacy WHERE 1=1"
     params = []
     if name:
-        query += " AND yadm_nm ILIKE %s"
-        params.append(f"%{name}%")
+        query += " AND yadm_nm ILIKE %s ESCAPE E'\\\\'"
+        params.append(f"%{_escape_ilike(name)}%")
     if region:
         condition, region_params = _multi_token_ilike("addr", region)
         query += f" AND ({condition})"
         params.extend(region_params)
-    query += " LIMIT %s"
+    query += (
+        " ORDER BY LOWER(yadm_nm) ASC, LOWER(addr) ASC, "
+        "LOWER(COALESCE(telno, '')) ASC LIMIT %s"
+    )
     params.append(limit)
 
-    with _get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(query, params)
-            return cur.fetchall()
+    return _fetch_all(query, params)
 
 
 def find_drug_info(item_name, limit=3):
@@ -205,6 +252,9 @@ def find_drug_info(item_name, limit=3):
       위해로 이어질 수 있는 안전 문제이기 때문이다.
     - None: 아무것도 못 찾음
     """
+    if not isinstance(item_name, str) or not item_name.strip():
+        raise ValueError("의약품 이름은 비어 있지 않은 문자열이어야 합니다.")
+    limit = _bounded_limit(limit)
     normalized_input = "".join(item_name.split())
 
     # 1단계: 공백만 무시하고 정확히 일치하는 제품이 있는지 먼저 확인
@@ -212,12 +262,13 @@ def find_drug_info(item_name, limit=3):
         SELECT item_name, entp_name, item_permit_date, item_ingr_name, prduct_type
         FROM drug_permit
         WHERE regexp_replace(item_name, '\\s+', '', 'g') = %s
+        ORDER BY LOWER(item_name) ASC, LOWER(entp_name) ASC,
+                 item_permit_date DESC NULLS LAST,
+                 LOWER(COALESCE(prduct_type, '')) ASC,
+                 LOWER(COALESCE(item_ingr_name, '')) ASC
         LIMIT %s
     """
-    with _get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(exact_query, (normalized_input, limit))
-            exact_rows = cur.fetchall()
+    exact_rows = _fetch_all(exact_query, (normalized_input, limit))
 
     if exact_rows:
         return {"results": exact_rows, "match_type": "exact"}
@@ -231,11 +282,12 @@ def find_drug_info(item_name, limit=3):
         SELECT item_name, entp_name, item_permit_date, item_ingr_name, prduct_type
         FROM drug_permit
         WHERE item_name = %s
+        ORDER BY LOWER(item_name) ASC, LOWER(entp_name) ASC,
+                 item_permit_date DESC NULLS LAST,
+                 LOWER(COALESCE(prduct_type, '')) ASC,
+                 LOWER(COALESCE(item_ingr_name, '')) ASC
         LIMIT %s
     """
-    with _get_conn() as conn:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(corrected_query, (corrected_name, limit))
-            rows = cur.fetchall()
+    rows = _fetch_all(corrected_query, (corrected_name, limit))
 
     return {"results": rows, "match_type": "corrected"}
