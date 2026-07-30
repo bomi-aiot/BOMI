@@ -8,8 +8,28 @@ from bomi_ai_chat import main
 
 def install_runtime_stubs(monkeypatch, *, once_succeeded=True):
     laptop_module = ModuleType("bomi_ai_chat.audio_io.laptop")
-    laptop_module.LaptopMicInput = type("LaptopMicInput", (), {})
-    laptop_module.LaptopSpeakerOutput = type("LaptopSpeakerOutput", (), {})
+    robot_module = ModuleType("bomi_ai_chat.audio_io.robot")
+
+    class LaptopMicInput:
+        def __init__(self, settings):
+            self.settings = settings
+
+    class LaptopSpeakerOutput:
+        def __init__(self, settings):
+            self.settings = settings
+
+    class RobotAudioInput:
+        def __init__(self, settings):
+            self.settings = settings
+
+    class RobotAudioOutput:
+        def __init__(self, settings):
+            self.settings = settings
+
+    laptop_module.LaptopMicInput = LaptopMicInput
+    laptop_module.LaptopSpeakerOutput = LaptopSpeakerOutput
+    robot_module.RobotAudioInput = RobotAudioInput
+    robot_module.RobotAudioOutput = RobotAudioOutput
 
     calls = []
 
@@ -30,6 +50,11 @@ def install_runtime_stubs(monkeypatch, *, once_succeeded=True):
         sys.modules,
         "bomi_ai_chat.audio_io.laptop",
         laptop_module,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "bomi_ai_chat.audio_io.robot",
+        robot_module,
     )
     monkeypatch.setitem(
         sys.modules,
@@ -88,3 +113,28 @@ def test_default_mode_runs_conversation_loop(
 
     assert exit_code == 0
     assert [call[0] for call in calls] == ["init", "run"]
+    assert type(calls[0][1]).__name__ == "LaptopMicInput"
+    assert type(calls[0][2]).__name__ == "LaptopSpeakerOutput"
+
+
+def test_robot_mode_selects_robot_audio_adapters(
+    monkeypatch,
+    settings_factory,
+):
+    settings = settings_factory(
+        RTZR_CLIENT_ID="id",
+        RTZR_CLIENT_SECRET="secret",
+        GEMINI_API_KEY="gemini",
+        TYPECAST_API_KEY="typecast",
+        AUDIO_MODE="robot",
+        AUDIO_INPUT_DEVICE="USB Mic",
+        AUDIO_OUTPUT_DEVICE="USB Speaker",
+    )
+    monkeypatch.setattr(main, "get_settings", lambda: settings)
+    calls = install_runtime_stubs(monkeypatch)
+
+    exit_code = main.main(["--once"])
+
+    assert exit_code == 0
+    assert type(calls[0][1]).__name__ == "RobotAudioInput"
+    assert type(calls[0][2]).__name__ == "RobotAudioOutput"

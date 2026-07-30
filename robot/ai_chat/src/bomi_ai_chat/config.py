@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 
 DEFAULT_TYPECAST_VOICE_ID = "tc_666a9871abcf27a5169850d0"
 VALID_DB_CONNECTION_MODES = {"direct", "ssh"}
+VALID_AUDIO_MODES = {"laptop", "robot"}
 
 
 class ConfigurationError(RuntimeError):
@@ -70,6 +71,23 @@ def _non_negative_float_env(name: str, default: float) -> float:
     return value
 
 
+def _audio_device_env(name: str) -> int | str | None:
+    """PortAudio 장치 인덱스 또는 장치명 일부를 읽는다."""
+
+    raw_value = _optional_env(name)
+    if raw_value is None:
+        return None
+    try:
+        device_index = int(raw_value)
+    except ValueError:
+        return raw_value
+    if device_index < 0:
+        raise ConfigurationError(
+            f"{name} 장치 인덱스는 0 이상이어야 합니다: {device_index!r}"
+        )
+    return device_index
+
+
 @dataclass(frozen=True)
 class Settings:
     """ai_chat에서 사용하는 환경설정을 한 곳에 모은 값 객체."""
@@ -83,6 +101,16 @@ class Settings:
     hira_hospital_api_key: str | None
     hira_pharmacy_api_key: str | None
     dur_prdlst_api_key: str | None
+
+    audio_mode: str
+    audio_input_device: int | str | None
+    audio_output_device: int | str | None
+    audio_sample_rate: int
+    audio_channels: int
+    audio_chunk_seconds: float
+    audio_silence_threshold: float
+    audio_silence_limit_seconds: float
+    audio_max_seconds: float
 
     http_timeout_seconds: float
     http_max_attempts: int
@@ -128,6 +156,13 @@ class Settings:
                 f"{allowed} 중 하나여야 합니다: {db_connection_mode!r}"
             )
 
+        audio_mode = (_optional_env("AUDIO_MODE", "laptop") or "laptop").lower()
+        if audio_mode not in VALID_AUDIO_MODES:
+            allowed = ", ".join(sorted(VALID_AUDIO_MODES))
+            raise ConfigurationError(
+                f"AUDIO_MODE는 {allowed} 중 하나여야 합니다: {audio_mode!r}"
+            )
+
         return cls(
             rtzr_client_id=_optional_env("RTZR_CLIENT_ID"),
             rtzr_client_secret=_optional_env("RTZR_CLIENT_SECRET"),
@@ -144,6 +179,30 @@ class Settings:
             hira_hospital_api_key=_optional_env("HIRA_HOSPITAL_API_KEY"),
             hira_pharmacy_api_key=_optional_env("HIRA_PHARMACY_API_KEY"),
             dur_prdlst_api_key=_optional_env("DUR_PRDLST_API_KEY"),
+            audio_mode=audio_mode,
+            audio_input_device=_audio_device_env("AUDIO_INPUT_DEVICE"),
+            audio_output_device=_audio_device_env("AUDIO_OUTPUT_DEVICE"),
+            audio_sample_rate=_positive_integer_env(
+                "AUDIO_SAMPLE_RATE",
+                16000,
+            ),
+            audio_channels=_positive_integer_env("AUDIO_CHANNELS", 1),
+            audio_chunk_seconds=_positive_float_env(
+                "AUDIO_CHUNK_SECONDS",
+                0.5,
+            ),
+            audio_silence_threshold=_non_negative_float_env(
+                "AUDIO_SILENCE_THRESHOLD",
+                300.0,
+            ),
+            audio_silence_limit_seconds=_positive_float_env(
+                "AUDIO_SILENCE_LIMIT_SECONDS",
+                3.0,
+            ),
+            audio_max_seconds=_positive_float_env(
+                "AUDIO_MAX_SECONDS",
+                15.0,
+            ),
             http_timeout_seconds=_positive_float_env(
                 "HTTP_TIMEOUT_SECONDS",
                 10.0,
@@ -202,6 +261,24 @@ class Settings:
             },
             feature="기본 음성 대화",
         )
+        self.validate_audio()
+
+    def validate_audio(self) -> None:
+        """선택한 오디오 모드의 장치 설정을 검증한다."""
+
+        if self.audio_mode == "robot":
+            self.validate_robot_audio()
+
+    def validate_robot_audio(self) -> None:
+        """로봇 어댑터에 필요한 입력·출력 장치를 검증한다."""
+
+        self._require(
+            {
+                "AUDIO_INPUT_DEVICE": self.audio_input_device,
+                "AUDIO_OUTPUT_DEVICE": self.audio_output_device,
+            },
+            feature="로봇 오디오",
+        )
 
     def validate_weather(self) -> None:
         """날씨 조회에 필요한 설정을 검증한다."""
@@ -241,11 +318,15 @@ class Settings:
 
     @staticmethod
     def _require(
-        values: dict[str, str | None],
+        values: dict[str, object | None],
         *,
         feature: str,
     ) -> None:
-        missing = [name for name, value in values.items() if not value]
+        missing = [
+            name
+            for name, value in values.items()
+            if value is None or (isinstance(value, str) and not value)
+        ]
         if missing:
             joined = ", ".join(missing)
             raise ConfigurationError(
