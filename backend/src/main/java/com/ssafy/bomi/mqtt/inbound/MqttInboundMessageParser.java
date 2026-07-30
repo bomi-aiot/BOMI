@@ -20,7 +20,7 @@ public class MqttInboundMessageParser {
         MqttInboundCategory.IOT_EVENT,
         Set.of("DOOR_OPENED", "PRESENCE_DETECTED", "AMBIENT_ENVIRONMENT_OBSERVED"),
         MqttInboundCategory.ROBOT_EVENT,
-        Set.of("ONBOARDING_ANSWER_CAPTURED"),
+        Set.of("ONBOARDING_ANSWER_CAPTURED", "CONVERSATION_ENDED"),
         MqttInboundCategory.ROBOT_STATUS,
         Set.of("REST_STATE_CHANGED", "NAVIGATION_STATUS"),
         MqttInboundCategory.ROBOT_RESULT,

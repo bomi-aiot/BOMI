@@ -392,6 +392,32 @@ Backend는 토픽/메시지 `robotId`가 세션의 `robot_id`와 일치하고 �
 
 전체 STT, 원본·인코딩 음성, 토큰, 전체 프롬프트·모델 응답은 MQTT에 포함하지 않습니다. 실제 답변 텍스트는 `sourceConversationId`와 `sourceMessageId`로 `conversation_message`에서 찾습니다. 민감정보이거나 누락·모호·낮은 인식 신뢰도가 있는 값은 `fact_candidate`로 보내고 최종 확인된 `confirmed_value`만 업무 원본에 반영합니다.
 
+### `CONVERSATION_ENDED`
+
+귀가 환영 시나리오의 인사·대화가 끝났을 때, 음성·대화 도메인(Robot MQTT Bridge 경유)이 발행합니다. Backend는 이 이벤트를 받아 로봇을 기본 위치로 복귀시키고(NAVIGATE `DEFAULT_POSITION`) 시나리오를 마무리합니다. 이 이벤트가 없으면 시나리오가 `CONVERSING`에서 멈춥니다.
+
+```json
+{
+  "eventId": "01K0CONVEND7F5M2N1Q9R6S3T8V",
+  "type": "CONVERSATION_ENDED",
+  "occurredAt": "2026-07-21T10:31:40+09:00",
+  "robotId": "7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40",
+  "payload": {
+    "scenarioId": "6fd94c8c-3903-4a01-a82d-819e0c8edb12"
+  }
+}
+```
+
+| 필드 | 필수 | 설명 |
+| --- | --- | --- |
+| `eventId` | 예 | 대화 종료 이벤트의 멱등 키 |
+| `robotId` | 예 | 토픽의 `{robotId}`와 동일 |
+| `type` | 예 | `CONVERSATION_ENDED` 고정 |
+| `occurredAt` | 예 | 대화 종료 확정 시각 |
+| `payload.scenarioId` | 예 | 이 대화가 속한 시나리오 ID(Backend가 명령에 실어 보낸 값을 그대로 echo) |
+
+Backend는 `scenarioId`로 시나리오를 찾아 `CONVERSING` 상태일 때만 복귀를 진행합니다. 이미 복귀 중이거나 종료된 시나리오, 알 수 없는 `scenarioId`, 중복 `eventId`는 무시합니다(멱등). 대화 내용·음성·전체 프롬프트는 이 이벤트에 포함하지 않습니다.
+
 ## 9. Robot 최종 결과
 
 ### `NAVIGATION_RESULT`
