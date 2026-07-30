@@ -1,0 +1,10 @@
+# 실제 LiDAR와 RF2O 오도메트리를 사용하는 온라인 2D 지도 생성 설정.
+# 시뮬레이션 설정과 분리하며, 실측 전 임의 튜닝값을 추가하지 않는다.
+slam_toolbox:
+  ros__parameters:
+    use_sim_time: false
+    mode: mapping
+    map_frame: map
+    odom_frame: odom
+    base_frame: base_link
+    scan_topic: /scan
