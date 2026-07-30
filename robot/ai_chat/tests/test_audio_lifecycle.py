@@ -1,4 +1,4 @@
-"""노트북 오디오 예외 경로의 장치 해제 회귀 테스트."""
+"""공통 오디오 백엔드의 장치 전달과 예외 시 해제 회귀 테스트."""
 
 import importlib
 import io
@@ -7,6 +7,8 @@ import wave
 from types import ModuleType
 
 import pytest
+
+from bomi_ai_chat.config import ConfigurationError
 
 
 class FailingInputStream:
@@ -42,8 +44,8 @@ def wav_bytes():
 
 
 @pytest.fixture
-def laptop_module(monkeypatch):
-    """오디오·수치 라이브러리 없이 laptop 모듈의 수명주기만 불러온다."""
+def backend_module(monkeypatch):
+    """오디오·수치 라이브러리 없이 공통 백엔드의 수명주기만 불러온다."""
 
     fake_noisereduce = ModuleType("noisereduce")
     fake_noisereduce.reduce_noise = lambda **kwargs: kwargs["y"]
@@ -64,33 +66,115 @@ def laptop_module(monkeypatch):
     monkeypatch.setitem(sys.modules, "numpy", fake_numpy)
     monkeypatch.setitem(sys.modules, "sounddevice", fake_sounddevice)
 
-    module_name = "bomi_ai_chat.audio_io.laptop"
-    previous_module = sys.modules.pop(module_name, None)
+    module_names = (
+        "bomi_ai_chat.audio_io.laptop",
+        "bomi_ai_chat.audio_io.robot",
+        "bomi_ai_chat.audio_io.sounddevice_backend",
+    )
+    previous_modules = {
+        name: sys.modules.pop(name)
+        for name in module_names
+        if name in sys.modules
+    }
     try:
-        module = importlib.import_module(module_name)
+        module = importlib.import_module(module_names[-1])
         yield module
     finally:
-        sys.modules.pop(module_name, None)
-        if previous_module is not None:
-            sys.modules[module_name] = previous_module
+        for name in module_names:
+            sys.modules.pop(name, None)
+        sys.modules.update(previous_modules)
+
+
+def audio_input(backend_module, *, device="USB Mic"):
+    return backend_module.SoundDeviceAudioInput(
+        device=device,
+        sample_rate=16000,
+        channels=1,
+        chunk_seconds=0.5,
+        silence_threshold=300.0,
+        silence_limit_seconds=3.0,
+        max_seconds=15.0,
+    )
+
+
+def test_laptop_adapter_forwards_audio_settings(
+    backend_module,
+    settings_factory,
+):
+    laptop = importlib.import_module("bomi_ai_chat.audio_io.laptop")
+    settings = settings_factory(
+        AUDIO_INPUT_DEVICE="1",
+        AUDIO_OUTPUT_DEVICE="USB Speaker",
+        AUDIO_SAMPLE_RATE="48000",
+        AUDIO_CHANNELS="2",
+        AUDIO_CHUNK_SECONDS="0.25",
+        AUDIO_SILENCE_THRESHOLD="125",
+        AUDIO_SILENCE_LIMIT_SECONDS="2",
+        AUDIO_MAX_SECONDS="10",
+    )
+
+    audio_in = laptop.LaptopMicInput(settings)
+    audio_out = laptop.LaptopSpeakerOutput(settings)
+
+    assert audio_in.device == 1
+    assert audio_in.sample_rate == 48000
+    assert audio_in.channels == 2
+    assert audio_in.chunk_seconds == 0.25
+    assert audio_in.silence_threshold == 125.0
+    assert audio_in.silence_limit_seconds == 2.0
+    assert audio_in.max_seconds == 10.0
+    assert audio_out.device == "USB Speaker"
+
+
+def test_robot_adapter_requires_and_forwards_explicit_devices(
+    backend_module,
+    settings_factory,
+):
+    robot = importlib.import_module("bomi_ai_chat.audio_io.robot")
+    settings = settings_factory(
+        AUDIO_MODE="robot",
+        AUDIO_INPUT_DEVICE="Jetson Mic",
+        AUDIO_OUTPUT_DEVICE="2",
+    )
+
+    audio_in = robot.RobotAudioInput(settings)
+    audio_out = robot.RobotAudioOutput(settings)
+
+    assert audio_in.device == "Jetson Mic"
+    assert audio_out.device == 2
+
+
+def test_robot_adapter_rejects_default_laptop_devices(
+    backend_module,
+    settings_factory,
+):
+    robot = importlib.import_module("bomi_ai_chat.audio_io.robot")
+    settings = settings_factory()
+
+    with pytest.raises(ConfigurationError, match="AUDIO_INPUT_DEVICE"):
+        robot.RobotAudioInput(settings)
 
 
 @pytest.mark.parametrize("failure_stage", ["start", "read"])
 def test_microphone_stream_closes_when_start_or_read_fails(
     monkeypatch,
-    laptop_module,
+    backend_module,
     failure_stage,
 ):
     stream = FailingInputStream(failure_stage)
-    monkeypatch.setattr(
-        laptop_module.sd,
-        "InputStream",
-        lambda **kwargs: stream,
-    )
+    stream_options = {}
+
+    def input_stream(**kwargs):
+        stream_options.update(kwargs)
+        return stream
+
+    monkeypatch.setattr(backend_module.sd, "InputStream", input_stream)
 
     with pytest.raises(RuntimeError, match=f"audio {failure_stage} failed"):
-        laptop_module.LaptopMicInput().capture()
+        audio_input(backend_module).capture()
 
+    assert stream_options["device"] == "USB Mic"
+    assert stream_options["samplerate"] == 16000
     assert stream.closed is True
     assert stream.stopped is (failure_stage == "read")
 
@@ -98,13 +182,13 @@ def test_microphone_stream_closes_when_start_or_read_fails(
 @pytest.mark.parametrize("failure_stage", [None, "play", "wait"])
 def test_speaker_is_stopped_after_success_or_failure(
     monkeypatch,
-    laptop_module,
+    backend_module,
     failure_stage,
 ):
     calls = []
 
-    def play(data, samplerate):
-        calls.append(("play", samplerate))
+    def play(data, samplerate, device):
+        calls.append(("play", samplerate, device))
         if failure_stage == "play":
             raise RuntimeError("playback failed")
 
@@ -113,18 +197,20 @@ def test_speaker_is_stopped_after_success_or_failure(
         if failure_stage == "wait":
             raise RuntimeError("playback failed")
 
-    monkeypatch.setattr(laptop_module.sd, "play", play)
-    monkeypatch.setattr(laptop_module.sd, "wait", wait)
+    monkeypatch.setattr(backend_module.sd, "play", play)
+    monkeypatch.setattr(backend_module.sd, "wait", wait)
     monkeypatch.setattr(
-        laptop_module.sd,
+        backend_module.sd,
         "stop",
         lambda: calls.append(("stop",)),
     )
 
+    output = backend_module.SoundDeviceAudioOutput(device=2)
     if failure_stage:
         with pytest.raises(RuntimeError, match="playback failed"):
-            laptop_module.LaptopSpeakerOutput().play(wav_bytes())
+            output.play(wav_bytes())
     else:
-        laptop_module.LaptopSpeakerOutput().play(wav_bytes())
+        output.play(wav_bytes())
 
+    assert calls[0] == ("play", 16000, 2)
     assert calls[-1] == ("stop",)

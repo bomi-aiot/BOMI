@@ -4,7 +4,8 @@ import argparse
 import logging
 from collections.abc import Sequence
 
-from bomi_ai_chat.config import ConfigurationError, get_settings
+from bomi_ai_chat.audio_io.base import AudioInput, AudioOutput
+from bomi_ai_chat.config import ConfigurationError, Settings, get_settings
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -17,6 +18,27 @@ def _build_parser() -> argparse.ArgumentParser:
         help="한 번만 대화한 뒤 종료합니다. 기본값은 Ctrl+C까지 반복입니다.",
     )
     return parser
+
+
+def _build_audio_adapters(
+    settings: Settings,
+) -> tuple[AudioInput, AudioOutput]:
+    """설정한 실행 환경에 맞는 오디오 입력·출력을 만든다."""
+
+    if settings.audio_mode == "robot":
+        from bomi_ai_chat.audio_io.robot import (
+            RobotAudioInput,
+            RobotAudioOutput,
+        )
+
+        return RobotAudioInput(settings), RobotAudioOutput(settings)
+
+    from bomi_ai_chat.audio_io.laptop import (
+        LaptopMicInput,
+        LaptopSpeakerOutput,
+    )
+
+    return LaptopMicInput(settings), LaptopSpeakerOutput(settings)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -33,15 +55,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     # 임베딩 모델 등 무거운 런타임 의존성은 설정 검증 이후 불러온다.
-    from bomi_ai_chat.audio_io.laptop import (
-        LaptopMicInput,
-        LaptopSpeakerOutput,
-    )
     from bomi_ai_chat.pipeline import ConversationPipeline
 
+    audio_in, audio_out = _build_audio_adapters(settings)
     pipeline = ConversationPipeline(
-        audio_in=LaptopMicInput(),
-        audio_out=LaptopSpeakerOutput(),
+        audio_in=audio_in,
+        audio_out=audio_out,
         settings=settings,
     )
     if args.once:

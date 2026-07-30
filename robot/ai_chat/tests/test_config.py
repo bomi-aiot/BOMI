@@ -16,6 +16,15 @@ def load_settings() -> Settings:
 def test_defaults_are_explicit():
     settings = load_settings()
 
+    assert settings.audio_mode == "laptop"
+    assert settings.audio_input_device is None
+    assert settings.audio_output_device is None
+    assert settings.audio_sample_rate == 16000
+    assert settings.audio_channels == 1
+    assert settings.audio_chunk_seconds == 0.5
+    assert settings.audio_silence_threshold == 300.0
+    assert settings.audio_silence_limit_seconds == 3.0
+    assert settings.audio_max_seconds == 15.0
     assert settings.typecast_voice_id == DEFAULT_TYPECAST_VOICE_ID
     assert settings.db_connection_mode == "ssh"
     assert settings.db_host == "localhost"
@@ -37,6 +46,41 @@ def test_invalid_database_mode_is_rejected(monkeypatch):
 
     with pytest.raises(ConfigurationError, match="DB_CONNECTION_MODE"):
         load_settings()
+
+
+def test_invalid_audio_mode_is_rejected(monkeypatch):
+    monkeypatch.setenv("AUDIO_MODE", "unknown")
+
+    with pytest.raises(ConfigurationError, match="AUDIO_MODE"):
+        load_settings()
+
+
+def test_audio_device_accepts_index_or_name(monkeypatch):
+    monkeypatch.setenv("AUDIO_INPUT_DEVICE", "0")
+    monkeypatch.setenv("AUDIO_OUTPUT_DEVICE", "USB Audio")
+
+    settings = load_settings()
+
+    assert settings.audio_input_device == 0
+    assert settings.audio_output_device == "USB Audio"
+
+
+def test_robot_audio_requires_both_devices(monkeypatch):
+    monkeypatch.setenv("AUDIO_MODE", "robot")
+    monkeypatch.setenv("AUDIO_INPUT_DEVICE", "0")
+
+    with pytest.raises(ConfigurationError) as error:
+        load_settings().validate_audio()
+
+    assert "AUDIO_OUTPUT_DEVICE" in str(error.value)
+
+
+def test_robot_audio_accepts_zero_device_indexes(monkeypatch):
+    monkeypatch.setenv("AUDIO_MODE", "robot")
+    monkeypatch.setenv("AUDIO_INPUT_DEVICE", "0")
+    monkeypatch.setenv("AUDIO_OUTPUT_DEVICE", "0")
+
+    load_settings().validate_audio()
 
 
 def test_invalid_integer_setting_is_rejected(monkeypatch):
@@ -63,6 +107,26 @@ def test_invalid_external_client_setting_is_rejected(
     name,
     value,
 ):
+    monkeypatch.setenv(name, value)
+
+    with pytest.raises(ConfigurationError, match=name):
+        load_settings()
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("AUDIO_INPUT_DEVICE", "-1"),
+        ("AUDIO_OUTPUT_DEVICE", "-2"),
+        ("AUDIO_SAMPLE_RATE", "0"),
+        ("AUDIO_CHANNELS", "-1"),
+        ("AUDIO_CHUNK_SECONDS", "0"),
+        ("AUDIO_SILENCE_THRESHOLD", "-0.1"),
+        ("AUDIO_SILENCE_LIMIT_SECONDS", "0"),
+        ("AUDIO_MAX_SECONDS", "not-a-number"),
+    ],
+)
+def test_invalid_audio_setting_is_rejected(monkeypatch, name, value):
     monkeypatch.setenv(name, value)
 
     with pytest.raises(ConfigurationError, match=name):
