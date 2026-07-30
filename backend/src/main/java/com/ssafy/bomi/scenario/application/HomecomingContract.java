@@ -29,8 +29,31 @@ public final class HomecomingContract {
     public static final String PAYLOAD_KEY = "payload";
     /** Result payload key echoing the scenario id we sent on the command. */
     public static final String RESULT_SCENARIO_ID_KEY = "scenarioId";
+    /** Result payload key holding the robot's outcome for the command. */
+    public static final String RESULT_STATUS_KEY = "status";
+    /** Result status value: the robot reached its target. */
+    public static final String RESULT_STATUS_ARRIVED = "ARRIVED";
+    /** Result status value: the robot failed to reach its target. */
+    public static final String RESULT_STATUS_FAILED = "FAILED";
 
     private HomecomingContract() {
+    }
+
+    /**
+     * Extracts the result status from an inbound result body
+     * ({@code body.payload.status}), or {@code null} when it is absent or blank.
+     *
+     * <p>Unlike {@link #readScenarioId}, a missing status is not an error: the
+     * caller decides how to treat an unknown status (the navigation handler
+     * neither advances nor fails the scenario on it).</p>
+     */
+    public static String readResultStatus(JsonNode body) {
+        JsonNode payload = body == null ? null : body.get(PAYLOAD_KEY);
+        JsonNode statusNode = payload == null ? null : payload.get(RESULT_STATUS_KEY);
+        if (statusNode == null || !statusNode.isTextual() || statusNode.textValue().isBlank()) {
+            return null;
+        }
+        return statusNode.textValue();
     }
 
     /**
