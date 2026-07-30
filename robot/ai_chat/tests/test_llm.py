@@ -5,10 +5,10 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from src.llm.client import LLMClient
-from src.llm.router import is_medical_query
+from bomi_ai_chat.llm.client import LLMClient
+from bomi_ai_chat.llm.router import is_medical_query
 from dotenv import load_dotenv
 load_dotenv()
 

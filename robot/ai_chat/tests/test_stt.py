@@ -2,8 +2,8 @@
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.audio_io.laptop import LaptopMicInput
-from src.stt.client import STTClient
+from bomi_ai_chat.audio_io.laptop import LaptopMicInput
+from bomi_ai_chat.stt.client import STTClient
 
 mic = LaptopMicInput(duration_seconds=3)
 stt = STTClient()

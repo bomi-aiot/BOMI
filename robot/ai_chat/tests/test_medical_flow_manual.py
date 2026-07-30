@@ -3,7 +3,7 @@ import sys, os, time
 SRC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 sys.path.append(os.path.abspath(SRC_DIR))
 
-from llm.medical_flow import handle_medical_query
+from bomi_ai_chat.llm.medical_flow import handle_medical_query
 
 questions = [
     "부산에 있는 병원 알려줘",       # region만 있는 케이스

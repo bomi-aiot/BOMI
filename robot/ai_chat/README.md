@@ -9,13 +9,13 @@ STT-LLM-TTS 순차 파이프라인, 로컬/API 하이브리드 LLM 라우팅, �
 ## 디렉터리 구조
 
 ```text
-src/audio_io/   마이크/스피커 입출력 (노트북/로봇 구현체)
-src/llm/        로컬(Ollama)/API(Gemini) LLM 클라이언트 및 라우팅 로직
-src/stt/        RTZR Sommers 기반 STT 클라이언트
-src/tts/        TTS 클라이언트
-src/weather/    기상청 API 연동
-src/pipeline.py STT → LLM → TTS 파이프라인
-src/main.py     진입점 (노트북 모드)
+src/bomi_ai_chat/audio_io/   마이크/스피커 입출력 (노트북/로봇 구현체)
+src/bomi_ai_chat/llm/        LLM 클라이언트 및 의료 라우팅 로직
+src/bomi_ai_chat/stt/        RTZR Sommers 기반 STT 클라이언트
+src/bomi_ai_chat/tts/        TTS 클라이언트
+src/bomi_ai_chat/weather/    기상청 API 연동
+src/bomi_ai_chat/pipeline.py STT → LLM → TTS 파이프라인
+src/bomi_ai_chat/main.py     진입점 (노트북 모드)
 tests/          LLM 라우팅/응답 품질 테스트
 ```
 
@@ -56,7 +56,7 @@ Ollama가 백그라운드 서비스(`localhost:11434`)로 떠 있어야 하며, 
 ## 실행
 
 ```bash
-python -m src.main
+python -m bomi_ai_chat
 ```
 
 마이크 입력을 받아 STT → 라우팅 판단 → LLM 응답 생성 → TTS 재생까지 한 번 실행한다.
