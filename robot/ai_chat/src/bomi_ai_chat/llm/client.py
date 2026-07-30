@@ -2,11 +2,19 @@
 """SSAFY GMS를 경유한 Gemini API 클라이언트."""
 
 import re
+import time
+from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 
 import requests
 
 from bomi_ai_chat.config import Settings, get_settings
+from bomi_ai_chat.http import (
+    InvalidResponseError,
+    decode_json_object,
+    request_with_retry,
+)
 
 EMOJI_PATTERN = re.compile(
     "["
@@ -71,9 +79,21 @@ def format_weather(weather_data: dict) -> str:
 class LLMClient:
     """GMS를 통해 Gemini 모델을 호출하는 클라이언트."""
 
-    def __init__(self, settings: Settings | None = None):
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        session: Any = requests,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
         settings = settings or get_settings()
         self.api_key = settings.gemini_api_key
+        self.timeout_seconds = settings.http_timeout_seconds
+        self.max_attempts = settings.http_max_attempts
+        self.backoff_seconds = settings.http_backoff_seconds
+        self.max_backoff_seconds = settings.http_max_backoff_seconds
+        self._session = session
+        self._sleep = sleep
         self.url = (
             "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com"
             "/v1beta/models/gemini-2.5-flash-lite:generateContent"
@@ -86,8 +106,16 @@ class LLMClient:
         if weather_data:
             user_content = f"{text}\n{format_weather(weather_data)}"
 
-        response = requests.post(
+        response = request_with_retry(
+            "POST",
             self.url,
+            service="Gemini",
+            timeout_seconds=self.timeout_seconds,
+            max_attempts=self.max_attempts,
+            backoff_seconds=self.backoff_seconds,
+            max_backoff_seconds=self.max_backoff_seconds,
+            session=self._session,
+            sleep=self._sleep,
             headers={
                 "Content-Type": "application/json",
                 "x-goog-api-key": self.api_key,
@@ -98,6 +126,28 @@ class LLMClient:
                 "generationConfig": {"maxOutputTokens": 60},
             },
         )
-        response.raise_for_status()
-        result = response.json()
-        return result["candidates"][0]["content"]["parts"][0]["text"]
+        result = decode_json_object(response, service="Gemini")
+        candidates = result.get("candidates")
+        if not isinstance(candidates, list) or not candidates:
+            raise InvalidResponseError("Gemini", "response has no candidates")
+
+        first_candidate = candidates[0]
+        if not isinstance(first_candidate, dict):
+            raise InvalidResponseError("Gemini", "candidate must be an object")
+        content = first_candidate.get("content")
+        if not isinstance(content, dict):
+            raise InvalidResponseError("Gemini", "candidate has no content object")
+        parts = content.get("parts")
+        if not isinstance(parts, list) or not parts:
+            raise InvalidResponseError("Gemini", "content has no parts")
+
+        texts = [
+            part["text"].strip()
+            for part in parts
+            if isinstance(part, dict)
+            and isinstance(part.get("text"), str)
+            and part["text"].strip()
+        ]
+        if not texts:
+            raise InvalidResponseError("Gemini", "response has no text")
+        return "".join(texts)

@@ -37,6 +37,39 @@ def _integer_env(name: str, default: int) -> int:
         ) from exc
 
 
+def _positive_integer_env(name: str, default: int) -> int:
+    value = _integer_env(name, default)
+    if value <= 0:
+        raise ConfigurationError(f"{name}은 0보다 큰 정수여야 합니다: {value!r}")
+    return value
+
+
+def _float_env(name: str, default: float) -> float:
+    raw_value = _optional_env(name)
+    if raw_value is None:
+        return default
+    try:
+        return float(raw_value)
+    except ValueError as exc:
+        raise ConfigurationError(
+            f"{name}은 숫자여야 합니다: {raw_value!r}"
+        ) from exc
+
+
+def _positive_float_env(name: str, default: float) -> float:
+    value = _float_env(name, default)
+    if value <= 0:
+        raise ConfigurationError(f"{name}은 0보다 큰 숫자여야 합니다: {value!r}")
+    return value
+
+
+def _non_negative_float_env(name: str, default: float) -> float:
+    value = _float_env(name, default)
+    if value < 0:
+        raise ConfigurationError(f"{name}은 0 이상이어야 합니다: {value!r}")
+    return value
+
+
 @dataclass(frozen=True)
 class Settings:
     """ai_chat에서 사용하는 환경설정을 한 곳에 모은 값 객체."""
@@ -50,6 +83,14 @@ class Settings:
     hira_hospital_api_key: str | None
     hira_pharmacy_api_key: str | None
     dur_prdlst_api_key: str | None
+
+    http_timeout_seconds: float
+    http_max_attempts: int
+    http_backoff_seconds: float
+    http_max_backoff_seconds: float
+    stt_poll_interval_seconds: float
+    stt_poll_timeout_seconds: float
+    stt_token_ttl_seconds: float
 
     db_connection_mode: str
     database_url: str | None
@@ -103,6 +144,34 @@ class Settings:
             hira_hospital_api_key=_optional_env("HIRA_HOSPITAL_API_KEY"),
             hira_pharmacy_api_key=_optional_env("HIRA_PHARMACY_API_KEY"),
             dur_prdlst_api_key=_optional_env("DUR_PRDLST_API_KEY"),
+            http_timeout_seconds=_positive_float_env(
+                "HTTP_TIMEOUT_SECONDS",
+                10.0,
+            ),
+            http_max_attempts=_positive_integer_env(
+                "HTTP_MAX_ATTEMPTS",
+                3,
+            ),
+            http_backoff_seconds=_non_negative_float_env(
+                "HTTP_BACKOFF_SECONDS",
+                0.5,
+            ),
+            http_max_backoff_seconds=_non_negative_float_env(
+                "HTTP_MAX_BACKOFF_SECONDS",
+                2.0,
+            ),
+            stt_poll_interval_seconds=_positive_float_env(
+                "STT_POLL_INTERVAL_SECONDS",
+                0.5,
+            ),
+            stt_poll_timeout_seconds=_positive_float_env(
+                "STT_POLL_TIMEOUT_SECONDS",
+                60.0,
+            ),
+            stt_token_ttl_seconds=_positive_float_env(
+                "STT_TOKEN_TTL_SECONDS",
+                3000.0,
+            ),
             db_connection_mode=db_connection_mode,
             database_url=_optional_env("DATABASE_URL"),
             db_host=_optional_env("DB_HOST", "localhost") or "localhost",

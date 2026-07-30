@@ -1,10 +1,18 @@
 """기상청 단기예보 API를 이용한 날씨 조회 클라이언트."""
 
+import time
+from collections.abc import Callable
 from datetime import datetime, timedelta
+from typing import Any
 
 import requests
 
 from bomi_ai_chat.config import Settings, get_settings
+from bomi_ai_chat.http import (
+    InvalidResponseError,
+    decode_json_object,
+    request_with_retry,
+)
 
 # 주요 도시 격자 좌표 (nx, ny) - 필요한 지역은 이후 추가
 CITY_GRID = {
@@ -23,9 +31,21 @@ CITY_GRID = {
 class WeatherClient:
     """기상청 단기예보 API 클라이언트."""
 
-    def __init__(self, settings: Settings | None = None):
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        *,
+        session: Any = requests,
+        sleep: Callable[[float], None] = time.sleep,
+    ):
         settings = settings or get_settings()
         self.service_key = settings.kma_api_key
+        self.timeout_seconds = settings.http_timeout_seconds
+        self.max_attempts = settings.http_max_attempts
+        self.backoff_seconds = settings.http_backoff_seconds
+        self.max_backoff_seconds = settings.http_max_backoff_seconds
+        self._session = session
+        self._sleep = sleep
         self.base_url = (
             "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0"
             "/getVilageFcst"
@@ -55,8 +75,16 @@ class WeatherClient:
         nx, ny = CITY_GRID[city]
         base_date, base_time = self._get_base_datetime()
 
-        response = requests.get(
+        response = request_with_retry(
+            "GET",
             self.base_url,
+            service="기상청",
+            timeout_seconds=self.timeout_seconds,
+            max_attempts=self.max_attempts,
+            backoff_seconds=self.backoff_seconds,
+            max_backoff_seconds=self.max_backoff_seconds,
+            session=self._session,
+            sleep=self._sleep,
             params={
                 "serviceKey": self.service_key,
                 "pageNo": "1",
@@ -68,10 +96,32 @@ class WeatherClient:
                 "ny": ny,
             },
         )
-        response.raise_for_status()
-        data = response.json()
+        data = decode_json_object(response, service="기상청")
+        response_data = data.get("response")
+        if not isinstance(response_data, dict):
+            raise InvalidResponseError("기상청", "response object is missing")
 
-        items = data["response"]["body"]["items"]["item"]
+        header = response_data.get("header")
+        if not isinstance(header, dict):
+            raise InvalidResponseError("기상청", "response header is missing")
+        result_code = header.get("resultCode")
+        if str(result_code) not in {"0", "00"}:
+            raise InvalidResponseError(
+                "기상청",
+                f"API result code is {result_code!r}",
+            )
+
+        body = response_data.get("body")
+        if not isinstance(body, dict):
+            raise InvalidResponseError("기상청", "response body is missing")
+        items_container = body.get("items")
+        if not isinstance(items_container, dict):
+            raise InvalidResponseError("기상청", "items object is missing")
+        items = items_container.get("item")
+        if isinstance(items, dict):
+            items = [items]
+        if not isinstance(items, list):
+            raise InvalidResponseError("기상청", "item list is missing")
         return self._parse_items(items)
 
     def _parse_items(self, items: list) -> dict:
@@ -84,9 +134,22 @@ class WeatherClient:
             "POP": "강수확률",
         }
         for item in items:
-            category = item["category"]
+            if not isinstance(item, dict):
+                raise InvalidResponseError("기상청", "forecast item must be an object")
+            category = item.get("category")
             if category in category_map:
+                value = item.get("fcstValue")
+                if not isinstance(value, (str, int, float)):
+                    raise InvalidResponseError(
+                        "기상청",
+                        f"{category} item has no forecast value",
+                    )
                 key = category_map[category]
                 if key not in result:
-                    result[key] = item["fcstValue"]
+                    result[key] = str(value)
+        if not result:
+            raise InvalidResponseError(
+                "기상청",
+                "forecast has no supported categories",
+            )
         return result
