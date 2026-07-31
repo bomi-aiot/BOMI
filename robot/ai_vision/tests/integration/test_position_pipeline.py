@@ -25,6 +25,15 @@ pytestmark = pytest.mark.integration
 Frame = NDArray[np.uint8]
 
 
+def tracking_service() -> UserTrackingService:
+    """파이프라인 연결 검증에 사용할 기본 상태 머신을 생성한다."""
+    return UserTrackingService(
+        lost_tolerance_frames=2,
+        multiple_confirm_frames=5,
+        single_recovery_frames=10,
+    )
+
+
 class FakeTracker:
     """모델 없이 정해진 사람 추적 결과를 반환한다."""
 
@@ -93,7 +102,7 @@ def test_pipeline_delivers_position_result_and_releases_resources() -> None:
 
     run_person_tracking(
         cast(UltralyticsByteTracker, tracker),
-        UserTrackingService(2),
+        tracking_service(),
         FollowCommandGenerator(0.15, 0.45),
         cast(OpenCVCamera, camera),
         cast(OpenCVDebugView, view),
@@ -119,7 +128,7 @@ def test_pipeline_uses_unflipped_camera_frame_for_detection_and_view() -> None:
 
     run_person_tracking(
         cast(UltralyticsByteTracker, tracker),
-        UserTrackingService(2),
+        tracking_service(),
         FollowCommandGenerator(0.15, 0.45),
         cast(OpenCVCamera, camera),
         cast(OpenCVDebugView, view),

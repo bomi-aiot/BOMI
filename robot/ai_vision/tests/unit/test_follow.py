@@ -15,6 +15,15 @@ from bomi_vision.follow import FollowCommandGenerator
 
 pytestmark = pytest.mark.unit
 
+# 각 안전 상태가 계약상 가질 수 있는 사람 수다.
+UNSAFE_PERSON_COUNTS = {
+    TrackingResultStatus.NOT_DETECTED: 0,
+    TrackingResultStatus.TEMPORARILY_LOST: 0,
+    TrackingResultStatus.MULTIPLE_PENDING: 2,
+    TrackingResultStatus.MULTIPLE_PERSONS: 2,
+    TrackingResultStatus.SINGLE_RECOVERY: 1,
+}
+
 
 def tracking_result(
     *,
@@ -28,8 +37,7 @@ def tracking_result(
 
 def unsafe_result(status: TrackingResultStatus) -> TrackingResult:
     """대표 대상이 없는 안전 상태의 추적 결과를 생성한다."""
-    person_count = 2 if status is TrackingResultStatus.MULTIPLE_PEOPLE else 0
-    return TrackingResult(status, person_count, None, None)
+    return TrackingResult(status, UNSAFE_PERSON_COUNTS[status], None, None)
 
 
 def inconsistent_tracking_result(
@@ -87,9 +95,11 @@ def test_dead_zone_boundary_is_centered(offset_x: float) -> None:
 @pytest.mark.parametrize(
     ("status", "reason"),
     [
-        (TrackingResultStatus.NOT_FOUND, "tracking_not_available"),
+        (TrackingResultStatus.NOT_DETECTED, "tracking_not_available"),
         (TrackingResultStatus.TEMPORARILY_LOST, "temporarily_lost"),
-        (TrackingResultStatus.MULTIPLE_PEOPLE, "multiple_people_detected"),
+        (TrackingResultStatus.MULTIPLE_PENDING, "multiple_people_pending"),
+        (TrackingResultStatus.MULTIPLE_PERSONS, "multiple_people_detected"),
+        (TrackingResultStatus.SINGLE_RECOVERY, "single_recovery_stabilizing"),
     ],
 )
 def test_unsafe_tracking_status_stops(

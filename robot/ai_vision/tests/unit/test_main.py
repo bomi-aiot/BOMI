@@ -10,6 +10,8 @@ from bomi_vision.main import (
     parse_forward_threshold,
     parse_horizontal_dead_zone,
     parse_lost_tolerance_frames,
+    parse_multiple_confirm_frames,
+    parse_single_recovery_frames,
 )
 
 pytestmark = pytest.mark.unit
@@ -52,6 +54,32 @@ def test_rejects_invalid_lost_tolerance(value: str) -> None:
     """음수이거나 정수가 아닌 누락 허용 프레임 수를 거부한다."""
     with pytest.raises(argparse.ArgumentTypeError):
         parse_lost_tolerance_frames(value)
+
+
+@pytest.mark.parametrize("value", ["1", "5"])
+def test_accepts_positive_multiple_confirm_frames(value: str) -> None:
+    """1 이상의 다중 인물 확인 프레임 수를 허용한다."""
+    assert parse_multiple_confirm_frames(value) == int(value)
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "many"])
+def test_rejects_invalid_multiple_confirm_frames(value: str) -> None:
+    """1 미만이거나 정수가 아닌 다중 인물 확인 프레임 수를 거부한다."""
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_multiple_confirm_frames(value)
+
+
+@pytest.mark.parametrize("value", ["1", "10"])
+def test_accepts_positive_single_recovery_frames(value: str) -> None:
+    """1 이상의 복귀 안정화 프레임 수를 허용한다."""
+    assert parse_single_recovery_frames(value) == int(value)
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "stable"])
+def test_rejects_invalid_single_recovery_frames(value: str) -> None:
+    """1 미만이거나 정수가 아닌 복귀 안정화 프레임 수를 거부한다."""
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_single_recovery_frames(value)
 
 
 @pytest.mark.parametrize("value", ["0", "0.15", "0.999"])

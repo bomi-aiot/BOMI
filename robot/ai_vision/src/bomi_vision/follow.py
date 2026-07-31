@@ -58,12 +58,16 @@ class FollowCommandGenerator:
         유효하지 않은 조합이나 위치값은 예외를 전파해 이동을 계속하지 않고
         ``STOP``과 ``invalid_tracking_result`` 이유로 안전하게 반환한다.
         """
-        if tracking_result.status is TrackingResultStatus.NOT_FOUND:
+        if tracking_result.status is TrackingResultStatus.NOT_DETECTED:
             return self._stop("tracking_not_available")
         if tracking_result.status is TrackingResultStatus.TEMPORARILY_LOST:
             return self._stop("temporarily_lost")
-        if tracking_result.status is TrackingResultStatus.MULTIPLE_PEOPLE:
+        if tracking_result.status is TrackingResultStatus.MULTIPLE_PENDING:
+            return self._stop("multiple_people_pending")
+        if tracking_result.status is TrackingResultStatus.MULTIPLE_PERSONS:
             return self._stop("multiple_people_detected")
+        if tracking_result.status is TrackingResultStatus.SINGLE_RECOVERY:
+            return self._stop("single_recovery_stabilizing")
         if tracking_result.status is not TrackingResultStatus.TRACKING:
             return self._stop("invalid_tracking_result")
         if tracking_result.position is None:

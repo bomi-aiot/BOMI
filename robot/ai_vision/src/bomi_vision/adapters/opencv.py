@@ -127,7 +127,10 @@ class OpenCVDebugView:
                     f"height_ratio: {result.position.height_ratio:.2f}",
                 ]
             )
-        elif result.status is TrackingResultStatus.MULTIPLE_PEOPLE:
+        elif result.status in {
+            TrackingResultStatus.MULTIPLE_PENDING,
+            TrackingResultStatus.MULTIPLE_PERSONS,
+        }:
             lines.append(f"person_count: {result.person_count}")
 
         for line_index, line in enumerate(lines):
