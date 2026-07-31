@@ -27,9 +27,11 @@ import time
 
 from dotenv import load_dotenv
 
-load_dotenv()
-
 from bomi_ai_chat.audio_io.beam_control import BeamController
+
+# BeamController 는 import 시점이 아니라 __init__ 에서 os.getenv 를 읽는다. 실제로 env 를
+# 읽는 시점은 main() 의 BeamController() 이므로, 이 한 줄이 그보다 앞서면 충분하다.
+load_dotenv()
 
 SAMPLE_SECONDS = 10     # 총 몇 초 동안 측정할지
 SAMPLE_INTERVAL = 0.5   # 몇 초 간격으로 방향을 읽을지

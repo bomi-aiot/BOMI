@@ -7,6 +7,7 @@ from typing import Any
 
 import requests
 
+from bomi_ai_chat.clock import clock
 from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.http import (
     InvalidResponseError,
@@ -54,7 +55,10 @@ class WeatherClient:
     def _get_base_datetime(self):
         """가장 최근 발표된 예보 시각을 계산한다.
         단기예보는 02,05,08,11,14,17,20,23시에 발표된다."""
-        now = datetime.now()
+        # 발표 시각 계산도 clock 을 통해서만 시간을 읽는다(CLAUDE.md §15).
+        # datetime.fromtimestamp(clock.now()) 는 로컬 시(hour)를 그대로 보존하므로
+        # KMA 발표시각(KST) 계산이 기존 datetime.now() 와 동일하게 동작한다.
+        now = datetime.fromtimestamp(clock.now())
         base_hours = [2, 5, 8, 11, 14, 17, 20, 23]
         available = [h for h in base_hours if h <= now.hour]
 
