@@ -63,6 +63,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         audio_out=audio_out,
         settings=settings,
     )
+
+    # 실제 실행에서만 빔 제어와 의미 기반 날씨 판정을 붙인다.
+    # (단위 테스트의 StubPipeline 생성자 계약을 깨지 않도록 속성으로 주입한다.)
+    from bomi_ai_chat.audio_io.beam_control import BeamController
+
+    pipeline.beam = BeamController()
+
+    def _semantic_weather(text: str) -> bool:
+        # 무거운 임베딩 라우터는 실제 판정 시점에만 불러온다.
+        from bomi_ai_chat.llm.router import is_weather_query
+
+        return is_weather_query(text)
+
+    pipeline._detect_weather = _semantic_weather
+
     if args.once:
         result = pipeline.run_once()
         return 0 if result.succeeded else 1
