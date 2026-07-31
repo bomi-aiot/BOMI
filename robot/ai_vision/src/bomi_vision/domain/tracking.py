@@ -46,20 +46,40 @@ class TrackedPerson:
 
 
 class TrackingResultStatus(str, Enum):
-    """현재 프레임의 사용자 추적 상태를 표현한다."""
+    """`docs/state-machine.md` §3이 정의한 사람 추적 상태를 표현한다.
 
-    NOT_FOUND = "not_found"
+    ``MULTIPLE_PENDING``과 ``SINGLE_RECOVERY``는 한 프레임의 관찰만으로 상태를
+    확정하지 않기 위한 완충 상태이며, 두 상태에서는 보호대상자를 선택하지 않는다.
+    """
+
+    NOT_DETECTED = "not_detected"
     TRACKING = "tracking"
-    MULTIPLE_PEOPLE = "multiple_people"
     TEMPORARILY_LOST = "temporarily_lost"
+    MULTIPLE_PENDING = "multiple_pending"
+    MULTIPLE_PERSONS = "multiple_persons"
+    SINGLE_RECOVERY = "single_recovery"
+
+
+def _matches_person_count(status: TrackingResultStatus, person_count: int) -> bool:
+    """대표 대상이 없는 상태와 사람 수 조합이 상태 정의와 맞는지 확인한다."""
+    if status in {
+        TrackingResultStatus.NOT_DETECTED,
+        TrackingResultStatus.TEMPORARILY_LOST,
+    }:
+        return person_count == 0
+    # 다중 인물 상태에서 한 명으로 줄었지만 아직 대상을 확정하지 못한 안정화 구간이다.
+    if status is TrackingResultStatus.SINGLE_RECOVERY:
+        return person_count == 1
+    return person_count >= 2
 
 
 @dataclass(frozen=True)
 class TrackingResult:
     """사람 수와 대표 사용자 추적 결과를 함께 표현한다.
 
-    다중 인물이나 미탐지 상태에서는 안전을 위해 대표 Track ID와 위치를
-    제공하지 않는다.
+    ``TRACKING``에서만 대표 Track ID와 위치를 제공한다. 미탐지, 일시 누락,
+    다중 인물 확인 및 확정, 한 명 복귀 안정화 상태에서는 안전을 위해 대표
+    대상을 제공하지 않는다.
     """
 
     status: TrackingResultStatus
@@ -68,27 +88,18 @@ class TrackingResult:
     position: UserPosition | None
 
     def __post_init__(self) -> None:
-        """상태별 사람 수와 대표 결과의 일관성을 검증한다."""
-        has_target = self.track_id is not None and self.position is not None
-        valid = (
-            (self.status is TrackingResultStatus.TRACKING and self.person_count == 1 and has_target)
-            or (
-                self.status is TrackingResultStatus.MULTIPLE_PEOPLE
-                and self.person_count >= 2
-                and not has_target
-                and self.track_id is None
-                and self.position is None
-            )
-            or (
-                self.status
-                in {
-                    TrackingResultStatus.NOT_FOUND,
-                    TrackingResultStatus.TEMPORARILY_LOST,
-                }
-                and self.person_count == 0
-                and self.track_id is None
-                and self.position is None
-            )
-        )
-        if not valid:
+        """상태별 사람 수와 대표 결과의 일관성을 검증한다.
+
+        Raises:
+            ValueError: 상태와 사람 수가 맞지 않거나, 정상 추적이 아닌 상태에
+                대표 Track ID 또는 위치가 포함된 경우.
+        """
+        if self.status is TrackingResultStatus.TRACKING:
+            if self.person_count != 1 or self.track_id is None or self.position is None:
+                raise ValueError("Tracking result does not match its status.")
+            return
+        # 안전 규칙: 정상 추적이 아닌 상태에서는 보호대상자를 특정하지 않는다.
+        if self.track_id is not None or self.position is not None:
+            raise ValueError("Tracking result does not match its status.")
+        if not _matches_person_count(self.status, self.person_count):
             raise ValueError("Tracking result does not match its status.")
