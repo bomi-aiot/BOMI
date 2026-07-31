@@ -13,15 +13,19 @@
 
 import os
 
-# .env를 읽기 전에 먼저 켜둔다. python-dotenv는 이미 설정된 값을 덮어쓰지 않으므로
-# .env의 BEAM_FIX_ENABLED=0 이어도 이 테스트에서는 1로 동작한다.
-os.environ["BEAM_FIX_ENABLED"] = "1"
-
 from dotenv import load_dotenv
 
-load_dotenv()
-
 from bomi_ai_chat.audio_io.beam_control import BeamController
+
+# .env를 읽기 전에 먼저 켜둔다. python-dotenv는 이미 설정된 값을 덮어쓰지 않으므로
+# .env의 BEAM_FIX_ENABLED=0 이어도 이 테스트에서는 1로 동작한다.
+#
+# import 보다 아래에 있어도 안전한 이유
+#   BeamController 는 import 시점이 아니라 __init__ 에서 os.getenv 를 읽는다.
+#   실제로 읽는 시점은 main() 의 BeamController() 이고, 그건 아래 두 줄보다 뒤다.
+os.environ["BEAM_FIX_ENABLED"] = "1"
+
+load_dotenv()
 
 
 def show(bc: BeamController, label: str):

@@ -13,6 +13,15 @@ dependencies = [
     "psycopg2-binary",
     "sshtunnel",
     "paramiko<3.0",
+    # 대화 런타임(graph/, jobs/). CLAUDE.md §6·§22 참고.
+    # langgraph-checkpoint-sqlite 는 checkpointer 를 '로봇 로컬' SQLite 에 두기 위한
+    # 별도 배포 패키지다. 서버 DB 에 두면 매 턴 네트워크 왕복이 붙어 지연 예산이
+    # 무너지고 오프라인에서 죽는다(CLAUDE.md §5).
+    "langgraph>=0.2",
+    "langgraph-checkpoint-sqlite>=2.0",
+    # 침묵 틱·현관 감시·일일 요약의 주기 실행. 실제 시간으로만 발동하므로
+    # SimClock 검증에는 jobs/ticks.py 의 틱 함수를 직접 호출한다(README "압축 시계").
+    "APScheduler>=3.10",
 ]
 
 [project.scripts]

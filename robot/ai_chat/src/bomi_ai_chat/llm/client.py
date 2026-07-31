@@ -9,6 +9,7 @@ from typing import Any
 
 import requests
 
+from bomi_ai_chat.clock import clock
 from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.http import (
     InvalidResponseError,
@@ -58,7 +59,10 @@ PTY_MAP = {"0": "없음", "1": "비", "2": "비/눈", "3": "눈", "4": "소나�
 
 
 def current_time_info() -> str:
-    now = datetime.now()
+    # 시계는 clock 을 통해서만 읽는다(CLAUDE.md §15). datetime.fromtimestamp 는
+    # clock.now() 의 POSIX 초를 로컬 벽시계로 변환한다 — 실제 시계에서는 기존
+    # datetime.now() 와 같은 값이고, SimClock 을 끼우면 이 안내 문구도 함께 흐른다.
+    now = datetime.fromtimestamp(clock.now())
     return (
         f"[현재 정보] 오늘은 {now.strftime('%Y년 %m월 %d일')} "
         f"{WEEKDAYS[now.weekday()]}, 현재 시각은 {now.strftime('%H시 %M분')}입니다."
