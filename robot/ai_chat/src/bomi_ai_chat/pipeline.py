@@ -66,6 +66,8 @@ class ConversationPipeline:
         settings: Settings | None = None,
         *,
         medical_query_detector: Callable[[str], bool] | None = None,
+        weather_query_detector: Callable[[str], bool] | None = None,
+        beam=None,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ):
@@ -79,6 +81,13 @@ class ConversationPipeline:
         self._is_medical_query = (
             medical_query_detector or _default_medical_query_detector
         )
+        # 날씨 의도 판정기. 기본은 가벼운 키워드 검사(테스트 격리 유지).
+        # 실제 실행(main)에서는 임베딩 기반 is_weather_query를 주입한다.
+        self._detect_weather = (
+            weather_query_detector or (lambda text: "날씨" in text)
+        )
+        # 대화 턴 동안 마이크 빔을 앞쪽으로 고정하는 컨트롤러(없으면 미사용).
+        self.beam = beam
         self._monotonic = monotonic
         self._sleep = sleep
 
@@ -186,6 +195,21 @@ class ConversationPipeline:
         return value.strip()
 
     def run_once(self) -> ConversationResult:
+        """빔을 대화 턴 동안 고정한 채 한 번의 대화를 처리한다.
+
+        빔 고정은 대화가 시작될 때만 걸리고, 정상/오류 어느 쪽으로 끝나든
+        finally에서 반드시 해제된다. beam이 없으면(노트북 개발 등) 건너뛴다.
+        """
+
+        if self.beam is not None:
+            self.beam.apply_fixed_beam()
+        try:
+            return self._run_once_inner()
+        finally:
+            if self.beam is not None:
+                self.beam.reset()
+
+    def _run_once_inner(self) -> ConversationResult:
         """한 번의 대화를 처리하고 실패 단계와 보존된 텍스트를 반환한다."""
 
         started_at = self._monotonic()
@@ -256,7 +280,7 @@ class ConversationPipeline:
             print(f"[의료 API] 응답: {response}")
         else:
             weather_data = None
-            if "날씨" in user_text:
+            if self._detect_weather(user_text):
                 city = self._extract_city(user_text)
                 if city:
                     try:
