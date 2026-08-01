@@ -28,12 +28,13 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 # 임계치는 policy 에서 읽고(함수에 박지 않는다), 시간은 clock 으로만 읽는다(§15).
-# 아직 본문이 TODO 인 틱들이 채워질 때 바로 쓰인다.
-from bomi_ai_chat import policy  # noqa: F401
-from bomi_ai_chat.clock import clock  # noqa: F401
-from bomi_ai_chat.localstore import outbox
+from bomi_ai_chat import policy
+from bomi_ai_chat.clock import clock
+from bomi_ai_chat.localstore import outbox, proposals
 from bomi_ai_chat.notify import GuardianNotifier, LoggingGuardianNotifier
 from bomi_ai_chat.state import ConvState
 
@@ -237,6 +238,95 @@ def outbox_flush(notifier: GuardianNotifier | None = None) -> dict[str, int]:
             outbox.pending_count(),
         )
     return result
+
+
+def schedule_tick(senior_id: str, *, time_zone: str | None = None) -> int:
+    """때가 된 일상 권유를 '제안'으로 큐에 넣는다. 말하지는 않는다.
+
+    무엇을 하는가
+        어르신의 로컬 시각을 보고, 지난 식사·수분 시각에 해당하는 제안을 하루에
+        한 번씩만 큐에 넣는다.
+
+    왜 스케줄러가 직접 말하지 않는가
+        말할지 여부는 게이트의 몫이다. 스케줄러가 직접 말하면 quiet hours 도
+        쿨다운도 우회되고, 그 우회는 코드 어디에도 적히지 않는다 (CLAUDE.md §7).
+
+    왜 식사·수분이 기본 루틴인가
+        어르신은 배고픔과 갈증을 잘 느끼지 못해서, 거른 식사와 탈수가 복약 시각보다
+        더 문제인 경우가 많다 (CLAUDE.md §1). 그리고 이 둘은 백엔드 데이터 없이도
+        돌아가므로 오프라인에서도 살아 있다.
+
+    누가 호출하는가
+        jobs.scheduler(실기), 그리고 압축 시계 경로의 run_all_ticks_once.
+
+    반환값
+        새로 넣은 제안 개수.
+
+    주의사항
+        - 하루 한 번만 넣는다. slot_key 에 날짜가 들어가고, 이미 처리된 슬롯은
+          건너뛴다. 안 그러면 매 틱마다 같은 제안이 쌓인다.
+        - 복약은 여기서 다루지 않는다. 복약 시각은 백엔드 care_record 에 있고,
+          그 스케줄을 읽어오는 경로가 아직 없다. 임의로 시각을 정하면 실제 처방과
+          어긋나므로, 없는 채로 두고 이 사실을 남긴다. → PROGRESS.md
+    """
+    local_now = _local_now(time_zone)
+    today = local_now.date().isoformat()
+    added = 0
+
+    for kind, times, intent, priority, seed in (
+        ("meal", policy.MEAL_REMINDER_TIMES, "companion", "medium", "식사하셨어요?"),
+        ("water", policy.WATER_REMINDER_TIMES, "companion", "low", "물 한 잔 드시겠어요?"),
+    ):
+        for hour, minute in times:
+            if (local_now.hour, local_now.minute) < (hour, minute):
+                continue  # 아직 그 시각이 안 됐다
+
+            slot_key = f"{today}:{kind}:{hour:02d}{minute:02d}"
+            if proposals.is_slot_completed(senior_id, slot_key):
+                continue
+            if _already_queued(senior_id, slot_key):
+                continue
+
+            proposals.enqueue(senior_id, {
+                "intent": intent,
+                "priority": priority,
+                "seed": seed,
+                # 때를 놓친 식사 권유는 그날 버린다. 저녁 7시의 점심 권유는 이상하다.
+                "expires_at": clock.now() + policy.ROUTINE_REMINDER_TTL_SEC,
+                "origin": f"schedule:{kind}:{hour:02d}{minute:02d}",
+                "meta": {"slot_key": slot_key},
+            })
+            # 넣자마자 완료로 표시한다. 여기서의 '완료'는 "오늘 이 슬롯을 이미
+            # 제안했다"는 뜻이고, 게이트가 그것을 다시 평가한다.
+            proposals.mark_slot_completed(senior_id, slot_key)
+            added += 1
+
+    if added:
+        logger.info("schedule_tick queued %d routine proposal(s) for %s", added, senior_id)
+    return added
+
+
+def _already_queued(senior_id: str, slot_key: str) -> bool:
+    """같은 슬롯의 제안이 이미 큐에 있는가."""
+    return any(
+        (proposal.get("meta") or {}).get("slot_key") == slot_key
+        for proposal in proposals.pending(senior_id)
+    )
+
+
+def _local_now(time_zone: str | None):
+    """지금을 어르신의 로컬 시각으로. 시간대를 모르면 UTC 로 둔다.
+
+    시각은 clock 을 통해서만 읽는다(§15). 압축 시계로 하루를 흘리는 시연에서
+    이 틱이 함께 흘러야 하기 때문이다.
+    """
+    zone = timezone.utc
+    if time_zone:
+        try:
+            zone = ZoneInfo(time_zone)
+        except Exception:  # noqa: BLE001
+            logger.warning("unknown time zone %r; using UTC for schedule_tick", time_zone)
+    return datetime.fromtimestamp(clock.now(), tz=zone)
 
 
 def daily_summary_job(senior_id: str) -> None:

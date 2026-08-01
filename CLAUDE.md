@@ -1070,6 +1070,38 @@ broken. Resist it.
 
 ---
 
+## 22a. Progress reporting (mandatory)
+
+Much of this build is delegated, and the person accountable for it must be able to judge the state
+**without reading the code**. Four documents in `docs/carebot/` exist for that, and keeping them
+truthful is part of finishing a ticket — not paperwork afterwards.
+
+| Document | Answers |
+| --- | --- |
+| [`PROGRESS.md`](docs/carebot/PROGRESS.md) | What failed, what is unverified, what deviated from the plan, what is going well |
+| [`VERIFICATION.md`](docs/carebot/VERIFICATION.md) | What to run, and what counts as success or failure |
+| [`READING-ORDER.md`](docs/carebot/READING-ORDER.md) | Which files to read, in what order, and what to look for |
+| [`CONCEPTS.md`](docs/carebot/CONCEPTS.md) | Vocabulary, and why each design decision was made |
+
+**When to update `PROGRESS.md`:**
+
+- **Every ticket push** — move the row, fill in the completion-condition results.
+- **Whenever a decision changes** — record it in §3 (deviations) with the reason, even if it looks
+  minor. Especially if it looks minor.
+- **Whenever a new risk appears** — §2 is ordered by importance; put it where it belongs.
+- **Whenever something that was failing starts passing** — removing a stale warning matters as much
+  as adding a real one.
+
+**When to update the other three:** `VERIFICATION.md` when a new way to check something exists, or
+when success criteria change. `READING-ORDER.md` and `CONCEPTS.md` when a new module lands or a
+design judgement is made that a reader would otherwise have to reverse-engineer.
+
+**The rule that makes these documents worth reading:** never describe something as done when it is
+only implemented. "Logic verified, hardware unverified" is the honest shape of most of this work,
+and writing it that way is what lets someone else trust the parts that *are* finished.
+
+---
+
 ## 23. Anti-patterns — reject these in review
 
 - Calling `time.time()` / `datetime.now()` outside `clock.py`.

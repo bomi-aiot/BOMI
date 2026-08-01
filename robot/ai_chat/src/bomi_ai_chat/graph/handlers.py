@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import logging
 
+from bomi_ai_chat.localstore import proposals as proposal_store
 from bomi_ai_chat.prompts import build_prompt
 from bomi_ai_chat.state import ConvState
 
@@ -187,7 +188,68 @@ def handle_schedule(state: ConvState) -> dict:
           그 밖의 것은 사람에게 넘긴다.
         - 세 가지가 예정돼 있어도 한 발화에 한 항목만.
     """
-    raise NotImplementedError
+    senior_id = state.get("senior_id") or ""
+    text = state.get("user_input", "")
+
+    # 어르신이 완료를 알린 턴인가.
+    #
+    # 이 판정이 게이트 1 무효화의 유일한 입력이다. 여기서 놓치면 이미 먹은 약을
+    # 9시에 또 알린다. 반대로 과하게 잡으면 안 먹은 약을 먹었다고 기록한다 —
+    # 그래서 '완료 표현'과 '부정'을 함께 본다.
+    if senior_id and _is_completion_report(text):
+        slot_key = _resolve_slot_key(state)
+        if slot_key:
+            proposal_store.mark_slot_completed(senior_id, slot_key)
+            logger.info("schedule slot marked complete: %s", slot_key)
+
+    return {"response": _generate(state)}
+
+
+# 완료를 알리는 표현. 부정이 붙으면 완료가 아니다.
+#
+# ★ 이 목록은 최소한이고, 실사용 발화로 넓혀야 한다. 넓힐 때는 '부정' 쪽을 먼저
+#   확인할 것 — "약 안 먹었어"를 완료로 잡으면 어르신이 약을 거른 채 알림이 사라진다.
+#   그건 조용한 안전 실패다.
+_COMPLETION_MARKERS = ("먹었", "복용했", "챙겨 먹", "다 먹", "마셨")
+_NEGATIONS = ("안 ", "안먹", "못 ", "못먹", "아직", "않았")
+
+
+def _is_completion_report(text: str) -> bool:
+    """"약 먹었어"인가, "약 안 먹었어"인가.
+
+    부정을 먼저 본다. "안 먹었어"에도 "먹었"이 들어 있으므로, 완료 표현만 찾으면
+    정반대로 판정한다.
+    """
+    if not text:
+        return False
+    if any(negation in text for negation in _NEGATIONS):
+        return False
+    return any(marker in text for marker in _COMPLETION_MARKERS)
+
+
+def _resolve_slot_key(state: ConvState) -> str | None:
+    """어떤 슬롯이 완료됐는가.
+
+    능동 턴이면 이긴 제안이 자기 슬롯 키를 들고 온다. 어르신이 먼저 말한 턴이면
+    가장 최근에 제안된 스케줄 슬롯을 쓴다 — 9시 알림이 큐에 있는데 8시 55분에
+    "약 먹었어"라고 하는 것이 정확히 이 경우다.
+
+    슬롯을 특정하지 못하면 None 을 돌려주고 아무것도 표시하지 않는다.
+    엉뚱한 슬롯을 완료로 찍는 것보다 알림이 한 번 더 나가는 편이 낫다.
+    """
+    own = (state.get("proposal_meta") or {}).get("slot_key")
+    if own:
+        return str(own)
+
+    senior_id = state.get("senior_id") or ""
+    if not senior_id:
+        return None
+
+    for proposal in reversed(proposal_store.pending(senior_id)):
+        slot_key = (proposal.get("meta") or {}).get("slot_key")
+        if proposal.get("intent") == "schedule" and slot_key:
+            return str(slot_key)
+    return None
 
 
 def handle_emotional(state: ConvState) -> dict:
