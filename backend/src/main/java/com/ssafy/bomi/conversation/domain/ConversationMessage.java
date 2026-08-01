@@ -58,6 +58,29 @@ public class ConversationMessage {
     @Column(name = "occurred_at", nullable = false)
     private OffsetDateTime occurredAt;
 
+    /**
+     * Why this utterance happened. {@link #role} says who spoke; this says what
+     * made them speak.
+     *
+     * <p>Nullable because rows written before this column existed have genuinely
+     * unknown provenance, and labelling them all {@code USER} would misclassify the
+     * robot's own rows. Every new write sets it — prefer
+     * {@link #proactive} / {@link #reactive} over the bare factory.</p>
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "trigger_type", length = 30)
+    private MessageTriggerType triggerType;
+
+    /**
+     * Priority the proactive gate granted this utterance, or null.
+     *
+     * <p>Null for every reactive turn: answering a senior who just spoke needs no
+     * permission, so it never reaches the gate (CLAUDE.md §7).</p>
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "priority", length = 20)
+    private MessagePriority priority;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -77,6 +100,34 @@ public class ConversationMessage {
     public static ConversationMessage of(UUID conversationId, int sequenceNo, MessageRole role,
         String content, OffsetDateTime occurredAt) {
         return new ConversationMessage(conversationId, sequenceNo, role, content, occurredAt);
+    }
+
+    /**
+     * A turn the senior started, or the robot answering one. Carries no priority
+     * because it never went through the gate.
+     */
+    public static ConversationMessage reactive(UUID conversationId, int sequenceNo, MessageRole role,
+        String content, OffsetDateTime occurredAt) {
+        ConversationMessage message =
+            new ConversationMessage(conversationId, sequenceNo, role, content, occurredAt);
+        message.triggerType = MessageTriggerType.USER;
+        return message;
+    }
+
+    /**
+     * A robot utterance the gate allowed through.
+     *
+     * <p>Recording both why and at what priority is what later answers "why did the
+     * robot speak at 3 a.m.", separates robot from senior volume in the T2 metrics,
+     * and lets us retrieve recent phrasings so wording varies (CLAUDE.md §17.8).</p>
+     */
+    public static ConversationMessage proactive(UUID conversationId, int sequenceNo, String content,
+        OffsetDateTime occurredAt, MessageTriggerType triggerType, MessagePriority priority) {
+        ConversationMessage message = new ConversationMessage(conversationId, sequenceNo,
+            MessageRole.ROBOT, content, occurredAt);
+        message.triggerType = requireNonNull(triggerType, "triggerType");
+        message.priority = requireNonNull(priority, "priority");
+        return message;
     }
 
     private static String requireText(String value, String field) {
