@@ -28,21 +28,31 @@ os.environ["BEAM_FIX_ENABLED"] = "1"
 load_dotenv()
 
 
+def _last(bc: BeamController, cmd: str) -> str:
+    """xvf_host 출력에서 장치 접속 로그 줄을 빼고 값 줄만 남긴다."""
+    out = bc._run(cmd)
+    return out.splitlines()[-1].strip()
+
+
 def show(bc: BeamController, label: str):
-    """현재 마이크의 빔 관련 상태 3가지를 읽어서 출력한다."""
+    """현재 마이크의 빔 관련 상태를 읽어서 출력한다."""
     print(f"\n[{label}]")
-    print("  고정 모드 ON/OFF :", bc._run("AEC_FIXEDBEAMSONOFF"))
-    print("  고정 빔 방향     :", bc._run("AEC_FIXEDBEAMSAZIMUTH_VALUES"))
-    print("  좌채널 출력 경로 :", bc._run("AUDIO_MGR_OP_L"))
+    print("  고정 모드 ON/OFF :", _last(bc, "AEC_FIXEDBEAMSONOFF"))
+    print("  고정 빔 방향     :", _last(bc, "AEC_FIXEDBEAMSAZIMUTH_VALUES"))
+    print("  좌채널 출력 경로 :", _last(bc, "AUDIO_MGR_OP_L"))
+    print("  게이팅 ON/OFF    :", _last(bc, "AEC_FIXEDBEAMSGATING"))
+    print("  간섭제거 문턱값  :", _last(bc, "AEC_FIXEDBEAMNOISETHR"))
 
 
 def main():
     bc = BeamController()
 
-    print("=== 설정 확인 ===")
+    print("=== 설정 확인 (.env에서 읽은 값) ===")
     print("  BEAM_FIX_ENABLED :", bc.enabled)
     print("  XVF_HOST_PATH    :", bc.host_path)
     print("  앞각(도)         :", bc.front_deg)
+    print("  게이팅           :", bc.gating)
+    print("  간섭제거 문턱값  :", bc.noise_threshold)
 
     if not bc._available():
         raise SystemExit(f"\nxvf_host를 찾을 수 없습니다: {bc.host_path!r}\n"

@@ -49,10 +49,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigurationError as exc:
         raise SystemExit(f"설정 오류: {exc}") from None
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    # logging.basicConfig(
+    #     level=logging.INFO,
+    #     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    # )
 
     # 임베딩 모델 등 무거운 런타임 의존성은 설정 검증 이후 불러온다.
     from bomi_ai_chat.pipeline import ConversationPipeline
@@ -77,6 +77,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return is_weather_query(text)
 
     pipeline._detect_weather = _semantic_weather
+
+    # 임베딩 의도 판정 모델을 '수음 시작 전에' 미리 로드(warm-up)한다.
+    # 이렇게 안 하면 첫 대화 도중(수음 뒤) 모델이 로드되면서 응답이 크게
+    # 지연된다. 아래 호출이 router 모듈을 import시켜 모델을 미리 올려둔다.
+    logging.getLogger("bomi_ai_chat.main").info("의도 판정 모델 로딩(warm-up)...")
+    _semantic_weather("워밍업")
 
     if args.once:
         result = pipeline.run_once()
