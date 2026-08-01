@@ -1,5 +1,6 @@
 package com.ssafy.bomi.conversation.domain;
 
+import com.ssafy.bomi.embedding.domain.EmbeddingStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -25,9 +26,11 @@ import lombok.NoArgsConstructor;
  * {@code superseded_by_id} (§4). {@code senior_id} and {@code conversation_id}
  * are raw {@link UUID} logical references.</p>
  *
- * <p>The {@code embedding} ({@code VECTOR}) column is intentionally not mapped
- * here: the model and dimension, plus the vector index, are still TBD (§12) and
- * require a pgvector integration decision before it becomes a managed column.</p>
+ * <p>There is no {@code embedding} column, and there will not be one. Upstage
+ * embeddings are 4096-dimensional while pgvector indexes at most 2,000
+ * ({@code vector}) or 4,000 ({@code halfvec}) dimensions, so semantic search moved
+ * to an external vector store (S15P11E102-218). What remains here is the sync
+ * bookkeeping that makes that derived index rebuildable.</p>
  */
 @Entity
 @Table(
@@ -72,6 +75,28 @@ public class ConversationSummary {
     @Column(name = "superseded_by_id")
     private UUID supersededById;
 
+    /**
+     * Whether this row's vector is present and current in the external vector store.
+     *
+     * <p>Like {@code memory}, content here is effectively immutable: regeneration
+     * writes a new row and supersedes this one, so a synced vector goes stale only
+     * on an embedding model change.</p>
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "embedding_status", nullable = false, length = 20)
+    private EmbeddingStatus embeddingStatus = EmbeddingStatus.PENDING;
+
+    @Column(name = "embedding_synced_at")
+    private OffsetDateTime embeddingSyncedAt;
+
+    /**
+     * Which model produced the stored vector. A different model means a different
+     * vector space, which silently makes every similarity score meaningless — so it
+     * is recorded per row rather than assumed globally.
+     */
+    @Column(name = "embedding_model", length = 100)
+    private String embeddingModel;
+
     private ConversationSummary(UUID seniorId, UUID conversationId, SummaryType summaryType,
         OffsetDateTime periodStartedAt, OffsetDateTime periodEndedAt, String content,
         int sourceMessageCount) {
@@ -103,6 +128,26 @@ public class ConversationSummary {
     /** Points this (older) summary at the row that regenerated it. */
     public void supersededBy(UUID newerSummaryId) {
         this.supersededById = requireNonNull(newerSummaryId, "newerSummaryId");
+    }
+
+    /** Records that this row's vector is now in the external store. */
+    public void markEmbeddingSynced(String embeddingModel, OffsetDateTime syncedAt) {
+        this.embeddingModel = requireText(embeddingModel, "embeddingModel");
+        this.embeddingSyncedAt = requireNonNull(syncedAt, "syncedAt");
+        this.embeddingStatus = EmbeddingStatus.SYNCED;
+    }
+
+    /**
+     * Records that embedding was attempted and failed, kept distinct from
+     * {@code PENDING} so a permanently failing row does not look like new work.
+     */
+    public void markEmbeddingFailed() {
+        this.embeddingStatus = EmbeddingStatus.FAILED;
+    }
+
+    /** Flags this row for re-embedding, typically after an embedding model change. */
+    public void markEmbeddingStale() {
+        this.embeddingStatus = EmbeddingStatus.STALE;
     }
 
     private static String requireText(String value, String field) {

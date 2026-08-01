@@ -57,6 +57,30 @@ public class Robot {
     @Column(name = "ambient_observed_at")
     private OffsetDateTime ambientObservedAt;
 
+    /**
+     * Whether the senior is at home, as last derived from the entrance sensor.
+     *
+     * <p>Defaults to {@link OccupancyStatus#UNKNOWN}, never {@code HOME}: assuming
+     * someone is home before the entrance node has said anything would let the
+     * silence ladder run against an empty house and page the guardian for nothing.</p>
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "occupancy_status", nullable = false, length = 30)
+    private OccupancyStatus occupancyStatus = OccupancyStatus.UNKNOWN;
+
+    @Column(name = "occupancy_observed_at")
+    private OffsetDateTime occupancyObservedAt;
+
+    /**
+     * Last heartbeat from the entrance node.
+     *
+     * <p>Without it, "nobody moved" and "the Raspberry Pi died" are the same
+     * observation — a silent failure in a safety system. Null means we have never
+     * heard from it, which must be treated as {@code UNKNOWN}, not as healthy.</p>
+     */
+    @Column(name = "door_node_heartbeat_at")
+    private OffsetDateTime doorNodeHeartbeatAt;
+
     @Column(name = "is_active", nullable = false)
     private boolean active = true;
 
@@ -115,5 +139,36 @@ public class Robot {
         this.ambientTemperatureC = temperatureC;
         this.ambientHumidityPercent = humidityPercent;
         this.ambientObservedAt = observedAt;
+    }
+
+    /**
+     * Applies an occupancy transition.
+     *
+     * <p>{@code observedAt} must already be normalized to the Jetson's clock. The
+     * entrance node's own timestamp is advisory: a Pi without a battery-backed RTC
+     * can boot with a wrong clock, and a wrong door timestamp corrupts both the
+     * routine baseline and TTL arithmetic (CLAUDE.md §11).</p>
+     */
+    public void applyOccupancy(OccupancyStatus status, OffsetDateTime observedAt) {
+        if (status == null) {
+            throw new IllegalArgumentException("status must not be null");
+        }
+        this.occupancyStatus = status;
+        this.occupancyObservedAt = observedAt;
+    }
+
+    /** Records a heartbeat from the entrance node. */
+    public void recordDoorNodeHeartbeat(OffsetDateTime observedAt) {
+        this.doorNodeHeartbeatAt = observedAt;
+    }
+
+    /**
+     * Degrades occupancy to {@code UNKNOWN} because the entrance node went silent.
+     *
+     * <p>Deliberately does not clear {@link #doorNodeHeartbeatAt}: how long ago the
+     * node was last alive is exactly what the watch loop needs to report.</p>
+     */
+    public void degradeOccupancyToUnknown(OffsetDateTime observedAt) {
+        applyOccupancy(OccupancyStatus.UNKNOWN, observedAt);
     }
 }
