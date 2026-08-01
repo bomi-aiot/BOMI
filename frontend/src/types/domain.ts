@@ -436,6 +436,23 @@ export type ConfirmationRequestStatus =
   (typeof CONFIRMATION_REQUEST_STATUSES)[number];
 
 export type ConfirmationResolution = "CONFIRM" | "EDIT" | "REJECT" | "REASK";
+
+export const RISK_LEVELS = ["NORMAL", "SENSITIVE", "HIGH"] as const;
+export type RiskLevel = (typeof RISK_LEVELS)[number];
+
+export const COORDINATION_STATUSES = [
+  "NOT_REQUIRED",
+  "COORDINATION_REQUIRED",
+  "WAITING_PRIMARY_GUARDIAN",
+  "WAITING_SENIOR",
+  "AGREED",
+  "DISAGREED",
+  "SENIOR_UNREACHABLE",
+  "GUARDIAN_OVERRIDE_CONFIRMED",
+  "COMPLETED",
+] as const;
+export type CoordinationStatus = (typeof COORDINATION_STATUSES)[number];
+
 export type StructuredValue =
   | string
   | number
@@ -455,10 +472,11 @@ export interface ConfirmationRequest {
   currentValue?: StructuredValue;
   proposedValue: StructuredValue;
   status: ConfirmationRequestStatus;
+  riskLevel: RiskLevel;
+  coordinationStatus: CoordinationStatus;
   source: InformationSource;
   sourceConversationId?: string;
   sourceMessageId?: string;
-  confidence: number;
   createdAt: string;
   resolvedAt?: string;
   resolutionNote?: string;
@@ -482,18 +500,12 @@ export interface ActivitySummary {
 export interface RobotStatus {
   id: string;
   elderId: string;
-  serialNumber: string;
-  displayName: string;
-  registrationStatus: RobotRegistrationStatus;
-  connectionStatus: RobotConnectionStatus;
+  deviceId?: string;
   currentMode: RobotMode;
-  batteryLevel: number;
-  lastSeenAt: string;
+  isActive: boolean;
   ambientTemperatureC?: number;
   ambientHumidityPercent?: number;
   ambientObservedAt?: string;
-  ambientSensorCode?: string;
-  sensorConnectionStatus: SensorConnectionStatus;
 }
 
 export interface HomeEnvironmentSummary {
@@ -501,7 +513,6 @@ export interface HomeEnvironmentSummary {
   label: string;
   temperatureC?: number;
   humidityPercent?: number;
-  sensorConnectionStatus: SensorConnectionStatus;
   lastObservedAt?: string;
 }
 

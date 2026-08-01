@@ -22,6 +22,8 @@ import type {
   ConfirmationRequest,
   ConfirmationRequestStatus,
   ConfirmationResolution,
+  CoordinationStatus,
+  RiskLevel,
   StructuredValue,
 } from '../types/domain'
 import { formatDateTime } from '../utils/date'
@@ -76,6 +78,30 @@ const STATUS_TONES: Record<
   EDITED: 'success',
   REJECTED: 'neutral',
   REASK_REQUESTED: 'info',
+}
+
+const RISK_LABELS: Record<RiskLevel, string> = {
+  NORMAL: '정상',
+  SENSITIVE: '민감',
+  HIGH: '높음',
+}
+
+const RISK_TONES: Record<RiskLevel, 'neutral' | 'warning' | 'danger'> = {
+  NORMAL: 'neutral',
+  SENSITIVE: 'warning',
+  HIGH: 'danger',
+}
+
+const COORDINATION_LABELS: Record<CoordinationStatus, string> = {
+  NOT_REQUIRED: '',
+  COORDINATION_REQUIRED: '조율 필요',
+  WAITING_PRIMARY_GUARDIAN: '주 보호자 확인 대기',
+  WAITING_SENIOR: '어르신 확인 대기',
+  AGREED: '조율 완료',
+  DISAGREED: '조율 불일치',
+  SENIOR_UNREACHABLE: '어르신 연결 안 됨',
+  GUARDIAN_OVERRIDE_CONFIRMED: '보호자 우선 확정',
+  COMPLETED: '조율 종료',
 }
 
 const VALUE_KEY_LABELS: Record<string, string> = {
@@ -545,7 +571,8 @@ export function ConfirmationRequestsPage() {
             const isPending = request.status === 'PENDING'
             const isProcessing =
               pendingActionId === `confirmation-${request.id}`
-            const confidencePercent = Math.round(request.confidence * 100)
+            const showCoordination =
+              request.coordinationStatus !== 'NOT_REQUIRED'
 
             return (
               <li key={request.id}>
@@ -563,6 +590,14 @@ export function ConfirmationRequestsPage() {
                       <Badge tone={STATUS_TONES[request.status]} dot>
                         {STATUS_LABELS[request.status]}
                       </Badge>
+                      <Badge tone={RISK_TONES[request.riskLevel]}>
+                        {RISK_LABELS[request.riskLevel]}
+                      </Badge>
+                      {showCoordination ? (
+                        <Badge tone="info">
+                          {COORDINATION_LABELS[request.coordinationStatus]}
+                        </Badge>
+                      ) : null}
                     </div>
                   }
                 >
@@ -575,21 +610,6 @@ export function ConfirmationRequestsPage() {
                     </span>
                     <p>{request.evidence}</p>
                   </blockquote>
-
-                  <div className="confidence-meter">
-                    <div className="confidence-meter__label">
-                      <span>AI 판단 신뢰도</span>
-                      <strong>{confidencePercent}%</strong>
-                    </div>
-                    <progress
-                      max={100}
-                      value={confidencePercent}
-                      aria-label={`AI 판단 신뢰도 ${confidencePercent}%`}
-                    />
-                    <p>
-                      신뢰도는 참고 수치이며, 보호자의 확인을 대신하지 않습니다.
-                    </p>
-                  </div>
 
                   <div
                     className={`confirmation-comparison${
