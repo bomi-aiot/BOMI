@@ -1,6 +1,8 @@
 import { Badge, Button, Card, ErrorState, LoadingState, PageHeader } from '../components'
 import { useBomi } from '../state/BomiContext'
+import { formatRelativeTime } from '../utils/date'
 import type {
+  MedicationResponse,
   MedicationResponseStatus,
   Schedule,
   StatusLevel,
@@ -51,6 +53,18 @@ const medicationStatusTone: Record<
   DECLINED: 'neutral',
 }
 
+function deriveMedicationStatus(
+  response: MedicationResponse,
+  now: Date,
+): MedicationResponseStatus {
+  if (response.respondedAt) {
+    return response.status === 'DECLINED' ? 'DECLINED' : 'CONFIRMED'
+  }
+  return new Date(response.scheduledAt).getTime() > now.getTime()
+    ? 'UPCOMING'
+    : 'MISSED'
+}
+
 function ScheduleRow({ schedule }: { schedule: Schedule }) {
   return (
     <li className="timeline-row">
@@ -96,10 +110,22 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
     todayIncidentCount,
     todaySchedules,
     medicationResponses,
-    medicationProgress,
     confirmationRequests,
     recentActivities,
   } = dashboard
+
+  const now = new Date(dashboard.generatedAt)
+  const medicationStatuses = medicationResponses.map((response) => ({
+    response,
+    status: deriveMedicationStatus(response, now),
+  }))
+  const medicationProgress = {
+    total: medicationStatuses.length,
+    confirmed: medicationStatuses.filter((m) => m.status === 'CONFIRMED').length,
+    upcoming: medicationStatuses.filter((m) => m.status === 'UPCOMING').length,
+    missed: medicationStatuses.filter((m) => m.status === 'MISSED').length,
+    noResponse: medicationStatuses.filter((m) => m.status === 'NO_RESPONSE').length,
+  }
 
   return (
     <div className="page-stack">
@@ -135,15 +161,15 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
         <article className="summary-card summary-card--blue">
           <div className="summary-card__topline">
             <span className="summary-card__icon" aria-hidden="true">B</span>
-            <Badge tone={robot.connectionStatus === 'ONLINE' ? 'success' : 'neutral'} dot>
-              {robot.connectionStatus === 'ONLINE' ? '온라인' : '오프라인'}
+            <Badge tone={robot.isActive ? 'success' : 'neutral'} dot>
+              {robot.isActive ? '활성' : '비활성'}
             </Badge>
           </div>
           <p className="summary-card__label">돌봄 로봇</p>
-          <strong className="summary-card__value">{robot.batteryLevel}%</strong>
-          <span className="summary-card__detail">
-            {robot.displayName} · {robot.currentMode === 'IDLE' ? '대기 중' : '돌봄 수행 중'}
-          </span>
+          <strong className="summary-card__value">
+            {robot.currentMode === 'IDLE' ? '돌봄 대기 중' : '돌봄 수행 중'}
+          </strong>
+          <span className="summary-card__detail">현재 모드 · {robot.currentMode}</span>
         </article>
 
         <article className="summary-card summary-card--orange">
@@ -163,19 +189,18 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
         <article className="summary-card summary-card--lavender">
           <div className="summary-card__topline">
             <span className="summary-card__icon" aria-hidden="true">집</span>
-            <Badge
-              tone={homeEnvironment.sensorConnectionStatus === 'CONNECTED' ? 'success' : 'neutral'}
-              dot
-            >
-              {homeEnvironment.sensorConnectionStatus === 'CONNECTED' ? '센서 연결' : '연결 끊김'}
-            </Badge>
+            {homeEnvironment.lastObservedAt ? (
+              <Badge tone="neutral">
+                {formatRelativeTime(homeEnvironment.lastObservedAt)}
+              </Badge>
+            ) : null}
           </div>
           <p className="summary-card__label">집 안 환경</p>
           <strong className="summary-card__value">
             {homeEnvironment.temperatureC ?? '—'}℃
           </strong>
           <span className="summary-card__detail">
-            습도 {homeEnvironment.humidityPercent ?? '—'}% · {homeEnvironment.label}
+            습도 {homeEnvironment.humidityPercent ?? '—'}% · 로봇 관찰값
           </span>
         </article>
       </section>
@@ -230,7 +255,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
               />
             </div>
             <ul className="compact-list">
-              {medicationResponses.map((response) => (
+              {medicationStatuses.map(({ response, status }) => (
                 <li key={response.id}>
                   <div>
                     <strong>
@@ -238,8 +263,8 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                     </strong>
                     <span>{timeFormatter.format(new Date(response.scheduledAt))}</span>
                   </div>
-                  <Badge tone={medicationStatusTone[response.status]}>
-                    {medicationStatusLabel[response.status]}
+                  <Badge tone={medicationStatusTone[status]}>
+                    {medicationStatusLabel[status]}
                   </Badge>
                 </li>
               ))}
