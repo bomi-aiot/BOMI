@@ -30,8 +30,26 @@ pipeline.py 와의 역할 분담  ★ 205번 티켓에서 반드시 확인할 �
 
 from __future__ import annotations
 
+import logging
+import re
+
 from bomi_ai_chat import policy
 from bomi_ai_chat.state import ConvState
+
+logger = logging.getLogger(__name__)
+
+# 문장 끝 뒤에서 자른다. 종결 부호를 잘린 조각에 남기려고 lookbehind 를 쓴다.
+#
+# 한국어에서 ".!?" 만 보면 부족하다. 종결어미 뒤에 부호가 빠지는 경우가 흔해서
+# "괜찮으세요 오늘 날씨가" 처럼 한 덩어리가 된다. 그래서 종결어미 + 공백도 경계로 본다.
+_SENTENCE_END = re.compile(
+    r"(?<=[.!?。！？])\s+"
+    r"|(?<=[다요])\s+(?=[가-힣A-Za-z])"
+)
+
+# 소수점 보호용 자리표시자. 본문에 나올 일이 없는 제어문자를 쓴다.
+_DECIMAL_MARK = "\x00"
+_DECIMAL = re.compile(r"\d+\.\d+")
 
 # 어르신 id 별 재생 핸들.
 #
@@ -62,8 +80,19 @@ def split_sentences(text: str) -> list[str]:
         한국어 문장 경계는 ".!?" 만이 아니다. "요.", "다.", 인용문, 그리고 나눠서는
         안 되는 소수점 숫자를 함께 봐야 한다.
     """
-    # TODO: 한국어를 제대로 인식하는 분할.
-    return [t.strip() for t in text.split(". ") if t.strip()]
+    if not text or not text.strip():
+        return []
+
+    # 소수점을 먼저 가려낸다. "3.5도"를 "3." 과 "5도"로 쪼개면 로봇이 이상하게 말한다.
+    # 자리표시자로 바꿔두고 분할이 끝난 뒤 되돌린다.
+    guarded = _DECIMAL.sub(lambda m: m.group(0).replace(".", _DECIMAL_MARK), text)
+
+    parts = _SENTENCE_END.split(guarded)
+    return [
+        part.replace(_DECIMAL_MARK, ".").strip()
+        for part in parts
+        if part and part.strip()
+    ]
 
 
 def response_shaper(state: ConvState) -> dict:
@@ -99,10 +128,18 @@ def response_shaper(state: ConvState) -> dict:
     text = state.get("response", "")
     limit = policy.MAX_SENTENCES_TERSE if state.get("terse") else policy.MAX_SENTENCES
 
-    # TODO(프롬프트 우선): 정제는 대부분 프롬프트에서 이뤄져야 한다(CLAUDE.md §16 9단계).
-    #   여기는 강제 안전망으로 남기고, 실제로 절단이 일어나면 로그를 남긴다.
-    #   그 로그가 곧 "프롬프트를 고쳐야 한다"는 신호다.
-    sentences = split_sentences(text)[:limit]
+    all_sentences = split_sentences(text)
+    sentences = all_sentences[:limit]
+
+    if len(all_sentences) > limit:
+        # 정제는 대부분 프롬프트에서 이뤄져야 한다(CLAUDE.md §16 9단계). 여기서
+        # 실제로 잘렸다는 것은 프롬프트가 제 일을 못 했다는 뜻이고, 절단은 중요한
+        # 절반을 날릴 수 있다("약 두 알 드시고, 인슐린은—"). 그래서 조용히 자르지 않고
+        # 남긴다. 이 로그가 쌓이면 고칠 곳은 이 함수가 아니라 프롬프트다.
+        logger.warning(
+            "response truncated: %d sentences -> %d (intent=%s, terse=%s). "
+            "fix the prompt, not the shaper",
+            len(all_sentences), limit, state.get("intent"), bool(state.get("terse")))
 
     return {"sentences": sentences, "final_utterance": " ".join(sentences)}
 
@@ -141,5 +178,44 @@ def emit(state: ConvState) -> dict:
           네트워크 없이 동작하며, 그것이 바로 프로브가 가장 중요한 상황이다
           (CLAUDE.md §18).
     """
-    # TODO(audio): TTS_HANDLES[senior_id] = tts.speak_async(state["sentences"], ...)
+    sentences = state.get("sentences") or []
+    if not sentences:
+        # 할 말이 없으면 말하는 중으로 표시하지 않는다. speaking=True 로 두면
+        # barge-in 로직이 존재하지 않는 재생을 끊으려 든다.
+        return {"speaking": False, "spoken_prefix": ""}
+
+    senior_id = state.get("senior_id") or "unknown"
+    player = _player()
+    if player is None:
+        # 재생기가 없는 환경(테스트, 오디오 장치 없는 개발 PC)에서는 조용히 넘어간다.
+        # 다만 무엇을 말하려 했는지는 남긴다.
+        logger.info("no speech player configured; would speak: %s", " ".join(sentences))
+        return {"speaking": False, "spoken_prefix": ""}
+
+    # 문장을 '하나씩' 넘긴다. 전체를 한 덩어리로 주면 barge-in 이 어디서 끊었는지
+    # 알 수 없고 나머지를 정확히 재큐할 수 없다 (CLAUDE.md §13).
+    #
+    # 이 호출은 즉시 반환해야 한다. 여기서 블로킹하면 말하는 동안 아무도 어르신의
+    # 끼어들기를 관찰하지 못해서 양보 우선 정책이 원리적으로 불가능해진다.
+    TTS_HANDLES[senior_id] = player.speak_async(sentences)
     return {"speaking": True, "spoken_prefix": ""}
+
+
+# 재생기를 주입받는다.
+#
+# 왜 tts/client.py 를 직접 부르지 않는가
+#   TTSClient.synthesize 는 바이트를 '동기'로 만들어 돌려준다. 그걸 여기서 그대로
+#   부르면 emit 이 블로킹되고, 위에 적은 이유로 barge-in 이 불가능해진다. 합성과
+#   재생을 백그라운드로 돌리는 책임은 오디오 계층에 있고(205번), 그때 이 자리에
+#   실제 재생기가 꽂힌다.
+_PLAYER = None
+
+
+def _player():
+    return _PLAYER
+
+
+def set_player(player) -> None:
+    """비블로킹 재생기를 설치한다. speak_async(list[str]) -> handle 을 만족해야 한다."""
+    global _PLAYER
+    _PLAYER = player

@@ -40,7 +40,75 @@
 
 from __future__ import annotations
 
+import logging
+
+from bomi_ai_chat.prompts import build_prompt
 from bomi_ai_chat.state import ConvState
+
+logger = logging.getLogger(__name__)
+
+# LLM 클라이언트를 지연 생성한다. import 시점에 만들면 API 키가 없는 환경에서
+# 모듈을 불러오는 것만으로 실패한다.
+_LLM = None
+
+
+def _llm():
+    global _LLM
+    if _LLM is None:
+        from bomi_ai_chat.llm.client import LLMClient
+
+        _LLM = LLMClient()
+    return _LLM
+
+
+def set_llm(client) -> None:
+    """LLM 클라이언트를 교체한다. 테스트와 부트스트랩에서 쓴다."""
+    global _LLM
+    _LLM = client
+
+
+# 네트워크가 죽었을 때 내놓을 말.
+#
+# 왜 침묵이 아닌가
+#   어르신은 방금 말을 걸었다. 아무 반응이 없으면 고장 난 기계다. 모른다고 말하는
+#   것과 반응하지 않는 것은 전혀 다르다.
+_FALLBACK_RESPONSE = "죄송해요, 지금 잘 못 들었어요. 다시 한 번 말씀해 주시겠어요?"
+
+
+def _generate(state: ConvState) -> str:
+    """이 턴의 '유일한' 생성 호출.
+
+    무엇을 하는가
+        프롬프트를 조립해 LLM 을 한 번 부른다. 개방형 핸들러들이 공유한다.
+
+    왜 핸들러마다 따로 두지 않는가
+        턴당 생성 호출 1회가 예산이다 (CLAUDE.md §16). 핸들러마다 호출 코드를
+        복사하면 언젠가 두 번 부르는 핸들러가 생기고, 그 순간 지연 예산이 무너진다.
+        한 곳에 두면 "이 함수가 한 턴에 한 번" 이라는 규칙을 눈으로 확인할 수 있다.
+
+    무엇을 호출하는가
+        prompts.build_prompt(순수 함수), 그다음 llm/client.py.
+
+    주의사항
+        생성 실패에 예외를 올리지 않는다. 어르신 입장에서 예외는 그냥 대답 없는
+        로봇이다. 되묻는 문장으로 저하시킨다.
+    """
+    prompt = build_prompt(
+        state.get("ctx") or {},
+        state.get("intent") or "companion",
+        state.get("user_input", ""),
+        terse=bool(state.get("terse")),
+        ctx_is_cached=bool(state.get("ctx_is_cached")),
+        speech_origin=state.get("speech_origin", ""),
+        recent_phrasings=state.get("recent_phrasings"),
+    )
+
+    try:
+        return _llm().generate(prompt)
+    except Exception:  # noqa: BLE001 - 생성 실패가 턴을 죽이면 안 된다
+        logger.warning("generation failed; falling back to a clarifying reply", exc_info=True)
+        return _FALLBACK_RESPONSE
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 개방형 핸들러
@@ -66,7 +134,7 @@ def handle_info(state: ConvState) -> dict:
           벡터 저장소에서 온다.
         - 한두 문장으로 답한다. 정확한 세 문단 답변은 여기서는 실패다.
     """
-    raise NotImplementedError
+    return {"response": _generate(state)}
 
 
 def handle_companion(state: ConvState) -> dict:
@@ -93,7 +161,7 @@ def handle_companion(state: ConvState) -> dict:
         - 표현을 바꾼다. 최근에 쓴 표현을 넘기고 다르게 말하라고 지시하지 않으면,
           같은 권유가 3일 연속 글자 하나까지 똑같이 나온다.
     """
-    raise NotImplementedError
+    return {"response": _generate(state)}
 
 
 def handle_schedule(state: ConvState) -> dict:

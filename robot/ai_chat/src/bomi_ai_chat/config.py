@@ -140,6 +140,15 @@ class Settings:
     #   디렉터리 하나만 복사하면 되고, SD카드를 교체할 때 옮길 대상이 명확해진다.
     localstore_dir: str
 
+    # 백엔드(문맥 조립 API)의 주소와 타임아웃. 배포마다 바뀌므로 policy 가 아니라 여기다.
+    #
+    # 타임아웃을 짧게 두는 이유
+    #   이 호출은 턴 지연 예산(약 2초) '안에' 있다. 오래 기다리느니 캐시로 내려가서
+    #   얕게라도 대답하는 편이 낫다. 기다리다 놓친 턴은 어르신 입장에서 그냥
+    #   대답하지 않은 로봇이다.
+    backend_base_url: str
+    backend_timeout_seconds: float
+
     @classmethod
     def from_env(
         cls,
@@ -261,6 +270,11 @@ class Settings:
             localstore_dir=(
                 _optional_env("LOCALSTORE_DIR", "var/localstore") or "var/localstore"
             ),
+            backend_base_url=(
+                _optional_env("BACKEND_BASE_URL", "http://localhost:8080")
+                or "http://localhost:8080"
+            ),
+            backend_timeout_seconds=_positive_float_env("BACKEND_TIMEOUT_SECONDS", 1.5),
         )
 
     def validate_conversation(self) -> None:

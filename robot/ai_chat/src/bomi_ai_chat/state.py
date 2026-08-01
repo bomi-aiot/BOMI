@@ -94,6 +94,15 @@ class SpeechProposal(TypedDict, total=False):
 
 
 class ConvState(TypedDict, total=False):
+    # ── 신원 ──
+    #
+    # senior_id 는 checkpointer 의 thread_id 와 같은 값이다. state 에도 두는 이유는
+    # 노드가 config 를 뒤지지 않고 문맥 조회·저장소 접근을 할 수 있어야 하기 때문이다.
+    senior_id: str
+    # 지금 진행 중인 대화. 최근 Raw 메시지를 어느 대화에서 가져올지 정한다.
+    # 새 대화의 첫 턴에서는 None 이고, 그러면 최근 메시지가 비어서 온다.
+    conversation_id: str | None
+
     # ── 진입: 이 턴이 세 경로 중 어디에서 왔는가 (§6) ──
     #
     # "user_utterance" -> 어르신이 말했다. note_interaction 다음 safety_triage 로.
@@ -143,6 +152,11 @@ class ConvState(TypedDict, total=False):
     # 백엔드에 닿지 못해 로컬 읽기 캐시에서 가져왔을 때 True.
     # 이 경우 핸들러는 사실에 대해 단정적으로 말하지 않아야 한다.
     ctx_is_cached: bool
+    # 이번 턴에 요청할 기억 개수. 비어 있으면 policy.MEMORY_TOP_K 를 쓴다.
+    # 성능 저하 모드가 이 값을 낮춰 넣는다(policy.DEGRADATION_ORDER 첫 단계).
+    memory_top_k: int
+    # 같은 종류의 알림에서 최근에 쓴 표현. 프롬프트에 넘겨 반복을 막는다(§17.8).
+    recent_phrasings: list[str]
 
     # ── 출력 (§14) ──
     response: str
