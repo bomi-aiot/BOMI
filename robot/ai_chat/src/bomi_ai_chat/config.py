@@ -131,6 +131,13 @@ class Settings:
     remote_db_host: str
     remote_db_port: int
 
+    # 로봇 로컬 운영 상태가 사는 디렉터리. 배포마다 바뀌므로 policy.py 가 아니라 여기다.
+    #
+    # 왜 디렉터리 하나인가
+    #   런타임 DB, 발신 큐 DB, 캐시 오디오가 모두 이 아래에 모인다. 일일 덤프가
+    #   디렉터리 하나만 복사하면 되고, SD카드를 교체할 때 옮길 대상이 명확해진다.
+    localstore_dir: str
+
     @classmethod
     def from_env(
         cls,
@@ -241,6 +248,9 @@ class Settings:
                 _optional_env("REMOTE_DB_HOST", "localhost") or "localhost"
             ),
             remote_db_port=_integer_env("REMOTE_DB_PORT", 5432),
+            localstore_dir=(
+                _optional_env("LOCALSTORE_DIR", "var/localstore") or "var/localstore"
+            ),
         )
 
     def validate_conversation(self) -> None:
