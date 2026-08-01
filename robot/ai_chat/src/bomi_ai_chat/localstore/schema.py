@@ -118,12 +118,30 @@ CREATE INDEX IF NOT EXISTS idx_outbox_pending
 """
 
 
+# 마지막으로 성공한 대화 문맥. 어르신당 한 행.
+#
+# 왜 질의별이 아니라 어르신별 하나인가
+#   오프라인일 때 필요한 것은 "이 질문에 딱 맞는 기억"이 아니라 "이 어르신이 누구인지"다.
+#   질의별로 쌓으면 microSD 쓰기만 늘고 적중률은 오르지 않는다.
+#
+# 이 표는 '사실의 권위'가 아니다. 여기서 읽은 턴은 ctx_is_cached 로 표시되고,
+# 그 표시가 프롬프트로 이어져 복약·일정에 대한 단정적 표현을 막는다.
+_CONTEXT_CACHE = """
+CREATE TABLE IF NOT EXISTS context_cache (
+    senior_id TEXT NOT NULL PRIMARY KEY,
+    payload   TEXT NOT NULL,
+    cached_at REAL NOT NULL
+)
+"""
+
+
 def init_runtime(connection: sqlite3.Connection) -> None:
     """운영 상태 DB 의 표를 만든다. 멱등하다."""
     connection.execute(_RUNTIME_STATE)
     connection.execute(_PROPOSALS)
     connection.execute(_PROPOSALS_INDEX)
     connection.execute(_AUDIO_CACHE)
+    connection.execute(_CONTEXT_CACHE)
 
 
 def init_outbox(connection: sqlite3.Connection) -> None:
