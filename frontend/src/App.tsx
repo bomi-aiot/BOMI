@@ -65,10 +65,8 @@ function App() {
   const pendingConfirmationCount = confirmationRequests.filter(
     (request) => request.status === 'PENDING',
   ).length
-  const robotOnline = dashboard?.robot.connectionStatus === 'ONLINE'
-  const sensorConnected =
-    dashboard?.homeEnvironment.sensorConnectionStatus === 'CONNECTED'
-  const systemNormal = robotOnline && sensorConnected
+  const robotActive = dashboard?.robot.isActive ?? false
+  const systemNormal = robotActive
 
   return (
     <AppLayout

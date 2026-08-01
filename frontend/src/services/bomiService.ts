@@ -9,6 +9,12 @@ import {
   mockRobotStatus,
   mockSchedules,
 } from "../mocks/data";
+import { httpGet, httpPost } from "./http";
+import { mapDashboard, type DashboardDto } from "./mappers/dashboard";
+import {
+  mapFactCandidate,
+  type FactCandidateDto,
+} from "./mappers/confirmationRequest";
 import type {
   ActivitySummary,
   ConfirmationRequest,
@@ -342,7 +348,7 @@ class MockBomiService implements BomiService {
         source: "AI",
         sourceConversationId: request.sourceConversationId,
         sourceMessageId: request.sourceMessageId,
-        confidence: request.confidence,
+        confidence: 1,
         verificationStatus: "GUARDIAN_CONFIRMED",
         lifecycleStatus: "ACTIVE",
         visibility: "SHARED_WITH_GUARDIANS",
@@ -1051,4 +1057,59 @@ class MockBomiService implements BomiService {
   }
 }
 
-export const bomiService: BomiService = new MockBomiService();
+/**
+ * 실제 API 연동 서비스. P0 두 화면(대시보드·확인요청)만 실제 서버를 호출하고,
+ * 아직 백엔드가 없는 나머지(프로필·복약·일정 등)는 MockBomiService 동작을 그대로 상속한다.
+ */
+class HttpBomiService extends MockBomiService {
+  async getDashboard(): Promise<HomeDashboardSummary> {
+    const dto = await httpGet<DashboardDto>(API_ENDPOINTS.dashboard);
+    return mapDashboard(dto);
+  }
+
+  async getConfirmationRequests(): Promise<ConfirmationRequest[]> {
+    const dtos = await httpGet<FactCandidateDto[]>(
+      API_ENDPOINTS.confirmationRequests,
+    );
+    return dtos.map(mapFactCandidate);
+  }
+
+  async resolveConfirmationRequest(
+    id: string,
+    resolution: ConfirmationResolution,
+    options?: {
+      editedValue?: StructuredValue;
+      note?: string;
+    },
+  ): Promise<ConfirmationRequest> {
+    const dto = await httpPost<FactCandidateDto>(
+      `${API_ENDPOINTS.confirmationRequests}/${id}/resolve`,
+      {
+        resolution,
+        editedValue: options?.editedValue,
+        note: options?.note,
+      },
+    );
+    return mapFactCandidate(dto);
+  }
+
+  async undoConfirmationResolution(id: string): Promise<ConfirmationRequest> {
+    const dto = await httpPost<FactCandidateDto>(
+      `${API_ENDPOINTS.confirmationRequests}/${id}/undo`,
+    );
+    return mapFactCandidate(dto);
+  }
+
+  async getInitialData(): Promise<BomiInitialData> {
+    const base = await super.getInitialData();
+    const [dashboard, confirmationRequests] = await Promise.all([
+      this.getDashboard(),
+      this.getConfirmationRequests(),
+    ]);
+    return { ...base, dashboard, confirmationRequests };
+  }
+}
+
+export const bomiService: BomiService = USE_MOCK_API
+  ? new MockBomiService()
+  : new HttpBomiService();
