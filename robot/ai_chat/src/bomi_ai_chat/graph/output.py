@@ -197,8 +197,35 @@ def emit(state: ConvState) -> dict:
     #
     # 이 호출은 즉시 반환해야 한다. 여기서 블로킹하면 말하는 동안 아무도 어르신의
     # 끼어들기를 관찰하지 못해서 양보 우선 정책이 원리적으로 불가능해진다.
+    #
+    # 핸들을 여기 보관하는 것이 barge-in 복구의 전제다. note_interaction 이
+    # 이 핸들에게 "어디까지 말했나"를 묻는다 — state 가 아니라. state 는 그래프
+    # 실행 시점의 스냅샷이라 재생이 진행된 만큼 이미 낡아 있다.
     TTS_HANDLES[senior_id] = player.speak_async(sentences)
+
+    # 이번 발화가 무엇이었는지 남긴다. 잘렸을 때 나머지를 원래 우선순위로 되돌리려면
+    # 우선순위와 origin 을 알아야 하는데, 재생 핸들은 그것을 모른다.
+    SPEECH_CONTEXT[senior_id] = {
+        "sentences": list(sentences),
+        "intent": state.get("intent"),
+        "priority": state.get("speech_priority"),
+        "origin": state.get("speech_origin", ""),
+    }
     return {"speaking": True, "spoken_prefix": ""}
+
+
+# 재생 중인 발화의 '무엇을 왜 말하고 있었는가'.
+#
+# 왜 TTS_HANDLES 와 따로인가
+#   핸들은 진행 상황(몇 문장 말했나)의 권위이고, 이쪽은 재큐에 필요한 메타데이터다.
+#   핸들에 우선순위를 들려주면 오디오 계층이 게이트 정책을 알게 된다.
+SPEECH_CONTEXT: dict[str, dict] = {}
+
+
+def clear_speech_state(senior_id: str) -> None:
+    """재생이 끝났거나 취소된 뒤 정리한다."""
+    TTS_HANDLES.pop(senior_id, None)
+    SPEECH_CONTEXT.pop(senior_id, None)
 
 
 # 재생기를 주입받는다.

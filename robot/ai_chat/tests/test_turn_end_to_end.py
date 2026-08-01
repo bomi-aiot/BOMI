@@ -50,13 +50,32 @@ class FakeLLM:
         return self.reply
 
 
+class FakeHandle:
+    """재생 핸들 대역.
+
+    205 에서 핸들이 barge-in 복구의 권위가 되면서 계약이 생겼다.
+    cancel() 로 멈출 수 있고, remaining_sentences() 로 못 한 말을 알려줘야 한다.
+    """
+
+    def __init__(self, sentences):
+        self.sentences = list(sentences)
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
+
+    def remaining_sentences(self):
+        # 이 대역은 즉시 전부 말한 것으로 친다.
+        return []
+
+
 class FakePlayer:
     def __init__(self):
         self.spoken = []
 
     def speak_async(self, sentences):
         self.spoken.append(list(sentences))
-        return object()
+        return FakeHandle(sentences)
 
 
 @pytest.fixture
