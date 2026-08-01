@@ -34,6 +34,7 @@ from langgraph.graph import END, START, StateGraph
 
 from bomi_ai_chat.graph import context, handlers, ingress, output, triage
 from bomi_ai_chat.graph.gate import proactive_gate, route_gate
+from bomi_ai_chat.localstore.db import runtime_db_path
 from bomi_ai_chat.state import ConvState
 
 # 일곱 개의 핸들러 인텐트. 한 곳에 두어서 라우터 매핑과 아래의 수렴 엣지가
@@ -82,7 +83,7 @@ def memory_write(state: ConvState) -> dict:
     return {"last_spoke_at": clock.now()}
 
 
-def build_graph(checkpoint_path: str = "bomi_ai_chat.sqlite"):
+def build_graph(checkpoint_path: str | None = None):
     """대화 그래프를 컴파일한다.
 
     무엇을 하는가
@@ -94,8 +95,10 @@ def build_graph(checkpoint_path: str = "bomi_ai_chat.sqlite"):
         백엔드 ERD 에 속하지 않고 Flyway 관리 대상도 아니다 (CLAUDE.md §5).
 
     인자
-        checkpoint_path: 로컬 SQLite 파일. 런타임 값(silence_level, last_spoke_at,
-            occupancy)이 재시작을 넘어 살아남는 경로다.
+        checkpoint_path: 로컬 SQLite 파일. None 이면 localstore 의 runtime DB 를
+            쓴다. 그게 기본값인 이유는, 운영 상태가 한 파일에 모여 있으면 일일 덤프가
+            디렉터리 하나만 복사하면 되고 SD카드 교체 시 옮길 대상이 명확해지기
+            때문이다. 테스트만 별도 경로를 넘긴다.
 
     반환값
         컴파일된 그래프. 어르신별 thread_id 로 호출한다.
@@ -184,7 +187,8 @@ def build_graph(checkpoint_path: str = "bomi_ai_chat.sqlite"):
     #   그래프를 호출하는 스레드가 하나가 아니다. emit 의 재생은 그래프 실행보다
     #   오래 살고(§13), 침묵 틱과 현관 감시는 스케줄러 스레드에서 돌아온다(§15).
     #   기본값(True)이면 그때 sqlite3 가 ProgrammingError 를 던진다.
-    conn = sqlite3.connect(checkpoint_path, check_same_thread=False)
+    path = checkpoint_path if checkpoint_path is not None else str(runtime_db_path())
+    conn = sqlite3.connect(path, check_same_thread=False)
     return g.compile(checkpointer=SqliteSaver(conn))
 
 

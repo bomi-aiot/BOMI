@@ -8,3 +8,10 @@ __pycache__/
 *.egg-info/
 *.wav
 *.mp3
+
+# 로봇 로컬 운영 상태(LOCALSTORE_DIR 기본값). 런타임 DB·발신 큐·캐시 오디오가
+# 여기 쌓인다. 기기별 상태이므로 커밋하지 않는다.
+var/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm

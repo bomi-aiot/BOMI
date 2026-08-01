@@ -27,12 +27,17 @@
 
 from __future__ import annotations
 
-# 이 두 개는 아래 틱 함수들의 TODO(localstore) 본문이 채워지는 순간 바로 쓰인다.
+import logging
+
 # 임계치는 policy 에서 읽고(함수에 박지 않는다), 시간은 clock 으로만 읽는다(§15).
-# 뼈대 단계에서 지우면 다음 티켓이 같은 것을 다시 추가하게 된다.
+# 아직 본문이 TODO 인 틱들이 채워질 때 바로 쓰인다.
 from bomi_ai_chat import policy  # noqa: F401
 from bomi_ai_chat.clock import clock  # noqa: F401
+from bomi_ai_chat.localstore import outbox
+from bomi_ai_chat.notify import GuardianNotifier, LoggingGuardianNotifier
 from bomi_ai_chat.state import ConvState
+
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 침묵 사다리
@@ -183,7 +188,7 @@ def door_watch_tick(senior_id: str, app) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def outbox_flush() -> None:
+def outbox_flush(notifier: GuardianNotifier | None = None) -> dict[str, int]:
     """아직 전달되지 않은 보호자 알림을 재시도한다.
 
     왜 존재하는가
@@ -192,7 +197,18 @@ def outbox_flush() -> None:
         전달된다.
 
     누가 호출하는가
-        APScheduler. 자주(수십 초 단위).
+        APScheduler. 자주(policy.OUTBOX_FLUSH_INTERVAL_SEC).
+
+    무엇을 호출하는가
+        localstore.outbox.flush. 판단과 상태 전이는 전부 그쪽에 있고, 이 함수는
+        어댑터를 골라 넘기고 결과를 로그로 남기는 얇은 껍데기다.
+
+    인자
+        notifier: 채널 어댑터. 기본값은 로그 전용 임시 어댑터다. 실제 채널이
+            붙기 전까지의 자리 표시자이며, 그 상태를 로그로 요란하게 남긴다.
+
+    반환값
+        {"sent": n, "failed": n, "gave_up": n}.
 
     주의사항
         - 늦은 전달은 원래 타임스탬프를 포함해 '지연됨'으로 표시한다. 보호자가
@@ -202,9 +218,25 @@ def outbox_flush() -> None:
           크래시 후 마지막 몇 초를 잃어도 되지만, 큐에 든 응급 알림은 안 된다
           (CLAUDE.md §18).
         - 백오프를 두고 재시도하며, 포기할 때는 요란하게 포기한다. 조용히 포기하지 않는다.
+        - 예외를 밖으로 던지지 않는다. 이 함수가 스케줄러에서 죽으면 큐가 영원히
+          멈추고, 그때 안 나가는 것은 응급 알림이다.
     """
-    # TODO(localstore + notify): 대기 항목을 꺼내 전달하고, 성공 표시 또는 재예약.
-    ...
+    channel = notifier if notifier is not None else LoggingGuardianNotifier()
+    try:
+        result = outbox.flush(channel)
+    except Exception:  # noqa: BLE001 - 틱이 죽으면 큐가 영원히 멈춘다
+        logger.exception("outbox flush tick failed; queue stays intact for next tick")
+        return {"sent": 0, "failed": 0, "gave_up": 0}
+
+    if result["sent"] or result["failed"] or result["gave_up"]:
+        logger.info(
+            "outbox flush: sent=%d failed=%d gave_up=%d pending=%d",
+            result["sent"],
+            result["failed"],
+            result["gave_up"],
+            outbox.pending_count(),
+        )
+    return result
 
 
 def daily_summary_job(senior_id: str) -> None:

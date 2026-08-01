@@ -5,6 +5,7 @@ from collections.abc import Callable
 import pytest
 import requests
 
+from bomi_ai_chat.clock import Clock, SimClock, install_clock
 from bomi_ai_chat.config import Settings, clear_settings_cache
 
 SETTING_VARIABLES = (
@@ -43,6 +44,7 @@ SETTING_VARIABLES = (
     "SSH_KEY_PATH",
     "REMOTE_DB_HOST",
     "REMOTE_DB_PORT",
+    "LOCALSTORE_DIR",
 )
 
 
@@ -74,6 +76,38 @@ def block_external_http(monkeypatch, request):
         )
 
     monkeypatch.setattr(requests.sessions.Session, "request", fail_request)
+
+
+@pytest.fixture
+def frozen_clock():
+    """스스로 흐르지 않는 시계를 설치하고, 테스트가 끝나면 되돌린다.
+
+    왜 speed=0.0 인가
+        SimClock 의 기본값 speed=1.0 은 시작점부터 '실제 시간과 함께' 흐른다.
+        그래서 now() 가 정확히 start 값이 아니고, 시각을 직접 비교하는 단위 테스트가
+        머신 부하에 따라 흔들린다. speed=0.0 은 시간을 멈춰서 advance() 로만
+        움직이게 하므로, "3시간 뒤"를 결정적으로 재현할 수 있다.
+
+    사용 예
+        def test_something(frozen_clock):
+            sim = frozen_clock(start=1_000.0)
+            ...
+            sim.advance(3 * 3600)
+    """
+
+    installed: list[Clock] = []
+
+    def install(start: float = 1_700_000_000.0) -> SimClock:
+        sim = SimClock(start=start, speed=0.0)
+        installed.append(install_clock(sim))
+        return sim
+
+    yield install
+
+    # 설치한 역순으로 되돌린다. 전역 상태이므로 복원을 빼먹으면 이후 테스트가
+    # 가짜 시계를 물려받는다.
+    for previous in reversed(installed):
+        install_clock(previous)
 
 
 @pytest.fixture
