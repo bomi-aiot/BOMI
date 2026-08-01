@@ -34,7 +34,9 @@ from zoneinfo import ZoneInfo
 # 임계치는 policy 에서 읽고(함수에 박지 않는다), 시간은 clock 으로만 읽는다(§15).
 from bomi_ai_chat import policy
 from bomi_ai_chat.clock import clock
-from bomi_ai_chat.localstore import outbox, proposals
+from bomi_ai_chat.graph import gate
+from bomi_ai_chat.localstore import audio_cache, context_cache, outbox, proposals
+from bomi_ai_chat.localstore import runtime as runtime_store
 from bomi_ai_chat.notify import GuardianNotifier, LoggingGuardianNotifier
 from bomi_ai_chat.state import ConvState
 
@@ -77,10 +79,43 @@ def _is_absence_expected(runtime: ConvState) -> bool:
           죽은 현관 노드 때문에 생긴 UNKNOWN 이 안전 감시를 조용히 껐다는 결과가
           되어서는 안 된다.
     """
-    if runtime.get("occupancy") == "AWAY":
+    occupancy = runtime.get("occupancy")
+
+    # 1. 나가 있다. 사다리를 '정지'한다.
+    #    집에 없는 사람이 대답하지 않는 것은 아무 정보도 아니다.
+    if occupancy == "AWAY":
         return True
-    # TODO: quiet hours(로컬 시간), 루틴 베이스라인 조회, RESTING 인내심 반영.
-    raise NotImplementedError
+
+    # ★ UNKNOWN 은 여기서 True 가 되면 안 된다.
+    #
+    #   현관 노드가 죽으면 occupancy 가 UNKNOWN 으로 강등된다. 그때 이 함수가
+    #   "예상된 부재"라고 답하면, 라즈베리파이 하나가 죽은 것만으로 안전 감시가
+    #   통째로 꺼진다. 그리고 아무도 그 사실을 모른다.
+    #
+    #   그래서 UNKNOWN 은 명시적으로 통과시킨다. 아래 검사들만 적용받는다.
+    #   CLAUDE.md §10 의 해석표에서 UNKNOWN 이 '보수적 가동'인 이유다.
+
+    # 2. 밤이다. 새벽 4시의 침묵은 경고 신호가 아니라 수면이다.
+    #    게이트와 '같은' 창을 쓴다. 두 곳이 어긋나면 로봇이 조용해야 할 때
+    #    프로브를 던지거나, 반대로 낮에 감시를 쉰다.
+    if gate.is_quiet_hours(runtime):
+        return True
+
+    # 3. 루틴 베이스라인.
+    #    "N시간 조용함"이 아니라 "이 사람이 조용할 리 없는 때에 조용함"이 우리가
+    #    원하는 트리거다. 그러려면 이 어르신의 평소 리듬을 알아야 한다.
+    #
+    #    ★ 아직 구현되지 않았다. 이벤트 로그(occupancy_event, conversation_message)가
+    #      며칠 쌓여야 의미가 생기고, 그 축적이 아직 없다. 지금은 이 필터가 없는
+    #      상태로 동작하며, 그만큼 오탐이 많다.
+    #      → docs/carebot/PROGRESS.md 에 기록
+
+    # 4. RESTING 은 '정지'가 아니라 '늦춤'이다.
+    #
+    #    쉬는 중의 침묵은 정상이지만, 쉬다가 쓰러질 수도 있다. 그래서 True 를
+    #    돌려주지 않고, 임계치에 인내심 배수를 곱하는 방식으로 늦춘다.
+    #    그 계산은 _rung_for 가 한다.
+    return False
 
 
 def silence_tick(senior_id: str, app) -> None:
@@ -115,31 +150,164 @@ def silence_tick(senior_id: str, app) -> None:
         - 어르신이 프로브에 끼어들면 그것이 곧 답이다. 사다리를 리셋하고 프로브를
           재개하지 않는다 (CLAUDE.md §13).
     """
-    # TODO(localstore): runtime = read_runtime(senior_id)
-    #   if _is_absence_expected(runtime): return
-    #   elapsed = clock.now() - runtime["last_user_interaction_at"]
-    #   level = rung_for(elapsed, policy.SILENCE_LADDER_SEC, runtime["rest_state"])
-    #   if level == 0: return
-    #   if level <= 2:
-    #       priority, seed = {1: ("low", "점심 드셨어요?"),
-    #                         2: ("high", "어르신, 괜찮으세요?")}[level]
-    #       app.invoke({"trigger_type": "proactive",
-    #                   "proposals": [{"intent": "companion", "priority": priority,
-    #                                  "seed": seed, "origin": f"silence_ladder:{level}"}]},
-    #                  config=thread(senior_id))
-    #   elif level == 3:
-    #       # 여기서는 미리 만들어둔 로컬 오디오를 우선한다. 네트워크 없이 동작해야
-    #       # 하고, 그것이 바로 이 프로브가 가장 중요한 상황이다 (CLAUDE.md §18).
-    #       app.invoke({"trigger_type": "proactive",
-    #                   "proposals": [{"intent": "companion", "priority": "critical",
-    #                                  "seed": "...", "origin": "silence_ladder:3"}]},
-    #                  config=thread(senior_id))
-    #   else:
-    #       app.invoke({"trigger_type": "proactive", "safety_level": "T1",
-    #                   "escalation": {"reason": "no_response",
-    #                                  "silence_sec": elapsed}},
-    #                  config=thread(senior_id))
-    ...
+    state = runtime_store.load(senior_id)
+    # quiet hours 판정은 어르신의 프로필(시간대·수면 창)을 본다. 게이트와 같은 값을
+    # 써야 하므로 캐시된 문맥에서 가져온다. 없으면 창이 없는 것으로 취급된다.
+    state["ctx"] = context_cache.load(senior_id) or {}
+
+    if _is_absence_expected(state):
+        return
+
+    last_interaction = state.get("last_user_interaction_at") or 0.0
+    if last_interaction <= 0.0:
+        # 상호작용 기록이 없다. 방금 부팅했거나 처음 만난 어르신이다.
+        # 여기서 사다리를 돌리면 켜자마자 "괜찮으세요?"를 묻는다.
+        return
+
+    elapsed = clock.now() - last_interaction
+    reached = _rung_for(elapsed, state.get("rest_state"))
+    current = int(state.get("silence_level") or 0)
+
+    if reached <= current:
+        # 아직 다음 칸에 도달하지 않았다. 같은 칸에서 프로브를 반복하지 않는다.
+        return
+
+    # ★ 한 틱에 한 칸만 올라간다.
+    #
+    #   경과 시간만 보고 도달한 칸으로 바로 점프하면 프로브를 건너뛴다. 사다리
+    #   2칸과 3칸의 간격이 20분뿐이라, 틱이 조금만 밀려도(절전, 재부팅, 스케줄러
+    #   coalesce) 3칸을 통째로 지나쳐 곧바로 T1 이 나간다.
+    #
+    #   3칸은 '마지막 기회'다. 모든 게이트를 뚫고 물어보는 그 한 번이 오탐과
+    #   진짜 응급을 가른다. 그것을 건너뛰면 보호자에게 갈 필요 없던 알림이 간다.
+    #   오탐이 쌓이면 보호자가 알림을 읽지 않게 되고, 그때부터 진짜를 놓친다.
+    level = current + 1
+
+    runtime_store.save(senior_id, silence_level=level)
+
+    if level >= len(policy.SILENCE_LADDER_SEC) + 1:
+        _escalate_no_response(senior_id, elapsed, state)
+        return
+
+    _send_probe(senior_id, level, elapsed, app)
+
+
+# 각 칸의 프로브. 문구는 seed 이고 최종 문장이 아니다 — 핸들러가 다시 쓴다.
+#
+# 1단계가 "점심 드셨어요?"인 것이 중요하다. 감시가 아니라 말벗처럼 들려야 하고,
+# 그 이중 목적이 이 설계를 함께 살 만한 것으로 만든다 (CLAUDE.md §10).
+_PROBES: dict[int, tuple[str, str, str]] = {
+    1: ("low", "점심 드셨어요?", "probe.low.1"),
+    2: ("high", "어르신, 괜찮으세요?", "probe.high.1"),
+    3: ("critical", "어르신, 대답 좀 해주세요.", "probe.critical.1"),
+}
+
+
+def _rung_for(elapsed: float, rest_state: object) -> int:
+    """경과 시간이 사다리의 몇 번째 칸인가. 0 이면 아직 아무것도 안 한다.
+
+    RESTING 이면 임계치에 인내심 배수를 곱한다.
+        쉬는 중의 침묵은 정상이다. 사다리를 완전히 멈추고 싶지는 않지만(쉬다가
+        쓰러질 수도 있다) 훨씬 인내심 있게 동작해야 한다.
+
+    반환값
+        0            아직 이르다
+        1, 2, 3      해당 프로브
+        4            사다리 소진 -> T1
+    """
+    patience = (
+        policy.RESTING_PATIENCE_MULTIPLIER if rest_state == "RESTING" else 1.0
+    )
+
+    # 사다리는 '누적' 시간이다. 3시간 -> 다시 45분 -> 다시 20분.
+    threshold = 0.0
+    for index, step in enumerate(policy.SILENCE_LADDER_SEC, start=1):
+        threshold += step * patience
+        if elapsed < threshold:
+            return index - 1
+    return len(policy.SILENCE_LADDER_SEC) + 1
+
+
+def _send_probe(senior_id: str, level: int, elapsed: float, app) -> None:
+    """프로브를 '제안'한다. 직접 말하지 않는다.
+
+    1·2 단계는 정당하게 연기될 수 있다(누가 말하는 중, quiet hours). 3단계는
+    priority critical 이라 policy.PRIORITY_POLICY 에 의해 모든 게이트를 뚫는다.
+    그 예외는 여기 코드가 아니라 표에 적혀 있다.
+    """
+    priority, seed, cache_key = _PROBES[level]
+
+    if level == 3:
+        # critical 프로브는 미리 만들어둔 로컬 오디오를 우선한다.
+        # 네트워크 없이 동작해야 하고, 그게 바로 이 프로브가 가장 중요한 상황이다
+        # (CLAUDE.md §18). 없으면 평소대로 합성하지만, 없다는 사실을 남긴다.
+        if audio_cache.lookup(cache_key) is None:
+            logger.warning(
+                "critical probe has no cached audio (%s); it will need the network "
+                "at exactly the moment the network may be gone", cache_key)
+
+    logger.info(
+        "silence ladder rung %d for %s after %.0fs of silence", level, senior_id, elapsed)
+
+    _invoke_proactive(app, senior_id, {
+        "trigger_type": "proactive",
+        "senior_id": senior_id,
+        "proposals": [{
+            "intent": "companion",
+            "priority": priority,
+            "seed": seed,
+            "origin": f"silence_ladder:{level}",
+            "meta": {"probe_level": level, "cache_key": cache_key},
+        }],
+    })
+
+
+def _escalate_no_response(senior_id: str, elapsed: float, state: ConvState) -> None:
+    """사다리를 다 올라갔는데도 응답이 없다. 보호자를 부른다.
+
+    무엇을 하는가
+        outbox 에 T1 을 적재한다. 전송은 outbox_flush 가 맡는다 — 여기서 직접
+        보내면 네트워크가 끊긴 순간 그 알림이 사라지는데, 하필 그 순간이 알림이
+        가장 중요한 순간이다 (CLAUDE.md §18).
+
+    왜 신뢰도 점수를 함께 담는가
+        에스컬레이션 판정은 단일 임계치가 아니라 여러 약한 신호의 조합이어야 한다
+        (CLAUDE.md §10). 아직 점수를 '계산해서 문턱을 넘기는' 단계는 아니지만,
+        판단 근거가 되는 신호들을 알림에 실어서 보호자와 사후 튜닝이 볼 수 있게 한다.
+
+    주의사항
+        T1 은 guardian_sharing_consent_status 와 무관하게 나간다. 생명 안전이다.
+        그 대신 보호자가 1초에 무시할 수 있는 형태여야 한다 — 119 직통이 아니다.
+    """
+    payload = {
+        "reason": "no_response",
+        "silence_sec": round(elapsed),
+        "probes_failed": len(policy.SILENCE_LADDER_SEC),
+        # 약한 신호들. 보호자 화면과 사후 튜닝이 함께 본다.
+        "occupancy": state.get("occupancy"),
+        "rest_state": state.get("rest_state"),
+        "ambient_sound": bool((state.get("audio_ctx") or {}).get("ambient_sound")),
+    }
+    outbox.enqueue("T1", payload)
+    logger.warning(
+        "silence ladder exhausted for %s after %.0fs; T1 queued", senior_id, elapsed)
+
+
+def _invoke_proactive(app, senior_id: str, inputs: dict) -> None:
+    """그래프를 능동 경로로 호출한다. 실패해도 틱을 죽이지 않는다.
+
+    app 이 없으면(스케줄러만 돌리는 구성, 테스트) 제안을 큐에 넣어두기만 한다.
+    다음 능동 턴에서 게이트가 집어간다.
+    """
+    if app is None:
+        for proposal in inputs.get("proposals", []):
+            proposals.enqueue(senior_id, proposal)
+        return
+
+    try:
+        app.invoke(inputs, {"configurable": {"thread_id": senior_id}})
+    except Exception:  # noqa: BLE001 - 틱이 죽으면 그 감시가 영원히 멈춘다
+        logger.exception("proactive invoke failed for %s", senior_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

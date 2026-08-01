@@ -30,8 +30,13 @@ from bomi_ai_chat.jobs import ticks
 logger = logging.getLogger(__name__)
 
 
-def build_scheduler(senior_id: str):
+def build_scheduler(senior_id: str, app=None):
     """APScheduler 를 만들고 주기 작업을 등록한다. 시작하지는 않는다.
+
+    인자
+        app: 컴파일된 그래프. 침묵 사다리와 현관 감시가 능동 턴을 돌릴 때 쓴다.
+            None 이면 틱들이 제안을 큐에 넣어두기만 하고, 다음 능동 턴에서
+            게이트가 집어간다.
 
     무엇을 하는가
         틱 함수들을 policy 의 주기로 등록한다. 주기는 함수에 박지 않고 policy 에서
@@ -55,7 +60,7 @@ def build_scheduler(senior_id: str):
     scheduler = BackgroundScheduler()
 
     scheduler.add_job(
-        _guard(ticks.silence_tick, senior_id),
+        _guard(ticks.silence_tick, senior_id, app),
         "interval",
         seconds=policy.SILENCE_TICK_INTERVAL_SEC,
         id="silence_tick",
@@ -65,7 +70,7 @@ def build_scheduler(senior_id: str):
         max_instances=1,
     )
     scheduler.add_job(
-        _guard(ticks.door_watch_tick, senior_id),
+        _guard(ticks.door_watch_tick, senior_id, app),
         "interval",
         seconds=policy.SILENCE_TICK_INTERVAL_SEC,
         id="door_watch_tick",
@@ -113,7 +118,7 @@ def _guard(func, *args):
     return run
 
 
-def run_all_ticks_once(senior_id: str) -> None:
+def run_all_ticks_once(senior_id: str, app=None) -> None:
     """모든 틱을 한 번씩 직접 실행한다. 압축 시계 경로.
 
     왜 필요한가
@@ -130,6 +135,7 @@ def run_all_ticks_once(senior_id: str) -> None:
             sim.advance(3600)
             run_all_ticks_once("senior-1")
     """
-    for tick in (ticks.schedule_tick, ticks.silence_tick, ticks.door_watch_tick):
-        _guard(tick, senior_id)()
+    _guard(ticks.schedule_tick, senior_id)()
+    for tick in (ticks.silence_tick, ticks.door_watch_tick):
+        _guard(tick, senior_id, app)()
     _guard(ticks.outbox_flush)()
