@@ -133,3 +133,48 @@ def clear(senior_id: str) -> None:
     connection = runtime_db()
     schema.init_runtime(connection)
     connection.execute("DELETE FROM speech_proposal WHERE senior_id = ?", (senior_id,))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 완료된 슬롯
+#
+# "9시 복약"처럼 하루 한 번 일어나야 하는 일이 이미 처리됐는지 기록한다.
+# 게이트 1(is_still_valid)이 이걸 보고 이미 먹은 약의 알림을 폐기한다.
+#
+# 왜 백엔드가 아니라 로컬인가
+#   사실(복약 기록)은 백엔드 care_record 가 권위다. 여기 있는 것은 '오늘 이 알림을
+#   이미 처리했는가'라는 운영 상태이고, 게이트가 매 틱마다 읽는 값이다. 매 틱
+#   네트워크를 타면 지연 예산이 무너지고 오프라인에서 죽는다 (CLAUDE.md §5).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def mark_slot_completed(senior_id: str, slot_key: str) -> None:
+    """이 슬롯이 처리됐다고 표시한다.
+
+    누가 호출하는가
+        handlers.handle_schedule. 어르신이 "약 먹었어"라고 말했을 때.
+
+    인자
+        slot_key: 하루 안에서 유일한 키. 예: "2026-08-01:med:morning".
+            날짜를 포함하는 이유는 어제 완료가 오늘 알림을 막으면 안 되기 때문이다.
+    """
+    connection = runtime_db()
+    schema.init_runtime(connection)
+    connection.execute(
+        "INSERT OR REPLACE INTO completed_slot (senior_id, slot_key, completed_at) "
+        "VALUES (?, ?, ?)",
+        (senior_id, slot_key, clock.now()),
+    )
+
+
+def is_slot_completed(senior_id: str, slot_key: str) -> bool:
+    """이 슬롯이 이미 처리됐는가. 게이트 1 이 매 틱 부른다."""
+    if not senior_id or not slot_key:
+        return False
+    connection = runtime_db()
+    schema.init_runtime(connection)
+    row = connection.execute(
+        "SELECT 1 FROM completed_slot WHERE senior_id = ? AND slot_key = ?",
+        (senior_id, slot_key),
+    ).fetchone()
+    return row is not None

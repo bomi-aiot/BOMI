@@ -135,6 +135,22 @@ CREATE TABLE IF NOT EXISTS context_cache (
 """
 
 
+# 오늘 이미 처리된 슬롯.
+#
+# 게이트 1 이 "9시 복약 알림을 아직 말할 가치가 있는가"를 판정할 때 본다.
+# 8시 55분에 어르신이 "약 먹었어"라고 하면 여기 한 행이 생기고, 9시 알림은 폐기된다.
+#
+# slot_key 에 날짜가 들어간다. 안 넣으면 어제 완료가 오늘 알림을 영원히 막는다.
+_COMPLETED_SLOT = """
+CREATE TABLE IF NOT EXISTS completed_slot (
+    senior_id    TEXT NOT NULL,
+    slot_key     TEXT NOT NULL,
+    completed_at REAL NOT NULL,
+    PRIMARY KEY (senior_id, slot_key)
+)
+"""
+
+
 def init_runtime(connection: sqlite3.Connection) -> None:
     """운영 상태 DB 의 표를 만든다. 멱등하다."""
     connection.execute(_RUNTIME_STATE)
@@ -142,6 +158,7 @@ def init_runtime(connection: sqlite3.Connection) -> None:
     connection.execute(_PROPOSALS_INDEX)
     connection.execute(_AUDIO_CACHE)
     connection.execute(_CONTEXT_CACHE)
+    connection.execute(_COMPLETED_SLOT)
 
 
 def init_outbox(connection: sqlite3.Connection) -> None:
