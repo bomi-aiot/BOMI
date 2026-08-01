@@ -89,6 +89,20 @@ public class CareRecord {
     @Column(name = "recurrence")
     private Map<String, Object> recurrence;
 
+    /**
+     * How urgently the guardian hears about this, for notification-type records.
+     *
+     * <p>Null on every record that is not an outbound notification — most rows are
+     * medication schedules and observations, which nobody is paged about.</p>
+     *
+     * <p>A column rather than a key inside {@link #details} because "is there an
+     * unsent T1?" is a safety query, and pulling it out of JSON on every scan is
+     * the wrong place to spend that time.</p>
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "notification_tier", length = 10)
+    private NotificationTier notificationTier;
+
     private CareRecord(UUID seniorId, String recordType, Map<String, Object> details) {
         this.seniorId = requireNonNull(seniorId, "seniorId");
         this.recordType = requireText(recordType, "recordType");
@@ -110,6 +124,21 @@ public class CareRecord {
     }
 
     public void assignRecipientGuardian(UUID recipientGuardianId) {
+        this.recipientGuardianId = recipientGuardianId;
+    }
+
+    /**
+     * Marks this record as an outbound guardian notification at the given tier.
+     *
+     * <p>There is no T4: T4 means never sent, so no notification record exists for
+     * it. It is expressed as {@code memory.visibility = PRIVATE} instead.</p>
+     *
+     * <p>Setting the tier does not authorize sending. T2 and T3 must still check
+     * {@code guardian_sharing_consent_status}; only T1 proceeds regardless, because
+     * it is life safety (CLAUDE.md §9).</p>
+     */
+    public void markAsNotification(NotificationTier tier, UUID recipientGuardianId) {
+        this.notificationTier = requireNonNull(tier, "tier");
         this.recipientGuardianId = recipientGuardianId;
     }
 

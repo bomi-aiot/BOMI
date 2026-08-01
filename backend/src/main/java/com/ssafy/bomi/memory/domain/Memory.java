@@ -1,5 +1,6 @@
 package com.ssafy.bomi.memory.domain;
 
+import com.ssafy.bomi.embedding.domain.EmbeddingStatus;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -101,6 +102,33 @@ public class Memory {
     @Column(name = "last_used_at")
     private OffsetDateTime lastUsedAt;
 
+    /**
+     * Whether this row's vector is present and current in the external vector store.
+     *
+     * <p>The vector itself is not stored here. Upstage embeddings are
+     * 4096-dimensional and pgvector cannot index beyond 2,000 ({@code vector}) or
+     * 4,000 ({@code halfvec}) dimensions, so semantic search moved to an external
+     * store (S15P11E102-218). That store is a derived index and this column is how
+     * we know what to rebuild when it is lost.</p>
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "embedding_status", nullable = false, length = 20)
+    private EmbeddingStatus embeddingStatus = EmbeddingStatus.PENDING;
+
+    @Column(name = "embedding_synced_at")
+    private OffsetDateTime embeddingSyncedAt;
+
+    /**
+     * Which model produced the stored vector.
+     *
+     * <p>Change the model and every existing vector is worthless: a different model
+     * is a different vector space, so the similarity numbers stop meaning anything.
+     * That failure throws no exception and shows up only as quietly worse recall,
+     * which is why the model is recorded per row.</p>
+     */
+    @Column(name = "embedding_model", length = 100)
+    private String embeddingModel;
+
     private Memory(UUID seniorId, MemoryType memoryType, String content, MemoryVisibility visibility) {
         this.seniorId = requireNonNull(seniorId, "seniorId");
         this.memoryType = requireNonNull(memoryType, "memoryType");
@@ -157,6 +185,33 @@ public class Memory {
 
     public void markUsed() {
         this.lastUsedAt = OffsetDateTime.now();
+    }
+
+    /**
+     * Records that this row's vector is now in the external store.
+     *
+     * <p>{@code content} is immutable once created — a changed fact becomes a new
+     * memory linked by {@code superseded_by_id} (§4) — so a synced vector can only
+     * go stale by a model change, never by an edit.</p>
+     */
+    public void markEmbeddingSynced(String embeddingModel, OffsetDateTime syncedAt) {
+        this.embeddingModel = requireText(embeddingModel, "embeddingModel");
+        this.embeddingSyncedAt = requireNonNull(syncedAt, "syncedAt");
+        this.embeddingStatus = EmbeddingStatus.SYNCED;
+    }
+
+    /**
+     * Records that embedding was attempted and failed. Kept distinct from
+     * {@code PENDING} so a permanently failing row stays visible instead of looking
+     * like fresh work forever.
+     */
+    public void markEmbeddingFailed() {
+        this.embeddingStatus = EmbeddingStatus.FAILED;
+    }
+
+    /** Flags this row for re-embedding, typically after an embedding model change. */
+    public void markEmbeddingStale() {
+        this.embeddingStatus = EmbeddingStatus.STALE;
     }
 
     private static String requireText(String value, String field) {

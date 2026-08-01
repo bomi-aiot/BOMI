@@ -19,6 +19,7 @@ dist/
 build/
 out/
 *.class
+backend/bin/
 
 # Python / ROS 2
 __pycache__/
