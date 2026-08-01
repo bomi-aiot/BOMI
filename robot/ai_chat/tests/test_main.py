@@ -46,6 +46,18 @@ def install_runtime_stubs(monkeypatch, *, once_succeeded=True):
 
     pipeline_module = ModuleType("bomi_ai_chat.pipeline")
     pipeline_module.ConversationPipeline = StubPipeline
+
+    # main의 warm-up이 실제 임베딩 모델(ko-sroberta)을 내려받지 않도록
+    # 의도 판정 라우터도 가벼운 스텁으로 대체한다.
+    router_module = ModuleType("bomi_ai_chat.llm.router")
+    router_module.is_weather_query = lambda text: False
+    router_module.is_medical_query = lambda text: False
+    monkeypatch.setitem(
+        sys.modules,
+        "bomi_ai_chat.llm.router",
+        router_module,
+    )
+
     monkeypatch.setitem(
         sys.modules,
         "bomi_ai_chat.audio_io.laptop",

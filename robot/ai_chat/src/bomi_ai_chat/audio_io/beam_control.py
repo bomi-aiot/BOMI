@@ -41,6 +41,8 @@
     XVF_HOST_PROTOCOL      마이크와 통신하는 방식(보통 비워두면 USB로 자동).
     BEAM_FRONT_AZIMUTH_DEG 로봇 정면이 몇 도인지(각도). 조립 후 calibrate_beam.py로 측정해서 넣는다.
     BEAM_GATING            "1"이면 고정한 방향 외의 빔 소리를 아예 없앤다(보통 "0").
+    BEAM_NOISE_THRESHOLD   간섭 제거기 문턱값. 낮출수록 먼 방향(예: 정반대) 목소리까지
+                           지운다(예: 0.2). 비워두면 장치 기본값을 그대로 쓴다.
 """
 
 import math
@@ -58,6 +60,9 @@ class BeamController:
         self.protocol = os.getenv("XVF_HOST_PROTOCOL", "").strip()
         self.front_deg = float(os.getenv("BEAM_FRONT_AZIMUTH_DEG", "90"))
         self.gating = os.getenv("BEAM_GATING", "0") == "1"
+        # 간섭 제거기 문턱값. 비워두면(미설정) 장치 기본값을 그대로 둔다.
+        raw_noise = os.getenv("BEAM_NOISE_THRESHOLD", "").strip()
+        self.noise_threshold = float(raw_noise) if raw_noise else None
 
     def _available(self) -> bool:
         """xvf_host 프로그램 파일이 실제로 그 위치에 있는지 확인한다."""
@@ -110,11 +115,18 @@ class BeamController:
         self._run("AEC_FIXEDBEAMSAZIMUTH_VALUES", rad_str, rad_str)  # 1) 방향 정하기
         self._run("AEC_FIXEDBEAMSONOFF", "1")                        # 2) 고정 모드 켜기
         self._run("AUDIO_MGR_OP_L", "6", "0")                       # 3) 녹음 소리를 고정 빔으로
-        if self.gating:
-            self._run("AEC_FIXEDBEAMSGATING", "1")  # (선택) 다른 방향 소리 완전히 끄기
 
+        # 4) 다른 방향(특히 정반대) 목소리를 더 억제하는 튜닝.
+        # 이 값들은 USB 재연결/재부팅 시 초기화되므로, 대화 시작마다 여기서 다시
+        # 걸어줘야 튜닝이 유지된다. 게이팅은 항상 명시적으로 0/1을 지정한다.
+        self._run("AEC_FIXEDBEAMSGATING", "1" if self.gating else "0")
+        if self.noise_threshold is not None:
+            thr = f"{self.noise_threshold:.3f}"
+            self._run("AEC_FIXEDBEAMNOISETHR", thr, thr)
+
+        noise_msg = f", noise={self.noise_threshold}" if self.noise_threshold is not None else ""
         print(f"[BeamController] 빔 고정 완료: {self.front_deg:.1f}도 ({rad_str} 라디안)"
-              f"{', gating 켬' if self.gating else ''}")
+              f"{', gating 켬' if self.gating else ''}{noise_msg}")
         return True
 
     def reset(self) -> None:

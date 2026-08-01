@@ -71,12 +71,14 @@ def _non_negative_float_env(name: str, default: float) -> float:
     return value
 
 
-def _audio_device_env(name: str) -> int | str | None:
-    """PortAudio 장치 인덱스 또는 장치명 일부를 읽는다."""
+def _audio_device_env(
+    name: str, default: int | str | None = None
+) -> int | str | None:
+    """PortAudio 장치 인덱스 또는 장치명 일부를 읽는다. 미설정 시 default 반환."""
 
     raw_value = _optional_env(name)
     if raw_value is None:
-        return None
+        return default
     try:
         device_index = int(raw_value)
     except ValueError:
@@ -181,13 +183,21 @@ class Settings:
             ),
             kma_api_key=_optional_env("KMA_API_KEY"),
             audio_mode=audio_mode,
-            audio_input_device=_audio_device_env("AUDIO_INPUT_DEVICE"),
+            # 이 프로젝트는 ReSpeaker XVF3800을 마이크로 쓴다. 미설정 시 이름으로
+            # 자동 검색되도록 기본값을 "reSpeaker"로 둔다(USB 재연결로 인덱스가
+            # 바뀌어도 자동 대응). 다른 마이크를 쓰려면 .env에서 AUDIO_INPUT_DEVICE를
+            # 지정하면 이 기본값을 덮어쓴다.
+            # 원래 기본값: audio_input_device=_audio_device_env("AUDIO_INPUT_DEVICE"),
+            audio_input_device=_audio_device_env("AUDIO_INPUT_DEVICE", "reSpeaker"),
             audio_output_device=_audio_device_env("AUDIO_OUTPUT_DEVICE"),
             audio_sample_rate=_positive_integer_env(
                 "AUDIO_SAMPLE_RATE",
                 16000,
             ),
-            audio_channels=_positive_integer_env("AUDIO_CHANNELS", 1),
+            # ReSpeaker는 2채널(왼쪽=처리된 빔, 오른쪽=원본 mic0)로 열어 왼쪽만
+            # 사용하므로 기본값을 2로 둔다.
+            # 원래 기본값: audio_channels=_positive_integer_env("AUDIO_CHANNELS", 1),
+            audio_channels=_positive_integer_env("AUDIO_CHANNELS", 2),
             audio_chunk_seconds=_positive_float_env(
                 "AUDIO_CHUNK_SECONDS",
                 0.5,
