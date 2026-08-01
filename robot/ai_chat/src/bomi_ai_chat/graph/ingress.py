@@ -33,11 +33,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from langgraph.graph import END
 
 from bomi_ai_chat import policy
 from bomi_ai_chat.clock import clock
+from bomi_ai_chat.graph import output
 from bomi_ai_chat.state import ConvState, SpeechProposal
+
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 진입 라우팅
@@ -153,15 +158,65 @@ def note_interaction(state: ConvState) -> dict:
         return out
 
     # 양보 우선(yield-first): 어르신의 발화가 우리 발화보다 가치 있다 (CLAUDE.md §13).
-    # TODO(audio): tts_cancel(senior_id) 후 재생이 어디까지 갔는지 읽어온다.
+    # 양보 우선(yield-first): 어르신의 발화가 우리 발화보다 가치 있다 (CLAUDE.md §13).
     out["speaking"] = False
-
-    # TODO(output): sentences 와 spoken_prefix 로 말하지 못한 나머지를 계산해서
-    #   원래 우선순위로 다시 제안한다. 단 생존 확인 프로브는 예외로, 버리고
-    #   silence_level 만 리셋된 상태로 둔다(위 주의사항 참고).
-    out["interrupted_remainder"] = None
-
+    out["interrupted_remainder"] = _yield_playback(state)
     return out
+
+
+def _yield_playback(state: ConvState) -> SpeechProposal | None:
+    """재생을 멈추고, 말하지 못한 나머지를 재큐할 제안으로 만든다.
+
+    무엇을 하는가
+        재생 핸들을 취소하고, 그 핸들에게 '어디까지 말했는지'를 물어 나머지를
+        꺼낸다. 나머지가 있으면 원래 우선순위 그대로 다시 제안한다.
+
+    왜 state 가 아니라 핸들에게 묻는가  ★ 이 함수의 핵심
+        spoken_prefix 는 주인이 둘이다 — 재생 스레드와 checkpoint 된 state.
+        state 값은 그래프 실행 시점의 스냅샷이라, 그 사이 재생이 더 진행됐으면
+        낡아 있다. 낡은 값을 믿으면 이미 말한 문장을 다시 말한다.
+        진행 상황의 권위는 재생 스레드에 있다 (CLAUDE.md §13).
+
+    반환값
+        재큐할 SpeechProposal, 또는 None(재큐할 것이 없거나 재큐하면 안 될 때).
+
+    주의사항
+        생존 확인 프로브는 재개하지 '않는다'. 끼어든 것 자체가 프로브가 물으려던
+        것을 이미 증명했다. 재개하면 방금 대답한 사람에게 "괜찮으세요?"를 다시
+        묻는 로봇이 된다. barge-in 은 생존 증거다.
+    """
+    senior_id = state.get("senior_id") or ""
+    handle = output.TTS_HANDLES.get(senior_id)
+    context = output.SPEECH_CONTEXT.get(senior_id, {})
+
+    if handle is None:
+        # state 는 말하는 중이라는데 핸들이 없다. 재생기가 없는 환경이거나 이미
+        # 끝난 것이다. 취소할 것이 없으니 조용히 넘어간다.
+        return None
+
+    handle.cancel()
+    remaining = handle.remaining_sentences()
+    output.clear_speech_state(senior_id)
+
+    priority = context.get("priority")
+    if priority == "critical":
+        # 생존 확인 프로브. 나머지를 '일부러' 버린다.
+        logger.info("barge-in during a liveness probe; discarding the remainder — "
+                    "the interruption is the answer")
+        return None
+
+    if not remaining:
+        return None
+
+    return {
+        "intent": context.get("intent") or "companion",
+        "priority": priority or "medium",
+        "seed": " ".join(remaining),
+        # 원래 origin 에 표시를 남긴다. "왜 로봇이 이 말을 했는가"를 추적할 때
+        # 이것이 이어붙인 나머지임을 알 수 있어야 한다.
+        "origin": f"{context.get('origin', '')}|resumed",
+        "meta": {"resumed": True},
+    }
 
 
 def route_interaction(state: ConvState) -> str:

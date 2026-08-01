@@ -131,6 +131,10 @@ class ConvState(TypedDict, total=False):
     terse: bool
     # 이긴 제안에서 복사해온다. 순수하게 로깅과 사후 튜닝을 위한 값.
     speech_origin: str
+    # 이긴 제안의 우선순위. barge-in 으로 잘렸을 때 나머지를 '원래 우선순위로'
+    # 되돌리려면 필요하고, critical(생존 확인 프로브)은 아예 재개하지 않아야 하므로
+    # 그 판단의 근거이기도 하다 (CLAUDE.md §13).
+    speech_priority: Priority
 
     # ── 안전 (§9, §10) ──
     safety_level: Literal["T1", "T2", "T3", "T4", "none"]

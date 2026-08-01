@@ -17,10 +17,15 @@ def test_defaults_are_explicit():
     settings = load_settings()
 
     assert settings.audio_mode == "laptop"
-    assert settings.audio_input_device is None
+    # 입력 장치의 기본값은 S15P11E102-214 에서 "reSpeaker" 로 바뀌었다. USB 인덱스가
+    # 재부팅마다 달라져서 이름으로 잡도록 한 의도된 변경이다(config.py 주석 참고).
+    # 출력은 여전히 기본값이 없다 — 스피커는 장치 지정이 필수다.
+    assert settings.audio_input_device == "reSpeaker"
     assert settings.audio_output_device is None
     assert settings.audio_sample_rate == 16000
-    assert settings.audio_channels == 1
+    # 채널 기본값도 214 에서 2 로 바뀌었다. ReSpeaker 는 마이크 배열이라 스테레오로
+    # 잡아야 빔 제어가 동작한다.
+    assert settings.audio_channels == 2
     assert settings.audio_chunk_seconds == 0.5
     assert settings.audio_silence_threshold == 300.0
     assert settings.audio_silence_limit_seconds == 3.0
