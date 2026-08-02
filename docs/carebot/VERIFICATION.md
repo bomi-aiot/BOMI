@@ -312,6 +312,48 @@ occ.apply_backend_occupancy("senior-1", "AWAY", observed_at=<외출 시각>)
 - 하트비트가 한 번도 안 옴 → 알림은 안 가고 프로세스당 한 번 경고만 나옵니다. `MQTT_ENABLED` 와 라즈베리파이를 확인하십시오
 - **인사가 안 나갑니다.** 이건 정상입니다 — 판정하는 쪽(226)이 아직 없습니다
 
+### 2.8 계약 주도형 대화 — 온보딩·재질의 (209, 227)
+
+```bash
+cd robot/ai_chat && python -m pytest tests/test_contract_dialogue.py -v
+cd backend && ./gradlew test --tests "*RobotOnboarding*" --tests "*RobotClarification*"
+```
+
+**성공/실패의 기준은 "무엇이 확인으로 인정되는가"입니다.** 이것만 직접 확인해 보십시오.
+
+```python
+from bomi_ai_chat.graph import contract_dialogue as cd
+cd.read_affirmation("네")                 # True  — 확인
+cd.read_affirmation("아니요")             # False — 거절
+cd.read_affirmation("글쎄")               # None  — 다시 묻기
+cd.read_affirmation("오늘 날씨가 좋네")    # None  ← "네"가 걸리면 안 됩니다
+cd.read_affirmation("그래서 어제 병원에 갔는데 의사가 그러더라")  # None
+```
+
+| 결과 | 뜻 | 틀렸다면 |
+|---|---|---|
+| `True` | 확정한다 | 오탐이면 **동의한 적 없는 동의가 기록됩니다** |
+| `False` | 거절로 기록 | 오탐이면 딸린 질문이 영영 안 나옵니다 |
+| `None` | 다시 묻는다 | 이것이 애매할 때의 정답입니다 |
+
+**동의 판정에 LLM 이 쓰이면 실패입니다.** 대역 LLM 의 호출 횟수가 0 이어야 합니다 — `test_consent_is_never_decided_by_the_model` 이 그것을 봅니다.
+
+서버 쪽에서 확인할 것:
+
+| 상황 | 성공 | 실패했다면 |
+|---|---|---|
+| 건강정보 동의 전 `next` 호출 | 동의 질문이 먼저 내려옴 | 복약 질문이 내려오면 **계약 위반** |
+| 동의 거절 후 | 딸린 질문이 안 내려오고 세션 COMPLETED | 되물으면 거절을 무시한 것 |
+| 활성 후보 3건 | `active` 가 1건 | 여러 건이면 어르신이 연달아 심문받습니다 |
+| 복약 3필드 누락 | 응답 `missingFields` 1개, DB `missing_fields` 3개 | DB 도 1개면 나머지가 빈 채로 확정됩니다 |
+| 확인 없는 민감 답변 | `verification_status=UNVERIFIED`, `confirmed_at` **NULL** | 시각이 있으면 "동의했다"는 근거가 됩니다 |
+
+**실패의 모습 — 조용한 것들**:
+
+- 로봇이 `"GRANTED"` 나 `"{}"` 를 말한다 → 내부 값이 TTS 로 샜습니다(둘 다 회귀 테스트로 고정)
+- 필드명(`dose`)을 소리내어 읽는다 → 돌봄 로봇이 아니라 서식입니다
+- 백엔드가 죽었는데 온보딩이 진행된다 → **계약 없이 민감정보를 묻고 있습니다**
+
 ---
 
 ## 3. 지금 일부러 실패하는 것들 (정상)
@@ -327,7 +369,8 @@ occ.apply_backend_occupancy("senior-1", "AWAY", observed_at=<외출 시각>)
 | 보호자 알림 | 로그만 남음 (채널 미구현) | 211 |
 | 능동 발화 (로봇이 먼저 말 걸기) | 안 함 — `build_scheduler()` 를 부트스트랩이 호출하지 않음 | 실기 배선 |
 | 현관 인사 (배웅·환영) | **안 함** — 판정하는 쪽이 없음 | 226 |
-| 온보딩·재질의 | 안 함 — 백엔드 API 가 없음 | 227 → 209 |
+| 온보딩·재질의 | 코드는 완성, **실제 호출 미검증** | 227 머지 후 |
+| `memory`/`care_record` 최종 반영 | 후보가 CONFIRMED 에 머묾 | 별도 티켓 |
 
 로그에서 이런 경고가 보이면 **정상**입니다:
 

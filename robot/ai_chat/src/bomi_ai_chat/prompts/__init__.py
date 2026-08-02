@@ -4,6 +4,16 @@
 자연스러움 대부분이 여기서 결정되므로 반복이 값싸야 한다 (CLAUDE.md §16).
 """
 
-from bomi_ai_chat.prompts.builder import build_prompt, load_template
+from bomi_ai_chat.prompts.builder import (
+    build_extraction_prompt,
+    build_field_question_prompt,
+    build_prompt,
+    load_template,
+)
 
-__all__ = ["build_prompt", "load_template"]
+__all__ = [
+    "build_extraction_prompt",
+    "build_field_question_prompt",
+    "build_prompt",
+    "load_template",
+]

@@ -90,11 +90,13 @@
 | `graph/gate.py` | 능동 발화 게이트 (**206 에서 채움**) |
 | `graph/triage.py` | 안전 분류 (**210 에서 채움**) |
 | `graph/context.py` | 문맥 조회 + 인텐트 분류 |
-| `graph/handlers.py` | 7개 핸들러 (**3개 구현됨**) |
+| `graph/handlers.py` | 7개 핸들러 (**6개 구현됨**, `handle_emotional` 만 남음) |
 | `graph/output.py` | 정제 + 재생 시작 |
 | `graph/turn.py` | 반응형 한 턴 실행 |
 | `prompts/builder.py` | 프롬프트 조립 (순수 함수) |
 | `prompts/templates/*.md` | 실제 프롬프트 문구. **여기를 고치면 로봇 말투가 바뀐다** |
+| `graph/contract_dialogue.py` | **무엇을 LLM 에게 맡기지 않는가.** 확인 판정의 규칙 |
+| `backend_client/contract_client.py` | 온보딩·재질의 API. **실패하면 예외** (문맥 조회와 반대) |
 | `contracts/door.py` | 기기 경계를 넘는 메시지 형태. **여기를 고치는 것은 호환성 결정** |
 | `door/occupancy.py` | 재실 규칙. **"발화가 센서를 이긴다"가 여기서 시각 비교로 표현된다** |
 | `door/intake.py` | 문 이벤트 하나의 처리. 저장소가 두 개인 이유가 여기 적혀 있다 |

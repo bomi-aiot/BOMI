@@ -102,6 +102,9 @@ class ConvState(TypedDict, total=False):
     # 지금 진행 중인 대화. 최근 Raw 메시지를 어느 대화에서 가져올지 정한다.
     # 새 대화의 첫 턴에서는 None 이고, 그러면 최근 메시지가 비어서 온다.
     conversation_id: str | None
+    # 이 로봇의 id. 온보딩 세션을 '로봇에서' 시작할 때 서버가 요구한다
+    # (앱에서 시작한 세션은 robot_id 가 없어도 된다).
+    robot_id: str | None
 
     # ── 진입: 이 턴이 네 경로 중 어디에서 왔는가 (§6) ──
     #
@@ -159,6 +162,26 @@ class ConvState(TypedDict, total=False):
     # 로봇이 말하는 중 맞장구가 들어와서, 응답 없이 턴을 끝내야 할 때
     # note_interaction 이 설정한다. route_interaction 만 읽는다.
     is_backchannel: bool
+
+    # ── 계약 주도형 대화 (§12) ── 턴 사이에 유지된다
+    #
+    # 로봇이 방금 던진 '계약 질문'과 그 진행 상태. 다음 턴의 어르신 발화가 이 질문에
+    # 대한 답인지 판단하는 근거이며, 없으면 어르신의 대답이 그냥 잡담으로 흘러간다.
+    #
+    #   {"kind": "onboarding"|"clarification",
+    #    "session_id": str,        # onboarding
+    #    "candidate_id": str,      # clarification
+    #    "question_code": str,
+    #    "fields": ["dose"],       # 지금 받으려는 필드. 항상 하나다
+    #    "stage": "ask"|"confirm", # 묻는 중인가, 복창하고 확인받는 중인가
+    #    "value": {...},           # confirm 단계에서 확인받고 있는 값
+    #    "fact_type": str}
+    #
+    # 왜 state 에 두는가
+    #   checkpointer 가 어르신별로 저장하므로 턴을 넘어 살아남는다. localstore 에 또
+    #   두면 같은 사실이 두 곳에 생기고, 둘이 어긋나면 로봇이 이미 답한 질문을 다시
+    #   묻는다 (CLAUDE.md §17.3 — 아는 걸 다시 묻는 순간 몰입이 깨진다).
+    pending_contract: dict | None
 
     # ── 백엔드에서 온 컨텍스트 (§5, §8) ──
     #

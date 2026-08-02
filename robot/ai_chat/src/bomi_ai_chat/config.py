@@ -170,6 +170,14 @@ class Settings:
     backend_base_url: str
     backend_timeout_seconds: float
 
+    # 이 로봇의 id. 배포된 기기마다 다르므로 policy 가 아니라 여기다.
+    #
+    # 왜 필요한가
+    #   로봇에서 온보딩 세션을 '새로' 시작할 때 서버가 요구한다. 앱에서 시작한 세션을
+    #   이어받을 때는 필요 없다. 미설정이면 로봇이 온보딩을 시작하지 못하고, 그 사실을
+    #   로그로 남긴다(조용히 안 하지 않는다).
+    robot_id: str | None
+
     # ── MQTT: 현관 이벤트 구독  (CLAUDE.md §11, docs/mqtt/topic-convention.md) ──
     #
     # 왜 URL 한 개로 받는가
@@ -318,6 +326,7 @@ class Settings:
                 or "http://localhost:8080"
             ),
             backend_timeout_seconds=_positive_float_env("BACKEND_TIMEOUT_SECONDS", 1.5),
+            robot_id=_optional_env("ROBOT_ID"),
             mqtt_enabled=_bool_env("MQTT_ENABLED", False),
             mqtt_broker_url=_optional_env("MQTT_BROKER_URL", "") or "",
             mqtt_door_topic=(

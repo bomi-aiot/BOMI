@@ -284,3 +284,57 @@ def build_prompt(
     blocks.append(constraints)
 
     return "\n\n".join(block for block in blocks if block)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 계약 주도형 프롬프트  (CLAUDE.md §12)
+#
+# 위의 build_prompt 와 성격이 정반대다. 저것은 자연스럽게 말하도록 문맥을 넉넉히
+# 주고, 이것은 **자유를 뺏는다.** 수집 중인 단 하나의 필드, 허용되는 답변 형태,
+# 그 외에는 아무것도 묻지 말라는 지시.
+#
+# 그래서 기억·요약·문서를 넣지 않는다. 넣으면 모델이 대화를 하려 들고, 계약이 깨진다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def build_field_question_prompt(field: str, *, fact_type: str = "", hint: str = "") -> str:
+    """필드명 하나를 사람의 질문으로 바꾸는 프롬프트.
+
+    왜 필요한가
+        백엔드가 주는 것은 `"dose"` 라는 필드명이다. 그것을 소리내어 읽으면 돌봄
+        로봇이 아니라 서식이 된다. 짧은 우리말 질문 하나로 바꾸는 것이 로봇의 몫이다
+        (CLAUDE.md §12).
+
+    인자
+        field: 백엔드가 지정한 단 하나의 필드명.
+        fact_type: 무엇에 대한 것인지 (예: "MEDICATION"). 문맥을 조금만 준다.
+        hint: 사람이 읽을 수 있는 설명이 백엔드에서 왔으면 그것.
+
+    반환값
+        LLM 에 그대로 넘길 문자열. 순수 함수다.
+    """
+    parts = [f"필드 이름: {field}"]
+    if fact_type:
+        parts.append(f"무엇에 대한 것인지: {fact_type}")
+    if hint:
+        parts.append(f"참고: {hint}")
+    return load_template("contract_question.md").format(field_hint="\n".join(parts))
+
+
+def build_extraction_prompt(fields: list[str], utterance: str) -> str:
+    """어르신의 말에서 필요한 필드만 뽑는 프롬프트.
+
+    왜 생성 호출에 분류를 합치는가
+        턴당 생성 호출 1회가 예산이다 (CLAUDE.md §16). 값 추출을 위해 왕복을 하나 더
+        쓰면 음성 대화의 2초 예산이 무너진다. 그래서 이 호출이 그 턴의 유일한 호출이다.
+
+    왜 '없으면 넣지 말라'를 강조하는가
+        모델은 빈칸을 채우려는 성향이 있다. "한 알쯤 먹어요"에서 1 을 만들어내면,
+        어르신이 말한 적 없는 복약 용량이 기록된다. 그것이 이 흐름 전체가 막으려는
+        실패다. 애매하면 비우고, 비면 백엔드가 다시 묻게 한다.
+
+    반환값
+        LLM 에 그대로 넘길 문자열. 순수 함수다.
+    """
+    listed = "\n".join(f"- {field}" for field in fields) or "- (없음)"
+    return load_template("contract_extract.md").format(fields=listed, utterance=utterance)
