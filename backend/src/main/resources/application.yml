@@ -84,6 +84,42 @@ bomi:
     # 값은 seed-kim-sunja.sql 기준 김순자 UUID.
     sensor-to-senior:
       door_sensor: 10000000-0000-4000-8000-000000000001
+  # 의미 검색 벡터 스토어 (S15P11E102-218).
+  #
+  # host 가 비면 의미 검색이 꺼진 채로 뜬다. 지원되는 상태다 — 기억 조회가
+  # 키워드 x 중요도 x 최근성으로 내려앉을 뿐이고, 기동 로그에 남는다.
+  # 개발 노트북에 컨테이너가 없어도 앱은 떠야 한다.
+  qdrant:
+    host: ${QDRANT_HOST:}
+    # gRPC 포트다. 6333(REST)을 넣으면 프로토콜 오류가 네트워크 문제처럼 보인다.
+    grpc-port: ${QDRANT_GRPC_PORT:6334}
+    api-key: ${QDRANT_API_KEY:}
+    use-tls: ${QDRANT_USE_TLS:false}
+    # 임베딩 모델과 정확히 같아야 한다. 이 숫자가 pgvector 를 불가능하게 만든 값이다.
+    dimensions: ${QDRANT_DIMENSIONS:4096}
+    timeout-millis: ${QDRANT_TIMEOUT_MILLIS:1500}
+
+  # 임베딩 모델 (S15P11E102-218).
+  #
+  # ★ 기본값이 전부 꺼짐이다. 백엔드에서 유일하게 과금되는 외부 API 이고, 프로젝트
+  #   잔액이 프로토타입 시연까지 감당해야 한다. 기본값이 켜짐이면 테스트 실행·로컬
+  #   기동·CI 잡이 전부 돈을 쓴다. 켜는 것은 배포 env 한 줄이고, 소진된 잔액을
+  #   되돌리는 방법은 없다.
+  embedding:
+    enabled: ${EMBEDDING_ENABLED:false}
+    api-key: ${UPSTAGE_API_KEY:}
+    base-url: ${UPSTAGE_BASE_URL:https://api.upstage.ai/v1}
+    # 저장은 passage, 검색은 query. 섞으면 예외 없이 검색 품질만 조용히 나빠진다.
+    passage-model: ${UPSTAGE_PASSAGE_MODEL:embedding-passage}
+    query-model: ${UPSTAGE_QUERY_MODEL:embedding-query}
+    dimensions: ${EMBEDDING_DIMENSIONS:4096}
+    timeout-millis: ${EMBEDDING_TIMEOUT_MILLIS:1200}
+    # 한 행 = 과금 1회. 이것은 튜닝 값이 아니라 지출 상한이다.
+    sync-batch-size: ${EMBEDDING_SYNC_BATCH_SIZE:30}
+    # 배경 잡은 별도로 켠다. 시연 중에는 질의 임베딩만 돌고 백로그를 훑지 않게 한다.
+    sync-enabled: ${EMBEDDING_SYNC_ENABLED:false}
+    sync-interval-millis: ${EMBEDDING_SYNC_INTERVAL_MILLIS:300000}
+
   mqtt:
     enabled: ${MQTT_ENABLED:false}
     broker-url: ${MQTT_BROKER_URL:tcp://${MQTT_BROKER_HOST:localhost}:${MQTT_BROKER_PORT:1883}}
