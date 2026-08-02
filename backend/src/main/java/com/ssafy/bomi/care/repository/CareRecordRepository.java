@@ -12,6 +12,9 @@ public interface CareRecordRepository extends JpaRepository<CareRecord, UUID> {
     // 가디언 대시보드용 조회 (S15P11E102-221).
     List<CareRecord> findBySeniorId(UUID seniorId);
 
+    // 복약 자식 스케줄 조회 (S15P11E102-224).
+    List<CareRecord> findByParentRecordId(UUID parentRecordId);
+
     List<CareRecord> findBySeniorIdAndStatus(UUID seniorId, CareRecordStatus status);
 
     List<CareRecord> findBySeniorIdAndRecordTypeAndStatus(
