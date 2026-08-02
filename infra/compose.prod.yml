@@ -21,6 +21,57 @@ services:
     networks:
       - backend-net
 
+  # 의미 검색 전용 벡터 스토어 (S15P11E102-218).
+  #
+  # 왜 pgvector 가 아닌가 (실측)
+  #   Upstage solar-embedding-1-large 의 출력은 4096차원이다. pgvector 0.8.5 가
+  #   인덱싱할 수 있는 상한은 vector 2,000 / halfvec 4,000 차원이므로 4096 은 인덱스를
+  #   만들 수 없고, 남는 것은 인덱스 없는 순차 스캔뿐이다. 한국어 품질 때문에 Upstage 를
+  #   포기할 수 없다는 판단이라 저장소를 바꿨다.
+  #
+  # 왜 호스트 포트를 열지 않는가
+  #   Qdrant 는 기본 인증이 없다. 포트를 열면 어르신의 기억 벡터와 payload 가 인터넷에
+  #   그대로 노출된다. backend-net 은 internal: true 라 외부에서 닿지 않고, 붙는 것은
+  #   backend 하나뿐이다. mosquitto 만 8883 을 여는 것과 같은 기준이다.
+  #
+  # ★ Postgres 가 여전히 권위다. 이 컨테이너는 파생 인덱스이므로, 볼륨을 잃어도
+  #   embedding_status 부기 컬럼으로 전량 재색인이 된다(V5). 그래서 백업 대상이 아니다.
+  qdrant:
+    image: qdrant/qdrant:v1.18.3
+    container_name: bomi-qdrant
+    restart: unless-stopped
+    environment:
+      # 컨테이너 안에서만 닿지만, 키가 설정돼 있으면 요구한다. 네트워크 격리 하나에만
+      # 기대지 않는다 — 나중에 누가 컨테이너를 다른 네트워크에 붙이면 격리가 사라진다.
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+      # 로그를 조용하게. 기본 INFO 는 검색 한 건마다 한 줄을 남겨 다른 로그를 덮는다.
+      QDRANT__LOG_LEVEL: WARN
+    volumes:
+      - ${QDRANT_DATA_DIR:?QDRANT_DATA_DIR is required}:/qdrant/storage
+    healthcheck:
+      # /readyz 는 컬렉션 적재까지 끝났는지 본다. /healthz 는 프로세스만 확인한다.
+      #
+      # ★ CMD-SHELL 이 아니라 bash 를 직접 부른다. 이 이미지의 /bin/sh 는 dash 이고
+      #   dash 에는 /dev/tcp 가 없다. curl·wget·nc 도 전부 없어서(이미지에서 확인함)
+      #   남은 수단이 bash 의 /dev/tcp 뿐이다. CMD-SHELL 로 쓰면 항상 실패하고,
+      #   backend 의 depends_on: service_healthy 때문에 배포가 그대로 멈춘다.
+      #
+      # ★ 역슬래시가 두 개인 이유: YAML 이 겹따옴표 안에서 한 겹을 벗긴다. 한 개만
+      #   쓰면 YAML 이 그것을 '실제 개행'으로 바꿔버려서 HTTP 요청줄이 깨진다
+      #   (CRLF 가 아니라 LF 가 되고, printf 가 해석할 것이 남지 않는다).
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    mem_limit: 1g
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 20s
+    networks:
+      - backend-net
+
   backend:
     build:
       context: ..
@@ -30,6 +81,11 @@ services:
     restart: unless-stopped
     depends_on:
       postgres:
+        condition: service_healthy
+      # ★ service_started 가 아니라 service_healthy 다. Qdrant 는 기동 직후 잠깐
+      #   컬렉션을 적재하는데, 그 사이 요청은 실패한다. 백엔드가 그때 컬렉션을 만들려
+      #   하면 첫 기동에서만 조용히 실패하고 그 뒤로 의미 검색이 영원히 꺼진다.
+      qdrant:
         condition: service_healthy
     environment:
       BACKEND_PORT: 8080
@@ -47,6 +103,13 @@ services:
       MQTT_CLIENT_ID_PREFIX: bomi-backend-prod
       MQTT_USERNAME: ${MQTT_USERNAME:?MQTT_USERNAME is required}
       MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD is required}
+      # 의미 검색 (S15P11E102-218). gRPC 포트다 — 공식 Java 클라이언트가 gRPC 를 쓴다.
+      QDRANT_HOST: qdrant
+      QDRANT_GRPC_PORT: 6334
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      # ★ 이 키가 없으면 임베딩을 만들 수 없고, 의미 검색은 꺼진 채로 뜬다(키워드·중요도·
+      #   최근성 랭킹으로 계속 동작한다). 조용히 꺼지지 않고 기동 로그에 남는다.
+      UPSTAGE_API_KEY: ${UPSTAGE_API_KEY:-}
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:8080/actuator/health"]
       interval: 10s

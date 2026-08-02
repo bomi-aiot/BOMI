@@ -85,7 +85,7 @@ docker compose \
   up -d postgres
 ```
 
-## 4. 상태 및 pgvector 확인
+## 4. 상태 확인 (pgvector 는 켜지 않습니다)
 
 ```bash
 docker compose \
@@ -103,7 +103,32 @@ docker compose \
   "SELECT extversion FROM pg_extension WHERE extname = '\''vector'\'';"'
 ```
 
-정상이라면 컨테이너 상태는 `healthy`, 확장 버전은 `0.8.5`로 출력됩니다.
+정상이라면 컨테이너 상태는 `healthy`이고, **확장 버전은 아무것도 출력되지 않습니다(빈 줄).**
+
+`0.8.5`가 출력되면 누군가 `CREATE EXTENSION vector`를 실행한 것입니다. 의도된 상태가 아닙니다 — S15P11E102-218에서 의미 검색을 Qdrant로 옮겼고, pgvector는 4096차원을 인덱싱할 수 없습니다(상한은 `vector` 2,000 / `halfvec` 4,000). 켜져 있으면 검색 경로가 둘이 되고 그중 하나는 인덱스 없는 순차 스캔입니다. `infra/docker/postgres/init/001-enable-vector.sql`에 경위가 적혀 있습니다.
+
+이미지가 `pgvector/pgvector`인 것은 그대로입니다. 운영 중 PostgreSQL 이미지를 바꾸는 것이 확장 하나를 끄는 것보다 위험하기 때문입니다.
+
+### Qdrant 상태 확인
+
+```bash
+docker compose \
+  --env-file /home/ubuntu/bomi/secrets/production.env \
+  -f infra/compose.prod.yml \
+  ps qdrant
+
+docker inspect --format='{{.State.Health.Status}}' bomi-qdrant
+```
+
+`healthy`여야 합니다. 컬렉션은 백엔드가 기동할 때 만듭니다(`memory`, `conversation_summary`, 각각 4096차원). 호스트 포트를 열지 않으므로 대시보드는 밖에서 볼 수 없습니다. 안에서 확인하려면:
+
+```bash
+docker exec bomi-qdrant bash -c \
+  "exec 3<>/dev/tcp/127.0.0.1/6333 && \
+   printf 'GET /collections HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && cat <&3"
+```
+
+이미지에 `curl`·`wget`·`nc`가 없어서 `bash`의 `/dev/tcp`를 씁니다. `/bin/sh`는 dash이므로 `sh -c`로는 동작하지 않습니다.
 
 DB 포트가 호스트에 공개되지 않았는지도 확인합니다.
 
