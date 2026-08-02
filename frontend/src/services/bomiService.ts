@@ -9,12 +9,19 @@ import {
   mockRobotStatus,
   mockSchedules,
 } from "../mocks/data";
-import { httpGet, httpPost } from "./http";
+import { httpGet, httpPost, httpPut, httpDelete } from "./http";
 import { mapDashboard, type DashboardDto } from "./mappers/dashboard";
 import {
   mapFactCandidate,
   type FactCandidateDto,
 } from "./mappers/confirmationRequest";
+import { mapSchedule, type ScheduleDto } from "./mappers/schedule";
+import {
+  mapMedication,
+  mapMedicationResponse,
+  type MedicationDto,
+  type MedicationResponseDto,
+} from "./mappers/medication";
 import type {
   ActivitySummary,
   ConfirmationRequest,
@@ -1100,13 +1107,99 @@ class HttpBomiService extends MockBomiService {
     return mapFactCandidate(dto);
   }
 
+  async getSchedules(): Promise<Schedule[]> {
+    const dtos = await httpGet<ScheduleDto[]>(API_ENDPOINTS.schedules);
+    return dtos.map(mapSchedule);
+  }
+
+  async getMedications(): Promise<Medication[]> {
+    const dtos = await httpGet<MedicationDto[]>(API_ENDPOINTS.medications);
+    return dtos.map(mapMedication);
+  }
+
+  async getMedicationResponses(): Promise<MedicationResponse[]> {
+    const dtos = await httpGet<MedicationResponseDto[]>(
+      API_ENDPOINTS.medicationResponses,
+    );
+    return dtos.map(mapMedicationResponse);
+  }
+
+  async createMedication(input: CreateMedicationInput): Promise<Medication> {
+    const dto = await httpPost<MedicationDto>(API_ENDPOINTS.medications, input);
+    return mapMedication(dto);
+  }
+
+  async updateMedication(
+    id: string,
+    input: UpdateMedicationInput,
+  ): Promise<Medication> {
+    const dto = await httpPut<MedicationDto>(
+      `${API_ENDPOINTS.medications}/${id}`,
+      input,
+    );
+    return mapMedication(dto);
+  }
+
+  async toggleMedicationStatus(id: string): Promise<Medication> {
+    const dto = await httpPost<MedicationDto>(
+      `${API_ENDPOINTS.medications}/${id}/toggle-status`,
+    );
+    return mapMedication(dto);
+  }
+
+  async toggleMedicationReminder(id: string): Promise<Medication> {
+    const dto = await httpPost<MedicationDto>(
+      `${API_ENDPOINTS.medications}/${id}/toggle-reminder`,
+    );
+    return mapMedication(dto);
+  }
+
+  async deleteMedication(id: string): Promise<string> {
+    const res = await httpDelete<{ id: string }>(
+      `${API_ENDPOINTS.medications}/${id}`,
+    );
+    return res.id;
+  }
+
+  async createSchedule(input: CreateScheduleInput): Promise<Schedule> {
+    const dto = await httpPost<ScheduleDto>(API_ENDPOINTS.schedules, input);
+    return mapSchedule(dto);
+  }
+
+  async updateSchedule(
+    id: string,
+    input: UpdateScheduleInput,
+  ): Promise<Schedule> {
+    const dto = await httpPut<ScheduleDto>(
+      `${API_ENDPOINTS.schedules}/${id}`,
+      input,
+    );
+    return mapSchedule(dto);
+  }
+
   async getInitialData(): Promise<BomiInitialData> {
     const base = await super.getInitialData();
-    const [dashboard, confirmationRequests] = await Promise.all([
+    const [
+      dashboard,
+      confirmationRequests,
+      schedules,
+      medications,
+      medicationResponses,
+    ] = await Promise.all([
       this.getDashboard(),
       this.getConfirmationRequests(),
+      this.getSchedules(),
+      this.getMedications(),
+      this.getMedicationResponses(),
     ]);
-    return { ...base, dashboard, confirmationRequests };
+    return {
+      ...base,
+      dashboard,
+      confirmationRequests,
+      schedules,
+      medications,
+      medicationResponses,
+    };
   }
 }
 
