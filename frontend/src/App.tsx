@@ -52,9 +52,8 @@ function App() {
       case '/confirmation-requests':
         return <ConfirmationRequestsPage />
       case '/health':
-        return <HealthPage initialTab="health" onNavigate={navigate} />
       case '/medications':
-        return <HealthPage initialTab="medications" onNavigate={navigate} />
+        return <HealthPage onNavigate={navigate} />
       case '/schedules':
         return <SchedulesPage />
       default:

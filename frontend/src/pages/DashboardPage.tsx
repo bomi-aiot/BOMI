@@ -329,13 +329,13 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
         <div className="quick-action-grid">
           <button type="button" onClick={() => onNavigate('/elder/profile')}>
             <span aria-hidden="true">01</span>
-            <strong>어르신 정보 수정</strong>
-            <small>기본·건강·관심사 정보</small>
+            <strong>어르신 정보</strong>
+            <small>기본 정보 보기</small>
           </button>
           <button type="button" onClick={() => onNavigate('/conversation-preferences')}>
             <span aria-hidden="true">02</span>
-            <strong>맞춤 대화 정보</strong>
-            <small>보미가 기억할 내용 관리</small>
+            <strong>대화 정보</strong>
+            <small>보미가 학습한 내용 보기</small>
           </button>
           <button type="button" onClick={() => onNavigate('/medications')}>
             <span aria-hidden="true">03</span>
