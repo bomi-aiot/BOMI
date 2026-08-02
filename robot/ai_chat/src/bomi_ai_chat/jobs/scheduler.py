@@ -26,6 +26,7 @@ import logging
 
 from bomi_ai_chat import policy
 from bomi_ai_chat.jobs import ticks
+from bomi_ai_chat.notify import BackendGuardianNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,12 @@ def build_scheduler(senior_id: str, app=None):
         max_instances=1,
     )
     scheduler.add_job(
-        _guard(ticks.outbox_flush),
+        # ★ 실제 채널을 여기서 붙인다 (S15P11E102-232).
+        #
+        #   기본값은 LoggingGuardianNotifier 라 T1 이 로그로만 나가고 아무에게도
+        #   도달하지 않는다. 그 상태로 배포하면 큐는 정상으로 보이고 보호자는
+        #   아무것도 못 받는다 — 조용한 실패의 교과서적인 모양이다.
+        _guard(ticks.outbox_flush, BackendGuardianNotifier(senior_id)),
         "interval",
         seconds=policy.OUTBOX_FLUSH_INTERVAL_SEC,
         id="outbox_flush",
