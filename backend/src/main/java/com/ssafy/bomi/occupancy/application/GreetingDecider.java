@@ -1,6 +1,5 @@
 package com.ssafy.bomi.occupancy.application;
 
-import com.ssafy.bomi.care.domain.CareRecord;
 import com.ssafy.bomi.care.domain.CareRecordStatus;
 import com.ssafy.bomi.care.repository.CareRecordRepository;
 import com.ssafy.bomi.occupancy.domain.OccupancyDirection;
@@ -9,8 +8,6 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -35,8 +32,6 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class GreetingDecider {
-
-    private static final Logger log = LoggerFactory.getLogger(GreetingDecider.class);
 
     private static final String MEDICATION_SCHEDULE = "MEDICATION_SCHEDULE";
     private static final String MEDICATION_TAKEN = "MEDICATION_TAKEN";
@@ -111,25 +106,25 @@ public class GreetingDecider {
     /**
      * A dose scheduled for today with no matching taken-record.
      *
-     * <p>Reads {@code details.scheduledAt} because {@code care_record} has no timestamp
-     * column — the convention S15P11E102-224 established, and the reason 230 exists. Using
-     * a second convention here would give the dashboard and the greeting different answers
-     * about the same dose.</p>
+     * <p>"Any dose today" is a range query on {@code occurred_at} (S15P11E102-230). It used
+     * to parse {@code details.scheduledAt} out of every active record, because
+     * {@code care_record} had no timestamp column.</p>
      */
     private Optional<String> unconfirmedMedication(UUID seniorId, OffsetDateTime now) {
-        List<CareRecord> records = careRecordRepository
-            .findBySeniorIdAndStatus(seniorId, CareRecordStatus.ACTIVE);
-
-        boolean anyTakenToday = records.stream()
-            .filter(record -> MEDICATION_TAKEN.equals(record.getRecordType()))
-            .anyMatch(record -> isToday(record, now));
+        boolean anyTakenToday = !careRecordRepository.findByTypesBetween(
+            seniorId, CareRecordStatus.ACTIVE, List.of(MEDICATION_TAKEN),
+            startOfDay(now), startOfNextDay(now)).isEmpty();
         if (anyTakenToday) {
             return Optional.empty();
         }
 
-        boolean hasSchedule = records.stream()
-            .anyMatch(record -> MEDICATION_SCHEDULE.equals(record.getRecordType()));
+        boolean hasSchedule = !careRecordRepository
+            .findBySeniorIdAndStatusAndRecordTypeIn(
+                seniorId, CareRecordStatus.ACTIVE, List.of(MEDICATION_SCHEDULE))
+            .isEmpty();
         if (!hasSchedule) {
+            // 반복 스케줄은 occurred_at 이 없다(시간축의 한 점이 아니다). 그래서 여기만
+            // 범위 질의가 아니라 존재 확인이다 — 범위를 걸면 항상 0건이 나온다.
             return Optional.empty();
         }
 
@@ -138,26 +133,37 @@ public class GreetingDecider {
         return Optional.of("나가시기 전에 약은 드셨어요?");
     }
 
+    /**
+     * Today's appointment, if there is one.
+     *
+     * <p><b>This never fired before S15P11E102-230.</b> It looked for
+     * {@code details.scheduledAt}, and the write path
+     * ({@code CareRecordCommandService.createSchedule}) stores {@code startsAt}. Two
+     * conventions for the same idea, and nothing in the schema forced them to agree, so the
+     * mismatch stayed silent — the greeting simply fell through to "다녀오세요" every time.
+     * Both now feed one column.</p>
+     */
     private Optional<String> todaysAppointment(UUID seniorId, OffsetDateTime now) {
-        return careRecordRepository
-            .findBySeniorIdAndStatusAndRecordTypeIn(seniorId, CareRecordStatus.ACTIVE, SCHEDULE_TYPES)
+        return careRecordRepository.findByTypesBetween(
+                seniorId, CareRecordStatus.ACTIVE, SCHEDULE_TYPES,
+                startOfDay(now), startOfNextDay(now))
             .stream()
-            .filter(record -> isToday(record, now))
             .findFirst()
             .map(record -> "오늘 약속이 있으셨죠. 잊지 마세요.");
     }
 
-    private boolean isToday(CareRecord record, OffsetDateTime now) {
-        Object raw = record.getDetails() == null ? null : record.getDetails().get("scheduledAt");
-        if (!(raw instanceof String text) || text.isBlank()) {
-            return false;
-        }
-        try {
-            return OffsetDateTime.parse(text).toLocalDate().equals(now.toLocalDate());
-        } catch (RuntimeException error) {
-            log.debug("care record {} has an unparseable scheduledAt; not counting it",
-                record.getId());
-            return false;
-        }
+    /**
+     * The day boundary, taken from the offset of {@code now}.
+     *
+     * <p>The caller's {@code now} carries the senior's offset, so "today" means their
+     * today. Using UTC here would ask about yesterday's appointments for anyone who goes
+     * out before 09:00 Korean time.</p>
+     */
+    private static OffsetDateTime startOfDay(OffsetDateTime now) {
+        return now.toLocalDate().atStartOfDay().atOffset(now.getOffset());
+    }
+
+    private static OffsetDateTime startOfNextDay(OffsetDateTime now) {
+        return startOfDay(now).plusDays(1);
     }
 }

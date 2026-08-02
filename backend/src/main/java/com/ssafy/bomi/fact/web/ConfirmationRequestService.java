@@ -1,6 +1,7 @@
 package com.ssafy.bomi.fact.web;
 
 import com.ssafy.bomi.care.domain.CareRecord;
+import com.ssafy.bomi.care.domain.CareRecordTime;
 import com.ssafy.bomi.care.repository.CareRecordRepository;
 import com.ssafy.bomi.fact.domain.ClarificationReason;
 import com.ssafy.bomi.fact.domain.FactCandidate;
@@ -12,6 +13,7 @@ import com.ssafy.bomi.memory.domain.Memory;
 import com.ssafy.bomi.memory.domain.MemoryType;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
 import com.ssafy.bomi.user.repository.AppUserRepository;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -138,6 +140,10 @@ public class ConfirmationRequestService {
         }
         if (domain == FactTargetDomain.CARE_RECORD) {
             CareRecord record = CareRecord.create(candidate.getSeniorId(), candidate.getFactType(), value);
+            // 확인된 값이 시각을 품고 있으면 그것을 쓰고, 없으면 확인한 지금이다
+            // (S15P11E102-230). 어르신이 "어제 병원 다녀왔어"라고 한 것을 오늘 확인했다면
+            // 값 안의 어제가 맞다 — 확인 시각은 사건 시각이 아니다.
+            record.occurredAt(CareRecordTime.fromDetailsOrNow(value, OffsetDateTime.now()));
             CareRecord saved = careRecordRepository.save(record);
             candidate.materialize(saved.getId());
             return new Snapshot(previousStatus, "CARE_RECORD", saved.getId());

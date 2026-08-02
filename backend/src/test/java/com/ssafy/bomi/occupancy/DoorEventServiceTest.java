@@ -17,6 +17,7 @@ import com.ssafy.bomi.user.repository.AppUserRepository;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import java.io.IOException;
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
@@ -209,6 +210,53 @@ class DoorEventServiceTest {
             seniorId, Signal.DOOR_OPENED, now.plusSeconds(2), null);
 
         assertThat(outcome.greeting()).doesNotContain("약");
+    }
+
+    @Test
+    void theEscortGreetingMentionsTodaysAppointment() {
+        /*
+         * ★★ 이 인사는 S15P11E102-230 전까지 단 한 번도 나간 적이 없다.
+         *
+         * GreetingDecider 는 "오늘 약속"을 찾을 때 details.scheduledAt 을 읽었고,
+         * 일정을 쓰는 쪽(CareRecordCommandService.createSchedule)은 startsAt 을 넣었다.
+         * 같은 뜻의 규약이 둘이었는데 스키마가 둘을 맞춰줄 수 없었으므로, 어긋남이
+         * 조용했다 — 인사는 늘 "다녀오세요"로 흘러내렸고 아무도 몰랐다.
+         *
+         * 그래서 이 테스트는 일부러 '쓰는 쪽이 실제로 넣는' startsAt 으로 적는다.
+         * scheduledAt 으로 적으면 고쳐진 것을 검증하지 못한다.
+         */
+        // 신호 시각은 진짜 now 여야 한다. 현관 판정에는 상관 창(correlation window)이
+        // 있어서, 몇 시간 전 시각을 넣으면 두 신호가 짝지어지지 않고 판정 자체가 안 난다.
+        // 약속 시각만 오늘 안의 다른 시각으로 둔다.
+        careRecordRepository.save(CareRecord.create(seniorId, "APPOINTMENT",
+            Map.of("title", "내과 진료",
+                "startsAt", OffsetDateTime.now().truncatedTo(ChronoUnit.DAYS)
+                    .plusHours(14).plusMinutes(30).toString())));
+        OffsetDateTime now = OffsetDateTime.now();
+        service.accept(seniorId, Signal.MOTION, now, null);
+
+        DoorEventOutcome outcome = service.accept(
+            seniorId, Signal.DOOR_OPENED, now.plusSeconds(2), null);
+
+        assertThat(outcome.greeting()).contains("약속");
+    }
+
+    @Test
+    void tomorrowsAppointmentIsNotMentionedAtTheDoorToday() {
+        /*
+         * 범위 질의가 '오늘'로 좁혀지는지 본다. 내일 약속까지 말하면 현관 인사는
+         * 일정 브리핑이 되고, 어르신은 반쯤 나가 있는 채로 그걸 듣는다.
+         */
+        careRecordRepository.save(CareRecord.create(seniorId, "APPOINTMENT",
+            Map.of("title", "내과 진료",
+                "startsAt", OffsetDateTime.now().plusDays(1).toString())));
+        OffsetDateTime now = OffsetDateTime.now();
+        service.accept(seniorId, Signal.MOTION, now, null);
+
+        DoorEventOutcome outcome = service.accept(
+            seniorId, Signal.DOOR_OPENED, now.plusSeconds(2), null);
+
+        assertThat(outcome.greeting()).doesNotContain("약속");
     }
 
     @Test
