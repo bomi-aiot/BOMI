@@ -16,8 +16,8 @@
 import pytest
 
 from bomi_ai_chat.backend_client import ContextResult
+from bomi_ai_chat.graph import build, handlers, output
 from bomi_ai_chat.graph import context as context_node
-from bomi_ai_chat.graph import handlers, output
 from bomi_ai_chat.graph.build import build_graph
 from bomi_ai_chat.graph.turn import run_user_turn
 from bomi_ai_chat.localstore import db
@@ -78,6 +78,21 @@ class FakePlayer:
         return FakeHandle(sentences)
 
 
+class FakeConversationClient:
+    """대화 적재 대역. 올라간 턴을 순서대로 모은다.
+
+    순서를 보존하는 것이 중요하다 — 서버가 올라온 순서로 순번을 매기므로,
+    로봇이 로봇 발화를 먼저 올리면 기록상 로봇이 먼저 말한 것이 된다.
+    """
+
+    def __init__(self):
+        self.turns = []
+
+    def record_turn(self, senior_id, **fields):
+        self.turns.append({"seniorId": senior_id, **fields})
+        return fields.get("conversation_id") or "conversation-1"
+
+
 @pytest.fixture
 def wired(monkeypatch, tmp_path):
     """그래프 주변의 외부 의존을 전부 대역으로 바꾼다."""
@@ -87,9 +102,11 @@ def wired(monkeypatch, tmp_path):
     client = FakeContextClient()
     llm = FakeLLM()
     player = FakePlayer()
+    conversations = FakeConversationClient()
     context_node.set_client(client)
     handlers.set_llm(llm)
     output.set_player(player)
+    build.set_conversation_client(conversations)
 
     app = build_graph(checkpoint_path=str(tmp_path / "checkpoint.sqlite"))
     yield app, client, llm, player
@@ -97,6 +114,7 @@ def wired(monkeypatch, tmp_path):
     context_node.set_client(None)
     handlers.set_llm(None)
     output.set_player(None)
+    build.set_conversation_client(None)
     db.close_all()
 
 
