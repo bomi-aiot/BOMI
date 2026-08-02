@@ -120,6 +120,24 @@ public class OnboardingAnswer {
         this.updatedAt = this.confirmedAt;
     }
 
+    /**
+     * Records an answer that is not yet verified, leaving no confirmation trace.
+     *
+     * <p>Separate from {@link #confirm} because {@code confirmed_at} must stay null: a
+     * sensitive value that has not been read back and explicitly agreed to has not been
+     * confirmed, and a timestamp saying otherwise is the record that would later be cited
+     * as proof the senior agreed to a dose they never heard.</p>
+     *
+     * <p>Clears any previous confirmation too. Re-answering after a confirmation means
+     * the old agreement no longer describes the stored value.</p>
+     */
+    public void markUnverified() {
+        this.verificationStatus = AnswerVerificationStatus.UNVERIFIED;
+        this.confirmedByUserId = null;
+        this.confirmedAt = null;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     private static String requireText(String value, String field) {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(field + " must not be blank");

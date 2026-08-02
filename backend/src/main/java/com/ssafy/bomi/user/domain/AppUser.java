@@ -147,6 +147,18 @@ public class AppUser {
         this.preferredName = preferredName;
     }
 
+    /**
+     * Sets how the senior wants to be addressed.
+     *
+     * <p>Separate from {@link #updateProfile} because onboarding collects this field on
+     * its own — the PREFERRED_NAME question does not touch the legal name, and making the
+     * caller re-supply {@code name} to change a form of address invites overwriting it
+     * with a stale value.</p>
+     */
+    public void changePreferredName(String preferredName) {
+        this.preferredName = requireText(preferredName, "preferredName");
+    }
+
     public void changeEmail(String email) {
         this.email = email;
     }
