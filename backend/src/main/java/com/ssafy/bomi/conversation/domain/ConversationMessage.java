@@ -81,6 +81,21 @@ public class ConversationMessage {
     @Column(name = "priority", length = 20)
     private MessagePriority priority;
 
+    /**
+     * Whether this senior utterance was an orientation question ("what day is it?").
+     *
+     * <p>Counted into the T2 trend and <b>nowhere else</b>. Rising repetition is an
+     * early cognitive-decline signal, but it must never reach the prompt: a model told
+     * "asked 9 times already" lets that leak into its tone, and the tenth answer stops
+     * sounding as warm as the first. Splitting the two destinations is what makes both
+     * behaviours possible at once (CLAUDE.md §8).</p>
+     *
+     * <p>Nullable, and null is not false. Rows written before this column existed, and
+     * rows from channels that do not classify, genuinely do not know.</p>
+     */
+    @Column(name = "orientation_question")
+    private Boolean orientationQuestion;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -112,6 +127,34 @@ public class ConversationMessage {
             new ConversationMessage(conversationId, sequenceNo, role, content, occurredAt);
         message.triggerType = MessageTriggerType.USER;
         return message;
+    }
+
+    /**
+     * Attaches why this utterance happened, after the row was built.
+     *
+     * <p>The {@link #reactive} / {@link #proactive} factories cover the two shapes the
+     * conversation domain creates itself. This exists for the robot ingestion path, where
+     * the trigger arrives as data rather than as a choice of factory — the robot already
+     * decided, and re-deriving it from the text here would put the same judgement in two
+     * places.</p>
+     *
+     * <p>Priority stays null for reactive turns. Answering someone who just spoke never
+     * reaches the gate, so recording a priority would invent a decision nobody made.</p>
+     */
+    public void attachProvenance(MessageTriggerType triggerType, MessagePriority priority) {
+        this.triggerType = requireNonNull(triggerType, "triggerType");
+        this.priority = priority;
+    }
+
+    /**
+     * Marks a senior utterance as an orientation question.
+     *
+     * <p>The robot decides this — it already classified the turn. Re-analysing the text
+     * on the server would put the same judgement in two places, and a server that starts
+     * analysing conversation content soon does it for other purposes too.</p>
+     */
+    public void markOrientationQuestion(boolean orientationQuestion) {
+        this.orientationQuestion = orientationQuestion;
     }
 
     /**
