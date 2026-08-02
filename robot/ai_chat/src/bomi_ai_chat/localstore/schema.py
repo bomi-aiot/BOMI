@@ -63,6 +63,13 @@ CREATE TABLE IF NOT EXISTS runtime_state (
 _RUNTIME_STATE_ADDED_COLUMNS = (
     ("away_since", "REAL NOT NULL DEFAULT 0"),
     ("door_open_since", "REAL NOT NULL DEFAULT 0"),
+    # 안전 확인 질문의 마감 시각. 0 이면 대기 중인 확인이 없다.
+    #
+    # 왜 내구 저장소에 있는가
+    #   어르신이 확인 질문에 아예 대답하지 않으면 그래프는 다시 호출되지 않는다.
+    #   틱이 마감을 보려면 그래프 밖에서 읽을 수 있어야 하고, 재부팅을 넘어야 한다 —
+    #   증상을 말한 직후에 로봇이 재시작했다고 그 확인이 사라지면 안 된다.
+    ("safety_check_until", "REAL NOT NULL DEFAULT 0"),
 )
 
 # 게이트를 기다리는 발화 제안.

@@ -32,7 +32,7 @@ cd backend && ./gradlew test
 
 | 결과 | 판정 |
 |---|---|
-| 로봇 `228 passed` + `All checks passed` | ✅ |
+| 로봇 `405 passed` + `All checks passed` | ✅ |
 | 백엔드 `BUILD SUCCESSFUL` | ✅ |
 | 하나라도 실패 | ❌ — 아래에서 어느 영역인지 좁힌다 |
 
@@ -354,6 +354,54 @@ cd.read_affirmation("그래서 어제 병원에 갔는데 의사가 그러더라
 - 필드명(`dose`)을 소리내어 읽는다 → 돌봄 로봇이 아니라 서식입니다
 - 백엔드가 죽었는데 온보딩이 진행된다 → **계약 없이 민감정보를 묻고 있습니다**
 
+### 2.9 안전 트리아지 (210)
+
+```bash
+cd robot/ai_chat && python -m pytest tests/test_safety_triage.py -v
+```
+
+**성공/실패의 기준은 "무엇을 부르고 무엇을 넘기는가"입니다.**
+
+```python
+from bomi_ai_chat.graph import triage
+triage.safety_triage({"senior_id": "s1", "user_input": "무릎이 아파"})["safety_level"]
+```
+
+| 발화 | 기대 | 틀렸다면 |
+|---|---|---|
+| `"무릎이 아파"` | `none` | `confirm` 이면 **가장 흔한 말마다 보호자를 부릅니다** |
+| `"가슴이 아파"` | `confirm` | `none` 이면 놓칩니다 |
+| `"안 아파"` | `none` | `confirm` 이면 괜찮다는 사람 때문에 보호자가 호출됩니다 |
+| `"어제 가슴이 아팠어"` | `none` | — |
+| `"어제부터 가슴이 아파"` | `confirm` | `none` 이면 이틀째 아픈 분이 걸러집니다 |
+| `"넘어졌어요"` | `confirm` | `none` 이면 시제 어미로 억제한 것입니다 |
+| `"아들한테 전화해줘"` | `T1` | 확인 질문을 하면 이미 확인한 것을 또 묻는 것입니다 |
+| `"이제 그만 살고 싶어"` | `T1` | — |
+| `"더워 죽겠네"` | `none` | `T1` 이면 강조 표현을 자해로 읽은 것입니다 |
+
+확인 질문 이후:
+
+| 어르신의 답 | 기대 |
+|---|---|
+| `"아니야 괜찮아"` | `none` — 취소 |
+| `"글쎄"`, `"몰라"`, 다른 이야기 | **`T1`** — 애매하면 부릅니다 |
+| (무응답 90초) | **`T1`** — `silence_tick` 이 부릅니다 |
+
+outbox 에서 확인할 것:
+
+```python
+from bomi_ai_chat.localstore import outbox
+outbox.pending_count()      # T1 적재 직후 1
+```
+
+| 확인 | 성공 |
+|---|---|
+| 네트워크 차단 중 flush | 대기 건수가 **줄지 않음** (버려지지 않는다) |
+| payload | `occupancy`·`rest_state` 포함, **발화 원문 없음** |
+| 어르신에게 간 말 | 진단·티어 이름 없음 |
+
+**정상인 경고 하나**: `self-harm marker list has not been human-reviewed yet` — 판별기는 동작하며, 목록 검토가 남았다는 뜻입니다(PROGRESS §2.2).
+
 ---
 
 ## 3. 지금 일부러 실패하는 것들 (정상)
@@ -364,7 +412,7 @@ cd.read_affirmation("그래서 어제 병원에 갔는데 의사가 그러더라
 |---|---|---|
 | "약 먹었어" 라고 말하기 | **정상 처리됨** (206) | — |
 | "외로워" 라고 말하기 | 대답 없음 (`handle_emotional` 미구현) | 별도 티켓 |
-| "가슴이 아파" 라고 말하기 | **에스컬레이션 안 함** | 210 |
+| "가슴이 아파" 라고 말하기 | **정상 처리됨** (210) | — |
 | 어제 얘기 참조 기대 | 잘 안 됨 (키워드 매칭뿐) | 218 |
 | 보호자 알림 | 로그만 남음 (채널 미구현) | 211 |
 | 능동 발화 (로봇이 먼저 말 걸기) | 안 함 — `build_scheduler()` 를 부트스트랩이 호출하지 않음 | 실기 배선 |
@@ -375,7 +423,7 @@ cd.read_affirmation("그래서 어제 병원에 갔는데 의사가 그러더라
 로그에서 이런 경고가 보이면 **정상**입니다:
 
 ```
-safety triage detector 'self_harm' is NOT IMPLEMENTED (S15P11E102-210)
+self-harm marker list has not been human-reviewed yet (HANDOFF §7)
 guardian notification not delivered (no channel configured)
 semantic search unavailable; memories ranked by keyword overlap...
 ```

@@ -140,6 +140,7 @@ def build_graph(checkpoint_path: str | None = None):
     g.add_node("backend_command", ingress.backend_command)
     g.add_node("proactive_gate", proactive_gate)
     g.add_node("safety_triage", triage.safety_triage)
+    g.add_node("safety_confirm", triage.safety_confirm)
     g.add_node("escalation", triage.escalation)
     g.add_node("context_read", context.context_read)
     g.add_node("classify_intent", context.classify_intent)
@@ -189,9 +190,16 @@ def build_graph(checkpoint_path: str | None = None):
     g.add_conditional_edges(
         "safety_triage",
         triage.route_triage,
-        {"escalation": "escalation", "context_read": "context_read"},
+        {
+            "escalation": "escalation",
+            # 확인 질문도 문맥 조회와 LLM 을 건너뛴다. "가슴이 아파" 직후에 로봇이
+            # 무슨 말을 할지가 네트워크 상태에 달려서는 안 된다.
+            "safety_confirm": "safety_confirm",
+            "context_read": "context_read",
+        },
     )
     g.add_edge("escalation", "response_shaper")
+    g.add_edge("safety_confirm", "response_shaper")
 
     # ── 공통 파이프라인 ──────────────────────────────────────────────────────
     g.add_edge("context_read", "classify_intent")
