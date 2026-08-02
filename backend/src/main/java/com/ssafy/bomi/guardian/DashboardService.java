@@ -2,6 +2,7 @@ package com.ssafy.bomi.guardian;
 
 import com.ssafy.bomi.care.domain.CareRecord;
 import com.ssafy.bomi.care.domain.CareRecordStatus;
+import com.ssafy.bomi.care.domain.NotificationTier;
 import com.ssafy.bomi.care.repository.CareRecordRepository;
 import com.ssafy.bomi.conversation.domain.ConversationSummary;
 import com.ssafy.bomi.conversation.repository.ConversationSummaryRepository;
@@ -49,6 +50,8 @@ public class DashboardService {
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
     private static final String SENIOR_USER_TYPE = "SENIOR";
     private static final Set<String> SCHEDULE_TYPES = Set.of("APPOINTMENT", "PERSONAL_SCHEDULE");
+    /** 로봇이 올린 보호자 알림의 기록 타입 (S15P11E102-211). */
+    private static final String GUARDIAN_ALERT_TYPE = "GUARDIAN_ALERT";
 
     /** 확인요청 목록에 노출할 대기 계열 상태. (P0 필드매핑 A-3) */
     private static final List<FactCandidateStatus> PENDING_STATUSES = List.of(
@@ -270,6 +273,32 @@ public class DashboardService {
                     m.getFirstObservedAt()));
         }
 
+        // 로봇이 올린 알림. T1 과 T2 가 화면에서 구분되어야 한다 (S15P11E102-211).
+        //
+        // 왜 활동 피드에 섞는가
+        //   보호자가 보는 시간순 흐름이 이미 여기다. 알림만 따로 두면 "오늘 무슨 일이
+        //   있었나"를 두 곳에서 읽어야 하고, 그 둘의 시간 순서를 사람이 맞춰야 한다.
+        //
+        // 구분은 statusLevel 로 한다. T1 은 지금 조치가 필요한 것이고, T2 는 추세다.
+        // 둘을 같은 무게로 보여주면 매일 오는 요약이 응급을 가린다 (CLAUDE.md §9).
+        for (CareRecord alert : careRecordRepository.findBySeniorIdAndRecordTypeAndStatus(
+                seniorId, GUARDIAN_ALERT_TYPE, CareRecordStatus.ACTIVE)) {
+            NotificationTier tier = alert.getNotificationTier();
+            if (tier == null) {
+                continue;
+            }
+            OffsetDateTime at = alertTime(alert);
+            merged.add(new Timed(
+                    new ActivityDto(
+                            alert.getId().toString(),
+                            tier == NotificationTier.T1 ? "확인이 필요해요" : "하루 요약",
+                            alertSummary(alert, tier),
+                            iso(at),
+                            "로봇",
+                            tier == NotificationTier.T1 ? "URGENT" : "INFO"),
+                    at));
+        }
+
         return merged.stream()
                 .sorted(Comparator.comparing(Timed::at, Comparator.nullsLast(Comparator.reverseOrder())))
                 .limit(5)
@@ -352,6 +381,51 @@ public class DashboardService {
         }
         Object v = map.get(key);
         return v == null ? null : v.toString();
+    }
+
+    /**
+     * 알림이 일어난 시각. care_record 에 시각 컬럼이 없어 details 에서 읽는다.
+     *
+     * <p>로봇은 {@code ts}(epoch 초)를, 일일 요약은 {@code metricDate}를 싣는다.
+     * 둘 다 없으면 null 을 돌려주고, 정렬에서 맨 뒤로 밀린다 — 시각을 지어내면
+     * 어제 알림이 오늘 맨 위에 뜬다.</p>
+     */
+    private static OffsetDateTime alertTime(CareRecord alert) {
+        Object ts = alert.getDetails() == null ? null : alert.getDetails().get("ts");
+        if (ts instanceof Number epochSeconds) {
+            return OffsetDateTime.ofInstant(
+                java.time.Instant.ofEpochSecond(epochSeconds.longValue()), SEOUL);
+        }
+        String metricDate = str(alert.getDetails(), "metricDate");
+        if (metricDate != null) {
+            try {
+                return LocalDate.parse(metricDate).atStartOfDay(SEOUL).toOffsetDateTime();
+            } catch (RuntimeException ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 보호자가 한 줄로 읽을 요약.
+     *
+     * <p>원문 발화는 애초에 payload 에 없다(로봇이 보내지 않는다). 여기서도 details 를
+     * 통째로 펼치지 않는다 — 필드가 늘어날 때마다 화면에 알 수 없는 값이 새는 경로가
+     * 된다. 보호자에게 필요한 것은 "가서 봐 주세요"이지 진단 근거가 아니다.</p>
+     */
+    private static String alertSummary(CareRecord alert, NotificationTier tier) {
+        String reason = str(alert.getDetails(), "reason");
+        if (tier == NotificationTier.T1) {
+            return switch (reason == null ? "" : reason) {
+                case "no_response" -> "한참 대답이 없으셨어요.";
+                case "not_returned" -> "나가신 뒤 오래 돌아오지 않으셨어요.";
+                case "self_harm_override" -> "마음이 많이 힘드신 것 같아요.";
+                case "explicit_request" -> "직접 연락을 요청하셨어요.";
+                default -> "확인이 필요한 일이 있었어요.";
+            };
+        }
+        return "오늘 하루 요약이 도착했어요.";
     }
 
     private static String iso(OffsetDateTime value) {

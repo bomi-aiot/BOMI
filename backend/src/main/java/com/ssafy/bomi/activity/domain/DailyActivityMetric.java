@@ -99,6 +99,24 @@ public class DailyActivityMetric {
     @Column(name = "outing_count")
     private Short outingCount;
 
+    /**
+     * How many times the senior asked an orientation question ("what day is it?").
+     *
+     * <p>Rising repetition is an early cognitive-decline signal. Like every metric here
+     * it is nullable, and null means "not measured", not "never asked".</p>
+     */
+    @Column(name = "orientation_question_repeat_count")
+    private Short orientationQuestionRepeatCount;
+
+    /**
+     * When the guardian received this day's summary, or null.
+     *
+     * <p>Separate from the row existing. Aggregating and sending are different acts,
+     * and only the second one must never happen twice.</p>
+     */
+    @Column(name = "summary_sent_at")
+    private OffsetDateTime summarySentAt;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -143,6 +161,34 @@ public class DailyActivityMetric {
     public void recordMoodAndOutings(Short moodScore, Short outingCount) {
         this.moodScore = moodScore;
         this.outingCount = outingCount;
+    }
+
+    /**
+     * Records how many times the senior asked an orientation question today.
+     *
+     * <p>Rising repetition is an early cognitive-decline signal. It belongs to the T2
+     * trend and to nothing else — never to a prompt, where it would leak into the
+     * robot's tone (CLAUDE.md §8).</p>
+     */
+    public void recordOrientationRepeats(Short orientationQuestionRepeatCount) {
+        this.orientationQuestionRepeatCount = orientationQuestionRepeatCount;
+    }
+
+    /**
+     * Marks the day's summary as delivered to the guardian.
+     *
+     * <p>Aggregation is idempotent through the unique constraint, but <b>sending is a
+     * separate side effect</b> and needs its own marker. Batches get re-run — server
+     * restarts, manual triggers, a scheduler firing twice — and a guardian who receives
+     * the same summary twice starts skimming, which is how a real alert gets missed.</p>
+     */
+    public void markSummarySent(OffsetDateTime sentAt) {
+        this.summarySentAt = sentAt;
+    }
+
+    /** True when the guardian has already received this day's summary. */
+    public boolean isSummarySent() {
+        return summarySentAt != null;
     }
 
     private static <T> T requireNonNull(T value, String field) {
