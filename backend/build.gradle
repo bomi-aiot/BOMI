@@ -34,3 +34,18 @@ dependencies {
 }
 
 tasks.named('test') { useJUnitPlatform() }
+
+// 온보딩 질문 세트를 docs/ 에서 가져와 클래스패스에 넣는다.
+//
+// 왜 복사본을 커밋하지 않는가
+//   이 파일은 앱·로봇·백엔드가 공유하는 계약이고, 문서 트리가 유일한 출처다.
+//   backend/src/main/resources 에 사본을 두면 문구가 바뀔 때 한쪽만 갱신되고,
+//   그것이 동의 문구라면 계약 위반이 된다. 빌드가 매번 가져오면 갈라질 수 없다.
+//
+// 왜 런타임에 docs/ 를 직접 읽지 않는가
+//   배포는 jar 하나이고 그 안에 docs/ 가 없다. 클래스패스 리소스여야 한다.
+processResources {
+    from("${rootDir}/../docs/database/onboarding-question-set-v1.json") {
+        into 'onboarding'
+    }
+}
