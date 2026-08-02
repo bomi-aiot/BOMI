@@ -157,6 +157,14 @@ def silence_tick(senior_id: str, app) -> None:
     # 써야 하므로 캐시된 문맥에서 가져온다. 없으면 창이 없는 것으로 취급된다.
     state["ctx"] = context_cache.load(senior_id) or {}
 
+    # ★ 안전 확인이 먼저다. 다른 무엇보다도.
+    #
+    #   "가슴이 아파" 뒤의 침묵은 예상된 부재가 아니다. quiet hours 든 RESTING 이든
+    #   상관없다 — 아래 _is_absence_expected 를 먼저 태우면, 증상을 말한 어르신이
+    #   밤이라는 이유로 조용히 걸러진다.
+    if _escalate_unanswered_safety_check(senior_id, state):
+        return
+
     if _is_absence_expected(state):
         return
 
@@ -228,6 +236,48 @@ def _rung_for(elapsed: float, rest_state: object) -> int:
         if elapsed < threshold:
             return index - 1
     return len(policy.SILENCE_LADDER_SEC) + 1
+
+
+def _escalate_unanswered_safety_check(senior_id: str, state: ConvState) -> bool:
+    """확인 질문에 답이 없는 채로 마감이 지났는가. 지났으면 보호자를 부른다.
+
+    ★ 왜 이 검사가 필요한가
+        트리아지는 증상 표현을 들으면 확인 질문 하나를 던진다("많이 불편하세요?").
+        어르신이 답하면 다음 턴에서 판정된다. **답하지 않으면 그 턴이 오지 않는다.**
+
+        그래서 그래프 밖에서 마감을 봐야 한다. 이 검사가 없으면 "가슴이 아파"라고
+        말하고 쓰러진 어르신이 확인 질문만 받고 잊힌다 — 이 시스템이 막으려는
+        바로 그 실패다.
+
+    왜 침묵 사다리보다 앞인가
+        사다리는 예상된 부재(밤, 외출, 휴식)를 걸러낸다. 증상을 말한 뒤의 침묵에는
+        그 필터를 적용하면 안 된다. 새벽 3시에 "숨이 안 쉬어져"라고 말한 뒤의 침묵은
+        수면이 아니다.
+
+    반환값
+        True  -> 에스컬레이션했다. 호출부는 이번 틱을 여기서 끝낸다.
+        False -> 대기 중인 확인이 없거나 아직 마감 전이다.
+    """
+    deadline = float(state.get("safety_check_until") or 0.0)
+    if deadline <= 0.0:
+        return False
+
+    if clock.now() < deadline:
+        return False
+
+    runtime_store.save(senior_id, safety_check_until=0.0)
+    outbox.enqueue("T1", {
+        "reason": "emergency",
+        # 어떻게 여기까지 왔는지를 남긴다. 보호자 화면과 사후 튜닝이 함께 본다.
+        "confirmed_by": "no_reply_to_safety_check",
+        "occupancy": state.get("occupancy"),
+        "rest_state": state.get("rest_state"),
+        "ts": clock.now(),
+    })
+    logger.warning(
+        "the senior did not answer the safety confirmation within %.0fs; T1 queued",
+        policy.SAFETY_CONFIRMATION_TIMEOUT_SEC)
+    return True
 
 
 def _send_probe(senior_id: str, level: int, elapsed: float, app) -> None:

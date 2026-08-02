@@ -31,7 +31,7 @@
 |---|---|---|
 | 1 | `graph/turn.py` | STT 텍스트를 받아 그래프를 호출. 지연 측정 시작 |
 | 2 | `graph/ingress.py` `note_interaction` | 사다리 리셋, occupancy=HOME, **barge-in 판단** |
-| 3 | `graph/triage.py` `safety_triage` | 안전 분류 (**지금 미구현 — 항상 통과**) |
+| 3 | `graph/triage.py` `safety_triage` | 안전 분류. T1 이면 여기서 파이프라인을 벗어난다 |
 | 4 | `graph/context.py` `context_read` | 백엔드에서 문맥 조회, 실패 시 캐시 |
 | 5 | `graph/context.py` `classify_intent` | 로컬 규칙으로 인텐트 결정 (LLM 안 씀) |
 | 6 | `graph/handlers.py` `_generate` | **이 턴의 유일한 LLM 호출** |
@@ -88,7 +88,7 @@
 | `graph/build.py` | 배선만 |
 | `graph/ingress.py` | 진입 **4경로** + barge-in. `door_event` 가 왜 END 로 끝나는지 여기 |
 | `graph/gate.py` | 능동 발화 게이트 (**206 에서 채움**) |
-| `graph/triage.py` | 안전 분류 (**210 에서 채움**) |
+| `graph/triage.py` | 안전 분류. **부정을 먼저, 통증은 부위로, 애매하면 부른다** |
 | `graph/context.py` | 문맥 조회 + 인텐트 분류 |
 | `graph/handlers.py` | 7개 핸들러 (**6개 구현됨**, `handle_emotional` 만 남음) |
 | `graph/output.py` | 정제 + 재생 시작 |

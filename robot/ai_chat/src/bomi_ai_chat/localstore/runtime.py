@@ -43,6 +43,8 @@ _DEFAULTS: dict[str, Any] = {
     # occupancy_observed_at 과 다르다 — schema.py 의 주석 참고.
     "away_since": 0.0,
     "door_open_since": 0.0,
+    # 안전 확인 질문의 마감 시각. 0 이면 대기 중인 확인이 없다 (schema.py 참고).
+    "safety_check_until": 0.0,
 }
 
 # 외부에서 갱신할 수 있는 필드. 오타가 조용히 무시되지 않도록 화이트리스트로 둔다.

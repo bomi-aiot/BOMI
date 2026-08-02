@@ -153,9 +153,20 @@ class ConvState(TypedDict, total=False):
     speech_priority: Priority
 
     # ── 안전 (§9, §10) ──
-    safety_level: Literal["T1", "T2", "T3", "T4", "none"]
+    #
+    # "confirm" 은 티어가 아니라 중간 상태다. 증상 표현을 들었지만 아직 부르지 않았고,
+    # 확인 질문 하나를 던진 턴이다. 키워드 한 번에 보호자를 부르지 않기 위한 장치다.
+    safety_level: Literal["T1", "T2", "T3", "T4", "confirm", "none"]
     # T1 일 때만 채워진다. outbox 로 넘기며, 프롬프트에는 절대 넣지 않는다.
     escalation: dict | None
+    # 확인 질문을 던져두고 답을 기다리는 상태. 다음 턴의 발화가 그 답이다.
+    #
+    #   {"reason": "emergency", "asked_at": float, "expires_at": float}
+    #
+    # 마감까지 답이 없으면 silence_tick 이 에스컬레이션한다. 어르신이 아예 대답하지
+    # 않으면 이 상태는 그래프로 돌아오지 않기 때문이다 — 그리고 증상을 말한 뒤의
+    # 침묵은 안심할 이유가 아니라 더 나쁜 신호다.
+    pending_safety_check: dict | None
 
     # ── 라우팅 ──
     intent: Intent
