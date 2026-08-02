@@ -60,8 +60,8 @@ def memory_write(state: ConvState) -> dict:
     """턴을 기록하고 last_spoke_at 을 찍는다.
 
     무엇을 하는가
-        로봇의 발화를 저장하고, 사실 추출을 큐에 넣고, 쿨다운 게이트가 읽는 타임스탬프를
-        찍는다.
+        어르신의 발화와 로봇의 발화를 백엔드에 남기고, 쿨다운 게이트가 읽는
+        타임스탬프를 찍는다.
 
     왜 추출을 인라인이 아니라 큐로 넘기는가
         추출은 임베딩 API 호출을 뜻하고, 어르신이 응답을 기다리는 동안 어제의 기억을
@@ -72,22 +72,19 @@ def memory_write(state: ConvState) -> dict:
         build.py, response_shaper 다음 emit 앞.
 
     반환값
-        {"last_spoke_at": ...}
+        {"last_spoke_at": ..., "conversation_id": ...}
 
     주의사항
         - 추출된 건강·복약 사실은 fact_candidate 로 가며, care_record 로 직행하지
           않는다 (CLAUDE.md §8).
-        - 이벤트 로그 쓰기는 매 턴 쓰지 말고 버퍼링한다. 이 하드웨어의 저장 매체는
-          microSD 이고, 끊임없는 작은 쓰기가 그것을 죽인다 (CLAUDE.md §18).
+        - 대화 적재는 실패해도 턴을 막지 않는다. 통계 때문에 대화를 망치지 않는다.
     """
     from bomi_ai_chat.clock import clock
     from bomi_ai_chat.localstore import runtime as runtime_store
 
-    # TODO(backend_client): trigger_type 과 priority 를 붙여 conversation_message 를
-    #   추가한다. 사후에 "왜 로봇이 새벽 3시에 말했는가"에 답하고, 표현 다양화를 위한
-    #   최근 문구를 조회할 수 있게 된다 (CLAUDE.md §19). → S15P11E102-211
     # TODO(jobs): 사실 추출을 큐에 넣고, 일간 지표를 버퍼링한다.
     now = clock.now()
+    conversation_id = _record_turn(state, now)
 
     # 내구 저장소에도 찍는다.
     #
@@ -99,7 +96,115 @@ def memory_write(state: ConvState) -> dict:
     if senior_id:
         runtime_store.save(senior_id, last_spoke_at=now)
 
-    return {"last_spoke_at": now}
+    out: dict = {"last_spoke_at": now}
+    if conversation_id:
+        # 다음 턴이 같은 대화에 이어 붙도록 서버가 배정한 id 를 들고 간다.
+        out["conversation_id"] = conversation_id
+    return out
+
+
+# 대화 적재 클라이언트. LLM 과 같은 이유로 지연 생성한다 — import 시점에 만들면
+# 백엔드 주소가 없는 환경에서 모듈을 불러오는 것만으로 실패한다.
+_CONVERSATION_CLIENT = None
+
+
+def _conversation_client():
+    global _CONVERSATION_CLIENT
+    if _CONVERSATION_CLIENT is None:
+        from bomi_ai_chat.backend_client import BackendConversationClient
+
+        _CONVERSATION_CLIENT = BackendConversationClient()
+    return _CONVERSATION_CLIENT
+
+
+def set_conversation_client(client) -> None:
+    """대화 적재 클라이언트를 교체한다. 테스트와 부트스트랩에서 쓴다."""
+    global _CONVERSATION_CLIENT
+    _CONVERSATION_CLIENT = client
+
+
+def _record_turn(state: ConvState, now: float) -> str | None:
+    """이 턴을 백엔드에 남긴다. 실패해도 턴을 막지 않는다.
+
+    무엇을 올리는가
+        어르신이 말한 턴이면 두 행(어르신 + 로봇), 능동 턴이면 로봇 한 행.
+        T2 요약의 발화량 지표가 이 행들에서 나온다 (S15P11E102-211).
+
+    ★ 왜 어르신 발화를 먼저 올리는가
+        서버가 순번을 매기므로 올린 순서가 곧 기록 순서다. 로봇 발화를 먼저 올리면
+        나중에 대화를 읽을 때 로봇이 먼저 말한 것으로 보인다.
+
+    ★ 왜 실패를 삼키는가
+        발화량 지표는 유실돼도 생명에 지장이 없다. 기록을 남기지 못했다고 어르신에게
+        대답을 못 하게 만들면, 통계 때문에 대화를 망치는 것이다.
+        같은 이유로 outbox 에 넣지 않는다 — 거기에 통계를 섞으면 T1 알림이 통계 뒤에
+        줄을 서게 된다 (backend_client/conversation_client.py).
+
+    반환값
+        서버가 배정한 conversation_id, 또는 아무것도 올리지 못했으면 None.
+    """
+    from bomi_ai_chat.graph import context as context_node
+
+    senior_id = state.get("senior_id")
+    if not senior_id:
+        return None
+
+    client = _conversation_client()
+    conversation_id = state.get("conversation_id")
+    trigger, priority = _provenance(state)
+
+    utterance = (state.get("user_input") or "").strip()
+    if state.get("trigger_type") == "user_utterance" and utterance:
+        returned = client.record_turn(
+            senior_id,
+            role="SENIOR",
+            content=utterance,
+            occurred_at=state.get("last_user_interaction_at") or now,
+            conversation_id=conversation_id,
+            trigger_type="USER",
+            # 지남력 질문의 '반복'은 T2 추세로만 간다. 이 플래그가 프롬프트로
+            # 되돌아가면 어조에 새어나가서 열 번째 답변이 짜증스럽게 들린다 (§8).
+            orientation_question=context_node.is_orientation_question(utterance),
+        )
+        conversation_id = returned or conversation_id
+
+    spoken = (state.get("final_utterance") or state.get("response") or "").strip()
+    if spoken:
+        returned = client.record_turn(
+            senior_id,
+            role="ROBOT",
+            content=spoken,
+            occurred_at=now,
+            conversation_id=conversation_id,
+            trigger_type=trigger,
+            priority=priority,
+        )
+        conversation_id = returned or conversation_id
+
+    return conversation_id
+
+
+def _provenance(state: ConvState) -> tuple[str, str | None]:
+    """이 로봇 발화가 왜 나왔는지, 게이트가 어떤 우선순위를 줬는지.
+
+    반응형 턴은 우선순위가 없다. 방금 말을 건 사람에게 대답하는 것은 게이트를 거치지
+    않으므로, 우선순위를 붙이면 있지도 않았던 판정을 지어내는 것이다 (CLAUDE.md §7).
+    """
+    trigger_type = state.get("trigger_type")
+    if trigger_type == "user_utterance":
+        return "USER", None
+
+    priority = state.get("speech_priority")
+    normalized = str(priority).upper() if priority else None
+
+    if trigger_type == "door_event" or state.get("intent") == "greeting":
+        return "DOOR_EVENT", normalized
+    if state.get("intent") == "clarification":
+        return "CLARIFICATION", normalized
+    origin = state.get("speech_origin") or ""
+    if origin.startswith("silence_ladder"):
+        return "SILENCE_PROBE", normalized
+    return "SCHEDULE", normalized
 
 
 def build_graph(checkpoint_path: str | None = None):

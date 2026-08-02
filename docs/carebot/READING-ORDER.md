@@ -110,7 +110,8 @@
 | `audio/echo_guard.py` | 자기 목소리를 걸러내는 판정 |
 | `audio/playback.py` | **진행 상황의 권위.** 동기화 버그가 가장 나기 쉬운 곳 |
 | `notify/base.py` | 보호자 채널 어댑터 인터페이스 |
-| `jobs/ticks.py` | 주기 작업. `daily_summary_job` 만 미구현(→ 211, 백엔드로 이동) |
+| `notify/backend_notifier.py` | **거절과 실패를 구분하는 곳.** 로봇은 푸시 서버를 모른다 |
+| `jobs/ticks.py` | 주기 작업. 일간 요약은 백엔드로 옮겼다(211) |
 
 ### 이미 있던 것 (재구현하지 않음)
 
