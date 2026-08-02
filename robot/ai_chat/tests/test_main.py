@@ -1,4 +1,11 @@
-"""CLI의 단발·반복 실행 모드 회귀 테스트."""
+"""CLI의 단발·반복 실행 모드 회귀 테스트.
+
+기존 네 건은 **옛 파이프라인 경로**를 검증한다. S15P11E102-232 부터 기본값이 그래프
+경로가 되었으므로 `--legacy` 를 명시한다 — 되돌리기 경로가 살아 있다는 것 자체가
+검증할 가치가 있다. 실기에서 새 경로에 문제가 나면 이것으로 되돌린다.
+
+그래프 경로는 아래 별도 절에서 본다.
+"""
 
 import sys
 from types import ModuleType, SimpleNamespace
@@ -93,7 +100,7 @@ def test_once_option_runs_one_turn(
     monkeypatch.setattr(main, "get_settings", lambda: settings)
     calls = install_runtime_stubs(monkeypatch)
 
-    exit_code = main.main(["--once"])
+    exit_code = main.main(["--once", "--legacy"])
 
     assert exit_code == 0
     assert [call[0] for call in calls] == ["init", "run_once"]
@@ -107,7 +114,7 @@ def test_once_option_returns_failure_exit_code(
     monkeypatch.setattr(main, "get_settings", lambda: settings)
     calls = install_runtime_stubs(monkeypatch, once_succeeded=False)
 
-    exit_code = main.main(["--once"])
+    exit_code = main.main(["--once", "--legacy"])
 
     assert exit_code == 1
     assert [call[0] for call in calls] == ["init", "run_once"]
@@ -121,7 +128,7 @@ def test_default_mode_runs_conversation_loop(
     monkeypatch.setattr(main, "get_settings", lambda: settings)
     calls = install_runtime_stubs(monkeypatch)
 
-    exit_code = main.main([])
+    exit_code = main.main(["--legacy"])
 
     assert exit_code == 0
     assert [call[0] for call in calls] == ["init", "run"]
@@ -145,8 +152,82 @@ def test_robot_mode_selects_robot_audio_adapters(
     monkeypatch.setattr(main, "get_settings", lambda: settings)
     calls = install_runtime_stubs(monkeypatch)
 
-    exit_code = main.main(["--once"])
+    exit_code = main.main(["--once", "--legacy"])
 
     assert exit_code == 0
     assert type(calls[0][1]).__name__ == "RobotAudioInput"
     assert type(calls[0][2]).__name__ == "RobotAudioOutput"
+
+
+# ── 그래프 경로 (S15P11E102-232) ─────────────────────────────────────────────
+
+
+def graph_settings(settings_factory, **extra):
+    return settings_factory(
+        RTZR_CLIENT_ID="id",
+        RTZR_CLIENT_SECRET="secret",
+        GEMINI_API_KEY="gemini",
+        TYPECAST_API_KEY="typecast",
+        SENIOR_ID="senior-1",
+        **extra,
+    )
+
+
+def test_the_graph_path_is_the_default(monkeypatch, settings_factory):
+    """★ 기본값이 옛 경로면 배선한 의미가 없다.
+
+    200~211 의 게이트·침묵 사다리·트리아지·현관은 전부 그래프 경로에만 있다.
+    """
+    settings = graph_settings(settings_factory)
+    monkeypatch.setattr(main, "get_settings", lambda: settings)
+    install_runtime_stubs(monkeypatch)
+    seen = {}
+
+    def fake_run(settings_arg, audio_in, audio_out, *, once):
+        seen["once"] = once
+        return 0
+
+    monkeypatch.setattr(main, "_run_graph_runtime", fake_run)
+
+    assert main.main([]) == 0
+    assert seen == {"once": False}
+
+
+def test_legacy_flag_falls_back_to_the_old_pipeline(monkeypatch, settings_factory):
+    """★ 되돌리기가 코드 수정이면 현장에서 못 한다."""
+    settings = graph_settings(settings_factory)
+    monkeypatch.setattr(main, "get_settings", lambda: settings)
+    calls = install_runtime_stubs(monkeypatch)
+
+    assert main.main(["--legacy"]) == 0
+    assert [call[0] for call in calls] == ["init", "run"]
+
+
+def test_the_env_switch_also_falls_back(monkeypatch, settings_factory):
+    """플래그 없이 .env 만으로도 되돌릴 수 있어야 한다. 실기에서 인자를 못 바꾸는
+    실행 방식(systemd, docker)이 있다."""
+    settings = graph_settings(settings_factory, USE_GRAPH_RUNTIME="false")
+    monkeypatch.setattr(main, "get_settings", lambda: settings)
+    calls = install_runtime_stubs(monkeypatch)
+
+    assert main.main([]) == 0
+    assert [call[0] for call in calls] == ["init", "run"]
+
+
+def test_once_does_not_start_background_work(monkeypatch, settings_factory):
+    """★ 한 턴만 보려는 실행에 스케줄러가 뜨면, 정리되기 전에 틱이 돌아 제안이
+    큐에 남는다. 다음 실행이 그것을 물려받아 "왜 갑자기 말하지?"가 된다."""
+    settings = graph_settings(settings_factory)
+    monkeypatch.setattr(main, "get_settings", lambda: settings)
+    install_runtime_stubs(monkeypatch)
+    seen = {}
+
+    def fake_run(settings_arg, audio_in, audio_out, *, once):
+        seen["once"] = once
+        return 0
+
+    monkeypatch.setattr(main, "_run_graph_runtime", fake_run)
+
+    main.main(["--once"])
+
+    assert seen["once"] is True

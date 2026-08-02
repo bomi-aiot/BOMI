@@ -178,6 +178,27 @@ class Settings:
     #   로그로 남긴다(조용히 안 하지 않는다).
     robot_id: str | None
 
+    # 이 로봇이 돌보는 어르신.
+    #
+    # ★ checkpointer 의 thread_id 이자 모든 로컬 저장소의 키다. 틀리면 두 어르신이
+    #   침묵 사다리를 공유하게 되고, 안전 시스템에서 그것은 한 사람의 발화가 다른
+    #   사람의 에스컬레이션을 억제한다는 뜻이다 (graph/build.py).
+    #
+    # 기본값을 두지 않는다. 임의의 값으로 기동하면 그 값으로 상태가 쌓이고, 나중에
+    # 진짜 id 로 바꾸는 순간 그동안의 사다리와 재실 기록이 통째로 사라진다.
+    senior_id: str | None
+
+    # 그래프 경로로 띄울 것인가.
+    #
+    # 왜 스위치가 있는가
+    #   200~211 의 대화 런타임은 실기에서 한 번도 돌아본 적이 없다(S15P11E102-233).
+    #   실기에서 문제가 나면 즉시 옛 경로로 되돌릴 수 있어야 하고, 그 되돌리기가
+    #   코드 수정이면 현장에서 못 한다.
+    #
+    #   기본값이 true 인 이유: 배선이 끝난 뒤에도 false 로 두면 아무도 새 경로를
+    #   쓰지 않고, 그러면 배선한 의미가 없다.
+    use_graph_runtime: bool
+
     # ── MQTT: 현관 이벤트 구독  (CLAUDE.md §11, docs/mqtt/topic-convention.md) ──
     #
     # 왜 URL 한 개로 받는가
@@ -327,6 +348,8 @@ class Settings:
             ),
             backend_timeout_seconds=_positive_float_env("BACKEND_TIMEOUT_SECONDS", 1.5),
             robot_id=_optional_env("ROBOT_ID"),
+            senior_id=_optional_env("SENIOR_ID"),
+            use_graph_runtime=_bool_env("USE_GRAPH_RUNTIME", True),
             mqtt_enabled=_bool_env("MQTT_ENABLED", False),
             mqtt_broker_url=_optional_env("MQTT_BROKER_URL", "") or "",
             mqtt_door_topic=(
