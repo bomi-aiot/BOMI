@@ -95,7 +95,7 @@ Therefore, in this repo:
 | **VAD** | Voice Activity Detection. Cheap local "is someone talking right now?". Silero VAD. |
 | **Wake word** | Local trigger phrase detector, so we are not streaming everything. openWakeWord. |
 | **Embedding** | A list of numbers representing a text's *meaning*. Similar meaning → similar numbers. |
-| **Vector search** | Finding stored texts whose meaning is closest to a query. Runs in Postgres via pgvector, **on the backend**. |
+| **Vector search** | Finding stored texts whose meaning is closest to a query. Runs **on the backend**, against Qdrant — not in Postgres. Upstage embeddings are 4096-dimensional and pgvector 0.8.5 indexes at most 2,000 (`vector`) / 4,000 (`halfvec`), so an index there is impossible (S15P11E102-218). |
 | **RAG** | Retrieval-Augmented Generation. Instead of hoping the LLM knows something, we retrieve relevant text first and paste it into the prompt. That is all it is. |
 | **LangGraph node** | Just a Python function: takes the state dict, returns a dict merged into the state. |
 | **LangGraph edge** | "After A, go to B." A **conditional edge** picks the next node at runtime. Returning the `END` sentinel stops the turn. |
@@ -146,7 +146,7 @@ Three deployable units, three different machines, three lifecycles.
 | --- | --- | --- |
 | **Robot runtime** (`robot/ai_chat/`) | Jetson Orin Nano 8GB | Python, LangGraph, audio, timing, gating, safety escalation decisions |
 | **Entrance node** (`iot/raspberry-pi/`) | Raspberry Pi at the front door | In/out direction detection, heartbeat |
-| **Backend + guardian app** | server | Spring Boot, PostgreSQL + pgvector, Flyway, the whole ERD, guardian API |
+| **Backend + guardian app** | server | Spring Boot, PostgreSQL (no pgvector), Qdrant for semantic search, Flyway, the whole ERD, guardian API |
 
 ### Database ownership — this decision shapes everything
 
@@ -363,9 +363,43 @@ it breaks correctness. Most memory is *pushed* into the prompt every turn; only 
 
 | Data | ERD home | Notes |
 | --- | --- | --- |
-| Long-term personal facts | `memory` (`content`, `keywords`, `embedding`, `importance`) | The raw material for natural conversation. Retrieval **must** combine similarity with recency and importance, or a knee complaint from six months ago outranks yesterday's. The ERD already specifies this. |
+| Long-term personal facts | `memory` (`content`, `keywords`, `importance`) in Postgres; the vector lives in Qdrant | The raw material for natural conversation. Retrieval **must** combine similarity with recency and importance, or a knee complaint from six months ago outranks yesterday's. There is no `embedding` column — see the boxed rule below. |
 | Compressed conversation context | `conversation_summary` (`CONVERSATION`, `DAILY`) | Context compression, not fact storage. |
 | Welfare programs, FAQs | reference document corpus (to build) | Long prose worth chunking. |
+
+### The vector store is a derived index. Postgres is the authority. (S15P11E102-218)
+
+There is no `embedding` column in `memory` or `conversation_summary`, and there will not be one.
+Vectors live in Qdrant (`qdrant/qdrant:v1.18.3`), two collections, 4096-dimensional cosine HNSW.
+Postgres keeps three bookkeeping columns instead (V5): `embedding_status`,
+`embedding_synced_at`, `embedding_model`.
+
+**The retrieval order is a privacy boundary, not an optimisation.**
+
+```text
+Qdrant (senior_id filter + similarity) -> candidate ids
+  -> Postgres re-verification
+     (lifecycle_status=ACTIVE, verification_status!=REJECTED, visibility allowed)
+  -> similarity x importance x recency -> top 3-10
+```
+
+A hit from the store **can only change the ranking of rows Postgres already returned. It can never
+add one.** The payload in Qdrant is a copy taken at indexing time and can be arbitrarily stale: a
+memory indexed while it was shared keeps that payload after the senior changes their mind. If a hit
+could add a row, that withdrawn memory would reappear on the guardian's screen. Re-verifying is not
+wasted work; it is the defence.
+
+Two consequences worth stating plainly:
+
+- **Losing the Qdrant volume is recoverable** — the bookkeeping columns say what to re-embed. So it
+  is deliberately **not backed up**; restoring an old snapshot would revive stale payloads.
+- **Query and passage models must stay paired** (`embedding-query` / `embedding-passage`). Mixing
+  them throws nothing. Search just returns slightly worse neighbours forever, and nothing in the
+  system can tell you it happened.
+
+**The embedding API is metered and the project balance is small.** Storing is embedded once (that is
+what the bookkeeping columns make checkable), the sync job has a per-run call cap, and both the
+model and the job are off unless switched on.
 
 ### Everyday information is not all RAG
 
@@ -919,13 +953,17 @@ original design specified — adopt it as-is (§8).
 
 ### Decide now
 
-- **Embedding model and dimension.** Currently TBD, but a `VECTOR` column needs its dimension in the
-  DDL, so it blocks. Upstage is chosen for Korean quality; confirm the dimension against the
-  pgvector index limit in the pinned version. If it exceeds the limit, we lose the index and fall
-  back to a full scan (likely survivable at our scale — measure).
-- **pgvector enablement.** `memory.embedding` and `conversation_summary.embedding` exist in the ERD
-  but were excluded from `V1__init.sql` because the entities are unmapped. A migration with
-  `CREATE EXTENSION vector;` plus the columns and index is an open work item.
+- ~~**Embedding model and dimension.**~~ **Settled (S15P11E102-218).** Upstage
+  `solar-embedding-1-large` outputs **4096 dimensions**. pgvector 0.8.5 indexes at most 2,000
+  (`vector`) / 4,000 (`halfvec`), so 4096 cannot be indexed at all — the only remaining option there
+  was a sequential scan. Korean quality made the model non-negotiable, so semantic search moved to
+  Qdrant.
+- ~~**pgvector enablement.**~~ **Cancelled (S15P11E102-218). Do not add a
+  `CREATE EXTENSION vector;` migration.** The Postgres image is still `pgvector/pgvector` (changing
+  a running database image is riskier than leaving an unused extension binary in it), but the
+  extension is never enabled and `FlywayMigrationValidationTest.pgvectorIsNotUsed` actively asserts
+  its absence. Enabling it would create a second search path, and that one has no index.
+  `memory.embedding` / `conversation_summary.embedding` were replaced by the V5 bookkeeping columns.
 
 ### Flyway rules (schema changes)
 
@@ -1211,7 +1249,7 @@ and writing it that way is what lets someone else trust the parts that *are* fin
 | --- | --- |
 | `memory.visibility` has a "never share" (T4) value? | Check the Excel code dictionary. If absent it must be added (§19). |
 | T3 consent queue location | `care_record` with a pending status, or a dedicated table (§19). |
-| Embedding model dimension vs pgvector index limit | Blocks the vector migration (§19). |
+| ~~Embedding model dimension vs pgvector index limit~~ | **Closed (S15P11E102-218).** 4096 dims exceeds pgvector's index ceiling; semantic search runs on Qdrant instead (§8, §19). |
 | Daily activity metrics: `care_record` type or dedicated table | Affects the T2 summary query (§19). |
 | Occupancy: boolean vs person count | Depends on sensor accuracy; drives visitor handling (§11). |
 | Direction timing window for the two-sensor derivation | How long after a door-open an inside motion still counts as an entry. Empirical (§11). |
