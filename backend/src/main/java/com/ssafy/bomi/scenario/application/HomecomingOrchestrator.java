@@ -38,7 +38,15 @@ public class HomecomingOrchestrator {
 
     private static final Logger log = LoggerFactory.getLogger(HomecomingOrchestrator.class);
     private static final Duration COMMAND_TTL = Duration.ofMinutes(2);
-    private static final String DEFAULT_GREETING = "어서 오세요, 잘 다녀오셨어요?";
+    /**
+     * 방향을 판정하지 못했을 때의 인사.
+     *
+     * <p>S15P11E102-226 이전에는 모든 문 열림에 이 문장이 나갔다. 지금은 방향을
+     * 판정한 경우 {@code GreetingDecider} 가 고른 문장이 대신 쓰이고, 이 값은 방향을
+     * 알 수 없는 통과의 폴백이다 — 어르신인지 방문자인지 모를 때는 정보를 얹지 않고
+     * 인사만 한다.</p>
+     */
+    static final String DEFAULT_GREETING = "어서 오세요, 잘 다녀오셨어요?";
 
     private final ScenarioRepository scenarioRepository;
     private final RobotRepository robotRepository;
@@ -60,10 +68,36 @@ public class HomecomingOrchestrator {
         this.properties = properties;
     }
 
-    /** Door opened: open a HOMECOMING scenario and send the robot to the entrance. */
+    /**
+     * Door opened with no direction known: greet without adding information.
+     *
+     * <p>Kept for the MQTT path that still sends a bare {@code DOOR_OPENED}. When the
+     * direction <em>is</em> resolved (S15P11E102-226), the caller passes the sentence
+     * {@code GreetingDecider} chose instead.</p>
+     */
     @Transactional
     public void startHomecoming(String sensorId) {
         UUID seniorId = properties.resolveSenior(sensorId);
+        startHomecoming(seniorId, sensorId, DEFAULT_GREETING);
+    }
+
+    /**
+     * Opens a HOMECOMING scenario, sends the robot to the entrance, and speaks.
+     *
+     * <p><b>Speech is published here, not on arrival</b> (S15P11E102-226). It used to wait
+     * for {@code onRobotArrived}, which meant a slow or failed navigation swallowed the
+     * greeting entirely — and the greeting has a ~45 second deadline, shorter than a
+     * navigation that has to route around a chair. Voice carries across rooms; there is no
+     * reason it should wait for wheels (CLAUDE.md §11).</p>
+     *
+     * <p>The move command still goes out immediately. The two are simply independent now:
+     * one failing no longer silences the other.</p>
+     *
+     * @param greeting the single sentence chosen by {@code GreetingDecider}, or null to
+     *     move without speaking — a delivery, or a passage we could not read
+     */
+    @Transactional
+    public void startHomecoming(UUID seniorId, String sensorId, String greeting) {
         Robot robot = robotRepository.findBySeniorId(seniorId)
             .orElseThrow(() -> new IllegalStateException("No robot assigned to senior: " + seniorId));
 
@@ -73,8 +107,11 @@ public class HomecomingOrchestrator {
         syncRobotMode(robot, scenario);
 
         publishNavigate(scenario.getId(), robot, HomecomingContract.TARGET_ENTRANCE);
-        log.info("Homecoming started: scenarioId={}, seniorId={}, robot={}",
-            scenario.getId(), seniorId, robot.getDeviceId());
+        if (greeting != null && !greeting.isBlank()) {
+            publishSpeak(scenario.getId(), robot, greeting);
+        }
+        log.info("Homecoming started: scenarioId={}, seniorId={}, robot={}, spoke={}",
+            scenario.getId(), seniorId, robot.getDeviceId(), greeting != null);
     }
 
     /** Robot reported arrival for a scenario (result echoes the scenarioId). */
@@ -90,7 +127,9 @@ public class HomecomingOrchestrator {
             case MOVING_TO_ENTRANCE -> {
                 Robot robot = requireRobot(scenario.getRobotId());
                 scenario.checkInteraction();
-                publishSpeak(scenario.getId(), robot, DEFAULT_GREETING);
+                // 인사는 startHomecoming 에서 이미 나갔다 (S15P11E102-226). 여기서 다시
+                // 말하면 어르신은 같은 인사를 두 번 듣고, 두 번째는 로봇이 도착한 뒤라
+                // 한참 늦다. 도착 시점에 하는 일은 대화로 넘기는 것뿐이다.
                 scenario.beginConversation();
                 scenarioRepository.save(scenario);
                 syncRobotMode(robot, scenario);
