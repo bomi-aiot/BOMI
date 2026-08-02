@@ -1,6 +1,7 @@
 package com.ssafy.bomi.care.application;
 
 import com.ssafy.bomi.care.domain.CareRecord;
+import com.ssafy.bomi.care.domain.CareRecordTime;
 import com.ssafy.bomi.care.domain.NotificationTier;
 import com.ssafy.bomi.care.repository.CareRecordRepository;
 import com.ssafy.bomi.relationship.domain.CareRelationship;
@@ -10,6 +11,7 @@ import com.ssafy.bomi.relationship.repository.CareRelationshipRepository;
 import com.ssafy.bomi.user.domain.AppUser;
 import com.ssafy.bomi.user.domain.ConsentStatus;
 import com.ssafy.bomi.user.repository.AppUserRepository;
+import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -94,6 +96,13 @@ public class GuardianAlertService {
         UUID recipientGuardianId) {
         CareRecord record = CareRecord.create(seniorId, ALERT_RECORD_TYPE, payload);
         record.markAsNotification(tier, recipientGuardianId);
+        // 알림이 '일어난' 시각 (S15P11E102-230).
+        //
+        // 로봇의 발신 큐가 payload.ts 를 싣는데, 그 값이 중요하다. 네트워크가 끊긴 동안
+        // 큐에 쌓였다가 한참 뒤에 도착하는 알림이 있고, 그때 도착 시각으로 적으면
+        // "새벽 3시에 반응이 없었다"가 아침 알림으로 보인다. 로봇이 관찰한 시각이 진실이다.
+        // 그 값이 없을 때만 지금으로 둔다 — 이 경우는 방금 일어난 일이 맞다.
+        record.occurredAt(CareRecordTime.fromDetailsOrNow(payload, OffsetDateTime.now()));
         return careRecordRepository.save(record);
     }
 

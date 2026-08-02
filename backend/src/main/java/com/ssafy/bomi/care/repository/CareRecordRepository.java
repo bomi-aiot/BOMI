@@ -2,10 +2,13 @@ package com.ssafy.bomi.care.repository;
 
 import com.ssafy.bomi.care.domain.CareRecord;
 import com.ssafy.bomi.care.domain.CareRecordStatus;
+import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface CareRecordRepository extends JpaRepository<CareRecord, UUID> {
 
@@ -33,4 +36,54 @@ public interface CareRecordRepository extends JpaRepository<CareRecord, UUID> {
      */
     List<CareRecord> findBySeniorIdAndStatusAndRecordTypeIn(
         UUID seniorId, CareRecordStatus status, Collection<String> recordTypes);
+
+    /**
+     * How many records of one type fall inside a time window (S15P11E102-230).
+     *
+     * <p>This replaces "load every record this senior has ever had, then parse
+     * {@code details} in Java". That worked while the table was small and got worse
+     * every day the daily batch ran. The index
+     * {@code (senior_id, record_type, occurred_at)} is laid out for exactly this.</p>
+     *
+     * <p>The window is half-open ({@code >= from, < to}) so consecutive days never
+     * double-count the midnight boundary — same rule as
+     * {@code ConversationMessageRepository.findForSeniorBetween}.</p>
+     *
+     * <p>Rows with a null {@code occurred_at} are excluded by the comparison itself.
+     * That is intended: a dose we cannot place in time must not be attributed to a day.
+     * Counting it into today would show the guardian adherence the senior never had.</p>
+     */
+    @Query("""
+        SELECT count(r) FROM CareRecord r
+        WHERE r.seniorId = :seniorId
+          AND r.recordType = :recordType
+          AND r.occurredAt >= :from AND r.occurredAt < :to
+        """)
+    long countByTypeBetween(
+        @Param("seniorId") UUID seniorId,
+        @Param("recordType") String recordType,
+        @Param("from") OffsetDateTime from,
+        @Param("to") OffsetDateTime to);
+
+    /**
+     * Active records of the given types inside a time window (S15P11E102-230).
+     *
+     * <p>Used by the door greeting: "is there an appointment today", "was any dose
+     * already taken today". {@code ACTIVE} only, for the same reason as
+     * {@link #findBySeniorIdAndStatusAndRecordTypeIn} — a cancelled appointment is not
+     * something to remind anyone about.</p>
+     */
+    @Query("""
+        SELECT r FROM CareRecord r
+        WHERE r.seniorId = :seniorId
+          AND r.status = :status
+          AND r.recordType IN :recordTypes
+          AND r.occurredAt >= :from AND r.occurredAt < :to
+        """)
+    List<CareRecord> findByTypesBetween(
+        @Param("seniorId") UUID seniorId,
+        @Param("status") CareRecordStatus status,
+        @Param("recordTypes") Collection<String> recordTypes,
+        @Param("from") OffsetDateTime from,
+        @Param("to") OffsetDateTime to);
 }

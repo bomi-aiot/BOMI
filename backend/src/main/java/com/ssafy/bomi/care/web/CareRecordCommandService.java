@@ -2,6 +2,7 @@ package com.ssafy.bomi.care.web;
 
 import com.ssafy.bomi.care.domain.CareRecord;
 import com.ssafy.bomi.care.domain.CareRecordStatus;
+import com.ssafy.bomi.care.domain.CareRecordTime;
 import com.ssafy.bomi.care.repository.CareRecordRepository;
 import com.ssafy.bomi.care.web.dto.MedicationDto;
 import com.ssafy.bomi.care.web.dto.MedicationRequests.CreateMedicationRequest;
@@ -51,6 +52,10 @@ public class CareRecordCommandService {
         put(details, "purpose", req.purpose());
         put(details, "activeIngredient", req.activeIngredient());
         put(details, "reminderEnabled", req.reminderEnabled());
+        // occurred_at 을 두지 않는다 (S15P11E102-230).
+        //
+        // 처방 자체는 시간축의 한 점이 아니다. "혈압약을 드신다"는 사실이지 사건이 아니다.
+        // 지금 시각으로 채우면 "오늘 일어난 일" 질의에 처방이 딸려 나온다.
         CareRecord med = careRecordRepository.save(
                 CareRecord.create(seniorId, "MEDICATION", details));
 
@@ -61,6 +66,9 @@ public class CareRecordCommandService {
             schedDetails.put("timeZone", TZ);
             put(schedDetails, "reminderLeadMinutes", req.reminderLeadMinutes());
 
+            // 스케줄도 occurred_at 이 없다. 반복 규칙이라 한 점으로 표현할 수 없고,
+            // 전개는 recurrence 가 담당한다. 첫 회 시각으로 채우면 매일 반복되는 약이
+            // 등록일 하루에만 있는 것처럼 집계된다.
             CareRecord sched = CareRecord.create(seniorId, "MEDICATION_SCHEDULE", schedDetails);
             sched.assignParent(med.getId());
             sched.updateRecurrence(dailyRecurrence(req.localTime()));
@@ -147,6 +155,13 @@ public class CareRecordCommandService {
         put(details, "followUpQuestion", req.followUpQuestion());
 
         String recordType = req.recordType() == null ? "PERSONAL_SCHEDULE" : req.recordType();
+        // startsAt 이 곧 이 일정의 시간축 위 위치다. CareRecord.create 가 details 에서
+        // 꺼내 occurred_at 에 넣는다 (S15P11E102-230).
+        //
+        // ★ 그래서 고쳐지는 버그: 현관 인사(GreetingDecider)는 "오늘 약속"을 찾을 때
+        //   details.scheduledAt 을 읽었는데, 쓰는 쪽인 여기는 startsAt 을 넣었다.
+        //   같은 뜻의 규약이 둘이었고 스키마가 둘을 맞춰줄 수 없었으므로, 어긋남이
+        //   조용했다 — "오늘 약속 있으시죠" 인사가 한 번도 나간 적이 없다.
         CareRecord r = careRecordRepository.save(CareRecord.create(seniorId, recordType, details));
         return CareRecordDtoMapper.toScheduleDto(r);
     }
@@ -166,6 +181,9 @@ public class CareRecordCommandService {
         put(details, "followUpEnabled", req.followUpEnabled());
         put(details, "followUpQuestion", req.followUpQuestion());
         r.updateDetails(details);
+        // 시작 시각을 바꾸면 시간축 위의 위치도 함께 옮긴다. 컬럼만 옛 시각으로 남으면
+        // 대시보드는 새 시각을, 집계는 옛 시각을 말한다.
+        r.occurredAt(CareRecordTime.fromDetails(details));
 
         if (req.status() != null) {
             r.changeStatus(mapScheduleStatus(req.status()));

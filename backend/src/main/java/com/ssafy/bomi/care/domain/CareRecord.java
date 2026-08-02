@@ -9,6 +9,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
+import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -90,6 +91,25 @@ public class CareRecord {
     private Map<String, Object> recurrence;
 
     /**
+     * Where this record sits on the timeline (S15P11E102-230).
+     *
+     * <p>When it happened for an event, when it is due for a scheduled one. One axis,
+     * so a range query means the same thing for every record type. Before this column
+     * existed the time lived under four different keys inside {@link #details}
+     * ({@code scheduledAt}, {@code startsAt}, {@code ts}, {@code metricDate}), which
+     * meant a trend query had to load every one of a senior's records and parse JSON
+     * in Java.</p>
+     *
+     * <p><b>Null is meaningful and stays null.</b> Two different reasons: the record has
+     * no single point in time (a recurring {@code MEDICATION_SCHEDULE}, a
+     * {@code MEDICATION} prescription), or we genuinely do not know. Filling it in with
+     * the current time would put an old alert at the top of the guardian's screen — the
+     * same "unknown is not zero" rule V4 is built on.</p>
+     */
+    @Column(name = "occurred_at")
+    private OffsetDateTime occurredAt;
+
+    /**
      * How urgently the guardian hears about this, for notification-type records.
      *
      * <p>Null on every record that is not an outbound notification — most rows are
@@ -107,8 +127,25 @@ public class CareRecord {
         this.seniorId = requireNonNull(seniorId, "seniorId");
         this.recordType = requireText(recordType, "recordType");
         this.details = details == null ? new HashMap<>() : new HashMap<>(details);
+        this.occurredAt = CareRecordTime.fromDetails(this.details);
     }
 
+    /**
+     * Creates a record, taking {@link #occurredAt} from {@code details} when it is there.
+     *
+     * <p><b>Why the factory reads the JSON.</b> S15P11E102-230 exists because the time of a
+     * care record lived under four different keys inside {@code details} and nothing forced
+     * a write path to use any of them. A new writer could omit the key, compile, save, and
+     * only vanish from the aggregate — the guardian then sees a missed dose that was never
+     * missed. Deriving here inverts that: a writer that puts a time in {@code details}
+     * cannot lose it, whatever it forgets to call.</p>
+     *
+     * <p>Callers whose time is <em>not</em> in {@code details} — an observation that is
+     * happening right now, an alert that carries its own clock — still call
+     * {@link #occurredAt} afterwards, and that wins. Which keys are read, and in what order,
+     * lives in {@link CareRecordTime}; it mirrors the {@code COALESCE} in V7 so backfilled
+     * rows and new rows land on the same clock.</p>
+     */
     public static CareRecord create(UUID seniorId, String recordType, Map<String, Object> details) {
         return new CareRecord(seniorId, recordType, details);
     }
@@ -140,6 +177,17 @@ public class CareRecord {
     public void markAsNotification(NotificationTier tier, UUID recipientGuardianId) {
         this.notificationTier = requireNonNull(tier, "tier");
         this.recipientGuardianId = recipientGuardianId;
+    }
+
+    /**
+     * Places this record on the timeline (S15P11E102-230).
+     *
+     * <p>Every write path calls this. Passing null is allowed and means one of the two
+     * things described on {@link #occurredAt} — it is not a "forgot to set it" escape
+     * hatch, and a caller that cannot work out a time should say so in a comment.</p>
+     */
+    public void occurredAt(OffsetDateTime occurredAt) {
+        this.occurredAt = occurredAt;
     }
 
     public void updateDetails(Map<String, Object> details) {
