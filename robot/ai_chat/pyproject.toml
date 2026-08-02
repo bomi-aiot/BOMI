@@ -33,6 +33,12 @@ dev = [
     "ruff",
     "mypy",
 ]
+# 현관 이벤트 MQTT 구독(door/mqtt.py). 선택 의존인 이유는 브로커가 없는 개발
+# 노트북에서도 대화 런타임 전체가 돌아야 하기 때문이다. door/mqtt.py 가 함수
+# 안에서 import 하므로, 설치하지 않으면 그 어댑터만 못 쓰고 나머지는 정상이다.
+mqtt = [
+    "paho-mqtt>=1.6",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -256,18 +256,78 @@ cd robot/ai_chat && python -m pytest tests/test_echo_and_bargein.py -v
 
 ---
 
+### 2.7 현관·재실 (208)
+
+```bash
+cd robot/ai_chat && python -m pytest tests/test_door_occupancy.py -v
+```
+
+44건입니다. **성공/실패의 기준은 "재실 상태가 어떤 값이 되는가"** 입니다. 직접 확인하려면 압축 시계로 돌립니다.
+
+```python
+# 문이 열렸다. 로봇은 방향을 모른다.
+from bomi_ai_chat.contracts.door import parse_door_event
+from bomi_ai_chat.door import intake
+from bomi_ai_chat.localstore import runtime as rt
+
+intake.ingest("senior-1", parse_door_event(
+    {"eventId": "e1", "type": "DOOR_OPENED", "sourceId": "door-01", "payload": {}}))
+print(rt.load("senior-1"))
+```
+
+| 확인할 값 | 성공 | 실패했다면 |
+|---|---|---|
+| `occupancy` | `UNKNOWN` | `HOME` 이면 빈 집에 사다리가 돕니다. `AWAY` 면 집에 있는 사람의 감시가 꺼집니다 |
+| `door_open_since` | 0 이 아닌 값 | 0 이면 문 방치를 감지하지 못합니다 |
+| `door_heartbeat_at` | 방금 시각 | 0 이면 5분 뒤 "파이가 죽었다"고 오판합니다 |
+| `away_since` | 0 | 0 이 아니면 미귀가 시계가 잘못 시작된 것입니다 |
+
+**`AWAY` 는 백엔드만 만듭니다.** 로봇이 스스로 `AWAY` 를 쓰는 코드가 있으면 그것이 버그입니다.
+
+```python
+# 백엔드가 방향을 판정해 확정값을 내려준 상황
+from bomi_ai_chat.door import occupancy as occ
+occ.apply_backend_occupancy("senior-1", "AWAY", observed_at=<외출 시각>)
+```
+
+| 확인할 값 | 성공 |
+|---|---|
+| `occupancy` | `AWAY` |
+| `away_since` | 외출 시각 (**다시 AWAY 를 관측해도 갱신되지 않아야 한다**) |
+
+**현관 감시 틱** — outbox 에 무엇이 쌓이는지로 판정합니다.
+
+| 상황 | outbox 에 들어와야 하는 것 | 안 들어오면 |
+|---|---|---|
+| 문이 20분 넘게 열림 | T2 `door_left_open` | 안전·보안 신호를 놓칩니다 |
+| 하트비트 5분 중단 | T2 `door_node_offline` + `occupancy=UNKNOWN` | **현관 감시가 꺼진 것을 아무도 모릅니다** |
+| 6시간 미귀가 | T2 `long_absence` | — |
+| 12시간 미귀가 | **T1** `not_returned` | 밤을 넘긴 미귀가는 명백한 이상입니다 |
+| 야간(23~05시) 외출 | T2 `night_exit` | 배회는 침묵 사다리로 원리적으로 안 잡힙니다 |
+| 같은 상황이 계속됨 | **추가 알림 없음** | 매 분 쌓이면 보호자가 알림을 읽지 않게 됩니다 |
+
+**실패의 모습 — 조용한 것들**:
+
+- `occupancy` 가 `AWAY` 에 머무는데 `away_since` 가 0 → 부재 시간을 잴 수 없습니다. 경고 로그가 나옵니다
+- 하트비트가 한 번도 안 옴 → 알림은 안 가고 프로세스당 한 번 경고만 나옵니다. `MQTT_ENABLED` 와 라즈베리파이를 확인하십시오
+- **인사가 안 나갑니다.** 이건 정상입니다 — 판정하는 쪽(226)이 아직 없습니다
+
+---
+
 ## 3. 지금 일부러 실패하는 것들 (정상)
 
 혼동하지 않도록 적어둡니다. **이건 버그가 아니라 아직 안 만든 것입니다.**
 
 | 시도 | 지금 결과 | 언제 고쳐지나 |
 |---|---|---|
-| "약 먹었어" 라고 말하기 | 대답 없음 (`handle_schedule` 미구현) | 별도 티켓 |
+| "약 먹었어" 라고 말하기 | **정상 처리됨** (206) | — |
 | "외로워" 라고 말하기 | 대답 없음 (`handle_emotional` 미구현) | 별도 티켓 |
 | "가슴이 아파" 라고 말하기 | **에스컬레이션 안 함** | 210 |
 | 어제 얘기 참조 기대 | 잘 안 됨 (키워드 매칭뿐) | 218 |
-| 보호자 알림 | 로그만 남음 | 211 |
-| 능동 발화 (로봇이 먼저 말 걸기) | 안 함 (스케줄러 미배선) | 206 |
+| 보호자 알림 | 로그만 남음 (채널 미구현) | 211 |
+| 능동 발화 (로봇이 먼저 말 걸기) | 안 함 — `build_scheduler()` 를 부트스트랩이 호출하지 않음 | 실기 배선 |
+| 현관 인사 (배웅·환영) | **안 함** — 판정하는 쪽이 없음 | 226 |
+| 온보딩·재질의 | 안 함 — 백엔드 API 가 없음 | 227 → 209 |
 
 로그에서 이런 경고가 보이면 **정상**입니다:
 
@@ -289,3 +349,7 @@ semantic search unavailable; memories ranked by keyword overlap...
 | 복약을 잘못 말함 | 🔴 즉시 확인. `careRecords` 가 정확 조회로 왔는지, 의미 검색이 섞이지 않았는지 |
 | 보호자에게 알림이 안 감 | `outbox` 테이블의 `status`·`last_error`. 채널이 아직 없으면 로그만 |
 | 새벽에 말을 검 | `app_user.quiet_hours_start/end` 와 게이트 (206) |
+| 침묵 사다리가 안 돎 | `runtime_state.last_user_interaction_at` 이 0 인지. **0 이면 그래프가 내구 저장소에 안 쓰고 있는 것** (208 에서 고친 결함, CONCEPTS §6.1) |
+| 문 이벤트가 안 옴 | `MQTT_ENABLED`, `MQTT_BROKER_URL`. 비활성이면 시작 시 경고가 나옵니다 |
+| `occupancy` 가 계속 `UNKNOWN` | 정상일 수 있습니다. `AWAY`/`HOME` 은 백엔드 확정값과 발화만 만듭니다 (226 전이면 발화뿐) |
+| 문 이벤트 시각이 이상함 | `door node clock is off by ...` 경고. 라즈베리파이 RTC 문제이고 동작은 안전합니다 |

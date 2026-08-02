@@ -45,6 +45,16 @@ SETTING_VARIABLES = (
     "REMOTE_DB_HOST",
     "REMOTE_DB_PORT",
     "LOCALSTORE_DIR",
+    "BACKEND_BASE_URL",
+    "BACKEND_TIMEOUT_SECONDS",
+    # 개발자 .env 의 MQTT 설정이 테스트로 새면, 브로커에 실제로 붙으려 하거나
+    # 비활성 기본값을 검증하는 테스트가 머신마다 다른 결과를 낸다.
+    "MQTT_ENABLED",
+    "MQTT_BROKER_URL",
+    "MQTT_DOOR_TOPIC",
+    "MQTT_CLIENT_ID",
+    "MQTT_USERNAME",
+    "MQTT_PASSWORD",
 )
 
 

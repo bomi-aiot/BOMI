@@ -42,6 +42,22 @@
 
 각 파일의 모듈 docstring 첫 문단이 "이 파일이 어디에 위치하는가"를 설명합니다.
 
+### 2.1 문이 열렸을 때 (208)
+
+대화 턴과 **완전히 다른 경로**입니다. 어디서 끝나는지를 보십시오.
+
+| 순서 | 파일 | 하는 일 |
+|---|---|---|
+| 1 | `door/mqtt.py` `handle_payload` | 브로커에서 bytes 하나를 받는다 |
+| 2 | `contracts/door.py` `parse_door_event` | 봉투 검증, **시각을 도착 시각으로 정규화** |
+| 3 | `door/intake.py` `ingest` | 하트비트, 문 개폐, 보수적 재실, 백엔드 전달 |
+| 4 | `door/occupancy.py` `set_occupancy` | **낡은 관측을 버린다.** `away_since` 유지 |
+| 5 | `graph/ingress.py` `door_event` | checkpoint 에도 반영하고 **END** |
+
+**5번에서 끝납니다.** 인사 제안이 없습니다 — 판정은 백엔드(226)이고, 그 결과는 `backend_command` 로 다시 들어옵니다.
+
+주기 감시는 별도입니다: `jobs/ticks.py` `door_watch_tick` — 하트비트, 문 방치, 미귀가, 야간 배회.
+
 ---
 
 ## 3. 서버 쪽 (백엔드)
@@ -70,24 +86,29 @@
 | `state.py` | 한 턴의 상태 스키마 + `SpeechProposal` |
 | `turn_timer.py` | 턴 지연 실측. `clock` 이 아니라 `monotonic` 을 쓰는 이유가 적혀 있다 |
 | `graph/build.py` | 배선만 |
-| `graph/ingress.py` | 진입 3경로 + barge-in |
+| `graph/ingress.py` | 진입 **4경로** + barge-in. `door_event` 가 왜 END 로 끝나는지 여기 |
 | `graph/gate.py` | 능동 발화 게이트 (**206 에서 채움**) |
 | `graph/triage.py` | 안전 분류 (**210 에서 채움**) |
 | `graph/context.py` | 문맥 조회 + 인텐트 분류 |
-| `graph/handlers.py` | 7개 핸들러 (**2개만 구현됨**) |
+| `graph/handlers.py` | 7개 핸들러 (**3개 구현됨**) |
 | `graph/output.py` | 정제 + 재생 시작 |
 | `graph/turn.py` | 반응형 한 턴 실행 |
 | `prompts/builder.py` | 프롬프트 조립 (순수 함수) |
 | `prompts/templates/*.md` | 실제 프롬프트 문구. **여기를 고치면 로봇 말투가 바뀐다** |
+| `contracts/door.py` | 기기 경계를 넘는 메시지 형태. **여기를 고치는 것은 호환성 결정** |
+| `door/occupancy.py` | 재실 규칙. **"발화가 센서를 이긴다"가 여기서 시각 비교로 표현된다** |
+| `door/intake.py` | 문 이벤트 하나의 처리. 저장소가 두 개인 이유가 여기 적혀 있다 |
+| `door/mqtt.py` | 브로커 구독. 판정 로직이 없어서 브로커 없이 테스트된다 |
 | `backend_client/` | 어르신의 사실·기억으로 가는 유일한 길 |
 | `localstore/db.py` | **DB 파일이 왜 두 개인지**가 여기 적혀 있다 |
 | `localstore/outbox.py` | 보호자 알림 큐. 전송보다 저장이 먼저 |
-| `localstore/runtime.py` | 재부팅을 넘는 운영 상태 |
+| `localstore/runtime.py` | 재부팅을 넘는 운영 상태. **틱이 읽는 쪽** |
+| `localstore/schema.py` | 표 정의 + 뒤늦게 추가한 컬럼의 멱등 마이그레이션 |
 | `localstore/proposals.py` | 게이트가 심판할 대기 목록 |
 | `audio/echo_guard.py` | 자기 목소리를 걸러내는 판정 |
 | `audio/playback.py` | **진행 상황의 권위.** 동기화 버그가 가장 나기 쉬운 곳 |
 | `notify/base.py` | 보호자 채널 어댑터 인터페이스 |
-| `jobs/ticks.py` | 주기 작업 (`outbox_flush` 만 구현됨) |
+| `jobs/ticks.py` | 주기 작업. `daily_summary_job` 만 미구현(→ 211, 백엔드로 이동) |
 
 ### 이미 있던 것 (재구현하지 않음)
 

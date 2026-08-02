@@ -34,6 +34,7 @@ from zoneinfo import ZoneInfo
 # 임계치는 policy 에서 읽고(함수에 박지 않는다), 시간은 clock 으로만 읽는다(§15).
 from bomi_ai_chat import policy
 from bomi_ai_chat.clock import clock
+from bomi_ai_chat.door import occupancy as occupancy_rules
 from bomi_ai_chat.graph import gate
 from bomi_ai_chat.localstore import audio_cache, context_cache, outbox, proposals
 from bomi_ai_chat.localstore import runtime as runtime_store
@@ -346,10 +347,218 @@ def door_watch_tick(senior_id: str, app) -> None:
           (CLAUDE.md §11).
         - 외출 빈도는 발화량과 함께 우리의 두 번째 활동 지표다. 급감은 우울과 건강
           신호이며, 추세이므로 절대 T1 으로 올리지 않는다.
+
+    ★ 4번(외출 빈도 급감)은 여기서 하지 않는다  (2026-08-01 재정의)
+        추세에는 이력이 필요하고, 이력은 `occupancy_event`(백엔드)에 있다. 로봇이 몇 주치
+        이동 기록을 들고 있을 이유가 없다 (CLAUDE.md §11, S15P11E102-211).
+
+        나머지 넷이 로봇에 남는 이유는 하나다. **네트워크 없이도 감지해야 하는 것은
+        로봇에 남는다.** 나가서 안 돌아온 어르신은 네트워크도 함께 끊겼을 수 있는
+        바로 그 경우다. 추세는 기다릴 수 있다.
+
+    ★ 미귀가·야간 배회는 백엔드가 AWAY 를 확정해 준 뒤에만 감지된다
+        로봇은 방향을 판정하지 않으므로 스스로 AWAY 를 만들지 못한다(door/occupancy.py).
+        외출 순간에 네트워크가 끊겨 있으면 occupancy 는 UNKNOWN 에 머물고, 이 틱은
+        미귀가를 알 수 없다. 대신 **오탐도 내지 않는다.**
+
+        일단 AWAY 가 확정되면 그 뒤로는 네트워크 없이 계속 센다. 그게 이 검사를 로봇에
+        남긴 이유다.
     """
-    # TODO(localstore + notify): 위 다섯 확인. policy.ABSENCE_*,
-    #   policy.NIGHT_EXIT_HOURS, policy.DOOR_HEARTBEAT_TIMEOUT_SEC 사용.
-    ...
+    state = runtime_store.load(senior_id)
+    # quiet hours 판정에 어르신 프로필이 필요하다. 게이트·침묵 틱과 같은 값을 쓴다.
+    state["ctx"] = context_cache.load(senior_id) or {}
+    now = clock.now()
+
+    _check_heartbeat(senior_id, state, now)
+    _check_door_left_open(senior_id, state, now)
+    _check_absence(senior_id, state, now)
+
+
+def _check_heartbeat(senior_id: str, state: ConvState, now: float) -> None:
+    """현관 노드가 살아 있는가. 죽었으면 occupancy 를 UNKNOWN 으로 내린다.
+
+    왜 선택 사항이 아닌가
+        하트비트가 없으면 "아무도 움직이지 않았다"와 "라즈베리파이가 죽었다"를 구분할
+        수 없다. 낡은 AWAY 를 그대로 믿으면 침묵 사다리가 정지한 채로 남고, 아무도
+        그 사실을 모른다. 안전 시스템에서 그게 가장 나쁜 실패다 (CLAUDE.md §11).
+
+    왜 보호자에게도 알리는가
+        강등만 하고 조용히 있으면 '조용한 실패'를 UNKNOWN 이라는 이름으로 바꿔 부른
+        것에 지나지 않는다. 현관 감시가 꺼졌다는 사실은 누군가 조치할 수 있어야 한다.
+        기기 문제이므로 T2 이고, 어르신의 상태가 아니다.
+
+    주의사항
+        door_heartbeat_at 이 0 이면 아무것도 하지 않는다. "아직 한 번도 못 받았다"와
+        "설치되지 않았다"를 구분할 수 없기 때문이다. 개발 노트북에서 매 분 알림이
+        쌓이는 것을 막는다. 대신 프로세스당 한 번 경고를 남긴다.
+    """
+    last_beat = float(state.get("door_heartbeat_at") or 0.0)
+    if last_beat <= 0.0:
+        _warn_door_node_never_seen()
+        return
+
+    silent_for = now - last_beat
+    if silent_for < policy.DOOR_HEARTBEAT_TIMEOUT_SEC:
+        return
+
+    if state.get("occupancy") != "UNKNOWN":
+        occupancy_rules.set_occupancy(
+            senior_id, "UNKNOWN", observed_at=now, source="heartbeat"
+        )
+
+    if runtime_store.mark_door_alert(senior_id, f"heartbeat_lost:{int(last_beat)}"):
+        outbox.enqueue("T2", {
+            "reason": "door_node_offline",
+            "silent_sec": round(silent_for),
+            "note": "occupancy degraded to UNKNOWN",
+        })
+        logger.warning(
+            "door node silent for %.0fs; occupancy degraded to UNKNOWN and T2 queued",
+            silent_for)
+
+
+_door_node_warning_emitted = False
+
+
+def _warn_door_node_never_seen() -> None:
+    """현관 노드에서 한 번도 소식이 없다. 프로세스당 한 번만 경고한다.
+
+    왜 경고가 필요한가
+        이 상태에서 로봇은 정상처럼 보이지만 안전 신호 하나가 아예 없다. occupancy 는
+        영원히 UNKNOWN 이고, 미귀가와 야간 배회는 원리적으로 감지되지 않는다.
+        조용히 도는 것이 가장 위험하다.
+    """
+    global _door_node_warning_emitted
+    if _door_node_warning_emitted:
+        return
+    _door_node_warning_emitted = True
+    logger.warning(
+        "no heartbeat has ever arrived from the door node; occupancy will stay UNKNOWN "
+        "and the door watch cannot detect a missing return or night wandering. "
+        "Check MQTT_ENABLED and the Raspberry Pi.")
+
+
+def _check_door_left_open(senior_id: str, state: ConvState, now: float) -> None:
+    """문이 오래 열려 있는가.
+
+    ★ 이것이 로봇이 방향 없이 혼자 판정할 수 있는 유일한 현관 신호다.
+        접점 센서는 열림/닫힘을 직접 보고한다. 누가 어느 쪽으로 지나갔는지 몰라도
+        "열린 채로 20분"은 그 자체로 사실이다. 그래서 백엔드가 없어도, 방향을 몰라도,
+        이 검사는 정확하다 (CLAUDE.md §11).
+
+    왜 T2 인가
+        안전·보안 문제이면서 인지 신호이기도 하다. 다만 응급은 아니다 — 문이 열려
+        있다는 것만으로 어르신이 위험하다고 말할 수 없다.
+    """
+    open_since = float(state.get("door_open_since") or 0.0)
+    if open_since <= 0.0:
+        return
+
+    open_for = now - open_since
+    if open_for < policy.DOOR_OPEN_TOO_LONG_SEC:
+        return
+
+    if runtime_store.mark_door_alert(senior_id, f"door_open:{int(open_since)}"):
+        outbox.enqueue("T2", {
+            "reason": "door_left_open",
+            "open_sec": round(open_for),
+        })
+        logger.warning("door has been open for %.0fs; T2 queued", open_for)
+
+
+def _check_absence(senior_id: str, state: ConvState, now: float) -> None:
+    """오래 나가 있는가. 그리고 그것이 야간 외출이었는가.
+
+    무엇을 하는가
+        away_since 를 기준으로 두 임계치를 본다. 그리고 부재가 '시작된' 시각이
+        야간이었으면 배회 신호로 따로 알린다.
+
+    왜 침묵 사다리로는 안 되는가
+        집에 아무도 없으면 사다리가 아예 시작되지 않는다. 나가서 안 돌아온 어르신은
+        구조적으로 사다리에게 보이지 않는다 (CLAUDE.md §11).
+
+        야간 배회는 침묵이 아니라 '활동'이라서 더욱 보이지 않는다. 치매의 대표
+        증상이므로, 인지 축이 객관적 신호를 얻는 곳이 이 검사다.
+
+    왜 occupancy_observed_at 이 아니라 away_since 인가
+        observed_at 은 "이 값을 마지막으로 관측한 시각"이라서 AWAY 를 다시 관측하면
+        갱신된다. 그러면 부재 시간이 매번 0 으로 리셋되어 알림이 영원히 안 나간다
+        (localstore/schema.py 의 주석 참고).
+
+    주의사항
+        - 알림은 두 단계다. ABSENCE_CONCERN_SEC 은 T2, ABSENCE_ALERT_SEC 은 T1.
+          T1 로 올리는 것은 '밤을 넘긴 미귀가'가 명백한 이상이기 때문이다.
+        - 배회 판정은 부재가 '시작된' 시각으로 한다. 지금 시각으로 하면 저녁에 나간
+          외출이 자정을 넘기는 순간 배회로 바뀐다.
+    """
+    if state.get("occupancy") != "AWAY":
+        return
+
+    away_since = float(state.get("away_since") or 0.0)
+    if away_since <= 0.0:
+        # AWAY 인데 시작 시각이 없다. 이 컬럼이 추가되기 전의 DB 이거나, 누군가
+        # occupancy 를 door.occupancy 를 거치지 않고 직접 썼다는 뜻이다.
+        logger.warning("occupancy is AWAY but away_since is unset; cannot measure absence")
+        return
+
+    away_for = now - away_since
+
+    # 야간 외출: 부재가 시작된 시각이 야간 구간이었는가.
+    if _is_night_local(away_since, state):
+        if runtime_store.mark_door_alert(senior_id, f"night_exit:{int(away_since)}"):
+            outbox.enqueue("T2", {
+                "reason": "night_exit",
+                "left_at": away_since,
+                "night_hours": list(policy.NIGHT_EXIT_HOURS),
+            })
+            logger.warning("night exit detected (left at %.0f); T2 queued", away_since)
+
+    if away_for >= policy.ABSENCE_ALERT_SEC:
+        if runtime_store.mark_door_alert(senior_id, f"absence_alert:{int(away_since)}"):
+            outbox.enqueue("T1", {
+                "reason": "not_returned",
+                "away_sec": round(away_for),
+                "left_at": away_since,
+            })
+            logger.warning("absent for %.0fs; T1 queued", away_for)
+        return
+
+    if away_for >= policy.ABSENCE_CONCERN_SEC:
+        if runtime_store.mark_door_alert(senior_id, f"absence_concern:{int(away_since)}"):
+            outbox.enqueue("T2", {
+                "reason": "long_absence",
+                "away_sec": round(away_for),
+                "left_at": away_since,
+            })
+            logger.info("absent for %.0fs; T2 queued", away_for)
+
+
+def _is_night_local(moment: float, state: ConvState) -> bool:
+    """이 순간이 어르신의 로컬 시각으로 야간 구간인가.
+
+    구간이 자정을 넘는다(23시~5시). gate.is_quiet_hours 와 같은 함정이므로 같은
+    방식으로 다룬다 — start > end 면 조건을 뒤집는다. 낮에 테스트하면 절대 안 잡히는
+    종류의 버그다.
+    """
+    profile = (state.get("ctx") or {}).get("profile") or {}
+    local = _local_now_from(moment, profile.get("timeZone"))
+    start, end = policy.NIGHT_EXIT_HOURS
+
+    if start > end:
+        return local.hour >= start or local.hour < end
+    return start <= local.hour < end
+
+
+def _local_now_from(moment: float, time_zone: str | None):
+    """특정 순간을 어르신의 로컬 시각으로. 시간대를 모르면 UTC."""
+    zone = timezone.utc
+    if time_zone:
+        try:
+            zone = ZoneInfo(time_zone)
+        except Exception:  # noqa: BLE001
+            logger.warning("unknown time zone %r; using UTC for the night-exit check",
+                           time_zone)
+    return datetime.fromtimestamp(moment, tz=zone)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -488,13 +697,7 @@ def _local_now(time_zone: str | None):
     시각은 clock 을 통해서만 읽는다(§15). 압축 시계로 하루를 흘리는 시연에서
     이 틱이 함께 흘러야 하기 때문이다.
     """
-    zone = timezone.utc
-    if time_zone:
-        try:
-            zone = ZoneInfo(time_zone)
-        except Exception:  # noqa: BLE001
-            logger.warning("unknown time zone %r; using UTC for schedule_tick", time_zone)
-    return datetime.fromtimestamp(clock.now(), tz=zone)
+    return _local_now_from(clock.now(), time_zone)
 
 
 def daily_summary_job(senior_id: str) -> None:

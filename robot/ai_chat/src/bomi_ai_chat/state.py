@@ -103,15 +103,28 @@ class ConvState(TypedDict, total=False):
     # 새 대화의 첫 턴에서는 None 이고, 그러면 최근 메시지가 비어서 온다.
     conversation_id: str | None
 
-    # ── 진입: 이 턴이 세 경로 중 어디에서 왔는가 (§6) ──
+    # ── 진입: 이 턴이 네 경로 중 어디에서 왔는가 (§6) ──
     #
-    # "user_utterance" -> 어르신이 말했다. note_interaction 다음 safety_triage 로.
-    #                     게이트를 절대 거치지 않는다. 우리에게 말을 건 사람에게
-    #                     대답할 허락을 받을 필요는 없다.
-    # "proactive"      -> 스케줄러나 침묵 사다리가 제안했다. 허락을 받아야 한다.
-    # "door_event"     -> 현관 센서가 발동했다. occupancy 를 즉시 반영한 '다음에'
-    #                     인사를 제안한다.
-    trigger_type: Literal["user_utterance", "proactive", "door_event"]
+    # "user_utterance"  -> 어르신이 말했다. note_interaction 다음 safety_triage 로.
+    #                      게이트를 절대 거치지 않는다. 우리에게 말을 건 사람에게
+    #                      대답할 허락을 받을 필요는 없다.
+    # "proactive"       -> 스케줄러나 침묵 사다리가 제안했다. 허락을 받아야 한다.
+    # "door_event"      -> 현관 센서가 발동했다. occupancy 만 반영하고 여기서 끝난다.
+    #                      인사를 제안하지 않는다 — 판정은 백엔드다 (§11).
+    # "backend_command" -> 백엔드가 말하라고 명령했다. 게이트를 거치지 않는다.
+    #                      이미 판정한 쪽에서 온 것이므로 다시 판정하면 심판이 둘이 된다.
+    trigger_type: Literal["user_utterance", "proactive", "door_event", "backend_command"]
+
+    # 백엔드가 내려보낸 발화 명령. trigger_type == "backend_command" 일 때만 있다.
+    #
+    #   {"text": "비 와요, 우산 챙기세요", "intent": "greeting",
+    #    "priority": "event", "terse": false, "origin": "scenario:homecoming",
+    #    "occupancy": "AWAY", "occupancyObservedAt": 1754...}
+    #
+    # text 가 '최종 문구'다. 로봇이 다시 고르지 않는다 — 인사의 내용은 백엔드만 아는
+    # 사실(오늘 일정, 미복용 약, 동의 상태)에 달려 있고, 로봇에서 다시 고르면 같은
+    # 우선순위 규칙이 두 곳에 생긴다 (CLAUDE.md §11).
+    command: dict
 
     # 반응형 턴에서는 ASR 텍스트, 능동 턴에서는 이긴 제안의 seed.
     # 이름이 "user_input" 인 이유는 두 경우 모두 프롬프트 빌더가 이 값을 소비하기
@@ -198,7 +211,11 @@ class ConvState(TypedDict, total=False):
     occupancy: Occupancy
     occupancy_observed_at: float
     rest_state: RestState
-    last_door_event: dict | None      # {"direction": "in"|"out", "ts": float}
+    # 마지막 문 이벤트. ts 는 '도착' 시각이며 라즈베리파이가 주장한 시각이 아니다
+    # (contracts/door.py). direction 은 백엔드가 채워준 경우에만 값이 있고, 보통 None
+    # 이다 — 로봇은 방향을 판정하지 않는다 (CLAUDE.md §11).
+    #   {"type": "DOOR_OPENED", "ts": float, "direction": "in"|"out"|None}
+    last_door_event: dict | None
     door_heartbeat_at: float             # 현관 라즈베리파이의 마지막 하트비트
 
     # 값싼 로컬 오디오 판정. 녹음하지 않고, 저장하지 않고, 전송하지 않는다 (§10).

@@ -36,9 +36,34 @@ CREATE TABLE IF NOT EXISTS runtime_state (
     last_spoke_at            REAL    NOT NULL DEFAULT 0,
     last_user_interaction_at REAL    NOT NULL DEFAULT 0,
     door_heartbeat_at        REAL    NOT NULL DEFAULT 0,
+    -- occupancy 가 AWAY 로 '전이한' 시각. 0 이면 지금 나가 있지 않다.
+    --
+    -- 왜 occupancy_observed_at 으로 대신하지 않는가
+    --   그 값은 "이 값을 마지막으로 관측한 시각"이다. AWAY 를 다시 관측하면 갱신되고,
+    --   그러면 부재 시간이 매번 0 으로 리셋되어 미귀가 알림이 영원히 안 나간다.
+    --   부재 '시작' 시각은 따로 들고 있어야 한다.
+    away_since               REAL    NOT NULL DEFAULT 0,
+    -- 문이 열린 시각. 0 이면 닫혀 있거나 아직 모른다.
+    -- 재부팅을 넘어 살아남아야 한다 — 재부팅 사이에 열린 채 방치된 문이 바로
+    -- 알려야 할 상황이다.
+    door_open_since          REAL    NOT NULL DEFAULT 0,
     updated_at               REAL    NOT NULL DEFAULT 0
 )
 """
+
+# runtime_state 에 뒤늦게 추가된 컬럼.
+#
+# 왜 이 목록이 필요한가
+#   CREATE TABLE IF NOT EXISTS 는 '이미 있는' 표에 컬럼을 더해주지 않는다. 그래서
+#   이미 돌고 있던 로봇의 DB 는 새 컬럼 없이 남고, SELECT * 로 읽는 쪽이 KeyError 로
+#   죽는다. 스키마 버전을 무겁게 관리하지는 않지만, 이 정도는 명시해야 한다.
+#
+#   (컬럼명, 타입과 기본값) 순서. ALTER TABLE ADD COLUMN 은 되돌릴 수 없으므로
+#   기본값이 '아직 모른다'를 뜻하는 값이어야 한다. 여기서는 둘 다 0 이다.
+_RUNTIME_STATE_ADDED_COLUMNS = (
+    ("away_since", "REAL NOT NULL DEFAULT 0"),
+    ("door_open_since", "REAL NOT NULL DEFAULT 0"),
+)
 
 # 게이트를 기다리는 발화 제안.
 #
@@ -151,14 +176,59 @@ CREATE TABLE IF NOT EXISTS completed_slot (
 """
 
 
+# 이미 보낸 현관 알림.
+#
+# 왜 필요한가
+#   door_watch_tick 은 60초마다 돈다. 부재 6시간을 넘긴 상태는 그 뒤로 계속 참이므로,
+#   중복 방지가 없으면 매 분 T2 가 하나씩 쌓인다. 보호자 화면이 같은 알림으로 도배되고,
+#   그러면 보호자가 알림을 읽지 않게 되고, 그때부터 진짜를 놓친다.
+#
+#   completed_slot 을 재사용하지 않는 이유는 그 표의 뜻이 "오늘 이 권유 슬롯을 이미
+#   다뤘다"이고 게이트 1 이 그것을 읽기 때문이다. 뜻이 다른 값을 같은 표에 넣으면
+#   나중에 둘 중 하나를 지우기 어려워진다.
+#
+#   alert_key 에 '상태가 시작된 시각'을 넣는다. 그래야 어르신이 돌아왔다가 다시 나가면
+#   새 키가 되어 다시 알릴 수 있다. 날짜를 넣으면 하루에 한 번으로 묶여버린다.
+_DOOR_ALERT = """
+CREATE TABLE IF NOT EXISTS door_alert (
+    senior_id  TEXT NOT NULL,
+    alert_key  TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    PRIMARY KEY (senior_id, alert_key)
+)
+"""
+
+
 def init_runtime(connection: sqlite3.Connection) -> None:
     """운영 상태 DB 의 표를 만든다. 멱등하다."""
     connection.execute(_RUNTIME_STATE)
+    _add_missing_columns(connection, "runtime_state", _RUNTIME_STATE_ADDED_COLUMNS)
     connection.execute(_PROPOSALS)
     connection.execute(_PROPOSALS_INDEX)
     connection.execute(_AUDIO_CACHE)
     connection.execute(_CONTEXT_CACHE)
     connection.execute(_COMPLETED_SLOT)
+    connection.execute(_DOOR_ALERT)
+
+
+def _add_missing_columns(
+    connection: sqlite3.Connection,
+    table: str,
+    columns: tuple[tuple[str, str], ...],
+) -> None:
+    """이미 존재하는 표에 빠진 컬럼을 더한다. 멱등하다.
+
+    왜 try/except 가 아니라 PRAGMA 로 확인하는가
+        "duplicate column name" 만 삼키려면 예외 메시지를 문자열로 비교해야 하고,
+        그러면 SQLite 버전이 문구를 바꿀 때 조용히 깨진다. 있는지 먼저 보는 편이
+        읽기도 쉽다.
+    """
+    existing = {
+        row[1] for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    for name, definition in columns:
+        if name not in existing:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
 
 def init_outbox(connection: sqlite3.Connection) -> None:
