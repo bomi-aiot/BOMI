@@ -7,6 +7,7 @@ import com.ssafy.bomi.care.web.dto.MedicationResponseDto;
 import com.ssafy.bomi.care.web.dto.ScheduleDto;
 import com.ssafy.bomi.care.web.dto.ScheduleRequests.CreateScheduleRequest;
 import com.ssafy.bomi.care.web.dto.ScheduleRequests.UpdateScheduleRequest;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -25,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/care-records")
+@Tag(name = "Guardian Care Record", description = "돌봄기록 일정·복약 — 가디언웹이 호출합니다.")
 public class CareRecordController {
 
     private final CareRecordQueryService queryService;

@@ -1,5 +1,6 @@
 package com.ssafy.bomi.fact.web;
 
+import io.swagger.v3.oas.annotations.tags.Tag;
 import java.util.List;
 import java.util.UUID;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -15,6 +16,9 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/confirmation-requests")
+@Tag(
+        name = "Guardian Confirmation Request",
+        description = "확인요청 — 가디언웹이 호출합니다. 로봇용 재질의 API와 같은 테이블을 다루지만 호출 주체와 권한이 다릅니다.")
 public class ConfirmationRequestController {
 
     private final ConfirmationRequestService service;

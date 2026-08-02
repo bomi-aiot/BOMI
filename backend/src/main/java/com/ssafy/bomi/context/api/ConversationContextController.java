@@ -22,7 +22,9 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/seniors/{seniorId}/conversation-context")
-@Tag(name = "Conversation Context", description = "대화 문맥 조립 (로봇 전용 이음새)")
+@Tag(
+        name = "Conversation Context",
+        description = "대화 문맥 조립 — 로봇(ai_chat context_client)이 호출합니다. 로봇 전용 이음새입니다.")
 public class ConversationContextController {
 
     private final ConversationContextService contextService;
