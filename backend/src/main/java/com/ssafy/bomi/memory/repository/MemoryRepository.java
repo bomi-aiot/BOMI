@@ -16,6 +16,9 @@ public interface MemoryRepository extends JpaRepository<Memory, UUID> {
     List<Memory> findTop5BySeniorIdAndLifecycleStatusOrderByFirstObservedAtDesc(
             UUID seniorId, MemoryLifecycleStatus lifecycleStatus);
 
+    /** 가디언 '대화 정보/기억' 화면용 — 한 어르신의 전체 기억(삭제 제외는 서비스에서). */
+    List<Memory> findBySeniorIdOrderByFirstObservedAtDesc(UUID seniorId);
+
     /**
      * Every memory a given requester is allowed to see for one senior.
      *

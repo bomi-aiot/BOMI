@@ -155,6 +155,15 @@ public class CareRecord {
     }
 
     /**
+     * Links this record to a parent record (e.g. a MEDICATION_SCHEDULE under its
+     * MEDICATION). Distinct from {@link #supersedeWith}: no status change, used when a
+     * child is created together with its parent (S15P11E102-224).
+     */
+    public void assignParent(UUID parentRecordId) {
+        this.parentRecordId = requireNonNull(parentRecordId, "parentRecordId");
+    }
+
+    /**
      * Creates the successor row for a value change, linking back to this record and
      * marking this one {@code SUPERSEDED} (§8).
      */
