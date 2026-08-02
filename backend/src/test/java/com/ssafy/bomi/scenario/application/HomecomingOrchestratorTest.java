@@ -3,6 +3,8 @@ package com.ssafy.bomi.scenario.application;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -97,17 +99,32 @@ class HomecomingOrchestratorTest {
         assertThat(saved.getFinalStatus()).isEqualTo(ScenarioStatus.MOVING_TO_ENTRANCE);
         assertThat(saved.getExternalEventId()).isEqualTo(sensorId);
 
+        // 이동과 발화가 함께 나간다 (S15P11E102-226).
+        //
+        // 예전에는 인사가 '도착한 뒤'에 나갔다. 그러면 느리거나 실패한 이동이 인사를
+        // 통째로 삼키는데, 인사의 마감 시간은 약 45초로 의자를 돌아가는 경로 계산보다
+        // 짧다. 목소리는 방을 건너 들리므로 바퀴를 기다릴 이유가 없다 (CLAUDE.md §11).
         ArgumentCaptor<RobotCommand> commandCaptor = ArgumentCaptor.forClass(RobotCommand.class);
-        verify(commandPublisher).publish(commandCaptor.capture());
-        RobotCommand command = commandCaptor.getValue();
-        assertThat(command.type()).isEqualTo(RobotCommandType.NAVIGATE);
-        assertThat(command.robotId()).isEqualTo(deviceId);
-        assertThat(command.payload()).containsEntry("target", "ENTRANCE");
-        assertThat(command.scenarioId()).isNotNull();
+        verify(commandPublisher, times(2)).publish(commandCaptor.capture());
+
+        RobotCommand navigate = commandCaptor.getAllValues().stream()
+            .filter(c -> c.type() == RobotCommandType.NAVIGATE).findFirst().orElseThrow();
+        assertThat(navigate.robotId()).isEqualTo(deviceId);
+        assertThat(navigate.payload()).containsEntry("target", "ENTRANCE");
+        assertThat(navigate.scenarioId()).isNotNull();
+
+        assertThat(commandCaptor.getAllValues())
+            .anyMatch(c -> c.type() == RobotCommandType.SPEAK);
     }
 
     @Test
-    void arrivalAtEntranceSpeaksAndStartsConversation() {
+    void arrivalAtEntranceHandsOffToConversationWithoutSpeakingAgain() {
+        /*
+         * ★ 인사는 startHomecoming 에서 이미 나갔다 (S15P11E102-226).
+         *
+         * 도착 시점에 또 말하면 어르신은 같은 인사를 두 번 듣고, 두 번째는 로봇이
+         * 도착한 뒤라 한참 늦다. 도착이 하는 일은 대화로 넘기는 것뿐이다.
+         */
         Scenario scenario = scenarioAt(ScenarioStatus.MOVING_TO_ENTRANCE);
         UUID scenarioId = scenario.getId();
         when(scenarioRepository.findById(scenarioId)).thenReturn(Optional.of(scenario));
@@ -116,9 +133,7 @@ class HomecomingOrchestratorTest {
         orchestrator.onRobotArrived(scenarioId);
 
         assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.CONVERSING);
-        ArgumentCaptor<RobotCommand> commandCaptor = ArgumentCaptor.forClass(RobotCommand.class);
-        verify(commandPublisher).publish(commandCaptor.capture());
-        assertThat(commandCaptor.getValue().type()).isEqualTo(RobotCommandType.SPEAK);
+        verify(commandPublisher, never()).publish(any());
         verify(conversationGateway).startConversation(scenarioId, seniorId);
     }
 
