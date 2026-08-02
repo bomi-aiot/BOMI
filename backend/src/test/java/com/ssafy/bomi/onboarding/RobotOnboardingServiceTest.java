@@ -351,6 +351,77 @@ class RobotOnboardingServiceTest {
             .hasMessageContaining("unknown question code");
     }
 
+    // ── 209 에서 발견한 결함: 재답변이 이전 필드를 지웠다 ─────────────────────
+
+    @Test
+    void answeringOneFieldAtATimeAccumulatesInsteadOfOverwriting() {
+        /*
+         * ★★ 계약이 한 필드씩 되묻는 이상, 재답변은 본질적으로 '부분'이다.
+         *
+         * 어르신이 "혈압약" 이라고 답하면 dose 와 doseUnit 을 다시 묻는다. 그 다음
+         * 턴에 로봇이 보내는 것은 {"dose": 1, "doseUnit": "정"} 뿐이다. 덮어쓰면
+         * 방금 들은 약 이름이 사라지고, 서버는 그것을 다시 묻는다 — 끝나지 않는다.
+         *
+         * 209 의 압축 워크스루가 이 순환을 실제로 보여줬다.
+         */
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grantAllConsents(session);
+
+        onboardingService.submitAnswer(session.getId(), "MEDICATION",
+            Map.of("medicationName", "혈압약"), true, null, null);
+        AnswerResult second = onboardingService.submitAnswer(session.getId(), "MEDICATION",
+            Map.of("dose", 1, "doseUnit", "정"), true, null, null);
+
+        assertThat(second.outcome()).isEqualTo(Outcome.ACCEPTED);
+
+        OnboardingAnswer answer = answerRepository
+            .findBySessionIdAndQuestionCode(session.getId(), "MEDICATION").orElseThrow();
+        assertThat(answer.getAnswerValue())
+            .containsEntry("medicationName", "혈압약")
+            .containsEntry("dose", 1)
+            .containsEntry("doseUnit", "정");
+    }
+
+    @Test
+    void aBlankReAnswerDoesNotEraseWhatWasAlreadyKnown() {
+        /*
+         * 빈 값은 어르신이 알아들을 만한 말을 하지 않았을 때 도착한다. 그것이 이미
+         * 아는 값을 지우면, 못 알아들은 한 턴이 데이터 손실이 된다.
+         */
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grantAllConsents(session);
+
+        onboardingService.submitAnswer(session.getId(), "MEDICATION",
+            Map.of("medicationName", "혈압약"), true, null, null);
+        onboardingService.submitAnswer(session.getId(), "MEDICATION",
+            Map.of("medicationName", "   "), true, null, null);
+
+        OnboardingAnswer answer = answerRepository
+            .findBySessionIdAndQuestionCode(session.getId(), "MEDICATION").orElseThrow();
+        assertThat(answer.getAnswerValue()).containsEntry("medicationName", "혈압약");
+    }
+
+    @Test
+    void theCandidateSeesTheAccumulatedValueToo() {
+        /*
+         * 후보의 제안값이 누적되지 않으면, 최종 확인 단계에서 어르신에게 반쪽짜리
+         * 값을 복창하게 된다.
+         */
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grantAllConsents(session);
+
+        onboardingService.submitAnswer(session.getId(), "MEDICATION",
+            Map.of("medicationName", "혈압약"), false, null, null);
+        AnswerResult second = onboardingService.submitAnswer(session.getId(), "MEDICATION",
+            Map.of("dose", 1, "doseUnit", "정"), false, null, null);
+
+        assertThat(second.outcome()).isEqualTo(Outcome.NEEDS_CONFIRMATION);
+        assertThat(second.valueToConfirm()).containsEntry("medicationName", "혈압약");
+        FactCandidate candidate = candidateRepository.findById(second.factCandidateId())
+            .orElseThrow();
+        assertThat(candidate.getProposedValue()).containsEntry("medicationName", "혈압약");
+    }
+
     // ── 헬퍼 ────────────────────────────────────────────────────────────────
 
     private QuestionDefinition next(OnboardingSession session) {
