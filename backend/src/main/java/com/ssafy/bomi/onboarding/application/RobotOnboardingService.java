@@ -305,9 +305,11 @@ public class RobotOnboardingService {
                 questionCode + " is not answerable on the ROBOT channel");
         }
 
-        Map<String, Object> value = answerValue == null ? Map.of() : answerValue;
-        OnboardingAnswer answer = upsertAnswer(session, question, value, conversationId,
+        Map<String, Object> supplied = answerValue == null ? Map.of() : answerValue;
+        OnboardingAnswer answer = upsertAnswer(session, question, supplied, conversationId,
             sourceMessageId);
+        // 병합된 값을 이후 판정에 쓴다. 무엇이 빠졌는지도 여기서 결정된다.
+        Map<String, Object> value = Map.copyOf(answer.getAnswerValue());
         FactCandidate candidate = upsertCandidate(session, question, answer, value);
 
         List<String> missing = missingFields(question, value);
@@ -360,9 +362,9 @@ public class RobotOnboardingService {
         OnboardingAnswer answer = answerRepository
             .findBySessionIdAndQuestionCode(session.getId(), question.code())
             .orElseGet(() -> answerRepository.save(OnboardingAnswer.create(
-                session.getId(), question.code(), CHANNEL, session.getSeniorId(), value)));
+                session.getId(), question.code(), CHANNEL, session.getSeniorId(), Map.of())));
 
-        answer.updateAnswerValue(value);
+        answer.mergeAnswerValue(value);
         // 로봇 답변은 근거 대화·메시지를 연결한다. 앱 답변에는 없을 수 있다(설계 노트 §1).
         answer.linkEvidence(conversationId, sourceMessageId);
         return answer;
