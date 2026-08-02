@@ -22,6 +22,11 @@ import {
   type MedicationDto,
   type MedicationResponseDto,
 } from "./mappers/medication";
+import { mapMemory, type MemoryDto } from "./mappers/memory";
+import {
+  mapElderProfile,
+  type ElderProfileDto,
+} from "./mappers/elderProfile";
 import type {
   ActivitySummary,
   ConfirmationRequest,
@@ -1074,6 +1079,18 @@ class HttpBomiService extends MockBomiService {
     return mapDashboard(dto);
   }
 
+  async getElderProfile(): Promise<ElderProfile> {
+    const dto = await httpGet<ElderProfileDto>(API_ENDPOINTS.elderProfile);
+    return mapElderProfile(dto);
+  }
+
+  async getConversationPreferences(): Promise<ConversationPreference[]> {
+    const dtos = await httpGet<MemoryDto[]>(
+      API_ENDPOINTS.conversationPreferences,
+    );
+    return dtos.map(mapMemory);
+  }
+
   async getConfirmationRequests(): Promise<ConfirmationRequest[]> {
     const dtos = await httpGet<FactCandidateDto[]>(
       API_ENDPOINTS.confirmationRequests,
@@ -1182,12 +1199,16 @@ class HttpBomiService extends MockBomiService {
     const [
       dashboard,
       confirmationRequests,
+      elderProfile,
+      conversationPreferences,
       schedules,
       medications,
       medicationResponses,
     ] = await Promise.all([
       this.getDashboard(),
       this.getConfirmationRequests(),
+      this.getElderProfile(),
+      this.getConversationPreferences(),
       this.getSchedules(),
       this.getMedications(),
       this.getMedicationResponses(),
@@ -1196,6 +1217,8 @@ class HttpBomiService extends MockBomiService {
       ...base,
       dashboard,
       confirmationRequests,
+      elderProfile,
+      conversationPreferences,
       schedules,
       medications,
       medicationResponses,

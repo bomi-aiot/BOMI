@@ -45,12 +45,6 @@ export const NAVIGATION_GROUPS = [
         path: '/confirmation-requests',
       },
       {
-        label: '건강 기록',
-        shortLabel: '건강',
-        marker: '건',
-        path: '/health',
-      },
-      {
         label: '복약 관리',
         shortLabel: '복약',
         marker: '약',
@@ -61,41 +55,6 @@ export const NAVIGATION_GROUPS = [
         shortLabel: '일정',
         marker: '일',
         path: '/schedules',
-      },
-    ],
-  },
-  {
-    label: '운영 관리',
-    items: [
-      {
-        label: '로봇·기기',
-        shortLabel: '로봇',
-        marker: '로',
-        disabled: true,
-      },
-      {
-        label: '이벤트 이력',
-        shortLabel: '이벤트',
-        marker: '이',
-        disabled: true,
-      },
-      {
-        label: '건강 분석',
-        shortLabel: '분석',
-        marker: '분',
-        disabled: true,
-      },
-      {
-        label: '시스템 관리',
-        shortLabel: '시스템',
-        marker: '시',
-        disabled: true,
-      },
-      {
-        label: '설정',
-        shortLabel: '설정',
-        marker: '설',
-        disabled: true,
       },
     ],
   },
@@ -121,10 +80,10 @@ const MOBILE_NAV_ITEMS: readonly NavigationItem[] = [
     path: '/confirmation-requests',
   },
   {
-    label: '건강 기록',
-    shortLabel: '건강',
-    marker: '건',
-    path: '/health',
+    label: '복약 관리',
+    shortLabel: '복약',
+    marker: '약',
+    path: '/medications',
   },
   {
     label: '일정 관리',
