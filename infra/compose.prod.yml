@@ -23,8 +23,8 @@ services:
 
   backend:
     build:
-      context: ../backend
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: backend/Dockerfile
     image: bomi-backend:${BACKEND_IMAGE_TAG:-local}
     container_name: bomi-backend
     restart: unless-stopped
