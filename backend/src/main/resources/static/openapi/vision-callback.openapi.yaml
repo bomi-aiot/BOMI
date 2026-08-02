@@ -1,8 +1,12 @@
 openapi: 3.0.3
 info:
-  title: BOMI AI Vision Result Callback API
+  title: "[AI-Vision] 결과 Callback API (계약·미구현)"
   version: 1.0.0
   description: |
+    ⚠️ **아직 구현체가 없는 계약입니다.** 이 문서는 합의된 계약이며 호출할 수 있는
+    API가 아닙니다. 수신 측인 Spring Boot에 `/api/v1/integrations/vision/results`
+    컨트롤러가 아직 없습니다. 구현되면 자동생성 그룹에도 나타납니다.
+
     AI Vision이 사람 인식 결과를 Spring Boot에 비동기로 전달하는 내부 API 계약입니다.
 
     `eventId`는 동일 Callback 전달의 멱등 키이고 `requestId`는 하나의 Vision 작업 식별자입니다.

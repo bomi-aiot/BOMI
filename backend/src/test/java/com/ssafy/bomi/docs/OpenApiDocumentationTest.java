@@ -29,13 +29,18 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
 @SpringBootTest
 class OpenApiDocumentationTest {
     private static final List<OpenApiSpec> SPECS = List.of(
-        new OpenApiSpec("AI Vision Recognition API", "vision-ai.openapi.yaml"),
-        new OpenApiSpec("AI Vision Result Callback API", "vision-callback.openapi.yaml"),
-        new OpenApiSpec("Conversation and Voice AI API", "voice-ai.openapi.yaml")
+        new OpenApiSpec("[AI-Vision] 인식 요청 API (계약·미구현)", "vision-ai.openapi.yaml"),
+        new OpenApiSpec("[AI-Vision] 결과 Callback API (계약·미구현)", "vision-callback.openapi.yaml"),
+        new OpenApiSpec("[AI-Chat] 대화·음성 생성 API (계약·미구현)", "voice-ai.openapi.yaml")
     );
+
+    private static final String PRIMARY_GROUP_NAME = "[BE-Robot] 로봇·AI 채널 API";
 
     @Autowired
     MockMvc mockMvc;
+
+    @Autowired
+    org.springframework.context.ApplicationContext applicationContext;
 
     @Test
     void openApiYamlFilesAreValidDocuments() throws IOException {
@@ -77,17 +82,114 @@ class OpenApiDocumentationTest {
             // concrete presence of every expected entry below rather than an exact size.
             .andExpect(jsonPath("$.urls.length()")
                 .value(org.hamcrest.Matchers.greaterThanOrEqualTo(SPECS.size() + 1)))
-            .andExpect(jsonPath("$['urls.primaryName']").value("BOMI Backend API"))
-            .andExpect(jsonPath("$.supportedSubmitMethods").isEmpty())
+            .andExpect(jsonPath("$['urls.primaryName']").value(PRIMARY_GROUP_NAME))
+            // Try it out 이 켜져 있어야 한다. 빈 배열이면 버튼이 사라진다.
+            .andExpect(jsonPath("$.supportedSubmitMethods").isNotEmpty())
+            .andExpect(jsonPath("$.supportedSubmitMethods",
+                org.hamcrest.Matchers.hasItems("get", "post")))
             .andReturn()
             .getResponse()
             .getContentAsString();
 
-        assertThat(config).contains("BOMI Backend API");
+        assertThat(config).contains(PRIMARY_GROUP_NAME);
+        assertThat(config).contains("/v3/api-docs/bomi-robot");
+        assertThat(config).contains("/v3/api-docs/bomi-guardian");
         assertThat(config).contains("/v3/api-docs/bomi-backend");
         for (OpenApiSpec spec : SPECS) {
             assertThat(config).contains(spec.name());
             assertThat(config).contains("/openapi/" + spec.fileName());
+        }
+    }
+
+    /**
+     * springdoc 은 group-configs 의 그룹을 display-name 으로 이미 드롭다운에 넣는다.
+     * 같은 그룹을 swagger-ui.urls 에 또 적으면 항목이 두 번 뜬다.
+     */
+    @Test
+    void dropdownHasNoDuplicateEntries() throws Exception {
+        List<String> urls = com.jayway.jsonpath.JsonPath.read(
+            mockMvc.perform(get("/v3/api-docs/swagger-config"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(),
+            "$.urls[*].url"
+        );
+
+        assertThat(urls).doesNotHaveDuplicates();
+    }
+
+    /**
+     * 채널이 실제로 갈리는지 본다. 표시명만 바꾸고 {@code paths-to-match} 를 빠뜨리면
+     * 드롭다운에는 두 항목이 뜨지만 내용은 똑같은 전체 목록이 된다.
+     */
+    @Test
+    void channelGroupsContainOnlyTheirOwnPaths() throws Exception {
+        String robot = mockMvc.perform(get("/v3/api-docs/bomi-robot"))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+
+        assertThat(robot)
+            .contains("/api/v1/robot/conversation-events")
+            .contains("/api/v1/robot/clarifications")
+            .contains("/api/v1/robot/guardian-alerts")
+            .contains("/api/v1/robot/onboarding")
+            .contains("/api/v1/seniors/{seniorId}/conversation-context")
+            .contains("/api/v1/seniors/{seniorId}/door-events");
+        assertThat(robot)
+            .doesNotContain("/api/v1/guardian/")
+            .doesNotContain("/api/v1/memories")
+            .doesNotContain("/api/v1/care-records")
+            .doesNotContain("/api/v1/confirmation-requests")
+            .doesNotContain("/api/v1/elders");
+
+        String guardian = mockMvc.perform(get("/v3/api-docs/bomi-guardian"))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+
+        assertThat(guardian)
+            .contains("/api/v1/guardian/")
+            .contains("/api/v1/memories")
+            .contains("/api/v1/care-records")
+            .contains("/api/v1/confirmation-requests")
+            .contains("/api/v1/elders");
+        assertThat(guardian).doesNotContain("/api/v1/robot/");
+    }
+
+    /**
+     * 새 컨트롤러가 태그 없이 들어오면 여기서 막힌다.
+     *
+     * <p>규칙을 문서에만 적어두면 다음 컨트롤러는 십중팔구 태그 없이 머지된다. 태그가 없으면
+     * springdoc 이 클래스명으로 기본 태그를 만들어 주기 때문에 Swagger 는 멀쩡해 보이고,
+     * "이 API 를 누가 호출하는가"라는 정보만 조용히 사라진다.</p>
+     */
+    @Test
+    void everyControllerDeclaresATagNamingItsCaller() {
+        Map<String, Object> controllers = applicationContext.getBeansWithAnnotation(
+            org.springframework.web.bind.annotation.RestController.class
+        );
+
+        List<Class<?>> ours = controllers.values().stream()
+            .map(org.springframework.aop.support.AopUtils::getTargetClass)
+            // springdoc 자신도 @RestController 로 문서 엔드포인트를 노출한다. 남의 빈이다.
+            .filter(type -> type.getPackageName().startsWith("com.ssafy.bomi"))
+            .toList();
+
+        assertThat(ours).as("스캔된 컨트롤러").isNotEmpty();
+
+        for (Class<?> type : ours) {
+            io.swagger.v3.oas.annotations.tags.Tag tag =
+                org.springframework.core.annotation.AnnotationUtils.findAnnotation(
+                    type, io.swagger.v3.oas.annotations.tags.Tag.class
+                );
+
+            assertThat(tag)
+                .as("%s 에 @Tag 가 없다. 호출 주체를 description 에 적어 붙일 것", type.getSimpleName())
+                .isNotNull();
+            assertThat(tag.name())
+                .as("%s 의 @Tag name", type.getSimpleName())
+                .isNotBlank();
+            assertThat(tag.description())
+                .as("%s 의 @Tag description — 누가 호출하는지 적을 것", type.getSimpleName())
+                .contains("호출합니다");
         }
     }
 

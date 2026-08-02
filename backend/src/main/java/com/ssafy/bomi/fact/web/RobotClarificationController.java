@@ -4,6 +4,7 @@ import com.ssafy.bomi.fact.application.RobotClarificationService;
 import com.ssafy.bomi.fact.application.RobotClarificationService.ClarificationResult;
 import com.ssafy.bomi.fact.domain.ClarificationReason;
 import com.ssafy.bomi.fact.domain.FactCandidate;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import java.util.List;
@@ -34,6 +35,9 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/robot/clarifications")
+@Tag(
+        name = "Robot Clarification",
+        description = "fact_candidate 재질의 — 로봇(ai_chat)이 호출합니다. 가디언웹용 확인요청 API와 같은 테이블을 다루지만 호출 주체와 권한이 다릅니다.")
 public class RobotClarificationController {
 
     private final RobotClarificationService clarificationService;

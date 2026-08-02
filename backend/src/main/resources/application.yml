@@ -29,24 +29,53 @@ springdoc:
   api-docs:
     enabled: true
   group-configs:
+    # 채널별로 나눈다. 같은 백엔드지만 호출 주체가 다르고, 섞어 두면
+    # "이건 누가 부르는 API인가"를 스펙만 보고 판단할 수 없다.
+    - group: bomi-robot
+      display-name: "[BE-Robot] 로봇·AI 채널 API"
+      paths-to-match:
+        - /api/v1/robot/**
+        - /api/v1/seniors/**
+    - group: bomi-guardian
+      display-name: "[BE-Guardian] 가디언웹 채널 API"
+      paths-to-match:
+        - /api/v1/guardian/**
+        - /api/v1/memories/**
+        - /api/v1/care-records/**
+        - /api/v1/confirmation-requests/**
+        - /api/v1/elders/**
     - group: bomi-backend
-      display-name: BOMI Backend API
+      display-name: "[BE-All] 백엔드 전체 API"
       packages-to-scan: com.ssafy.bomi
   swagger-ui:
     enabled: true
     path: /swagger-ui.html
     disable-swagger-default-url: true
-    supported-submit-methods: []
+    # Try it out 을 켠다. 계약만 있던 시절에는 실수로 연동 API 를 때리지 않도록
+    # 비워 두었지만(S15P11E102-63), 이제 로봇·가디언웹 채널은 실제로 동작하므로
+    # 브라우저에서 바로 호출해 보는 편이 낫다.
+    #
+    # 주의: 이 서비스에는 인증이 없다. 배포 Swagger 에서 쓰기 메서드까지 열리므로
+    # 문서 주소를 아는 사람은 운영 데이터를 바꿀 수 있다. 발표 기간 한정으로
+    # 감수한 결정이며, 외부 공개가 길어지면 문서 경로 인증을 먼저 붙여야 한다.
+    supported-submit-methods:
+      - get
+      - post
+      - put
+      - patch
+      - delete
+    # group-configs 의 세 그룹은 springdoc 이 display-name 으로 자동 등록한다.
+    # 여기에 다시 적으면 드롭다운에 같은 항목이 두 번 뜬다. 정적 YAML 만 적는다.
     urls:
-      - name: BOMI Backend API
-        url: /v3/api-docs/bomi-backend
-      - name: AI Vision Recognition API
+      - name: "[AI-Vision] 인식 요청 API (계약·미구현)"
         url: /openapi/vision-ai.openapi.yaml
-      - name: AI Vision Result Callback API
+      - name: "[AI-Vision] 결과 Callback API (계약·미구현)"
         url: /openapi/vision-callback.openapi.yaml
-      - name: Conversation and Voice AI API
+      - name: "[AI-Chat] 대화·음성 생성 API (계약·미구현)"
         url: /openapi/voice-ai.openapi.yaml
-    urls-primary-name: BOMI Backend API
+      # MQTT 계약은 OpenAPI 문법으로 표현할 수 없어 AsyncAPI 뷰어에서 본다.
+      # 진입점: /docs/ (docs/api/README.md 참고)
+    urls-primary-name: "[BE-Robot] 로봇·AI 채널 API"
 
 bomi:
   homecoming:

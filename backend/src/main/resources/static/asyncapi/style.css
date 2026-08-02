@@ -1,0 +1,189 @@
+/* BOMI MQTT 계약 뷰어.
+ *
+ * 외부 폰트·CDN 을 쓰지 않는다. 운영 Nginx 의 CSP 가 default-src 'self' 이므로
+ * 외부 리소스는 어차피 차단된다. */
+
+:root {
+    --bg: #ffffff;
+    --fg: #1f2328;
+    --muted: #59636e;
+    --border: #d1d9e0;
+    --surface: #f6f8fa;
+    --accent: #0969da;
+    --publish: #1a7f37;
+    --subscribe: #8250df;
+    --code-bg: #f6f8fa;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg: #0d1117;
+        --fg: #e6edf3;
+        --muted: #9198a1;
+        --border: #3d444d;
+        --surface: #151b23;
+        --accent: #4493f8;
+        --publish: #3fb950;
+        --subscribe: #ab7df8;
+        --code-bg: #151b23;
+    }
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Malgun Gothic",
+        "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    line-height: 1.6;
+}
+
+.topbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+
+.topbar-inner {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 0.75rem 1.25rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem 1.5rem;
+    align-items: baseline;
+    justify-content: space-between;
+}
+
+.brand { font-weight: 700; }
+.brand a { color: inherit; }
+
+.topbar nav { display: flex; flex-wrap: wrap; gap: 1rem; }
+
+a { color: var(--accent); }
+
+main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 1.5rem 1.25rem 4rem;
+}
+
+h1 { font-size: 1.75rem; margin: 0 0 0.25rem; }
+h2 {
+    font-size: 1.3rem;
+    margin: 2.5rem 0 0.5rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--border);
+}
+h3 { font-size: 1.05rem; margin: 1.75rem 0 0.4rem; }
+h4 { font-size: 0.95rem; margin: 1rem 0 0.35rem; color: var(--muted); }
+
+.version { color: var(--muted); font-size: 0.9rem; }
+
+.prose { white-space: pre-wrap; margin: 0.5rem 0 1rem; }
+
+.address {
+    font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+    font-size: 0.9rem;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.3rem 0.55rem;
+    display: inline-block;
+    word-break: break-all;
+}
+
+.badge {
+    display: inline-block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 999px;
+    padding: 0.1rem 0.6rem;
+    margin-right: 0.4rem;
+    border: 1px solid currentColor;
+}
+.badge-send { color: var(--publish); }
+.badge-receive { color: var(--subscribe); }
+
+.message {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.25rem 1rem 1rem;
+    margin: 1rem 0;
+    background: var(--surface);
+}
+
+.table-scroll { overflow-x: auto; }
+
+table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.9rem;
+    margin: 0.5rem 0 1rem;
+}
+
+th, td {
+    border: 1px solid var(--border);
+    padding: 0.4rem 0.6rem;
+    text-align: left;
+    vertical-align: top;
+}
+
+th { background: var(--bg); font-weight: 600; }
+
+td.field {
+    font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+    white-space: nowrap;
+}
+
+td.req { text-align: center; white-space: nowrap; }
+
+.yes { color: var(--publish); font-weight: 600; }
+.no { color: var(--muted); }
+
+.enum {
+    font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+    font-size: 0.85em;
+}
+
+pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.75rem;
+    overflow-x: auto;
+    font-size: 0.85rem;
+    margin: 0.35rem 0 1rem;
+}
+
+.toc { padding-left: 1.2rem; }
+
+/* 아직 구현되지 않은 계약을 알리는 상자. 눈에 띄어야 하지만 경고는 아니다. */
+.notice {
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    border-radius: 6px;
+    background: var(--surface);
+    padding: 0.25rem 1rem;
+    margin: 1rem 0 2rem;
+}
+
+.notice code {
+    font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+    font-size: 0.9em;
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.05rem 0.3rem;
+}
+
+.loading, .error { color: var(--muted); }
+.error { color: #cf222e; }
+
+@media (prefers-color-scheme: dark) {
+    .error { color: #ff7b72; }
+}

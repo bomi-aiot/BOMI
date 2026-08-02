@@ -1,0 +1,1025 @@
+asyncapi: 3.0.0
+
+# BOMI MQTT 메시지 계약.
+#
+# 이 파일이 단일 원본입니다. docs/mqtt/topic-convention.md 의 산문 설명과 같은 내용을
+# 기계가 읽을 수 있는 형식으로 옮긴 것이며, 두 곳에 내용을 복사해 두지 않습니다.
+# 규칙과 배경 설명은 마크다운, 필드·enum·필수 여부는 이 스펙이 기준입니다.
+#
+# action 은 Backend 관점입니다. receive = Backend 가 구독, send = Backend 가 발행.
+
+info:
+  title: "[MQTT] BOMI 로봇·IoT 메시지 계약"
+  version: 1.0.0
+  description: |
+    BOMI 외부 장치와 Spring Boot 사이의 MQTT 통신 계약입니다.
+
+    Robot 내부의 MQTT Bridge 가 MQTT 메시지와 ROS 2 명령·결과를 변환합니다.
+    MQTT Broker 가 ROS 2 노드나 토픽에 직접 연결되는 구조가 아닙니다.
+
+    기본 규칙
+      - 토픽 버전은 v1 입니다.
+      - payload 는 UTF-8 JSON 객체입니다.
+      - 필드 이름은 lowerCamelCase, enum 값은 UPPER_SNAKE_CASE 를 사용합니다.
+      - 시각은 타임존을 포함한 ISO 8601 문자열을 사용합니다.
+      - 모든 토픽은 retain=false, QoS 1 을 사용하고 수신자는 중복을 허용해야 합니다.
+      - 토픽과 payload 에 개인정보·토큰·비밀값을 넣지 않습니다.
+      - 영상·음성 바이너리는 MQTT 로 전송하지 않습니다.
+
+    관련 문서
+      - 산문 계약서: docs/mqtt/topic-convention.md
+      - 시나리오: docs/scenario/homecoming-welcome.md
+      - REST 계약: /swagger-ui.html
+
+servers:
+  production:
+    host: "mqtt.internal:1883"
+    protocol: mqtt
+    description: |
+      운영 브로커입니다. 인증과 TLS 를 적용하며 실제 접속 정보는 환경변수 또는
+      비밀 저장소로 주입하고 저장소에 커밋하지 않습니다.
+
+defaultContentType: application/json
+
+channels:
+  iotEvents:
+    address: "bomi/v1/iot/{deviceId}/events"
+    title: IoT 센서 이벤트
+    description: |
+      IoT 센서·Gateway 가 발행하고 Backend 가 구독합니다.
+      Backend 구독 패턴은 `bomi/v1/iot/+/events` 입니다.
+    parameters:
+      deviceId:
+        description: 발행 장치 ID. payload 의 sourceId 와 반드시 같아야 합니다.
+    messages:
+      doorOpened:
+        $ref: "#/components/messages/DoorOpened"
+      motionDetected:
+        $ref: "#/components/messages/MotionDetected"
+      presenceDetected:
+        $ref: "#/components/messages/PresenceDetected"
+      ambientEnvironmentObserved:
+        $ref: "#/components/messages/AmbientEnvironmentObserved"
+      heartbeat:
+        $ref: "#/components/messages/Heartbeat"
+
+  robotCommands:
+    address: "bomi/v1/robot/{robotId}/commands"
+    title: Backend → Robot 명령
+    description: Backend 가 발행하고 Robot MQTT Bridge 가 구독합니다.
+    parameters:
+      robotId:
+        description: 대상 Robot ID. payload 의 robotId 와 반드시 같아야 합니다.
+    messages:
+      navigate:
+        $ref: "#/components/messages/Navigate"
+      speak:
+        $ref: "#/components/messages/Speak"
+      cancel:
+        $ref: "#/components/messages/Cancel"
+
+  robotEvents:
+    address: "bomi/v1/robot/{robotId}/events"
+    title: Robot 업무 이벤트
+    description: |
+      Robot MQTT Bridge 가 발행하고 Backend 가 구독합니다.
+      Backend 구독 패턴은 `bomi/v1/robot/+/events` 입니다.
+    parameters:
+      robotId:
+        description: 발행 Robot ID. payload 의 robotId 와 반드시 같아야 합니다.
+    messages:
+      onboardingAnswerCaptured:
+        $ref: "#/components/messages/OnboardingAnswerCaptured"
+      conversationEnded:
+        $ref: "#/components/messages/ConversationEnded"
+
+  robotStatus:
+    address: "bomi/v1/robot/{robotId}/status"
+    title: Robot 진행 상태
+    description: |
+      Robot MQTT Bridge 가 발행하고 Backend 가 구독합니다.
+      진행 상태는 화면 표시와 관찰 가능성을 위한 정보이며, 최종 성공·실패 판정은
+      results 토픽으로 전달합니다. Backend 는 진행 상태만으로 시나리오를
+      ARRIVED 또는 실패 상태로 전환하지 않습니다.
+    parameters:
+      robotId:
+        description: 발행 Robot ID. payload 의 robotId 와 반드시 같아야 합니다.
+    messages:
+      navigationStatus:
+        $ref: "#/components/messages/NavigationStatus"
+      restStateChanged:
+        $ref: "#/components/messages/RestStateChanged"
+
+  robotResults:
+    address: "bomi/v1/robot/{robotId}/results"
+    title: Robot 최종 결과
+    description: |
+      Robot MQTT Bridge 가 발행하고 Backend 가 구독합니다.
+      명령의 최종 성공·실패 판정입니다.
+    parameters:
+      robotId:
+        description: 발행 Robot ID. payload 의 robotId 와 반드시 같아야 합니다.
+    messages:
+      navigationResult:
+        $ref: "#/components/messages/NavigationResult"
+      speakResult:
+        $ref: "#/components/messages/SpeakResult"
+      cancelResult:
+        $ref: "#/components/messages/CancelResult"
+
+operations:
+  receiveIotEvents:
+    action: receive
+    channel:
+      $ref: "#/channels/iotEvents"
+    summary: Backend 가 IoT 센서 이벤트를 구독합니다.
+
+  sendRobotCommand:
+    action: send
+    channel:
+      $ref: "#/channels/robotCommands"
+    summary: Backend 가 Robot 에 명령을 발행합니다.
+
+  receiveRobotEvents:
+    action: receive
+    channel:
+      $ref: "#/channels/robotEvents"
+    summary: Backend 가 Robot 업무 이벤트를 구독합니다.
+
+  receiveRobotStatus:
+    action: receive
+    channel:
+      $ref: "#/channels/robotStatus"
+    summary: Backend 가 Robot 진행 상태를 구독합니다.
+
+  receiveRobotResults:
+    action: receive
+    channel:
+      $ref: "#/channels/robotResults"
+    summary: Backend 가 Robot 최종 결과를 구독합니다.
+
+components:
+  messages:
+    DoorOpened:
+      name: DOOR_OPENED
+      title: 문 열림 감지
+      summary: |
+        단일 도어 센서가 문 열림을 감지했을 때 발행합니다. 이 이벤트만으로 사람의
+        존재나 이동 방향을 추론하지 않으며, 귀가 환영 시나리오를 시작하지 않습니다.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/DoorOpenedPayload"
+      examples:
+        - name: 현관 문 열림
+          payload:
+            eventId: 01K0M4Y6YQ6B9D2F7H3J5N8RSC
+            type: DOOR_OPENED
+            occurredAt: "2026-07-21T10:29:59+09:00"
+            sourceId: door-sensor-01
+            payload:
+              location: ENTRANCE
+
+    MotionDetected:
+      name: MOTION_DETECTED
+      title: 현관 움직임 감지
+      summary: |
+        현관 모션 센서(SONOFF SNZB-03P)가 움직임을 감지했을 때 발행합니다.
+        아직 배포된 펌웨어가 발행하지 않습니다. 서버는 준비되어 있으며 이 토픽이
+        조용한 동안에는 통과 방향이 판정되지 않을 뿐입니다.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/MotionDetectedPayload"
+      examples:
+        - name: 실내 모션
+          payload:
+            eventId: 01K0MOTION7G1D8W3A9H2T6Q5R
+            type: MOTION_DETECTED
+            occurredAt: "2026-07-21T10:30:00+09:00"
+            sourceId: entrance-motion-01
+            payload:
+              location: ENTRANCE
+
+    Heartbeat:
+      name: HEARTBEAT
+      title: 현관 노드 생존 신호
+      summary: 라즈베리파이 현관 노드가 살아 있음을 알립니다.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/HeartbeatPayload"
+
+    PresenceDetected:
+      name: PRESENCE_DETECTED
+      title: 사람·이동 방향 판정
+      summary: |
+        IoT Gateway 가 등록된 센서 조합으로 현관의 사람과 이동 방향을 판정했을 때
+        발행합니다. 단일 도어 센서의 문 열림만으로 이 이벤트를 생성해서는 안 됩니다.
+        Backend 는 direction=INBOUND 인 이벤트만 귀가 환영 시나리오의 트리거로
+        사용합니다.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/PresenceDetectedPayload"
+      examples:
+        - name: 귀가 감지
+          payload:
+            eventId: 01K0M4Y7G1D8W3A9H2T6Q5R4NP
+            type: PRESENCE_DETECTED
+            occurredAt: "2026-07-21T10:30:00+09:00"
+            sourceId: entrance-sensor-hub-01
+            payload:
+              location: ENTRANCE
+              direction: INBOUND
+              detectionMethod: SENSOR_SEQUENCE
+
+    AmbientEnvironmentObserved:
+      name: AMBIENT_ENVIRONMENT_OBSERVED
+      title: 온습도 관측
+      summary: |
+        온습도 센서 또는 IoT Gateway 가 최신 스냅샷을 발행합니다. 설정된 저주기,
+        의미 있는 변화 또는 임계값 초과 시에만 발행하고 초당 원시 스트림을 중앙으로
+        보내지 않습니다. Backend 는 occurredAt 이 현재 robot.ambient_observed_at
+        보다 새로울 때만 스냅샷을 갱신합니다.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/AmbientEnvironmentObservedPayload"
+      examples:
+        - name: 임계값 초과
+          payload:
+            eventId: 01K0AMBIENT7G1D8W3A9H2T6Q
+            type: AMBIENT_ENVIRONMENT_OBSERVED
+            occurredAt: "2026-07-23T14:20:00+09:00"
+            sourceId: living-room-ambient-01
+            payload:
+              temperatureC: 29.2
+              humidityPercent: 72.0
+              reason: THRESHOLD_CROSSED
+              policyVersion: ambient-policy-v1
+
+    Navigate:
+      name: NAVIGATE
+      title: 이동 명령
+      summary: |
+        waypointId 는 Backend 와 Robot 이 사전에 합의한 논리 위치 이름입니다.
+        좌표나 Nav2 세부 파라미터는 MQTT 계약에 노출하지 않고 Robot 설정에서
+        해석합니다.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/NavigateCommand"
+      examples:
+        - name: 현관 이동
+          payload:
+            commandId: 01K0M4Y8B7F5M2N1Q9R6S3T8VX
+            scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
+            robotId: 7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+            type: NAVIGATE
+            occurredAt: "2026-07-21T10:30:01+09:00"
+            expiresAt: "2026-07-21T10:31:01+09:00"
+            payload:
+              waypointId: ENTRANCE
+
+    Speak:
+      name: SPEAK
+      title: 발화 명령
+      summary: |
+        Backend 는 대화·음성 AI 응답의 서버 기준 주소와 downloadPath 를 조합해
+        audioUri 를 만듭니다. audioUri 는 내부 주소이며 장기 저장하지 않습니다.
+        음성 자체와 인증정보는 MQTT payload 에 넣지 않습니다.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/SpeakCommand"
+      examples:
+        - name: 귀가 인사
+          payload:
+            commandId: 01K0M51BR2X6A8D4F9G7H3J5KC
+            scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
+            robotId: 7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+            type: SPEAK
+            occurredAt: "2026-07-21T10:30:20+09:00"
+            expiresAt: "2026-07-21T10:30:50+09:00"
+            payload:
+              utteranceId: utt-01K0M519WQ
+              text: 길동님, 어서 오세요.
+              audioUri: http://voice-ai:8002/api/v1/audio/audio-01K0M51A9P
+              contentType: audio/wav
+
+    Cancel:
+      name: CANCEL
+      title: 취소 명령
+      summary: |
+        진행 중인 이동 또는 음성 재생을 중단하도록 요청합니다. 취소 명령은 별도의
+        commandId 를 사용하고 취소 대상은 targetCommandId 로 지정합니다.
+        취소 요청을 받았다는 이유만으로 대상 작업을 성공 처리하지 않습니다.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/CancelCommand"
+      examples:
+        - name: 시나리오 타임아웃 취소
+          payload:
+            commandId: 01K0M53F6C8D2G9H4J1N5Q7RST
+            scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
+            robotId: 7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+            type: CANCEL
+            occurredAt: "2026-07-21T10:31:01+09:00"
+            expiresAt: "2026-07-21T10:31:06+09:00"
+            payload:
+              targetCommandId: 01K0M4Y8B7F5M2N1Q9R6S3T8VX
+              reason: SCENARIO_TIMED_OUT
+
+    OnboardingAnswerCaptured:
+      name: ONBOARDING_ANSWER_CAPTURED
+      title: 온보딩 답변 캡처
+      summary: |
+        초기 온보딩에서 한 문항의 답변을 캡처했을 때 발행합니다. 재전송할 때는
+        반드시 같은 eventId, sessionId, questionCode 를 유지합니다.
+        전체 STT·원본 음성·토큰·프롬프트·모델 응답은 포함하지 않습니다.
+        실제 답변 텍스트는 sourceConversationId 와 sourceMessageId 로
+        conversation_message 에서 찾습니다.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/OnboardingAnswerCapturedPayload"
+      examples:
+        - name: 일과 문항 답변
+          payload:
+            eventId: 01K0ONBOARD7F5M2N1Q9R6S3T8V
+            robotId: 7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+            type: ONBOARDING_ANSWER_CAPTURED
+            occurredAt: "2026-07-23T10:15:20+09:00"
+            payload:
+              sessionId: 6c047625-c1d2-4e61-9e70-1c865ec6ac7f
+              questionCode: Q04_DAILY_ROUTINE
+              sourceConversationId: 1a4fe41a-6464-4e7e-b292-9a507333a3fa
+              sourceMessageId: a6f8cb84-c91c-4a38-a7b6-386ce6aa027f
+              verificationStatus: UNVERIFIED
+
+    ConversationEnded:
+      name: CONVERSATION_ENDED
+      title: 대화 종료
+      summary: |
+        귀가 환영 시나리오의 인사·대화가 끝났을 때 발행합니다. Backend 는 이
+        이벤트를 받아 로봇을 기본 위치로 복귀시키고 시나리오를 마무리합니다.
+        이 이벤트가 없으면 시나리오가 CONVERSING 에서 멈춥니다.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/ConversationEndedPayload"
+      examples:
+        - name: 인사 종료
+          payload:
+            eventId: 01K0CONVEND7F5M2N1Q9R6S3T8V
+            type: CONVERSATION_ENDED
+            occurredAt: "2026-07-21T10:31:40+09:00"
+            robotId: 7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+            payload:
+              scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
+
+    NavigationStatus:
+      name: NAVIGATION_STATUS
+      title: 이동 진행 상태
+      summary: |
+        sequence 는 동일한 commandId 안에서 1 부터 단조 증가합니다.
+        Backend 는 (commandId, sequence) 를 기준으로 적용하며, 마지막으로 적용한
+        값보다 작은 sequence 는 늦게 도착한 이전 상태이므로 무시합니다.
+        occurredAt 은 표시와 장애 분석용이며 처리 순서 판정에 사용하지 않습니다.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/NavigationStatusPayload"
+      examples:
+        - name: 이동 중
+          payload:
+            eventId: 01K0M4Z1CT7N9B5V3X2K8P6QRS
+            commandId: 01K0M4Y8B7F5M2N1Q9R6S3T8VX
+            scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
+            robotId: 7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+            type: NAVIGATION_STATUS
+            sequence: 2
+            occurredAt: "2026-07-21T10:30:10+09:00"
+            payload:
+              status: MOVING
+              currentLocation: HALLWAY
+
+    RestStateChanged:
+      name: REST_STATE_CHANGED
+      title: 휴식 상태 전이
+      summary: |
+        Robot 의 로컬 Vision 이 설정된 지속시간 이상 누움 또는 기상 상태를
+        확정했을 때만 발행합니다. 프레임별 자세 후보는 발행하지 않습니다.
+        명령 없이 발생하는 백그라운드 이벤트이므로 scenarioId, commandId,
+        sequence 를 사용하지 않습니다.
+
+        금지 payload: 이미지·영상·관절 좌표·bounding box·track ID·얼굴 특징·
+        프레임별 자세 배열.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/RestStateChangedPayload"
+      examples:
+        - name: 휴식 진입
+          payload:
+            eventId: 01K0REST8B7F5M2N1Q9R6S3T8V
+            robotId: 7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+            type: REST_STATE_CHANGED
+            occurredAt: "2026-07-23T13:10:00+09:00"
+            payload:
+              restState: RESTING
+              posture: LYING
+              detectionMethod: VISION_POSTURE_DURATION
+              detectionDurationSeconds: 600
+              confidence: 0.94
+              policyVersion: rest-policy-v1
+              robotMode: REST_GUARD
+        - name: 기상
+          payload:
+            eventId: 01K0RESTAWAKE5M2N1Q9R6S3T8V
+            robotId: 7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+            type: REST_STATE_CHANGED
+            occurredAt: "2026-07-23T14:02:00+09:00"
+            payload:
+              restState: AWAKE
+              detectionMethod: VISION_POSTURE_DURATION
+              confidence: 0.91
+              policyVersion: rest-policy-v1
+              robotMode: IDLE
+
+    NavigationResult:
+      name: NAVIGATION_RESULT
+      title: 이동 최종 결과
+      summary: |
+        결과 판정 키는 payload.status 입니다. Backend 는 status 가 ARRIVED 일 때만
+        시나리오를 진행하고, FAILED 이면 시나리오를 FAILED 로 종료하며 로봇을
+        SAFE_STOP 으로 전환합니다. status 가 없거나 알 수 없는 값이면 도착으로
+        처리하지 않고 무시합니다.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/NavigationResultPayload"
+      examples:
+        - name: 도착
+          payload:
+            eventId: 01K0M50D4S8V2X6Z1B3N7Q9RTP
+            commandId: 01K0M4Y8B7F5M2N1Q9R6S3T8VX
+            scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
+            robotId: 7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+            type: NAVIGATION_RESULT
+            occurredAt: "2026-07-21T10:30:15+09:00"
+            payload:
+              status: ARRIVED
+              location: ENTRANCE
+        - name: 경로 막힘
+          payload:
+            eventId: 01K0M50D4S8V2X6Z1B3N7Q9RTQ
+            commandId: 01K0M4Y8B7F5M2N1Q9R6S3T8VX
+            scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
+            robotId: 7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+            type: NAVIGATION_RESULT
+            occurredAt: "2026-07-21T10:30:15+09:00"
+            payload:
+              status: FAILED
+              reasonCode: PATH_BLOCKED
+              message: 목적지까지 안전한 경로를 찾지 못했습니다.
+
+    SpeakResult:
+      name: SPEAK_RESULT
+      title: 발화 최종 결과
+      summary: |
+        실패 시 status=FAILED 와 reasonCode, message 를 포함합니다.
+        다운로드 실패와 재생 실패는 reasonCode 로 구분합니다.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/SpeakResultPayload"
+      examples:
+        - name: 재생 완료
+          payload:
+            eventId: 01K0M528W4Q7B2N6P9R1S3T5VX
+            commandId: 01K0M51BR2X6A8D4F9G7H3J5KC
+            scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
+            robotId: 7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+            type: SPEAK_RESULT
+            occurredAt: "2026-07-21T10:30:25+09:00"
+            payload:
+              status: DONE
+
+    CancelResult:
+      name: CANCEL_RESULT
+      title: 취소 최종 결과
+      summary: |
+        Backend 는 CANCEL_RESULT 를 별도 명령 결과로 기록하고 시나리오의 원래
+        종료 원인인 TIMED_OUT 또는 CANCELLED 를 덮어쓰지 않습니다.
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/CancelResultPayload"
+      examples:
+        - name: 취소 성공
+          payload:
+            eventId: 01K0M53J8P2R4S6T9V1X3Z5BCD
+            commandId: 01K0M53F6C8D2G9H4J1N5Q7RST
+            scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
+            robotId: 7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+            type: CANCEL_RESULT
+            occurredAt: "2026-07-21T10:31:02+09:00"
+            payload:
+              status: CANCELLED
+              targetCommandId: 01K0M4Y8B7F5M2N1Q9R6S3T8VX
+
+  schemas:
+    # ---------- 공통 식별자 ----------
+    EventId:
+      type: string
+      maxLength: 64
+      description: |
+        논리 이벤트 식별자. 같은 사건을 재전송할 때 같은 값을 유지합니다.
+        생산자가 만든 불투명 식별자로 UUIDv4/v7 또는 ULID 를 사용합니다.
+        BOMI 시스템 전체에서 충돌하지 않아야 하며, 서로 다른 종류의 ID 를 같은
+        값으로 재사용하지 않습니다.
+
+    CommandId:
+      type: string
+      maxLength: 64
+      description: 명령 멱등 키. 명령과 상태·결과를 연결합니다.
+
+    ScenarioId:
+      type: string
+      format: uuid
+      description: Backend 가 생성한 E2E 시나리오 식별자. PostgreSQL scenario.id 입니다.
+
+    RobotId:
+      type: string
+      format: uuid
+      description: Robot ID. PostgreSQL robot.id 이며 토픽의 {robotId} 와 같아야 합니다.
+
+    OccurredAt:
+      type: string
+      format: date-time
+      description: |
+        이벤트 발생 시각이며 전송 시각이 아닙니다. 타임존을 포함한 ISO 8601 입니다.
+
+        예외: 현관 이벤트의 순서 판정에는 백엔드가 도착 시각을 씁니다. 배터리
+        백업 RTC 가 없는 라즈베리파이는 시계가 어긋난 채 부팅할 수 있고, 그 값으로
+        순서를 매기면 귀가가 외출로 뒤집히기 때문입니다.
+
+    # ---------- IoT 이벤트 ----------
+    DoorOpenedPayload:
+      type: object
+      required: [eventId, type, occurredAt, sourceId, payload]
+      additionalProperties: false
+      properties:
+        eventId:
+          $ref: "#/components/schemas/EventId"
+        type:
+          type: string
+          const: DOOR_OPENED
+        occurredAt:
+          $ref: "#/components/schemas/OccurredAt"
+        sourceId:
+          type: string
+          description: 토픽의 {deviceId} 와 동일한 도어 센서 ID.
+        payload:
+          type: object
+          required: [location]
+          properties:
+            location:
+              $ref: "#/components/schemas/Location"
+
+    MotionDetectedPayload:
+      type: object
+      required: [eventId, type, occurredAt, sourceId, payload]
+      additionalProperties: false
+      properties:
+        eventId:
+          $ref: "#/components/schemas/EventId"
+        type:
+          type: string
+          const: MOTION_DETECTED
+        occurredAt:
+          $ref: "#/components/schemas/OccurredAt"
+        sourceId:
+          type: string
+          description: 토픽의 {deviceId} 와 동일한 모션 센서 ID.
+        payload:
+          type: object
+          required: [location]
+          properties:
+            location:
+              $ref: "#/components/schemas/Location"
+
+    HeartbeatPayload:
+      type: object
+      required: [eventId, type, occurredAt, sourceId]
+      properties:
+        eventId:
+          $ref: "#/components/schemas/EventId"
+        type:
+          type: string
+          const: HEARTBEAT
+        occurredAt:
+          $ref: "#/components/schemas/OccurredAt"
+        sourceId:
+          type: string
+          description: 토픽의 {deviceId} 와 동일한 현관 노드 ID.
+
+    PresenceDetectedPayload:
+      type: object
+      required: [eventId, type, occurredAt, sourceId, payload]
+      additionalProperties: false
+      properties:
+        eventId:
+          $ref: "#/components/schemas/EventId"
+        type:
+          type: string
+          const: PRESENCE_DETECTED
+        occurredAt:
+          $ref: "#/components/schemas/OccurredAt"
+        sourceId:
+          type: string
+          description: 토픽의 {deviceId} 와 동일한 IoT Gateway ID.
+        payload:
+          type: object
+          required: [location, direction, detectionMethod]
+          properties:
+            location:
+              $ref: "#/components/schemas/Location"
+            direction:
+              type: string
+              enum: [INBOUND, OUTBOUND, UNKNOWN]
+              description: |
+                귀가 환영 시나리오는 INBOUND 만 트리거로 사용합니다.
+                UNKNOWN 은 시나리오를 시작하지 않습니다.
+            detectionMethod:
+              type: string
+              enum: [SENSOR_SEQUENCE, VISION, MANUAL_OVERRIDE]
+
+    AmbientEnvironmentObservedPayload:
+      type: object
+      required: [eventId, type, occurredAt, sourceId, payload]
+      additionalProperties: false
+      properties:
+        eventId:
+          $ref: "#/components/schemas/EventId"
+        type:
+          type: string
+          const: AMBIENT_ENVIRONMENT_OBSERVED
+        occurredAt:
+          $ref: "#/components/schemas/OccurredAt"
+        sourceId:
+          type: string
+          description: 토픽의 {deviceId} 와 동일한 센서 또는 Gateway ID.
+        payload:
+          type: object
+          required: [temperatureC, humidityPercent, reason, policyVersion]
+          properties:
+            temperatureC:
+              type: number
+              description: 섭씨 온도. 장치 지원 범위와 DB CHECK 범위 안의 숫자.
+            humidityPercent:
+              type: number
+              minimum: 0
+              maximum: 100
+              description: 상대습도 %RH.
+            reason:
+              type: string
+              enum: [PERIODIC, SIGNIFICANT_CHANGE, THRESHOLD_CROSSED, MANUAL_SAMPLE]
+            policyVersion:
+              type: string
+              description: 발행 주기·변화량·임계값을 판정한 운영 정책 버전.
+
+    Location:
+      type: string
+      description: 등록된 논리 위치. 귀가 시나리오는 ENTRANCE 를 사용합니다.
+      examples: [ENTRANCE]
+
+    # ---------- 명령 ----------
+    CommandEnvelope:
+      type: object
+      required: [commandId, scenarioId, robotId, type, occurredAt, expiresAt, payload]
+      description: |
+        모든 명령의 공통 형태입니다. Robot 은 expiresAt 이 지난 명령을 실행하지 않고
+        COMMAND_EXPIRED 실패 결과를 발행합니다. 이미 처리한 commandId 를 다시 받으면
+        재실행하지 않고 기존 최종 결과를 다시 발행할 수 있습니다.
+      properties:
+        commandId:
+          $ref: "#/components/schemas/CommandId"
+        scenarioId:
+          $ref: "#/components/schemas/ScenarioId"
+        robotId:
+          $ref: "#/components/schemas/RobotId"
+        type:
+          type: string
+          enum: [NAVIGATE, SPEAK, CANCEL]
+        occurredAt:
+          $ref: "#/components/schemas/OccurredAt"
+        expiresAt:
+          type: string
+          format: date-time
+          description: Robot 이 명령 실행을 시작할 수 있는 마지막 시각.
+        payload:
+          type: object
+
+    NavigateCommand:
+      allOf:
+        - $ref: "#/components/schemas/CommandEnvelope"
+        - type: object
+          properties:
+            type:
+              const: NAVIGATE
+            payload:
+              type: object
+              required: [waypointId]
+              properties:
+                waypointId:
+                  type: string
+                  description: |
+                    사전에 합의한 논리 위치 이름. 귀가 시나리오는 현관 이동에
+                    ENTRANCE, 안전 확인 후 복귀에 DEFAULT_POSITION 을 사용하며
+                    충전소를 복귀 대상으로 사용하지 않습니다.
+                  examples: [ENTRANCE, DEFAULT_POSITION]
+
+    SpeakCommand:
+      allOf:
+        - $ref: "#/components/schemas/CommandEnvelope"
+        - type: object
+          properties:
+            type:
+              const: SPEAK
+            payload:
+              type: object
+              required: [utteranceId, text, audioUri, contentType]
+              properties:
+                utteranceId:
+                  type: string
+                  description: AI 가 생성한 발화 식별자.
+                text:
+                  type: string
+                  description: 접근성·로그·Fallback 에 사용할 문장.
+                audioUri:
+                  type: string
+                  format: uri
+                  description: Robot 이 내부망에서 가져올 수 있는 HTTP(S) URI.
+                contentType:
+                  type: string
+                  enum: [audio/wav, audio/mpeg]
+
+    CancelCommand:
+      allOf:
+        - $ref: "#/components/schemas/CommandEnvelope"
+        - type: object
+          properties:
+            type:
+              const: CANCEL
+            payload:
+              type: object
+              required: [targetCommandId, reason]
+              properties:
+                targetCommandId:
+                  $ref: "#/components/schemas/CommandId"
+                reason:
+                  type: string
+                  enum:
+                    - SCENARIO_TIMED_OUT
+                    - USER_CANCELLED
+                    - POLICY_CANCELLED
+                    - SAFETY_CONDITION_UNCERTAIN
+
+    # ---------- 업무 이벤트 ----------
+    OnboardingAnswerCapturedPayload:
+      type: object
+      required: [eventId, robotId, type, occurredAt, payload]
+      additionalProperties: false
+      properties:
+        eventId:
+          $ref: "#/components/schemas/EventId"
+        robotId:
+          $ref: "#/components/schemas/RobotId"
+        type:
+          type: string
+          const: ONBOARDING_ANSWER_CAPTURED
+        occurredAt:
+          $ref: "#/components/schemas/OccurredAt"
+        payload:
+          type: object
+          required: [sessionId, questionCode, verificationStatus]
+          properties:
+            sessionId:
+              type: string
+              format: uuid
+              description: onboarding_session.id.
+            questionCode:
+              type: string
+              description: 세션의 버전 관리 질문 계약에 정의된 문항 코드.
+            sourceConversationId:
+              type: string
+              format: uuid
+              description: 단기 원문 출처 conversation UUID. 선택 항목입니다.
+            sourceMessageId:
+              type: string
+              format: uuid
+              description: |
+                conversation_message.id. 선택 항목이며 Raw 삭제 시 답변 FK 는
+                SET NULL 됩니다.
+            verificationStatus:
+              type: string
+              enum:
+                - UNVERIFIED
+                - AUTO_ACCEPTED
+                - USER_CONFIRMED
+                - GUARDIAN_CONFIRMED
+                - REJECTED
+
+    ConversationEndedPayload:
+      type: object
+      required: [eventId, type, occurredAt, robotId, payload]
+      additionalProperties: false
+      properties:
+        eventId:
+          $ref: "#/components/schemas/EventId"
+        type:
+          type: string
+          const: CONVERSATION_ENDED
+        occurredAt:
+          $ref: "#/components/schemas/OccurredAt"
+        robotId:
+          $ref: "#/components/schemas/RobotId"
+        payload:
+          type: object
+          required: [scenarioId]
+          properties:
+            scenarioId:
+              $ref: "#/components/schemas/ScenarioId"
+
+    # ---------- 진행 상태 ----------
+    NavigationStatusPayload:
+      type: object
+      required: [eventId, commandId, scenarioId, robotId, type, sequence, occurredAt, payload]
+      additionalProperties: false
+      properties:
+        eventId:
+          $ref: "#/components/schemas/EventId"
+        commandId:
+          $ref: "#/components/schemas/CommandId"
+        scenarioId:
+          $ref: "#/components/schemas/ScenarioId"
+        robotId:
+          $ref: "#/components/schemas/RobotId"
+        type:
+          type: string
+          const: NAVIGATION_STATUS
+        sequence:
+          type: integer
+          minimum: 1
+          description: |
+            동일한 commandId 안에서 1 부터 단조 증가합니다.
+            sequence 1 은 ACCEPTED, 2 는 MOVING 입니다.
+        occurredAt:
+          $ref: "#/components/schemas/OccurredAt"
+        payload:
+          type: object
+          required: [status]
+          properties:
+            status:
+              type: string
+              enum: [ACCEPTED, MOVING]
+            currentLocation:
+              type: string
+
+    RestStateChangedPayload:
+      type: object
+      required: [eventId, robotId, type, occurredAt, payload]
+      additionalProperties: false
+      properties:
+        eventId:
+          $ref: "#/components/schemas/EventId"
+        robotId:
+          $ref: "#/components/schemas/RobotId"
+        type:
+          type: string
+          const: REST_STATE_CHANGED
+        occurredAt:
+          $ref: "#/components/schemas/OccurredAt"
+          description: 후보가 아니라 최종 전이가 확정된 시각.
+        payload:
+          type: object
+          required: [restState, detectionMethod, policyVersion, robotMode]
+          properties:
+            restState:
+              type: string
+              enum: [RESTING, AWAKE]
+            posture:
+              type: string
+              enum: [LYING]
+              description: RESTING 일 때 필수입니다. MVP 는 LYING 만 사용합니다.
+            detectionMethod:
+              type: string
+              enum: [VISION_POSTURE_DURATION, USER_COMMAND, GUARDIAN_OVERRIDE]
+            detectionDurationSeconds:
+              type: integer
+              description: Vision RESTING 일 때 필수. 임계값을 충족한 실제 지속시간.
+            confidence:
+              type: number
+              minimum: 0
+              maximum: 1
+              description: Vision 일 때 필수. 최종 판정 신뢰도.
+            policyVersion:
+              type: string
+              description: 지속시간·해제 조건을 적용한 정책 버전.
+            robotMode:
+              type: string
+              description: |
+                RESTING 이면 REST_GUARD, AWAKE 이면 IDLE 또는 진행할 허용 모드.
+              examples: [REST_GUARD, IDLE]
+
+    # ---------- 최종 결과 ----------
+    ResultEnvelope:
+      type: object
+      required: [eventId, commandId, scenarioId, robotId, type, occurredAt, payload]
+      properties:
+        eventId:
+          $ref: "#/components/schemas/EventId"
+        commandId:
+          $ref: "#/components/schemas/CommandId"
+        scenarioId:
+          $ref: "#/components/schemas/ScenarioId"
+        robotId:
+          $ref: "#/components/schemas/RobotId"
+        type:
+          type: string
+          enum: [NAVIGATION_RESULT, SPEAK_RESULT, CANCEL_RESULT]
+        occurredAt:
+          $ref: "#/components/schemas/OccurredAt"
+        payload:
+          type: object
+
+    NavigationResultPayload:
+      allOf:
+        - $ref: "#/components/schemas/ResultEnvelope"
+        - type: object
+          properties:
+            type:
+              const: NAVIGATION_RESULT
+            payload:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [ARRIVED, FAILED]
+                location:
+                  type: string
+                  description: ARRIVED 일 때 도착한 논리 위치.
+                reasonCode:
+                  type: string
+                  enum:
+                    - COMMAND_EXPIRED
+                    - INVALID_COMMAND
+                    - PATH_BLOCKED
+                    - NAVIGATION_ABORTED
+                  description: 선택 진단 정보이며 현재 Backend 는 사용하지 않습니다.
+                message:
+                  type: string
+
+    SpeakResultPayload:
+      allOf:
+        - $ref: "#/components/schemas/ResultEnvelope"
+        - type: object
+          properties:
+            type:
+              const: SPEAK_RESULT
+            payload:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [DONE, FAILED]
+                reasonCode:
+                  type: string
+                  enum:
+                    - COMMAND_EXPIRED
+                    - INVALID_COMMAND
+                    - AUDIO_DOWNLOAD_FAILED
+                    - AUDIO_PLAYBACK_FAILED
+                message:
+                  type: string
+
+    CancelResultPayload:
+      allOf:
+        - $ref: "#/components/schemas/ResultEnvelope"
+        - type: object
+          properties:
+            type:
+              const: CANCEL_RESULT
+            payload:
+              type: object
+              required: [status, targetCommandId]
+              properties:
+                status:
+                  type: string
+                  enum: [CANCELLED, ALREADY_COMPLETED, FAILED]
+                  description: |
+                    CANCELLED 는 실행 중인 대상 작업을 중단함,
+                    ALREADY_COMPLETED 는 대상 작업이 이미 종료되어 취소할 작업이 없음,
+                    FAILED 는 취소에 실패함(reasonCode 필수)을 뜻합니다.
+                targetCommandId:
+                  $ref: "#/components/schemas/CommandId"
+                reasonCode:
+                  type: string
+                  enum:
+                    - COMMAND_EXPIRED
+                    - INVALID_COMMAND
+                    - TARGET_COMMAND_NOT_FOUND
+                    - CANCEL_UNSUPPORTED
+                message:
+                  type: string

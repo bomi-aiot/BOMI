@@ -26,6 +26,11 @@ dependencies {
     annotationProcessor 'org.projectlombok:lombok'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'com.h2database:h2'
+    // application-docs.yml 의 "docs" Profile 은 H2 로 뜬다. testRuntimeOnly 만으로는
+    // bootRun 클래스패스에 없어서 docs/api/README.md 가 안내하는 로컬 문서 확인
+    // 절차가 "Cannot load driver class: org.h2.Driver" 로 죽는다.
+    // developmentOnly 는 bootRun 에는 들어가고 bootJar 에는 빠진다.
+    developmentOnly 'com.h2database:h2'
     // 실제 PostgreSQL 을 Docker 없이 띄운다. H2 는 배열·JSONB·부분 인덱스 차이를 못 잡으므로
     // "빈 PG 에서 V1~Vn 순차 실행 후 Hibernate validate 통과"는 H2 로 검증할 수 없다.
     testImplementation 'io.zonky.test:embedded-postgres:2.0.7'

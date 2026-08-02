@@ -2,6 +2,7 @@ package com.ssafy.bomi.conversation.web;
 
 import com.ssafy.bomi.conversation.application.RobotConversationService;
 import com.ssafy.bomi.conversation.application.RobotConversationService.RecordedTurn;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import java.time.OffsetDateTime;
 import java.util.Map;
@@ -23,6 +24,9 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/robot/conversation-events")
+@Tag(
+        name = "Robot Conversation",
+        description = "대화 턴 기록 — 로봇(ai_chat conversation_client)이 호출합니다.")
 public class RobotConversationController {
 
     private final RobotConversationService service;
