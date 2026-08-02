@@ -204,7 +204,47 @@ public class FactCandidate {
         return c;
     }
 
-    /** Re-clarifies a single missing/ambiguous field (one field at a time — §6). */
+    /**
+     * Replaces the proposed value after a re-answer.
+     *
+     * <p>Used when an onboarding answer is upserted: the candidate is updated in place
+     * rather than duplicated, so the senior is never asked about the same fact twice —
+     * once from the stale candidate and once from the new one.</p>
+     *
+     * <p>Deliberately does not touch {@code confirmedValue}. Only a confirmation may
+     * set that, and a new proposal must not quietly inherit an old confirmation.</p>
+     */
+    public void updateProposedValue(Map<String, Object> proposedValue) {
+        this.proposedValue = proposedValue == null ? new HashMap<>() : new HashMap<>(proposedValue);
+    }
+
+    /**
+     * Links the conversation evidence for a value supplied by voice.
+     *
+     * <p>An onboarding-sourced candidate can still be clarified in ordinary conversation
+     * later. Recording where the value came from is what makes "why does the record say
+     * this?" answerable afterwards.</p>
+     *
+     * <p>Null-safe on purpose: the app channel has no conversation, and refusing to
+     * record an answer because it lacks a transcript would block the app entirely.</p>
+     */
+    public void recordEvidence(UUID conversationId, UUID sourceMessageId) {
+        if (conversationId != null) {
+            this.conversationId = conversationId;
+        }
+        if (sourceMessageId != null) {
+            this.sourceMessageId = sourceMessageId;
+        }
+    }
+
+    /**
+     * Re-clarifies the fields that are still missing or ambiguous.
+     *
+     * <p>Stores <b>all</b> of them. Asking about one at a time is a dialogue rule, not a
+     * storage rule (MVP ERD §6) — if only the asked field were stored, filling it would
+     * make the candidate look complete while two fields were still empty, and a
+     * half-known medication would be confirmed.</p>
+     */
     public void needsClarification(ClarificationReason reason, List<String> missingFields) {
         this.status = FactCandidateStatus.NEEDS_CLARIFICATION;
         this.clarificationReason = requireNonNull(reason, "reason");
