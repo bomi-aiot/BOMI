@@ -32,3 +32,23 @@ export async function httpPost<T>(url: string, body?: unknown): Promise<T> {
   })
   return parseJson<T>(res)
 }
+
+export async function httpPut<T>(url: string, body?: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(body ?? {}),
+  })
+  return parseJson<T>(res)
+}
+
+export async function httpDelete<T>(url: string): Promise<T> {
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: { Accept: 'application/json' },
+  })
+  return parseJson<T>(res)
+}
