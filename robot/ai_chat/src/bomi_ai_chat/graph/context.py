@@ -42,6 +42,7 @@ import re
 
 from bomi_ai_chat import policy
 from bomi_ai_chat.backend_client import BackendContextClient
+from bomi_ai_chat.graph import contract_dialogue
 from bomi_ai_chat.state import ConvState
 
 logger = logging.getLogger(__name__)
@@ -147,11 +148,11 @@ def classify_intent(state: ConvState) -> dict:
         이미 알고 있으면 {}, 아니면 {"intent": ...}.
 
     주의사항
-        - 순서가 중요하다. 재질의가 필요한 활성 fact_candidate 는 보통 잡담보다
-          우선해야 하지만, 어르신이 직접 질문한 턴을 가로채서는 안 된다. 먼저 대답하고
-          나중에 재질의한다.
+        - 순서가 중요하다. 대기 중인 계약 질문은 잡담보다 우선하지만, 어르신이 직접
+          질문한 턴을 가로채서는 안 된다. 먼저 대답하고 나중에 재질의한다.
         - 한 대화에서 질의할 수 있는 fact_candidate 는 '하나'뿐이다. DB 계약 규칙이며,
-          그래프가 그것을 강제하는 지점이 바로 여기다 (CLAUDE.md §12).
+          그것을 강제하는 곳은 백엔드(하나만 내려줌)와 contract_tick(한 대화에 한 번만
+          제안)이다 (CLAUDE.md §12).
     """
     if state.get("intent"):
         return {}
@@ -162,7 +163,45 @@ def classify_intent(state: ConvState) -> dict:
         # 질문에 답하려 든다.
         return {"intent": "companion"}
 
+    pending = _pending_contract_intent(state, text)
+    if pending:
+        return {"intent": pending}
+
     return {"intent": _classify(text)}
+
+
+def _pending_contract_intent(state: ConvState, text: str) -> str | None:
+    """이 발화가 '방금 로봇이 던진 계약 질문'에 대한 답인가.
+
+    ★ 어르신이 먼저 물은 턴은 가로채지 않는다  (CLAUDE.md §12)
+
+        로봇이 복약 용량을 묻고 기다리는 중인데 어르신이 "오늘 며칠이야?"라고 하면,
+        그것은 답이 아니라 새 질문이다. 여기서 clarification 으로 보내면 로봇은
+        어르신의 질문을 무시하고 자기 질문을 밀어붙이는 셈이 된다.
+
+        **먼저 답하고, 재질의는 나중에.** 대기 상태는 사라지지 않으므로 다음 턴에
+        다시 이어진다. 재질의가 한 턴 늦는 비용은 작고, 어르신의 질문을 무시하는
+        비용은 크다.
+
+    왜 확인 단계는 가로채는가
+        복창에 대한 답은 "네"/"아니요"이고, 그것이 의문형일 수 없다. 확인 단계에서
+        의문형이 오면 그것은 어르신이 되묻는 것이므로 여전히 가로채지 않는다 —
+        아래 검사가 두 단계 모두에 같이 적용된다.
+
+    반환값
+        "onboarding" | "clarification" | None
+    """
+    pending = state.get("pending_contract")
+    if not pending:
+        return None
+
+    if contract_dialogue.looks_like_a_question(text):
+        logger.info("the senior asked something; answering first and deferring the %s question",
+                    pending.get("kind"))
+        return None
+
+    kind = pending.get("kind")
+    return kind if kind in {"onboarding", "clarification"} else None
 
 
 # 지남력·사실 질문의 표지.

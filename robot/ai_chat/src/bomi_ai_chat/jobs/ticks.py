@@ -33,6 +33,7 @@ from zoneinfo import ZoneInfo
 
 # 임계치는 policy 에서 읽고(함수에 박지 않는다), 시간은 clock 으로만 읽는다(§15).
 from bomi_ai_chat import policy
+from bomi_ai_chat.backend_client.contract_client import BackendUnavailable
 from bomi_ai_chat.clock import clock
 from bomi_ai_chat.door import occupancy as occupancy_rules
 from bomi_ai_chat.graph import gate
@@ -698,6 +699,149 @@ def _local_now(time_zone: str | None):
     이 틱이 함께 흘러야 하기 때문이다.
     """
     return _local_now_from(clock.now(), time_zone)
+
+
+def contract_tick(
+    senior_id: str,
+    *,
+    conversation_id: str | None = None,
+    robot_id: str | None = None,
+    clarification_client=None,
+    onboarding_client=None,
+) -> int:
+    """계약 대화(온보딩·재질의)를 '제안'으로 큐에 넣는다. 말하지는 않는다.
+
+    무엇을 하는가
+        백엔드에 물을 것이 있는지 확인하고, 있으면 제안 하나를 넣는다. 게이트가
+        말할지 정한다.
+
+    왜 로봇이 스스로 시작하는가
+        어르신이 먼저 "온보딩 해줘"라고 말하지는 않는다. 보류된 사실도 마찬가지다.
+        누군가 꺼내야 하고, 그 '누군가'는 제안만 하고 심판은 게이트가 한다
+        (CLAUDE.md §7).
+
+    ★ 한 대화에 후보 하나  (CLAUDE.md §12)
+        백엔드가 활성 후보를 하나만 내려주지만, 그것만으로는 부족하다. 한 대화 안에서
+        틱이 여러 번 돌면 첫 후보가 해결된 뒤 곧바로 두 번째가 나온다. 어르신 입장에서는
+        연달아 심문받는 것과 같다.
+
+        그래서 대화별로 한 번만 제안한다. 표시는 completed_slot 에 남기며, 키에
+        conversation_id 가 들어가므로 다음 대화에서는 다시 물을 수 있다.
+
+    왜 온보딩보다 재질의를 먼저 보는가
+        재질의는 이미 어르신이 말한 것에 대한 확인이고, 온보딩은 새 질문이다.
+        꺼내 놓은 이야기를 마무리하는 편이 자연스럽다.
+
+    누가 호출하는가
+        jobs.scheduler(policy.CONTRACT_TICK_INTERVAL_SEC 마다), 그리고 테스트.
+
+    반환값
+        새로 넣은 제안 개수 (0 또는 1).
+
+    주의사항
+        백엔드에 못 닿으면 아무것도 하지 않는다. 계약을 서버가 강제하는데 서버에 못
+        닿으면 계약이 없는 상태이고, 그 상태로 민감정보를 물으면 안 된다.
+        침묵 사다리와 정반대의 판단이며, 그쪽은 네트워크가 없을 때가 가장 중요하다.
+    """
+    if conversation_id:
+        slot_key = f"contract:{conversation_id}"
+        if proposals.is_slot_completed(senior_id, slot_key):
+            return 0
+    else:
+        # 대화 밖(대기 상태)에서는 대화별 제한을 걸 수 없다. 게이트의 쿨다운이
+        # 남용을 막는다 — clarification 우선순위는 쿨다운을 무시하지만, 그때도
+        # quiet hours 와 끼어들기 검사는 그대로 적용된다.
+        slot_key = None
+
+    try:
+        proposal = _contract_proposal(
+            senior_id, robot_id, clarification_client, onboarding_client)
+    except BackendUnavailable as error:
+        logger.info("contract tick skipped: %s", error)
+        return 0
+
+    if proposal is None:
+        return 0
+
+    proposals.enqueue(senior_id, proposal)
+    if slot_key:
+        proposals.mark_slot_completed(senior_id, slot_key)
+    logger.info("contract tick queued a %s proposal for %s", proposal["intent"], senior_id)
+    return 1
+
+
+def _contract_proposal(
+    senior_id: str,
+    robot_id: str | None,
+    clarification_client,
+    onboarding_client,
+) -> dict | None:
+    """물을 것이 있으면 제안 하나를 만든다. 없으면 None.
+
+    seed 를 최종 문구로 쓰지 않는다. 실제 문장은 핸들러가 백엔드에서 다시 받아
+    만든다 — 제안이 큐에서 대기하는 동안 어르신이 앱으로 답했을 수 있고, 그러면
+    이미 답한 질문을 묻게 된다.
+    """
+    from bomi_ai_chat.backend_client.contract_client import (
+        BackendClarificationClient,
+        BackendOnboardingClient,
+    )
+
+    # 1. 꺼내 놓은 이야기부터 마무리한다.
+    #
+    #    재질의는 이미 어르신이 말한 것에 대한 확인이고, 온보딩은 새 질문이다.
+    #    꺼내 놓은 이야기를 마무리하는 편이 자연스럽다.
+    clarification = clarification_client or BackendClarificationClient()
+    candidate = clarification.active(senior_id)
+    if candidate is not None:
+        return {
+            "intent": "clarification",
+            "priority": "clarification",
+            "seed": "",
+            "origin": f"clarification:{candidate.get('factCandidateId', '')}",
+            "meta": {"fact_type": candidate.get("factType", "")},
+        }
+
+    # 2. 온보딩이 남아 있는가.
+    #
+    #    robot_id 가 없으면 '이어받기'만 가능하다. 서버는 새 ROBOT 세션을 만들 때
+    #    robot_id 를 요구하므로, 없으면 아예 시도하지 않는다 — 400 을 받아 오프라인으로
+    #    오인하는 것보다 낫다.
+    resolved_robot_id = robot_id or _configured_robot_id()
+    if not resolved_robot_id:
+        logger.info("no robot id configured; onboarding cannot be started from the robot")
+        return None
+
+    onboarding = onboarding_client or BackendOnboardingClient()
+    session = onboarding.start_or_resume(senior_id, resolved_robot_id)
+    if not session or not session.get("sessionId"):
+        return None
+    if session.get("status") != "IN_PROGRESS":
+        # 이미 끝났거나 중단된 세션이다. 다시 꺼내지 않는다.
+        return None
+
+    return {
+        "intent": "onboarding",
+        "priority": "clarification",
+        "seed": "",
+        "origin": f"onboarding:{session['sessionId']}",
+        "meta": {"session_id": session["sessionId"]},
+    }
+
+
+def _configured_robot_id() -> str | None:
+    """설정된 로봇 id. 없으면 None.
+
+    config 조회가 실패해도 틱을 죽이지 않는다. 온보딩을 못 시작할 뿐이고,
+    침묵 사다리 같은 안전 경로는 이 값과 무관하다.
+    """
+    try:
+        from bomi_ai_chat.config import get_settings
+
+        return get_settings().robot_id
+    except Exception:  # noqa: BLE001 - 설정 문제로 틱이 죽으면 안 된다
+        logger.warning("could not read the robot id from settings", exc_info=True)
+        return None
 
 
 def daily_summary_job(senior_id: str) -> None:

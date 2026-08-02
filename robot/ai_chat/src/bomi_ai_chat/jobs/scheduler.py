@@ -93,6 +93,16 @@ def build_scheduler(senior_id: str, app=None):
         coalesce=True,
         max_instances=1,
     )
+    scheduler.add_job(
+        _guard(ticks.contract_tick, senior_id),
+        "interval",
+        # 침묵 틱보다 훨씬 뜸하다. 계약 대화는 급하지 않고, 매 분 백엔드에
+        # "물을 것 있나요"를 묻는 것은 네트워크와 배터리 낭비다.
+        seconds=policy.CONTRACT_TICK_INTERVAL_SEC,
+        id="contract_tick",
+        coalesce=True,
+        max_instances=1,
+    )
 
     logger.info(
         "scheduler built: silence/door=%ds outbox=%ds",
@@ -136,6 +146,7 @@ def run_all_ticks_once(senior_id: str, app=None) -> None:
             run_all_ticks_once("senior-1")
     """
     _guard(ticks.schedule_tick, senior_id)()
+    _guard(ticks.contract_tick, senior_id)()
     for tick in (ticks.silence_tick, ticks.door_watch_tick):
         _guard(tick, senior_id, app)()
     _guard(ticks.outbox_flush)()
