@@ -45,11 +45,13 @@ import logging
 import re
 from typing import Any
 
+from bomi_ai_chat import policy
 from bomi_ai_chat.backend_client.contract_client import (
     BackendClarificationClient,
     BackendOnboardingClient,
     BackendUnavailable,
 )
+from bomi_ai_chat.clock import clock
 from bomi_ai_chat.graph import contract_dialogue
 from bomi_ai_chat.localstore import proposals as proposal_store
 from bomi_ai_chat.prompts import (
@@ -314,9 +316,89 @@ def handle_emotional(state: ConvState) -> dict:
           푸념, 회상, "우리끼리 얘기")는 로봇을 아예 떠나지 않으며, 어르신이 그것을
           믿을 수 있어야 T3 가 작동한다.
         - LangGraph 의 interrupt / human-in-the-loop 가 이 지연된 질문에 직접 만든
-          큐보다 잘 맞는다 (CLAUDE.md §16).
+          큐보다 잘 맞는다 (CLAUDE.md §16). 지금은 제안 큐를 쓴다 — 그 큐가 이미
+          '나중에 자연스러운 시점'을 판정하는 게이트를 가지고 있기 때문이다.
     """
-    raise NotImplementedError
+    # 이 턴이 이미 T3 동의를 여쭤보는 능동 턴이라면, 또 큐에 넣지 않는다.
+    # 넣으면 동의 질문이 동의 질문을 낳는다.
+    if not _is_t3_consent_turn(state):
+        _queue_t3_consent_question(state)
+
+    return {"response": _generate(state)}
+
+
+# 큐에 들어간 동의 질문을 알아보는 표식. 제안의 meta 에 실린다.
+_T3_CONSENT_MARKER = "t3_consent"
+
+
+def _is_t3_consent_turn(state: ConvState) -> bool:
+    """지금 턴이 '동의를 여쭤보는' 능동 턴인가.
+
+    게이트가 이긴 제안의 origin 을 speech_origin 으로 실어 준다. 그 값으로 판단한다.
+    """
+    return _T3_CONSENT_MARKER in (state.get("speech_origin") or "")
+
+
+def _queue_t3_consent_question(state: ConvState) -> None:
+    """공유해도 되는지 '나중에' 여쭤볼 질문을 큐에 넣는다.
+
+    무엇을 하는가
+        지금은 아무 말도 덧붙이지 않는다. T3_CONSENT_DELAY_SEC 뒤에 게이트를
+        통과할 수 있는 제안 하나를 남긴다.
+
+    왜 지금 묻지 않는가  ★ 이것이 T3 의 전부다
+        속마음을 꺼내는 순간 "아드님께 전해드릴까요?"로 끊으면, 로봇은 그 한 문장으로
+        말벗에서 감시 장치가 된다. 그 뒤로 어르신은 털어놓지 않고, 그러면 T3 로 보낼
+        내용 자체가 사라진다. 문구보다 타이밍이 중요하다 (CLAUDE.md §9).
+
+    누가 호출하는가  handle_emotional. 다른 곳에서 부르지 않는다.
+    무엇을 호출하는가  proposal_store.enqueue, clock.now.
+
+    주의사항
+        - 우선순위는 low 다. 이 질문은 급하지 않고, 복약이나 안전 프로브를 밀어낼
+          이유가 전혀 없다. quiet hours 와 쿨다운을 모두 지킨다.
+        - 대기 중인 질문이 이미 있으면 새로 만들지 않는다. 정서 대화가 이어질 때마다
+          만들면 하루에 여러 번 같은 것을 묻게 된다.
+        - 동의를 '받는' 것과 실제로 '보내는' 것은 다르다. 보내기 전에는 서버가
+          guardian_sharing_consent_status 를 다시 본다. 로봇은 여쭤보는 시점만 정한다.
+        - 어르신 id 가 없으면 조용히 넘어간다. 큐의 키가 어르신 id 이고, 임의의 키로
+          넣으면 영원히 아무도 집어가지 않는 행이 쌓인다.
+    """
+    senior_id = state.get("senior_id") or ""
+    if not senior_id:
+        logger.debug("no senior_id on the state; not queueing a T3 consent question")
+        return
+
+    if policy.T3_CONSENT_ONE_PENDING_ONLY and _has_pending_t3_consent(senior_id):
+        return
+
+    now = clock.now()
+    proposal_store.enqueue(senior_id, {
+        "intent": "emotional",
+        "priority": "low",
+        # seed 는 최종 문장이 아니라 힌트다. response_shaper 를 거쳐 나간다.
+        "seed": "아까 마음이 힘들다고 하셨던 이야기, 가족분께 전해도 괜찮을까요?",
+        # not_before 가 아니라 origin 에 표식을 둔다. 게이트는 만료만 보고 시작 시각은
+        # 보지 않으므로, 지연은 expires_at 이 아니라 '언제 넣는가'로 만들 수 없다.
+        # 그래서 아래 not_before 를 meta 에 넣고 게이트가 아닌 제안 자체가 갖게 한다.
+        "expires_at": now + policy.T3_CONSENT_DELAY_SEC + policy.T3_CONSENT_TTL_SEC,
+        "origin": f"{_T3_CONSENT_MARKER}: 어르신이 마음을 이야기하셨고, 그것을 가족과 "
+                  "나눠도 되는지 아직 여쭤보지 않았습니다.",
+        "meta": {
+            _T3_CONSENT_MARKER: True,
+            "not_before": now + policy.T3_CONSENT_DELAY_SEC,
+        },
+    })
+    logger.info("queued a T3 consent question for senior %s (asking in %ds)",
+                senior_id, policy.T3_CONSENT_DELAY_SEC)
+
+
+def _has_pending_t3_consent(senior_id: str) -> bool:
+    """이미 대기 중인 동의 질문이 있는가."""
+    return any(
+        (proposal.get("meta") or {}).get(_T3_CONSENT_MARKER)
+        for proposal in proposal_store.pending(senior_id)
+    )
 
 
 def handle_greeting(state: ConvState) -> dict:

@@ -248,6 +248,19 @@ def build_prompt(
     if intent == "info":
         blocks.append(_section("참고 자료", _format_documents(ctx)))
 
+    if intent == "emotional":
+        # 정서 턴에만 태도 지시를 넣는다 (S15P11E102-263).
+        #
+        # 왜 system.md 에 넣지 않는가
+        #   system.md 는 모든 턴에 들어간다. "조언하지 마세요"를 늘 켜 두면 정보
+        #   질문에도 조언을 못 하게 되고, "약은 식후에 드세요"를 못 말하게 된다.
+        #   태도는 턴의 성격에 따라 바뀌어야 한다.
+        #
+        # 왜 파일인가
+        #   프롬프트는 코드다 (CLAUDE.md §16, §23). 노드 함수 안의 문자열이면
+        #   문구를 고칠 때마다 파이썬을 고치게 되고, 문구 이력이 코드 이력에 섞인다.
+        blocks.append(load_template("emotional_stance.md"))
+
     blocks.append(_section("최근 대화", _format_recent_messages(ctx)))
     blocks.append(_section("표현 반복 피하기", _format_recent_phrasings(recent_phrasings)))
 
