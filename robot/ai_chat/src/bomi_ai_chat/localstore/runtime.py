@@ -39,6 +39,10 @@ _DEFAULTS: dict[str, Any] = {
     "last_spoke_at": 0.0,
     "last_user_interaction_at": 0.0,
     "door_heartbeat_at": 0.0,
+    # occupancy 가 AWAY 로 전이한 시각. 0 이면 나가 있지 않다.
+    # occupancy_observed_at 과 다르다 — schema.py 의 주석 참고.
+    "away_since": 0.0,
+    "door_open_since": 0.0,
 }
 
 # 외부에서 갱신할 수 있는 필드. 오타가 조용히 무시되지 않도록 화이트리스트로 둔다.
@@ -115,5 +119,43 @@ def reset_silence(senior_id: str) -> None:
         이 두 값은 항상 함께 바뀐다. 어르신이 반응했다는 사실 하나에서 나오는
         결과이므로, 따로 부르게 두면 한쪽만 갱신되는 버그가 생긴다.
         끼어들기(barge-in)도 생존 신호이므로 여기로 온다 (CLAUDE.md §13).
+
+    누가 호출하는가
+        graph.ingress.note_interaction. 어르신이 말한 모든 턴에서 부른다 —
+        맞장구로 끝나는 턴까지 포함한다. 그것도 생존 증거다.
     """
     save(senior_id, silence_level=0, last_user_interaction_at=clock.now())
+
+
+# ── 현관 알림 중복 방지 ──────────────────────────────────────────────────────
+
+
+def mark_door_alert(senior_id: str, alert_key: str) -> bool:
+    """이 현관 알림을 '처음 보낸다'면 표시하고 True 를 돌려준다.
+
+    무엇을 하는가
+        (senior_id, alert_key) 를 door_alert 에 넣고, 이미 있었으면 False.
+
+    왜 필요한가
+        door_watch_tick 은 60초마다 돌고, "부재 6시간 초과"는 그 뒤로 계속 참이다.
+        중복 방지가 없으면 매 분 T2 가 쌓여 보호자 화면을 도배하고, 그러면 보호자가
+        알림을 읽지 않게 된다. 시끄러운 감지기는 짜증이 아니라 안전 실패다.
+
+    누가 호출하는가
+        jobs.ticks.door_watch_tick. 알림을 만들기 '전에' 부르고, False 면 만들지 않는다.
+
+    반환값
+        True  -> 새 알림이다. 지금 보내라.
+        False -> 이미 보냈다. 아무것도 하지 마라.
+
+    주의사항
+        alert_key 에 '상태가 시작된 시각'을 넣는다(schema.py 참고). 날짜를 넣으면
+        어르신이 돌아왔다 다시 나가도 그날은 다시 알리지 못한다.
+    """
+    connection = runtime_db()
+    schema.init_runtime(connection)
+    cursor = connection.execute(
+        "INSERT OR IGNORE INTO door_alert (senior_id, alert_key, created_at) VALUES (?, ?, ?)",
+        (senior_id, alert_key, clock.now()),
+    )
+    return cursor.rowcount > 0

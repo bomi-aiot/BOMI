@@ -281,27 +281,51 @@ def handle_emotional(state: ConvState) -> dict:
 
 
 def handle_greeting(state: ConvState) -> dict:
-    """현관 배웅과 환영 — 실용 정보의 가치가 가장 높은 순간.
+    """백엔드가 정한 인사 문구를 발화로 옮긴다. 다시 고르지 않는다.
+
+    ★ 이 핸들러가 얇은 것이 의도다  (2026-08-01 재정의, CLAUDE.md §11)
+
+        초안에서는 이 핸들러가 골랐다 — 외출이면 날씨·미복용 약·오늘 일정 중 하나,
+        귀가면 수분·안부·휴식 중 하나. 합의된 구조는 다르다. **그 선택은 백엔드가 한다.**
+
+        이유는 데이터의 위치다. "미복용 약이 있는가", "오늘 일정이 있는가", "동의를
+        받았는가"는 전부 백엔드만 아는 사실이다. 로봇이 다시 조회해 다시 고르면 같은
+        우선순위 규칙이 두 곳에 생기고, 두 곳은 갈라진다. 그러면 "왜 로봇이 우산을
+        말하지 않았는가"에 답할 곳이 두 곳이 된다.
+
+        그래서 로봇의 몫은 하나다. 받은 문구를 §14 를 지켜 말하기.
 
     무엇을 하는가
-        seed "escort"  (외출): 행동으로서의 날씨, 미복용 약, 오늘 일정 — 그중 '하나'.
-        seed "welcome" (귀가): 수분, 안부, 장시간 외출이었다면 휴식 권유.
+        backend_command 가 넣어준 user_input(= 최종 문구)을 response 로 옮긴다.
 
-    왜 현관이 특별한가
-        "추워요, 내복 입으세요"는 문 손잡이를 잡은 순간에 다른 어떤 때보다 값어치가
-        크다. 행동 지향 정보가 실제로 보상받는 지점이다 (CLAUDE.md §11).
+    왜 그래도 노드가 필요한가
+        모든 발화가 같은 파이프라인을 지나야 하기 때문이다. 여기를 건너뛰고 정제기로
+        직행하는 지름길을 만들면, 그 지름길로 다른 것들이 따라 들어온다.
+        이 노드가 "백엔드 문구가 로봇 발화가 되는 유일한 지점"이다.
 
-    누가 호출하는가  build.py, intent "greeting". door_event 제안에서 온다.
-    반환값          {"response": str}
+    누가 호출하는가
+        build.py, intent "greeting". backend_command 경로에서 온다.
+
+    반환값
+        {"response": str}. 문구가 없으면 빈 문자열 — 정제기가 그것을 침묵으로 만든다.
 
     주의사항
-        - '하나만' 고른다. 현관에서 세 가지를 쏟는 것은 제품 전체에서 발화 규칙을 가장
-          어기고 싶어지는 지점이고, 어르신은 이미 반쯤 나가 있다.
-        - terse 를 지킨다. quiet hours 에는 몇 마디여야 한다 (policy.QUIET_TERSE).
-        - 이동을 기다리지 않는다. 음성은 방을 건너 들리고, 인사의 TTL 은 약 45초다
-          (policy.GREETING_TTL_SEC).
+        - '하나만'은 여전히 유효하다. 다만 그 판정이 백엔드로 갔다. 백엔드가 세 가지를
+          한 문장에 담아 보내면 여기서 막지 않는다 — 그건 226 의 완료 조건이다.
+          정제기의 MAX_SENTENCES 가 마지막 방어선이다.
+        - terse 는 백엔드가 지정한다(command.terse). quiet hours 판정도 백엔드 몫이다.
+        - 이동을 기다리지 않는다. 음성은 방을 건너 들리고, 인사의 TTL 은 약 45초다.
+          로봇이 현관에 도착했는지 여기서 확인하지 않는다 (CLAUDE.md §11).
     """
-    raise NotImplementedError
+    text = (state.get("user_input") or "").strip()
+    if not text:
+        # 여기 도달했는데 문구가 없다는 것은 backend_command 가 빈 명령을 통과시켰거나
+        # 누군가 intent="greeting" 을 직접 넣었다는 뜻이다. 조용히 침묵으로 끝낸다 —
+        # 무음 TTS 를 재생하는 것보다 낫다.
+        logger.warning("handle_greeting has no text to speak; falling through to silence")
+        return {"response": ""}
+
+    return {"response": text}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

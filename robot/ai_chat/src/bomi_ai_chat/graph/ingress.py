@@ -1,10 +1,10 @@
-"""턴이 시작될 수 있는 세 가지 경로, 그리고 그 사이의 라우팅.
+"""턴이 시작될 수 있는 네 가지 경로, 그리고 그 사이의 라우팅.
 
 어디에 위치하는가
     그래프의 맨 위. CLAUDE.md §6 에서 게이트나 트리아지보다 먼저 일어나는 모든 것이
     여기 있다.
 
-    세 개의 진입 경로이며, 일부러 '대칭이 아니다'.
+    네 개의 진입 경로이며, 일부러 '대칭이 아니다'.
 
       "user_utterance"  -> note_interaction -> safety_triage
             어르신이 말했다. 방금 우리에게 말을 건 사람에게 대답할 허락을 게이트에
@@ -13,9 +13,23 @@
       "proactive"       -> proactive_gate
             스케줄러나 침묵 사다리가 제안했다. 허락을 받아야 한다.
 
-      "door_event"      -> door_event -> proactive_gate
-            센서가 발동했다. occupancy '변경'은 세상에 대한 사실이므로 즉시 반영하고,
-            인사만 허락을 구한다.
+      "door_event"      -> door_event -> END
+            센서가 발동했다. occupancy 는 세상에 대한 사실이므로 즉시 반영하고,
+            **여기서 끝난다.** 인사를 제안하지 않는다.
+
+      "backend_command" -> backend_command -> context_read -> ...
+            백엔드가 말하라고 명령했다. 게이트를 거치지 않는다 — 이미 판정한 쪽이
+            보낸 것이므로 여기서 다시 판정하면 심판이 둘이 된다.
+
+왜 door_event 가 인사를 제안하지 않는가  ★ 2026-08-01 재정의
+    초안에서는 door_event 가 인사 제안을 만들고 로봇의 게이트가 그것을 심판했다.
+    합의된 구조는 다르다. **배웅·환영 인사 판정은 백엔드가 한다** (CLAUDE.md §11).
+
+    백엔드는 시나리오 기록·오늘 일정·동의 상태를 갖고 있어 판단 근거가 그쪽에 있다.
+    로봇에서 같은 판단을 다시 하면 같은 규칙이 두 곳에 생기고, 두 곳은 갈라진다.
+
+    로봇의 네 게이트(§7)는 여전히 '로봇이 스스로 시작하는' 발화 전부를 심판한다 —
+    일정 알림, 침묵 프로브, 재질의. 백엔드가 명령한 인사만 별도 경로다.
 
 왜 note_interaction 이 독립 노드인가
     어르신이 말하면, 다른 무엇보다 먼저 서로 무관한 네 가지가 일어나야 한다.
@@ -23,12 +37,13 @@
     안전 분류가 아니다. 이걸 safety_triage 안에 넣으면 그 노드가 두 가지 일을 하게
     되고 둘 다 테스트하기 어려워진다.
 
-읽는 값   trigger_type, user_input, speaking, occupancy, last_door_event
+읽는 값   trigger_type, user_input, speaking, occupancy, last_door_event, command
 쓰는 값   last_user_interaction_at, silence_level, occupancy, speaking,
-          interrupted_remainder, is_backchannel, proposals
+          interrupted_remainder, is_backchannel, proposals, intent, user_input
 
 참고
     CLAUDE.md §6 (아키텍처), §11 (현관 센서), §13 (barge-in)
+    S15P11E102-208 (이 재정의), S15P11E102-226 (백엔드 측 인사 판정)
 """
 
 from __future__ import annotations
@@ -39,7 +54,9 @@ from langgraph.graph import END
 
 from bomi_ai_chat import policy
 from bomi_ai_chat.clock import clock
+from bomi_ai_chat.door import occupancy as occupancy_rules
 from bomi_ai_chat.graph import output
+from bomi_ai_chat.localstore import runtime as runtime_store
 from bomi_ai_chat.state import ConvState, SpeechProposal
 
 logger = logging.getLogger(__name__)
@@ -59,7 +76,7 @@ def route_ingress(state: ConvState) -> str:
         build.py:  g.add_conditional_edges(START, route_ingress, {...})
 
     반환값
-        "note_interaction", "proactive_gate", "door_event" 중 하나.
+        "note_interaction", "proactive_gate", "door_event", "backend_command" 중 하나.
 
     주의사항
         여기서 KeyError 가 나면 누군가 trigger_type 없이 그래프를 호출했다는 뜻이다.
@@ -70,6 +87,7 @@ def route_ingress(state: ConvState) -> str:
         "user_utterance": "note_interaction",
         "proactive": "proactive_gate",
         "door_event": "door_event",
+        "backend_command": "backend_command",
     }[state["trigger_type"]]
 
 
@@ -137,14 +155,20 @@ def note_interaction(state: ConvState) -> dict:
         - 생존 확인 프로브 뒤에는 잘린 나머지를 재개하지 '않는다'. 끼어든 것 자체가
           프로브가 물으려던 것을 이미 증명했다. 재개하면 방금 대답한 사람에게 걱정스러운
           질문을 반복하는 로봇이 된다 (CLAUDE.md §13).
+        - **내구 저장소에도 쓴다.** 아래 _persist_interaction 참고. 이것 없이는
+          이 노드가 하는 일이 침묵 사다리에 도달하지 못한다.
     """
+    now = clock.now()
     out: dict = {
-        "last_user_interaction_at": clock.now(),
+        "last_user_interaction_at": now,
         "silence_level": 0,
         "occupancy": "HOME",
-        "occupancy_observed_at": clock.now(),
+        "occupancy_observed_at": now,
         "is_backchannel": False,
     }
+
+    # 맞장구로 끝나는 턴에서도 먼저 저장한다. "응" 한마디도 생존 증거다.
+    _persist_interaction(state, now)
 
     if not state.get("speaking"):
         return out
@@ -162,6 +186,40 @@ def note_interaction(state: ConvState) -> dict:
     out["speaking"] = False
     out["interrupted_remainder"] = _yield_playback(state)
     return out
+
+
+def _persist_interaction(state: ConvState, now: float) -> None:
+    """발화가 남긴 안전 신호를 내구 저장소에도 쓴다.
+
+    ★ 왜 이 함수가 있어야 하는가 — 208 에서 발견한 결함
+
+        침묵 사다리(jobs/ticks.silence_tick)는 그래프를 거치지 않고 runtime_state 를
+        읽는다. 그런데 이 노드는 LangGraph checkpoint 에만 썼다. 그래서 어르신이
+        하루 종일 대화해도 runtime_state 의 last_user_interaction_at 은 갱신되지 않았다.
+
+        기본값이 0 이고 아무도 쓰지 않았으므로, 실기에서 사다리는 `last_interaction
+        <= 0.0` 가드에서 매번 조용히 되돌아갔다. **207 의 침묵 사다리가 production
+        에서는 한 번도 돌지 않는 상태였다.** 테스트는 runtime_store 에 값을 직접
+        넣어주기 때문에 통과했다.
+
+        같은 이음이 문 이벤트에도 있다(door_event). 그래서 두 노드 모두 두 곳에 쓴다.
+        수명이 다른 두 저장소이므로 중복이 아니다 — door/intake.py 의 설명 참고.
+
+    왜 여기서 예외를 삼키지 않는가
+        삼키면 이 결함이 두 번째로 조용해진다. 저장이 실패하면 사다리가 다시 멈추므로,
+        요란하게 실패하는 편이 낫다. 이 경로는 이미 turn.run_user_turn 이 예외를
+        잡아 한 턴만 버리도록 감싸고 있다.
+    """
+    senior_id = state.get("senior_id")
+    if not senior_id:
+        # senior_id 없이 그래프를 부른 것이다. checkpoint 는 thread_id 로 동작하니
+        # 턴 자체는 굴러가지만, 내구 저장은 대상을 특정할 수 없다.
+        logger.warning("note_interaction has no senior_id; the silence ladder will not "
+                       "see this interaction")
+        return
+
+    runtime_store.reset_silence(senior_id)
+    occupancy_rules.set_occupancy(senior_id, "HOME", observed_at=now, source="speech")
 
 
 def _yield_playback(state: ConvState) -> SpeechProposal | None:
@@ -239,72 +297,129 @@ def route_interaction(state: ConvState) -> str:
 
 
 def door_event(state: ConvState) -> dict:
-    """occupancy 를 반영하고, 이동을 지시하고, 인사를 제안한다.
+    """재실 상태를 반영한다. 그리고 여기서 끝난다.
 
     무엇을 하는가
-        하나의 이벤트, 서로 분리된 두 효과.
-          (a) occupancy 전환 — 지금 여기서 반영하며 게이트를 거치지 않는다.
-              발화가 아니라 사실이기 때문이다.
-          (b) 아주 짧은 TTL 을 가진 인사 제안 — 이것은 다른 발화와 똑같이 게이트를
-              통과해야 한다.
-        아울러 현관으로 이동하라는 명령을 내고 원본 이벤트를 기록한다.
+        문에 무슨 일이 있었다는 사실만 state 에 반영한다. 규칙은 door.occupancy 에
+        있고 이 노드는 그것을 부른다 — 같은 규칙이 두 곳에 생기지 않게.
 
-    왜 두 효과를 분리하는가
-        인사가 억제되더라도(quiet hours, 누군가 말하는 중, TTL 만료) 로봇은 어르신이
-        나갔다는 사실을 '알아야' 한다. occupancy 를 게이트에 통과시키면, 억제된 인사가
-        안전 상태를 조용히 오염시킨다. 이 설계가 피하려는 바로 그 종류의 조용한 실패다.
+    무엇을 하지 '않는가'  ★ 2026-08-01 재정의
+        **인사를 제안하지 않는다.** 배웅·환영 판정은 백엔드 몫이다 (CLAUDE.md §11).
+        백엔드가 방향을 확정하고, 말할지 정하고, backend_command 경로로 내려보낸다.
+
+        방향도 만들지 않는다. 센서 두 개는 각자 방향을 모르고, 두 신호의 순서로만
+        방향이 나온다. 그 상관 판정의 시간 창은 실측값이라 튜닝 대상이고, 로봇에 두면
+        조정할 때마다 로봇을 배포해야 한다.
+
+    왜 그런데도 로봇이 occupancy 를 만지는가
+        침묵 사다리가 매 틱 이 값을 읽고, 네트워크 없이도 돌아야 한다 (§10, §18).
+        방향을 모르니 HOME/AWAY 는 만들 수 없다. 그래서 항상 안전한 한 가지를 한다 —
+        문에 무슨 일이 있으면 UNKNOWN. 사다리는 그것을 '보수적으로 가동'으로 읽는다.
+
+        피하려는 실패: 오프라인 로봇이 어르신을 AWAY 라고 믿고 사다리를 영원히
+        멈추는 것.
 
     누가 호출하는가
-        build.py. "door_event" 경로의 첫 노드. MQTT 로 받은 것을 door/ 가 넣어준다.
+        build.py. "door_event" 경로의 첫 노드이자 마지막 노드.
+        MQTT 로 받은 것을 door.mqtt 가 넣어준다.
 
     반환값
-        occupancy, occupancy_observed_at, silence_level, proposals.
+        occupancy, occupancy_observed_at. 제안은 없다.
 
     주의사항
-        - 타임스탬프를 clock.now() 로 정규화한다. 현관 라즈베리파이에는 배터리 백업
-          RTC 가 없을 수 있어서 전원을 껐다 켜면 시계가 틀릴 수 있고, 틀린 문 이벤트
-          시각은 루틴 베이스라인 학습과 TTL 계산을 함께 오염시킨다. 압축 시계 시연의
-          일관성도 이 정규화에 달려 있다 (CLAUDE.md §11, §15).
-        - 센서는 '방향'을 알고 '신원'은 모른다. 어르신이 부재중일 때 방문자가 들어오면
-          귀가로 읽힌다. 이 상태를 좋은 증거로 다루되 증명으로 다루지 않고, 발화가
-          덮어쓸 수 있게 한다.
-        - 이동이 인사를 막아서는 안 된다. 음성은 방을 건너 들리므로, 느리거나 실패한
-          이동이 발화를 삼켜서는 안 된다.
+        - 시각은 이벤트에 실려 온 '도착 시각'을 쓴다. 라즈베리파이가 주장한 시각이
+          아니다. 정규화는 contracts.door.parse_door_event 에서 이미 끝났다.
+        - 여기서도 내구 저장소에 쓴다. door.intake 를 거치지 않고 그래프만 호출되는
+          경로(테스트, 백엔드가 밀어준 이벤트)가 있기 때문이다. 두 번 써도 같은 값이다.
     """
-    event = state["last_door_event"]
-    direction = event["direction"]          # "in" | "out"
-    now = clock.now()                       # 권위 있는 시각. 위 주의사항 참고
+    event = state.get("last_door_event") or {}
+    event_type = str(event.get("type") or "")
+    # 도착 시각이 없으면 지금으로 둔다. 없는 채로 0 을 쓰면 '아주 오래된 관측'이
+    # 되어 door.occupancy 가 낡은 값으로 판단해 버린다.
+    observed_at = float(event.get("ts") or clock.now())
 
-    leaving = direction == "out"
+    resolved = occupancy_rules.local_occupancy_for(event_type)
+    if resolved is None:
+        # 문이 닫혔거나 하트비트다. 재실에 대해 아무 말도 하지 않는다.
+        logger.info("door event %s says nothing about occupancy", event_type or "?")
+        return {}
 
-    # (b) 이동. 즉시, 그리고 발화와 독립적으로 발행한다.
-    # TODO(robot): move_to_door() — 논블로킹이며, 실패가 여기서 예외를 던지면 안 된다.
+    senior_id = state.get("senior_id")
+    if senior_id:
+        occupancy_rules.set_occupancy(
+            senior_id, resolved, observed_at=observed_at, source="sensor"
+        )
 
-    # (c) 인사 제안.
-    #
-    # priority "event": 쿨다운을 무시한다(방금 말했다? 누군가 문을 통과했고, 그게
-    # 우리 마지막 문장보다 우선한다). 대신 quiet hours 는 "terse" 로 존중해서,
-    # 새벽 2시 귀가에도 짧고 조용한 한마디가 나간다 (policy.QUIET_TERSE).
-    proposal: SpeechProposal = {
-        "intent": "greeting",
-        "priority": "event",
-        # 문구는 핸들러가 정한다. "escort" 는 날씨·미복용 약·오늘 일정을 끌어와
-        # 가장 중요한 '하나'만 말하고, "welcome" 은 수분·안부·장시간 외출 후 휴식을 권한다.
-        "seed": "escort" if leaving else "welcome",
-        "expires_at": now + policy.GREETING_TTL_SEC,
-        "origin": f"door:{direction}",
-        "meta": {"direction": direction},
-    }
+    return {"occupancy": resolved, "occupancy_observed_at": observed_at}
 
-    # TODO(localstore): occupancy_event 원장에 이 이벤트를 추가한다. 루틴 베이스라인
-    #   (jobs/ticks.py)과 보호자에게 T2 로 가는 외출 빈도 추세의 입력이 된다.
-    #   이것은 원본 '사실'이고, 백엔드의 `scenario` 는 인사 '실행'을 기록하는 다른 것이다.
 
-    return {
-        "occupancy": "AWAY" if leaving else "HOME",
-        "occupancy_observed_at": now,
-        # 귀가는 새로운 생존 증거이므로 사다리를 리셋한다. 외출은 안녕함의 증거가
-        # 아니므로 레벨을 건드리지 않는다. occupancy 가 AWAY 라서 사다리는 알아서 멈춘다.
-        "silence_level": 0 if not leaving else state.get("silence_level", 0),
-        "proposals": [proposal],
-    }
+# ─────────────────────────────────────────────────────────────────────────────
+# 백엔드 명령 경로  (CLAUDE.md §6, §11)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def backend_command(state: ConvState) -> dict:
+    """백엔드가 말하라고 명령했다. 게이트를 거치지 않고 파이프라인에 올린다.
+
+    무엇을 하는가
+        명령을 그래프가 이해하는 값으로 옮긴다. intent, user_input(= 말할 내용),
+        speech_priority, speech_origin. 그리고 백엔드가 확정 재실 상태를 함께 보냈으면
+        그것도 반영한다.
+
+    왜 게이트를 거치지 않는가  ★
+        게이트는 "지금 말해도 되는가"를 판정한다. 이 명령은 그 판정을 이미 한 쪽에서
+        왔다. 여기서 다시 판정하면 심판이 둘이 되고, 그러면 백엔드가 보낸 인사가
+        로봇의 쿨다운에 조용히 삼켜지는 일이 생긴다. 백엔드는 자기가 보낸 인사가
+        나갔다고 기록하고, 어르신은 아무 말도 듣지 못한다.
+
+        대신 안전 규칙은 그대로다. 이 경로도 response_shaper 를 통과하므로 §14 의
+        '한 가지만, 짧게'는 지켜진다. terse 도 백엔드가 지정할 수 있다.
+
+    왜 문구를 백엔드가 정하는가
+        인사의 내용이 백엔드만 아는 사실에 달려 있다. 오늘 일정, 미복용 약, 동의 상태.
+        로봇이 그것을 다시 조회해 다시 고르면 같은 우선순위 규칙이 두 곳에 생긴다
+        (CLAUDE.md §11 "one judge, one place to audit").
+
+    누가 호출하는가
+        build.py. 백엔드 명령 수신부(MQTT `bomi/v1/robot/{id}/commands` 또는 HTTP)가
+        trigger_type="backend_command" 로 그래프를 부른다.
+
+    반환값
+        intent, user_input, speech_priority, speech_origin, terse, occupancy(있을 때).
+
+    주의사항
+        - `command.text` 가 비어 있으면 아무것도 하지 않는다. 빈 문장을 파이프라인에
+          올리면 정제기가 빈 문자열을 만들고 TTS 가 무음을 재생한다.
+        - 이동 명령(target: ENTRANCE)은 이 경로와 무관하다. 음성은 방을 건너 들리므로
+          느리거나 실패한 이동이 인사를 삼켜서는 안 된다 (CLAUDE.md §11).
+    """
+    command = state.get("command") or {}
+    text = str(command.get("text") or "").strip()
+
+    # 백엔드가 방향까지 판정해 확정 재실 상태를 실어 보냈으면 반영한다.
+    # 이것이 HOME/AWAY 가 저장소에 들어오는 두 경로 중 하나다(다른 하나는 발화).
+    out: dict = {}
+    occupancy = command.get("occupancy")
+    senior_id = state.get("senior_id")
+    if occupancy and senior_id:
+        observed_at = float(command.get("occupancyObservedAt") or clock.now())
+        occupancy_rules.apply_backend_occupancy(
+            senior_id, str(occupancy), observed_at=observed_at
+        )
+        out["occupancy"] = str(occupancy)
+        out["occupancy_observed_at"] = observed_at
+
+    if not text:
+        logger.warning("backend command has no text; nothing to say")
+        return out
+
+    out.update({
+        "intent": command.get("intent") or "greeting",
+        "user_input": text,
+        "speech_priority": command.get("priority") or "event",
+        "speech_origin": command.get("origin") or "backend_command",
+        "terse": bool(command.get("terse")),
+    })
+    logger.info("backend command accepted: intent=%s origin=%s",
+                out["intent"], out["speech_origin"])
+    return out

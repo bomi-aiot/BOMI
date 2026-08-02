@@ -10,16 +10,22 @@
     40줄을 읽고 답할 수 있다. 여기에 if 문을 추가하고 있다면, 그건 노드에 속한다.
 
 그래프를 읽는 방법
-    세 진입 경로가 하나의 응답 파이프라인으로 수렴하고, 판단 노드가 생성 노드보다
+    네 진입 경로가 하나의 응답 파이프라인으로 수렴하고, 판단 노드가 생성 노드보다
     위에 있다.
 
         어르신 발화  -> note_interaction -> safety_triage -\
         스케줄러     -> proactive_gate ---------------------> context_read -> ...
-        현관 센서    -> door_event -> proactive_gate -------/
+        백엔드 명령  -> backend_command --------------------/
+        현관 센서    -> door_event -> END
 
-    두 개의 엣지가 일부러 일찍 종료되며, 이 파일에서 가장 중요한 엣지들이다.
+    세 개의 엣지가 일부러 일찍 종료되며, 이 파일에서 가장 중요한 엣지들이다.
         route_gate        -> END   게이트가 침묵을 선택했다
         route_interaction -> END   어르신이 "응"만 했다
+        door_event        -> END   사실만 반영했다. 인사는 백엔드가 판정한다 (§11)
+
+    백엔드 명령이 게이트를 '건너뛰는' 것이 의도다. 게이트는 "지금 말해도 되는가"를
+    판정하고, 이 명령은 그 판정을 이미 한 쪽에서 왔다. 여기서 다시 판정하면 심판이
+    둘이 되고, 백엔드가 보낸 인사가 로봇의 쿨다운에 조용히 삼켜진다.
 
 참고
     CLAUDE.md §6 (아키텍처), §7 (게이트), §22 (개발 순서)
@@ -75,12 +81,25 @@ def memory_write(state: ConvState) -> dict:
           microSD 이고, 끊임없는 작은 쓰기가 그것을 죽인다 (CLAUDE.md §18).
     """
     from bomi_ai_chat.clock import clock
+    from bomi_ai_chat.localstore import runtime as runtime_store
 
     # TODO(backend_client): trigger_type 과 priority 를 붙여 conversation_message 를
     #   추가한다. 사후에 "왜 로봇이 새벽 3시에 말했는가"에 답하고, 표현 다양화를 위한
-    #   최근 문구를 조회할 수 있게 된다 (CLAUDE.md §19).
+    #   최근 문구를 조회할 수 있게 된다 (CLAUDE.md §19). → S15P11E102-211
     # TODO(jobs): 사실 추출을 큐에 넣고, 일간 지표를 버퍼링한다.
-    return {"last_spoke_at": clock.now()}
+    now = clock.now()
+
+    # 내구 저장소에도 찍는다.
+    #
+    # 왜 checkpoint 만으로 부족한가
+    #   재부팅 후 복원의 출처가 runtime_state 다. 여기 안 쓰면 로봇이 재시작한 직후
+    #   쿨다운이 0 으로 보이고, 방금 말했는데도 알림이 바로 또 나간다.
+    #   같은 이음이 note_interaction 과 door_event 에도 있다(ingress.py 참고).
+    senior_id = state.get("senior_id")
+    if senior_id:
+        runtime_store.save(senior_id, last_spoke_at=now)
+
+    return {"last_spoke_at": now}
 
 
 def build_graph(checkpoint_path: str | None = None):
@@ -118,6 +137,7 @@ def build_graph(checkpoint_path: str | None = None):
     # ── 노드 ─────────────────────────────────────────────────────────────────
     g.add_node("note_interaction", ingress.note_interaction)
     g.add_node("door_event", ingress.door_event)
+    g.add_node("backend_command", ingress.backend_command)
     g.add_node("proactive_gate", proactive_gate)
     g.add_node("safety_triage", triage.safety_triage)
     g.add_node("escalation", triage.escalation)
@@ -129,7 +149,7 @@ def build_graph(checkpoint_path: str | None = None):
     g.add_node("memory_write", memory_write)
     g.add_node("emit", output.emit)
 
-    # ── 진입: 세 경로 ────────────────────────────────────────────────────────
+    # ── 진입: 네 경로 ────────────────────────────────────────────────────────
     g.add_conditional_edges(
         START,
         ingress.route_ingress,
@@ -137,12 +157,20 @@ def build_graph(checkpoint_path: str | None = None):
             "note_interaction": "note_interaction",
             "proactive_gate": "proactive_gate",
             "door_event": "door_event",
+            "backend_command": "backend_command",
         },
     )
 
-    # 문 이벤트: occupancy 는 노드 안에서 이미 반영됐다(사실에는 허락이 필요 없다).
-    # 이제 인사 제안만 게이트를 마주한다.
-    g.add_edge("door_event", "proactive_gate")
+    # 문 이벤트는 여기서 끝난다.
+    #
+    # occupancy 는 노드 안에서 이미 반영됐다 — 사실에는 허락이 필요 없다. 그리고
+    # 인사 제안을 만들지 않으므로 게이트를 마주할 것이 없다. 배웅·환영 판정은
+    # 백엔드가 하고, 그 결과는 backend_command 로 들어온다 (CLAUDE.md §11).
+    g.add_edge("door_event", END)
+
+    # 백엔드 명령은 게이트를 건너뛰고 곧바로 파이프라인에 올라탄다.
+    # 이유는 이 파일 상단 주석 참고. 정제기(§14)는 여전히 통과한다.
+    g.add_edge("backend_command", "context_read")
 
     # 능동: 말하거나, 침묵한다. END 분기가 이 설계의 핵심이다.
     g.add_conditional_edges(

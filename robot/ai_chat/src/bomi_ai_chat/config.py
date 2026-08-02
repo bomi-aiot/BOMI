@@ -71,6 +71,27 @@ def _non_negative_float_env(name: str, default: float) -> float:
     return value
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    """"1/true/yes/on" 을 참으로 읽는다. 그 외 값은 오류로 알린다.
+
+    조용히 False 로 떨어뜨리지 않는 이유
+        MQTT_ENABLED=True 를 MQTT_ENABLED=Ture 로 적으면 현관 구독이 뜨지 않는다.
+        그리고 아무 로그도 남지 않는다. 안전 신호가 하나 사라진 것을 오타 때문에
+        아무도 모르는 상태가 된다.
+    """
+    raw_value = _optional_env(name)
+    if raw_value is None:
+        return default
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigurationError(
+        f"{name}은 true 또는 false 여야 합니다: {raw_value!r}"
+    )
+
+
 def _audio_device_env(
     name: str, default: int | str | None = None
 ) -> int | str | None:
@@ -148,6 +169,28 @@ class Settings:
     #   대답하지 않은 로봇이다.
     backend_base_url: str
     backend_timeout_seconds: float
+
+    # ── MQTT: 현관 이벤트 구독  (CLAUDE.md §11, docs/mqtt/topic-convention.md) ──
+    #
+    # 왜 URL 한 개로 받는가
+    #   브로커는 EC2(bomi-mosquitto)에도 있고 Jetson 로컬에도 있을 수 있다. 어느 쪽에
+    #   붙든 코드가 같아야 하므로 주소를 설정으로 받는다. scheme 이 TLS 여부를 정한다.
+    #     mqtt://host:1883   평문 (Jetson 로컬, 개발)
+    #     mqtts://host:8883  TLS  (서버)
+    #
+    # 왜 기본값이 '비활성'인가
+    #   브로커가 없는 개발 노트북에서 로봇을 띄우면 구독 스레드가 무한 재연결을 시도하고
+    #   로그를 덮는다. 그리고 실기에서는 반드시 켜야 하는 값이므로, 명시적으로 켜는 것이
+    #   배포 체크리스트에 남는 편이 낫다.
+    mqtt_enabled: bool
+    mqtt_broker_url: str
+    # 구독 토픽. 규약은 bomi/v1/{domain}/{deviceId}/{channel} 이고, 센서가 여러 개이므로
+    # deviceId 자리에 와일드카드를 둔다. 두 센서(SNZB-03P/04P)가 각자 다른 deviceId 로
+    # 발행하기 때문이다.
+    mqtt_door_topic: str
+    mqtt_client_id: str
+    mqtt_username: str | None
+    mqtt_password: str | None
 
     @classmethod
     def from_env(
@@ -275,7 +318,31 @@ class Settings:
                 or "http://localhost:8080"
             ),
             backend_timeout_seconds=_positive_float_env("BACKEND_TIMEOUT_SECONDS", 1.5),
+            mqtt_enabled=_bool_env("MQTT_ENABLED", False),
+            mqtt_broker_url=_optional_env("MQTT_BROKER_URL", "") or "",
+            mqtt_door_topic=(
+                _optional_env("MQTT_DOOR_TOPIC", "bomi/v1/iot/+/events")
+                or "bomi/v1/iot/+/events"
+            ),
+            mqtt_client_id=(
+                _optional_env("MQTT_CLIENT_ID", "bomi-robot-ai-chat")
+                or "bomi-robot-ai-chat"
+            ),
+            mqtt_username=_optional_env("MQTT_USERNAME"),
+            mqtt_password=_optional_env("MQTT_PASSWORD"),
         )
+
+    def validate_mqtt(self) -> None:
+        """현관 구독에 필요한 설정을 검증한다.
+
+        누가 호출하는가
+            door.mqtt.build_door_subscriber. 활성화됐을 때만.
+
+        왜 활성화됐을 때만 검사하는가
+            비활성 상태에서 브로커 주소를 요구하면, MQTT 를 쓰지 않는 테스트와
+            개발 실행이 전부 설정 오류로 죽는다.
+        """
+        self._require({"MQTT_BROKER_URL": self.mqtt_broker_url}, feature="현관 MQTT 구독")
 
     def validate_conversation(self) -> None:
         """기본 음성 대화 실행에 필요한 설정을 검증한다."""

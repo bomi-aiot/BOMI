@@ -8,5 +8,6 @@ from bomi_ai_chat.backend_client.context_client import (
     BackendContextClient,
     ContextResult,
 )
+from bomi_ai_chat.backend_client.door_client import BackendDoorClient
 
-__all__ = ["BackendContextClient", "ContextResult"]
+__all__ = ["BackendContextClient", "BackendDoorClient", "ContextResult"]

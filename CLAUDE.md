@@ -185,40 +185,60 @@ offline robot has shallower memory; do not accept a mute one (§18).
 
 ### Transport
 
-MQTT, per `docs/mqtt/topic-convention.md`. **Run the broker on the Jetson**, not in the cloud: the Pi
-stays a thin publisher, and the entrance keeps working when the internet does not.
+MQTT, per `docs/mqtt/topic-convention.md`. The broker runs **on the server** (`bomi-mosquitto`,
+TLS on 8883) and the chain is:
+
+```
+Raspberry Pi (SNZB-03P motion + SNZB-04P door contact)
+    → Jetson (normalizes, applies occupancy locally, forwards)
+        → Backend (judges, decides whether the robot speaks)
+```
+
+An earlier draft of this file said to run the broker on the Jetson so the entrance would keep
+working without internet. **That is not what the team agreed and not what is deployed.** The
+trade-off was decided the other way: the backend is the judge, so the chain needs the server anyway.
+
+What that costs, stated plainly: with no internet the entrance greeting does not happen. What it
+does *not* cost is safety monitoring — the Jetson applies occupancy locally the moment an event
+arrives, so the silence ladder keeps working offline (§10). Occupancy is a fact the robot owns;
+the greeting is a decision the backend owns.
 
 ---
 
 ## 6. Runtime architecture
 
-Three ingress paths converge into one response pipeline. **Judgment nodes sit above generation
+Four ingress paths converge into one response pipeline. **Judgment nodes sit above generation
 nodes**: we decide *whether* and *how* before we decide *what*.
 
 ```
-[senior utterance]      [scheduler]        [door sensor]
-    ASR text         meds/meals/water      in/out event
-        |                    |                   |
-        v                    |                   v
- note_interaction            |            door_event  --> occupancy applied
-   clock/ladder reset        |             (a fact: bypasses the gate)
-   occupancy -> HOME         |                   |
-   barge-in handling         +---------+---------+
-   back-channel -> END                 v
-        |                   +------------------------+
-        |                   | proactive_gate         |--> silent --> END
-        |                   | "may I speak now?"     |
-        |                   +----------+-------------+
-        v                              |
- +------------------+                  |
- | safety_triage    |                  |      +---------------------------+
- | emergency /      |------ T1 ---------------> escalation                 |
- | self-harm        |                  |      | outbox -> notify_guardian |
- +--------+---------+                  |      +---------------------------+
-          v                            |
- +------------------+                  |
- | context_read     | <----------------+   backend: assembled context
- | (backend call)   |                      + local cache fallback
+[senior utterance]   [scheduler]      [door sensor]     [backend command]
+    ASR text      meds/meals/water   two-sensor event      speak text
+        |                 |                 |                  |
+        v                 |                 v                  |
+ note_interaction         |           door_event               |
+   clock/ladder reset     |         occupancy applied +        |
+   occupancy -> HOME      |         forwarded to backend       |
+   barge-in handling      |         (a fact, not an utterance: |
+   back-channel -> END    |          this path ends here)      |
+        |                 |                                    |
+        |                 v                                    |
+        |       +------------------------+                     |
+        |       | proactive_gate         |--> silent --> END    |
+        |       | "may I speak now?"     |                     |
+        |       +----------+-------------+                     |
+        |                  |    the backend already judged,    |
+        |                  |    so a command skips the gate    |
+        |                  |    <------------------------------+
+        v                  |
+ +------------------+       |
+ | safety_triage    |       |   +---------------------------+
+ | emergency /      |-- T1 ---->| escalation                |
+ | self-harm        |       |   | outbox -> notify_guardian |
+ +--------+---------+       |   +---------------------------+
+          v                 |
+ +------------------+       |
+ | context_read     | <-----+   backend: assembled context
+ | (backend call)   |           + local cache fallback
  +--------+---------+
           v
  +------------------+
@@ -227,7 +247,7 @@ nodes**: we decide *whether* and *how* before we decide *what*.
    +------+--------+----------+-----------+----------+--------------+
    v      v        v          v           v          v              v
  info companion schedule  emotional   greeting  onboarding   clarification
-                            (T3)      (§11)      (§12)          (§12)
+                            (T3)   (backend §11)  (§12)          (§12)
    +------+--------+----------+-----------+----------+--------------+
           v
  +------------------------------+
@@ -245,7 +265,7 @@ nodes**: we decide *whether* and *how* before we decide *what*.
 | Node | Responsibility |
 | --- | --- |
 | `note_interaction` | First reactive node. Resets clocks and `silence_level`, forces `occupancy = HOME`, handles barge-in, ends the turn on a back-channel. |
-| `door_event` | Applies occupancy immediately, fires move-to-door, creates a short-TTL greeting proposal, logs the raw event. |
+| `door_event` | Applies occupancy immediately, forwards the event to the backend, logs it. Does **not** propose a greeting — the backend decides that (§11). |
 | `proactive_gate` | Four gates, priority arbitration, or silence. |
 | `safety_triage` | Emergency / self-harm classification. On T1 it skips the intent router entirely. |
 | `escalation` | Writes to the outbound queue, then `notify_guardian`. Returns a calm utterance for the senior. |
@@ -292,15 +312,21 @@ table edits, not changes to the loop.
 | --- | --- | --- | --- | --- |
 | `critical` | liveness check after long silence | bypass | bypass | bypass |
 | `high` | insulin, time-critical medication | bypass | bypass | respect |
-| `event` | door greeting (§11) | respect → **terse** | bypass | respect |
+| `event` | time-critical, externally triggered | respect → **terse** | bypass | respect |
 | `clarification` | active `fact_candidate` re-ask (§12) | respect | bypass | respect |
 | `medium` | ordinary medication, meals | respect | respect | respect |
 | `low` | hydration nudge, gentle check-in | respect | respect | respect |
 | `ambient` | small talk | respect | respect + longer | respect |
 
+**Note on `event`:** the door greeting used to be its example, but the backend now decides greetings
+and a commanded greeting does not pass through this gate at all (§11). The priority stays in the
+table because the shape — "time-critical, worthless if late, may interrupt a cooldown" — is still
+the right slot for anything externally triggered. Nothing uses it today.
+
 `event` is the only priority with a **third outcome**: during quiet hours it is neither blocked nor
-passed normally — it passes with `terse=True` so a 2 a.m. homecoming still gets a short, quiet
-greeting. Saying nothing would feel cold; full daytime length would be intrusive.
+passed normally — it passes with `terse=True`, short and quiet rather than silent or full length.
+The 2 a.m. homecoming was the case that motivated it; that case now belongs to the backend, but the
+mechanism is the only place in the gate where the answer is "yes, but briefly", so it stays.
 
 ### Reasoning behind each gate
 
@@ -507,28 +533,72 @@ Notes:
 
 ## 11. Door sensor and occupancy
 
-A Raspberry Pi at the entrance distinguishes **entry vs exit** (already built). The robot moves to
-the door and greets in both directions. Each run is recorded as a `scenario`
-(`scenario_type`, `external_event_id`), per `docs/scenario/homecoming-welcome.md`.
+Two Zigbee sensors at the entrance, read by a Raspberry Pi:
 
-### One event, two effects — keep them separate
+| Sensor | What it reports |
+| --- | --- |
+| **SONOFF SNZB-04P** | door/window contact — the door opened or closed |
+| **SONOFF SNZB-03P** | motion (PIR) — someone moved in the hallway |
 
-| Effect | Through the gate? | Why |
+Neither reports direction on its own. **Direction comes from the order of the two signals**:
+door-open followed by inside motion reads as an entry; inside motion followed by door-open reads as
+an exit. The timing window that makes this reliable is an empirical value — see §24.
+
+### Who decides what — the agreed split
+
+```
+Pi (two sensors)  →  Jetson  →  Backend
+                     │           │
+                     │           ├─ derives direction (IN/OUT) from the signal order
+                     │           ├─ sets authoritative occupancy
+                     │           └─ decides whether the robot speaks
+                     └─ normalizes timestamps, forwards,
+                        and holds a conservative local occupancy
+```
+
+| Effect | Owner | Why |
 | --- | --- | --- |
-| Occupancy transition | **No — applied immediately** | It is a fact about the world, not an utterance. Not the gate's business. |
-| Greeting proposal | **Yes** | It is an utterance; it takes the four gates like anything else. |
+| Direction (IN/OUT) | **Backend** | It sees the full event history and can tune the timing window without a firmware or robot deploy. |
+| Authoritative occupancy | **Backend**, pushed to the robot | Follows from direction. One judge. |
+| *Conservative* local occupancy | **Jetson, immediately** | See below. This is what keeps the safety ladder alive offline. |
+| Greeting decision | **Backend** | It has the scenario record, the schedule, and the consent state. One judge, one place to audit. |
+| Speaking the greeting | Jetson, on a backend command | All output still passes `response_shaper` (§14). |
 
-Any detected speech immediately promotes `UNKNOWN`/`AWAY` → `HOME`. **Speech beats the sensor.**
+**Why the robot still touches occupancy at all.** The silence ladder reads it every tick and must
+keep working with no network (§10). But without direction the Jetson cannot tell `HOME` from `AWAY`.
+So it does the one thing that is always safe: on any door activity it sets `UNKNOWN`, and the ladder
+treats that as "run conservatively". When the backend resolves the direction it pushes the real value
+back.
+
+Two local promotions need no direction and stay on the robot:
+
+- **Speech → `HOME`.** If they are talking, they are here, whatever the door said.
+- **Heartbeat lost → `UNKNOWN`.** A dead Pi must not leave a stale `AWAY` in place.
+
+The failure this arrangement avoids: an offline robot that believes the senior is `AWAY` and
+therefore never runs the ladder. `UNKNOWN` is the honest answer, and §10 already knows what to do
+with it.
+
+**An earlier draft of this section had the robot's gate decide the greeting.** That is not what the
+team agreed. The backend decides. The robot's four gates (§7) still govern everything the *robot*
+initiates — schedule reminders, silence probes, clarifications — but a backend-commanded greeting is
+a separate ingress path and does not consult them.
+
+Why this direction: the greeting depends on facts the backend owns (today's schedule, unconfirmed
+medication, consent). Duplicating that judgement on the robot would put the same rule in two places,
+and the two would drift.
+
+Any detected speech immediately promotes `UNKNOWN`/`AWAY` → `HOME`. **Speech beats the sensor**, and
+that promotion happens on the Jetson without asking anyone.
 
 ### Greeting specifics
 
 - **Very short TTL** (tens of seconds). "Welcome home" ten minutes late is worse than silence — the
-  robot announces to an empty hallway. This is the first real use of gate #1: expired greetings are
-  **discarded, not rescheduled**.
-- Priority `event`: bypass cooldown, quiet hours become `terse` (§7).
-- **Decouple movement from speech.** Issue the move-to-door command immediately; fire the greeting on
-  its own TTL. Voice carries across rooms, so a slow or failed navigation must not swallow the
-  greeting. If the TTL expired before arrival, drop it.
+  robot announces to an empty hallway. The backend must not queue a greeting it cannot deliver
+  promptly; a late one is **dropped, not rescheduled**.
+- **Decouple movement from speech.** Issue the move-to-door command immediately; let the greeting
+  follow its own deadline. Voice carries across rooms, so a slow or failed navigation must not
+  swallow the greeting.
 - **Detection vs anticipation.** Detection (sensor event) is what we build. Anticipation (moving to
   the door because the routine baseline predicts a return) is optional, low priority, and costs a
   robot idling in the hallway when wrong.
@@ -557,12 +627,16 @@ and on any contradiction fall back to `UNKNOWN` and behave conservatively.
 
 ### New safety signals only the door log can see
 
-| Pattern | Tier | Rationale |
-| --- | --- | --- |
-| Left and not returned for a long time | T2 → T1 if sustained | Previously undetectable: nobody home means the ladder never runs. |
-| Late-night / pre-dawn exit | T2, T1 if repeated | **Wandering** is a hallmark dementia symptom. It is *activity*, not silence, so the ladder is structurally blind to it. |
-| Door left open | T2 | Safety, security, and a cognitive signal. |
-| Sharp drop in outing frequency | T2 (trend) | Depression / health decline. Gives us a second activity metric besides utterance volume. |
+| Pattern | Tier | Owner | Rationale |
+| --- | --- | --- | --- |
+| Left and not returned for a long time | T2 → T1 if sustained | Jetson | Previously undetectable: nobody home means the ladder never runs. Needs only local state, so it survives offline. |
+| Late-night / pre-dawn exit | T2, T1 if repeated | Jetson | **Wandering** is a hallmark dementia symptom. It is *activity*, not silence, so the ladder is structurally blind to it. |
+| Door left open | T2 | Jetson | Safety, security, and a cognitive signal. |
+| Sharp drop in outing frequency | T2 (trend) | **Backend** | A trend needs history, and the history lives in `occupancy_event`. The robot has no business keeping weeks of it. |
+
+The split follows one rule: **anything the robot must still detect with no network stays on the
+robot.** A senior who left and has not come back is exactly the case where the network may also be
+gone, so that check cannot depend on the server. Trends can wait.
 
 These live in a **separate watch loop** (`door_watch_tick`), not the silence ladder.
 
@@ -1058,8 +1132,9 @@ Each step exists because the next is untestable otherwise. Do not reorder withou
 3. **Echo suppression (§13.1).** Before any proactive work. Skipping it contaminates every
    subsequent test.
 4. **Proactivity** — `proactive_gate` + `silence_tick`, verified under the compressed clock.
-5. **Door sensor integration (§11)** — MQTT, heartbeat, occupancy, greeting proposals with TTL. Needs
-   the gate first. Robot navigation can come later; the greeting must not depend on it.
+5. **Door sensor integration (§11)** — MQTT intake, direction from the two sensors, heartbeat watch,
+   occupancy. Occupancy is applied locally so the ladder keeps working offline; the greeting itself is
+   the backend's call. Robot navigation can come later; the greeting must not depend on it.
 6. **Contract-driven dialogues (§12)** — onboarding, then clarification. These unblock the
    `fact_candidate` flow that the whole memory write path depends on.
 7. **Triage and escalation last.** Signal tuning takes longest, and by now occupancy and rest state
@@ -1139,9 +1214,10 @@ and writing it that way is what lets someone else trust the parts that *are* fin
 | Embedding model dimension vs pgvector index limit | Blocks the vector migration (§19). |
 | Daily activity metrics: `care_record` type or dedicated table | Affects the T2 summary query (§19). |
 | Occupancy: boolean vs person count | Depends on sensor accuracy; drives visitor handling (§11). |
-| MQTT topic and payload for door events, heartbeat interval | Align with `docs/mqtt/topic-convention.md` (§11). |
+| Direction timing window for the two-sensor derivation | How long after a door-open an inside motion still counts as an entry. Empirical (§11). |
+| MQTT payload for door direction and heartbeat interval | The deployed `DOOR_OPENED` event carries no direction yet. Align with `docs/mqtt/topic-convention.md` (§11). |
 | Guardian channel implementation | Web app / push / SMS. Interface fixed, implementation open. |
-| Robot navigation to the door | Deferrable; the greeting must not depend on it (§11). |
+| Robot navigation to the door | Deferrable; the greeting must not depend on it (§11). Backend already commands `target: ENTRANCE`. |
 | Anticipatory move on predicted return | Optional. Detection-based greeting first (§11). |
 | AEC vs threshold-only echo handling | Decide after measuring on real hardware (§13). |
 | Far-field microphone quality | May be the real bottleneck; software cannot fix it. |
