@@ -67,6 +67,11 @@ public class RobotObservationService {
         CareRecord record = CareRecord.create(
             robot.getSeniorId(), RECORD_REST_OBSERVATION,
             Map.of(ObservationContract.REST_STATE_KEY, restState));
+        // 휴식 상태 관찰에는 지금까지 시각이 아예 없었다 (S15P11E102-230).
+        //
+        // details 에 상태만 있고 "언제"가 없어서, 침묵 사다리가 참고하는 "어제 몇 시부터
+        // 주무셨나"를 물을 방법이 없었다. 이 관찰은 방금 도착한 것이므로 지금이 맞다.
+        record.occurredAt(OffsetDateTime.now());
         careRecordRepository.save(record);
 
         applyRestMode(robot, restState);
@@ -100,7 +105,11 @@ public class RobotObservationService {
         if (comfort != null) {
             details.put(ObservationContract.COMFORT_KEY, comfort);
         }
-        careRecordRepository.save(CareRecord.create(seniorId, RECORD_ENVIRONMENT_OBSERVATION, details));
+        CareRecord record = CareRecord.create(seniorId, RECORD_ENVIRONMENT_OBSERVATION, details);
+        // 센서가 실은 관측 시각이 우선이다. 도착 시각으로 적으면 MQTT 가 밀린 만큼
+        // 측정값이 미래로 이동한다.
+        record.occurredAt(observedAt == null ? OffsetDateTime.now() : observedAt);
+        careRecordRepository.save(record);
     }
 
     /** RESTING → REST_GUARD; AWAKE clears REST_GUARD back to IDLE (other modes untouched). */

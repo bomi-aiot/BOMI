@@ -100,7 +100,7 @@ class FlywayMigrationValidationTest {
 
         // V1 부터 이 티켓의 V5 까지가 순서대로 적용되어야 한다. 새 V 파일을 추가하면
         // 이 목록도 함께 늘려서, 파일만 만들고 검증을 잊는 일이 없게 한다.
-        assertThat(applied).containsExactly("1", "2", "3", "4", "5", "6");
+        assertThat(applied).containsExactly("1", "2", "3", "4", "5", "6", "7");
     }
 
     /**
@@ -124,6 +124,10 @@ class FlywayMigrationValidationTest {
         assertThat(isNullable("robot", "door_node_heartbeat_at")).isTrue();
         // 측정하지 못한 지표를 0 으로 저장하면 T2 추세가 보호자에게 거짓을 보고한다.
         assertThat(isNullable("daily_activity_metric", "sleep_minutes")).isTrue();
+        // occurred_at 의 NULL 은 두 가지를 뜻한다: '모른다', 그리고 '시점이 없다'
+        // (반복 스케줄, 처방 자체). NOT NULL 로 만들면 둘 다 표현할 수 없어서
+        // 마이그레이션 시각을 지어내게 된다 (S15P11E102-230).
+        assertThat(isNullable("care_record", "occurred_at")).isTrue();
     }
 
     /** pgvector 를 쓰지 않기로 했으므로, 벡터 확장과 임베딩 컬럼이 없어야 한다. */

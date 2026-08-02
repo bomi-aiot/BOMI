@@ -219,14 +219,21 @@ public class DashboardService {
         return new MedicationResponseDto(id, medicationId, scheduleId, iso(scheduledAt), null, status, responseText);
     }
 
+    /**
+     * 이 복약 슬롯에 해당하는 복용 기록을 찾는다.
+     *
+     * <p>occurred_at 으로 맞춘다 (S15P11E102-230). MEDICATION_TAKEN 의 occurred_at 은
+     * '매칭된 슬롯 시각'이고, 실제로 대답한 순간은 details.respondedAt 에 그대로 있다.
+     * 예전에는 details.scheduledAt 을 파싱해 비교했는데, 같은 값을 문자열로 다시 읽는
+     * 일이었다.</p>
+     */
     private CareRecord findTaken(List<CareRecord> taken, String medicationName, OffsetDateTime scheduledAt) {
         for (CareRecord t : taken) {
-            Map<String, Object> td = t.getDetails();
-            OffsetDateTime ts = parseDateTime(str(td, "scheduledAt"));
+            OffsetDateTime ts = t.getOccurredAt();
             if (ts == null || !ts.toInstant().equals(scheduledAt.toInstant())) {
                 continue;
             }
-            String name = str(td, "medicationName");
+            String name = str(t.getDetails(), "medicationName");
             if (medicationName == null || medicationName.equals(name)) {
                 return t;
             }
@@ -384,27 +391,17 @@ public class DashboardService {
     }
 
     /**
-     * 알림이 일어난 시각. care_record 에 시각 컬럼이 없어 details 에서 읽는다.
+     * 알림이 일어난 시각.
      *
-     * <p>로봇은 {@code ts}(epoch 초)를, 일일 요약은 {@code metricDate}를 싣는다.
-     * 둘 다 없으면 null 을 돌려주고, 정렬에서 맨 뒤로 밀린다 — 시각을 지어내면
-     * 어제 알림이 오늘 맨 위에 뜬다.</p>
+     * <p>이제 컬럼 하나를 읽는다 (S15P11E102-230). 예전에는 로봇이 싣는 {@code ts}
+     * (epoch 초)와 일일 요약이 싣는 {@code metricDate}(날짜)를 여기서 각각 파싱했다.
+     * 두 규약을 V7 이 한 컬럼으로 합쳤고, 쓰는 쪽이 전부 컬럼에 적는다.</p>
+     *
+     * <p>null 이면 정렬에서 맨 뒤로 밀린다. 시각을 지어내면 어제 알림이 오늘 맨 위에
+     * 뜨고, 보호자는 그것을 새 알림으로 읽는다.</p>
      */
     private static OffsetDateTime alertTime(CareRecord alert) {
-        Object ts = alert.getDetails() == null ? null : alert.getDetails().get("ts");
-        if (ts instanceof Number epochSeconds) {
-            return OffsetDateTime.ofInstant(
-                java.time.Instant.ofEpochSecond(epochSeconds.longValue()), SEOUL);
-        }
-        String metricDate = str(alert.getDetails(), "metricDate");
-        if (metricDate != null) {
-            try {
-                return LocalDate.parse(metricDate).atStartOfDay(SEOUL).toOffsetDateTime();
-            } catch (RuntimeException ignored) {
-                return null;
-            }
-        }
-        return null;
+        return alert.getOccurredAt();
     }
 
     /**

@@ -190,9 +190,15 @@ public class CareRecordQueryService {
         return new MedicationResponseDto(id, medicationId, scheduleId, iso(scheduledAt), null, status, responseText);
     }
 
+    /**
+     * 이 복약 슬롯에 해당하는 복용 기록을 찾는다.
+     *
+     * <p>occurred_at 으로 맞춘다 (S15P11E102-230). 대시보드(DashboardService)와 같은
+     * 규칙이어야 한다 — 두 화면이 같은 약에 대해 다른 상태를 말하면 안 된다.</p>
+     */
     private CareRecord findTaken(List<CareRecord> taken, String medicationName, OffsetDateTime scheduledAt) {
         for (CareRecord t : taken) {
-            OffsetDateTime ts = parseDateTime(str(t.getDetails(), "scheduledAt"));
+            OffsetDateTime ts = t.getOccurredAt();
             if (ts == null || !ts.toInstant().equals(scheduledAt.toInstant())) {
                 continue;
             }
