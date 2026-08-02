@@ -113,6 +113,39 @@ public class OnboardingAnswer {
         this.updatedAt = OffsetDateTime.now();
     }
 
+    /**
+     * Folds newly heard fields into the answer, keeping what was already known.
+     *
+     * <p><b>Why merging rather than replacing.</b> The contract re-asks one field at a
+     * time, so a re-answer is partial by construction. If it replaced the value, a senior
+     * who says "혈압약" and then "한 알" would end up with only the dose — the medicine
+     * name they gave a moment earlier would be gone, and the flow would ask for it again
+     * in an endless circle.</p>
+     *
+     * <p>This mirrors what {@code RobotClarificationService} already does with a
+     * candidate's proposed value. The two paths must accumulate the same way; a robot
+     * answering the same contract should not get different behaviour depending on which
+     * endpoint it went through.</p>
+     *
+     * <p>Blank values do not overwrite. An empty string is what arrives when the senior
+     * said nothing usable, and letting it erase a known value would turn a misheard turn
+     * into data loss.</p>
+     */
+    public void mergeAnswerValue(Map<String, Object> newFields) {
+        if (newFields == null || newFields.isEmpty()) {
+            this.updatedAt = OffsetDateTime.now();
+            return;
+        }
+        Map<String, Object> merged = new HashMap<>(this.answerValue);
+        newFields.forEach((field, value) -> {
+            if (value != null && !value.toString().isBlank()) {
+                merged.put(field, value);
+            }
+        });
+        this.answerValue = merged;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
     public void confirm(AnswerVerificationStatus verificationStatus, UUID confirmedByUserId) {
         this.verificationStatus = requireNonNull(verificationStatus, "verificationStatus");
         this.confirmedByUserId = confirmedByUserId;

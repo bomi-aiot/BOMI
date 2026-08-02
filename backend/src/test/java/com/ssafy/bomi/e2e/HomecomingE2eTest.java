@@ -110,11 +110,15 @@ class HomecomingE2eTest {
 
     @Test
     void doorOpenedRunsThroughToCompleted() {
-        // 1) Door opens → scenario created, NAVIGATE(entrance), robot SCENARIO_ACTIVE.
+        // 1) Door opens → scenario created, NAVIGATE(entrance) + SPEAK, robot SCENARIO_ACTIVE.
+        //
+        //    발화가 이동과 함께 나간다 (S15P11E102-226). 예전에는 도착 뒤에 말했는데,
+        //    그러면 느리거나 실패한 이동이 인사를 삼킨다 (CLAUDE.md §11).
         dispatcher.dispatch(doorOpened("door-1"));
         sync();
 
-        assertThat(publisher.commands).hasSize(1);
+        assertThat(publisher.commands).hasSize(2);
+        assertThat(publisher.commands.get(1).type()).isEqualTo(RobotCommandType.SPEAK);
         RobotCommand navToEntrance = publisher.commands.get(0);
         assertThat(navToEntrance.type()).isEqualTo(RobotCommandType.NAVIGATE);
         assertThat(navToEntrance.robotId()).isEqualTo(DEVICE_ID);
@@ -124,11 +128,11 @@ class HomecomingE2eTest {
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.MOVING_TO_ENTRANCE);
         assertThat(mode()).isEqualTo(RobotMode.SCENARIO_ACTIVE);
 
-        // 2) Robot arrives at entrance → SPEAK, conversation hand-off, CONVERSING.
+        // 2) Robot arrives at entrance → conversation hand-off only. 인사는 이미 나갔다.
         dispatcher.dispatch(navigationResult("nav-1", scenarioId));
         sync();
 
-        assertThat(publisher.commands.get(1).type()).isEqualTo(RobotCommandType.SPEAK);
+        assertThat(publisher.commands).hasSize(2);  // 도착이 명령을 더하지 않는다
         assertThat(gateway.startedScenarioIds).containsExactly(scenarioId);
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.CONVERSING);
 
@@ -157,7 +161,7 @@ class HomecomingE2eTest {
         sync();
 
         assertThat(scenarioRepository.findAll()).hasSize(1);
-        assertThat(publisher.commands).hasSize(1);
+        assertThat(publisher.commands).hasSize(2);  // 두 번째 문 열림은 무시된다
     }
 
     @Test
@@ -172,7 +176,7 @@ class HomecomingE2eTest {
         sync();
 
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.MOVING_TO_ENTRANCE);
-        assertThat(publisher.commands).hasSize(1); // still only NAVIGATE(ENTRANCE)
+        assertThat(publisher.commands).hasSize(2); // 여전히 NAVIGATE(ENTRANCE) + SPEAK 뿐
     }
 
     @Test
@@ -207,7 +211,7 @@ class HomecomingE2eTest {
 
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.FAILED);
         assertThat(mode()).isEqualTo(RobotMode.SAFE_STOP);
-        assertThat(publisher.commands).hasSize(1); // only NAVIGATE(ENTRANCE), no SPEAK
+        assertThat(publisher.commands).hasSize(2); // NAVIGATE(ENTRANCE) + SPEAK, 그 뒤로 없음
     }
 
     @Test
@@ -224,7 +228,7 @@ class HomecomingE2eTest {
         sync();
 
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.MOVING_TO_ENTRANCE);
-        assertThat(publisher.commands).hasSize(1);
+        assertThat(publisher.commands).hasSize(2);
     }
 
     @Test
@@ -240,7 +244,7 @@ class HomecomingE2eTest {
         dispatcher.dispatch(navigationResult("nav-2", scenarioId, "FAILED"));
         sync();
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.FAILED);
-        assertThat(publisher.commands).hasSize(1);
+        assertThat(publisher.commands).hasSize(2);
     }
 
     @Test

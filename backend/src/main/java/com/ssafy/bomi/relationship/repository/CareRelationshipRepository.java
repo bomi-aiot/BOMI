@@ -1,6 +1,7 @@
 package com.ssafy.bomi.relationship.repository;
 
 import com.ssafy.bomi.relationship.domain.CareRelationship;
+import com.ssafy.bomi.relationship.domain.RelationshipPriority;
 import com.ssafy.bomi.relationship.domain.RelationshipStatus;
 import java.util.Optional;
 import java.util.UUID;
@@ -18,4 +19,14 @@ public interface CareRelationshipRepository extends JpaRepository<CareRelationsh
      */
     Optional<CareRelationship> findBySeniorIdAndGuardianIdAndStatus(
         UUID seniorId, UUID guardianId, RelationshipStatus status);
+
+    /**
+     * The guardian a notification should reach.
+     *
+     * <p>Both T1 alerts and T2 summaries need a recipient, and "the primary guardian" is
+     * the answer for both. Returns empty when nobody is connected — which is a real state
+     * for a senior mid-onboarding, and the caller must handle it rather than assume.</p>
+     */
+    Optional<CareRelationship> findFirstBySeniorIdAndPriorityAndStatus(
+        UUID seniorId, RelationshipPriority priority, RelationshipStatus status);
 }
