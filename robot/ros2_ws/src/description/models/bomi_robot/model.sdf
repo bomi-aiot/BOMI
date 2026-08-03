@@ -5,12 +5,18 @@
     <link name="base_link">
       <pose>0 0 0.18 0 0 0</pose>
 
+      <!--
+        관성은 0.45 x 0.32 x 0.12 m 직육면체(5.0 kg)의 이론값이다.
+        배터리와 구동부가 차체 아래쪽에 실린다고 보고 무게중심을
+        링크 원점보다 0.04 m 낮춰 주행 중 전복 여유를 확보한다.
+      -->
       <inertial>
+        <pose>0 0 -0.04 0 0 0</pose>
         <mass>5.0</mass>
         <inertia>
-          <ixx>0.08</ixx>
-          <iyy>0.08</iyy>
-          <izz>0.10</izz>
+          <ixx>0.048667</ixx>
+          <iyy>0.090375</iyy>
+          <izz>0.127042</izz>
         </inertia>
       </inertial>
 
@@ -39,12 +45,13 @@
     <link name="left_wheel">
       <pose>0 0.19 0.10 1.5708 0 0</pose>
 
+      <!-- 반지름 0.10 m, 두께 0.04 m 원통(0.5 kg)의 이론 관성. 로컬 z가 회전축이다. -->
       <inertial>
         <mass>0.5</mass>
         <inertia>
-          <ixx>0.002</ixx>
-          <iyy>0.002</iyy>
-          <izz>0.002</izz>
+          <ixx>0.001317</ixx>
+          <iyy>0.001317</iyy>
+          <izz>0.002500</izz>
         </inertia>
       </inertial>
 
@@ -55,6 +62,16 @@
             <length>0.04</length>
           </cylinder>
         </geometry>
+
+        <!-- 구동륜은 미끄러지지 않도록 마찰을 명시한다. -->
+        <surface>
+          <friction>
+            <ode>
+              <mu>1.0</mu>
+              <mu2>1.0</mu2>
+            </ode>
+          </friction>
+        </surface>
       </collision>
 
       <visual name="visual">
@@ -70,12 +87,13 @@
     <link name="right_wheel">
       <pose>0 -0.19 0.10 1.5708 0 0</pose>
 
+      <!-- 반지름 0.10 m, 두께 0.04 m 원통(0.5 kg)의 이론 관성. 로컬 z가 회전축이다. -->
       <inertial>
         <mass>0.5</mass>
         <inertia>
-          <ixx>0.002</ixx>
-          <iyy>0.002</iyy>
-          <izz>0.002</izz>
+          <ixx>0.001317</ixx>
+          <iyy>0.001317</iyy>
+          <izz>0.002500</izz>
         </inertia>
       </inertial>
 
@@ -86,6 +104,16 @@
             <length>0.04</length>
           </cylinder>
         </geometry>
+
+        <!-- 구동륜은 미끄러지지 않도록 마찰을 명시한다. -->
+        <surface>
+          <friction>
+            <ode>
+              <mu>1.0</mu>
+              <mu2>1.0</mu2>
+            </ode>
+          </friction>
+        </surface>
       </collision>
 
       <visual name="visual">
@@ -98,15 +126,61 @@
       </visual>
     </link>
 
-    <link name="caster">
+    <!--
+      캐스터는 앞뒤 두 곳에 둔다. 뒤쪽에만 있으면 지지 다각형의 앞 경계가
+      구동륜 축과 같아져 전진 가감속만으로도 로봇이 앞으로 넘어지고,
+      기울어진 LiDAR가 바닥을 가짜 장애물로 인식한다.
+      두 캐스터 모두 접지점이 z = 0으로 구동륜과 같은 높이다.
+    -->
+    <link name="rear_caster">
       <pose>-0.18 0 0.05 0 0 0</pose>
+
+      <!-- 반지름 0.05 m 구(0.2 kg)의 이론 관성. -->
+      <inertial>
+        <mass>0.2</mass>
+        <inertia>
+          <ixx>0.0002</ixx>
+          <iyy>0.0002</iyy>
+          <izz>0.0002</izz>
+        </inertia>
+      </inertial>
+
+      <collision name="collision">
+        <geometry>
+          <sphere>
+            <radius>0.05</radius>
+          </sphere>
+        </geometry>
+
+        <!-- 고정 캐스터가 바닥을 잡아 주행과 제자리 회전을 방해하지 않도록 마찰을 없앤다. -->
+        <surface>
+          <friction>
+            <ode>
+              <mu>0.0</mu>
+              <mu2>0.0</mu2>
+            </ode>
+          </friction>
+        </surface>
+      </collision>
+
+      <visual name="visual">
+        <geometry>
+          <sphere>
+            <radius>0.05</radius>
+          </sphere>
+        </geometry>
+      </visual>
+    </link>
+
+    <link name="front_caster">
+      <pose>0.18 0 0.05 0 0 0</pose>
 
       <inertial>
         <mass>0.2</mass>
         <inertia>
-          <ixx>0.001</ixx>
-          <iyy>0.001</iyy>
-          <izz>0.001</izz>
+          <ixx>0.0002</ixx>
+          <iyy>0.0002</iyy>
+          <izz>0.0002</izz>
         </inertia>
       </inertial>
 
@@ -116,6 +190,15 @@
             <radius>0.05</radius>
           </sphere>
         </geometry>
+
+        <surface>
+          <friction>
+            <ode>
+              <mu>0.0</mu>
+              <mu2>0.0</mu2>
+            </ode>
+          </friction>
+        </surface>
       </collision>
 
       <visual name="visual">
@@ -126,7 +209,7 @@
         </geometry>
       </visual>
     </link>
-    
+
     <link name="lidar_link">
       <pose>0.12 0 0.30 0 0 0</pose>
 
@@ -189,12 +272,18 @@
       </sensor>
     </link>
 
+    <!--
+      바퀴 링크는 X축으로 90도 돌아가 있고 SDF의 axis/xyz 기본 표현 좌표계는
+      조인트 프레임(= 자식 링크 프레임)이다. 따라서 <xyz>0 0 1</xyz>은
+      모델 좌표계에서 -Y가 되어 DiffDrive가 전진 명령에 후진한다.
+      혼동을 없애기 위해 모델 좌표계로 명시한다.
+    -->
     <joint name="left_wheel_joint" type="revolute">
       <parent>base_link</parent>
       <child>left_wheel</child>
 
       <axis>
-        <xyz>0 0 1</xyz>
+        <xyz expressed_in="__model__">0 1 0</xyz>
       </axis>
     </joint>
 
@@ -203,15 +292,20 @@
       <child>right_wheel</child>
 
       <axis>
-        <xyz>0 0 1</xyz>
+        <xyz expressed_in="__model__">0 1 0</xyz>
       </axis>
     </joint>
 
-    <joint name="caster_joint" type="fixed">
+    <joint name="rear_caster_joint" type="fixed">
       <parent>base_link</parent>
-      <child>caster</child>
+      <child>rear_caster</child>
     </joint>
-    
+
+    <joint name="front_caster_joint" type="fixed">
+      <parent>base_link</parent>
+      <child>front_caster</child>
+    </joint>
+
     <joint name="lidar_joint" type="fixed">
       <parent>base_link</parent>
       <child>lidar_link</child>
