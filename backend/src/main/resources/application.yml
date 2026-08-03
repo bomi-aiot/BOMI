@@ -84,6 +84,13 @@ bomi:
     # 값은 seed-kim-sunja.sql 기준 김순자 UUID.
     sensor-to-senior:
       door_sensor: 10000000-0000-4000-8000-000000000001
+  observation:
+    # 온습도 센서(디바이스 id) → 어르신(UUID) 매핑. IoT가 발행하는
+    # AMBIENT_ENVIRONMENT_OBSERVED의 sourceId를 해당 어르신에게 연결한다.
+    # 이 매핑이 없으면 온습도 이벤트가 기록되지 않는다(미등록 센서는 경고 후 폐기).
+    # 값은 seed-kim-sunja.sql 기준 김순자 UUID.
+    ambient-sensor-to-senior:
+      ambient-sensor-01: 10000000-0000-4000-8000-000000000001
   # 의미 검색 벡터 스토어 (S15P11E102-218).
   #
   # host 가 비면 의미 검색이 꺼진 채로 뜬다. 지원되는 상태다 — 기억 조회가
