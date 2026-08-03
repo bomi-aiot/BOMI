@@ -40,7 +40,7 @@ from __future__ import annotations
 import logging
 import re
 
-from bomi_ai_chat import policy
+from bomi_ai_chat import degradation
 from bomi_ai_chat.backend_client import BackendContextClient
 from bomi_ai_chat.graph import contract_dialogue
 from bomi_ai_chat.state import ConvState
@@ -115,8 +115,10 @@ def context_read(state: ConvState) -> dict:
 
     # 문서는 info 인텐트에서만 요청한다(§8). top-k 는 함수에 박지 않고 policy 에서 읽으며,
     # 성능 저하 모드에서는 낮춘 값이 들어온다(policy.DEGRADATION_ORDER).
-    want_documents = state.get("intent") == "info"
-    top_k = state.get("memory_top_k") or policy.MEMORY_TOP_K
+    # 저하 단계를 실제로 읽는다 (S15P11E102-212). 212 전까지 이 주석은 "압박 상황에서는
+    # 낮춘 값이 들어온다"고 말했지만 넣는 사람이 없었다.
+    want_documents = state.get("intent") == "info" and degradation.documents_allowed()
+    top_k = state.get("memory_top_k") or degradation.memory_top_k()
 
     result = _client().fetch_context(
         senior_id,

@@ -32,7 +32,7 @@ cd backend && ./gradlew test
 
 | 결과 | 판정 |
 |---|---|
-| 로봇 `454 passed` + `All checks passed` | ✅ |
+| 로봇 `499 passed` + `All checks passed` | ✅ |
 | 백엔드 `BUILD SUCCESSFUL` | ✅ |
 | 하나라도 실패 | ❌ — 아래에서 어느 영역인지 좁힌다 |
 
@@ -55,6 +55,48 @@ cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py -q
 | `test_the_gate_defers_a_proposal_that_is_not_due_yet` | 45분 지연이 장식이 되는 것. 게이트가 `not_before` 를 안 보면 다음 틱에 바로 나갑니다 |
 
 **실기에서 확인할 것**(233): 마이크에 "외로워"라고 말하고 대답이 나오는지, 그 대답에 가족·공유 이야기가 섞이지 않는지. 그리고 45분 뒤에 동의 질문이 실제로 나오는지 — 압축 시계로는 `SimClock` 을 advance 해서 볼 수 있지만, 실시간 45분은 실기에서만 확인됩니다.
+
+### 자연스러움 10개 항목 (212)
+
+```bash
+cd robot/ai_chat && python -m pytest tests/test_naturalness_replay.py tests/test_degradation.py -q
+```
+
+`45 passed` 여야 합니다.
+
+시나리오는 [`tests/scenarios/naturalness_v1.json`](../../robot/ai_chat/tests/scenarios/naturalness_v1.json) 에 있습니다. **파이썬을 몰라도 케이스를 추가할 수 있습니다** — `turns` 에 어르신 발화를 넣고 `expect` 에 확인할 것을 적으면 됩니다. 파일 안에 쓸 수 있는 키 목록이 있습니다.
+
+**⚠️ 이 세트는 실제 녹취가 아닙니다.** 사람이 작성한 시나리오입니다. 확인하는 것은 두 가지뿐입니다 — 모델에게 무엇이 주어졌는가, 그리고 출력이 규칙을 지켰는가. "따뜻한가", "자연스러운가"는 기계가 못 봅니다. 그 판단은 233 에서 사람이 듣고 합니다.
+
+| 항목 | 여기서 재는가 |
+|---|---|
+| 1 짧은 턴 / 3 아는 것 재질문 / 4 반복 온기 | ✅ |
+| 5 회피 목록 / 7 되묻기 / 8 표현 다양성 / 9 내부 기제 | ✅ |
+| 6 말 안 할 때 | ✅ (게이트를 직접 돌립니다) |
+| **2 이어짐 / 10 회상** | ❌ 의미 검색 필요 → 218 배포 후 |
+
+가장 중요한 세 개:
+
+| 테스트 | 깨지면 잡히는 것 |
+|---|---|
+| `test_every_tuning_dial_has_a_reader` | **policy.py 에 있는데 아무도 읽지 않는 상수.** 실제로 `DEGRADATION_ORDER` 가 그랬습니다 |
+| `test_the_module_offers_no_way_to_weaken_safety` | 저하 모듈이 침묵 사다리·트리아지·outbox 를 약하게 만들 수 있게 되는 것 |
+| `test_the_scenario_file_covers_every_criterion_or_says_why_not` | 항목이 조용히 사라지는 것. 시나리오를 지우면 커버리지가 줄어드는데 테스트는 통과합니다 |
+
+### 성능 저하 순서를 눈으로 보기
+
+```bash
+cd robot/ai_chat && python -c "
+from bomi_ai_chat import degradation, policy
+for i in range(5):
+    print(f'level {degradation.level()}: top_k={degradation.memory_top_k()} '
+          f'docs={degradation.documents_allowed()} ambient={degradation.ambient_allowed()}')
+    for _ in range(policy.DEGRADE_AFTER_SLOW_TURNS):
+        degradation.note_turn_latency(policy.TURN_LATENCY_BUDGET_SEC + 1)
+"
+```
+
+단계가 오를수록 `top_k` 가 줄고, 문서가 끊기고, 잡담이 끊겨야 합니다. **`probes_simplified()` 는 어느 단계에서도 True 입니다** — 프로브는 처음부터 캐시 음성이고, 그것이 네트워크가 끊긴 순간에도 생존 확인이 나가는 이유입니다.
 
 ## 2. 영역별 검증
 
