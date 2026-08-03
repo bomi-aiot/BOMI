@@ -58,6 +58,22 @@ tasks.named('test') {
     useJUnitPlatform {
         excludeTags 'integration', 'billed'
     }
+
+    // ★ 저장소 밖(모듈 밖)의 파일을 읽는 테스트가 있다. Gradle 에 입력으로 알려준다.
+    //
+    // 왜 필요한가
+    //   ComposeEnvironmentPassthroughTest 는 ../infra/compose.prod.yml 을 읽는다. 그런데
+    //   Gradle 은 backend/ 안의 소스와 리소스만 입력으로 본다. compose 를 고쳐도 test
+    //   태스크가 UP-TO-DATE 로 판정되어 **아예 돌지 않는다.**
+    //
+    //   실제로 겪었다. compose 에서 EMBEDDING_ENABLED 를 지우고 테스트를 돌렸는데
+    //   "BUILD SUCCESSFUL in 1s" 가 나왔다. 통과한 것이 아니라 실행되지 않은 것이다.
+    //   CI 는 매번 새로 받으니 잡히지만, 로컬에서는 조용히 넘어간다 — 고친 사람이
+    //   초록을 보고 넘어가는 것이 이 테스트가 막으려던 실패와 같은 모양이다.
+    inputs.files(
+        rootProject.file('../infra/compose.prod.yml'),
+        rootProject.file('../infra/production.env.example'),
+    ).withPropertyName('deploymentDescriptors').optional()
 }
 
 // Qdrant 를 실제로 띄워 두고 도는 테스트. 임베딩은 결정적 대역이라 과금이 없다.

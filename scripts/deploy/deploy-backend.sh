@@ -15,6 +15,10 @@ compose up -d --wait --wait-timeout 60 postgres
 compose build backend
 compose up -d --wait --wait-timeout 120 backend
 verify_container_health bomi-postgres
+# Qdrant 는 backend 의 depends_on 으로 함께 뜬다(compose up 이 의존성을 시작한다).
+# 그래도 여기서 따로 확인한다 — 확인하지 않으면 Qdrant 가 불건강할 때 "backend 가
+# healthy 가 되지 않았다"로만 실패하고, 원인이 색인 서버라는 사실이 로그에 없다.
+verify_container_health bomi-qdrant
 verify_container_health bomi-backend
 curl --fail --silent --show-error --retry 5 --retry-delay 2 \
   "https://$BOMI_DOMAIN/api/health" >/dev/null

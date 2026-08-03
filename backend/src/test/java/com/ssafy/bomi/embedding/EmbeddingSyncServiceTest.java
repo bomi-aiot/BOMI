@@ -305,10 +305,24 @@ class EmbeddingSyncServiceTest {
         return saved;
     }
 
+    /**
+     * Counter that keeps each summary's period distinct.
+     *
+     * <p>{@code conversation_summary} is unique on
+     * {@code (senior_id, summary_type, period_started_at, period_ended_at)}. Using
+     * {@code now()} for every summary made three of them collide, and the test passed only
+     * because consecutive {@code now()} calls usually differ by a fraction of a microsecond.
+     * It failed the moment two landed on the same value — a flake that looks like a bug in
+     * the sync job rather than in the fixture.</p>
+     */
+    private int summaryCount = 0;
+
     private ConversationSummary persistSummary(String content, EmbeddingStatus status) {
+        // 요약마다 다른 기간을 준다. 같은 기간을 쓰면 유일 제약에 걸린다.
+        OffsetDateTime periodEnd = OffsetDateTime.now().minusDays(++summaryCount);
         ConversationSummary summary = ConversationSummary.forConversation(
             SENIOR, UUID.randomUUID(),
-            OffsetDateTime.now().minusHours(1), OffsetDateTime.now(), content, 3);
+            periodEnd.minusHours(1), periodEnd, content, 3);
         if (status == EmbeddingStatus.SYNCED) {
             summary.markEmbeddingSynced(MODEL, OffsetDateTime.now());
         }
