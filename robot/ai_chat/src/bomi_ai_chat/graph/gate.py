@@ -106,6 +106,39 @@ def is_still_valid(proposal: SpeechProposal, state: ConvState) -> bool:
     return True
 
 
+def is_too_early(proposal: SpeechProposal) -> bool:
+    """게이트 1.5 — 아직 말할 '때'가 아닌가? (S15P11E102-263)
+
+    무엇을 하는가
+        제안의 meta.not_before 가 미래면 True. 없으면 항상 False 이므로 기존 제안은
+        영향을 받지 않는다.
+
+    왜 존재하는가
+        지연이 필요한 제안이 생겼다. T3 동의 질문("가족분께 전해도 될까요")은 어르신이
+        속마음을 이야기한 '직후'에 나가면 안 된다. 그 순간 로봇은 문장 하나로 말벗에서
+        감시 장치가 되고, 그 뒤로 어르신은 털어놓지 않는다 (CLAUDE.md §9).
+
+        이 확인이 없으면 T3_CONSENT_DELAY_SEC 는 장식이다. 큐에 넣은 제안은 다음 틱에
+        바로 후보가 되고, 45분 뒤에 묻겠다는 의도가 코드 어디에서도 지켜지지 않는다.
+
+    왜 만료(게이트 1)와 붙여 두지 않는가
+        결과가 다르다. 만료는 '폐기'이고 이것은 '연기'다. 같은 함수에 넣으면 아직
+        이른 제안이 폐기되어 영영 사라진다 — 정확히 반대 방향의 실수다.
+
+    누가 호출하는가  proactive_gate. 유효성 다음, quiet hours 앞.
+    반환값
+        True  -> 연기. 다음 틱에 다시 평가된다.
+        False -> 계속 평가한다.
+
+    주의사항
+        어떤 우선순위도 이것을 우회하지 않는다. PRIORITY_POLICY 에 항목을 만들지
+        않은 것도 그 이유다 — '아직 그 시점이 아니다'를 급하다고 앞당길 수 있으면
+        지연 자체가 의미를 잃는다. 급한 것은 애초에 not_before 를 달지 않는다.
+    """
+    not_before = (proposal.get("meta") or {}).get("not_before")
+    return not_before is not None and clock.now() < not_before
+
+
 def is_quiet_hours(state: ConvState) -> bool:
     """게이트 2 — 지금이 어르신의 수면 시간대인가?
 
@@ -282,7 +315,8 @@ def proactive_gate(state: ConvState) -> dict:
         (CLAUDE.md §11).
 
     무엇을 호출하는가
-        is_still_valid, is_quiet_hours, is_in_cooldown, is_busy — 모두 값싸다.
+        is_still_valid, is_too_early, is_quiet_hours, is_in_cooldown, is_busy —
+        모두 값싸다.
 
     인자
         state: 여기서는 proposals, 런타임 타임스탬프, audio_ctx 만 의미가 있다.
@@ -321,6 +355,12 @@ def proactive_gate(state: ConvState) -> dict:
             # 안 지우면 만료된 인사가 매 틱마다 다시 평가되고 큐가 무한히 자란다.
             _discard(proposal)
             continue
+
+        # ── 게이트 1.5: 아직 이른가 ──────────────────────────────────────────
+        #
+        # 폐기가 아니라 연기다. not_before 가 없는 제안은 이 확인을 그냥 통과한다.
+        if is_too_early(proposal):
+            continue  # 연기 — 그 시점이 오면 다시 평가된다
 
         # ── 게이트 2: quiet hours ────────────────────────────────────────────
         if quiet and "quiet_hours" not in bypass:

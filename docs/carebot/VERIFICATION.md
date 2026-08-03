@@ -32,13 +32,29 @@ cd backend && ./gradlew test
 
 | 결과 | 판정 |
 |---|---|
-| 로봇 `420 passed` + `All checks passed` | ✅ |
+| 로봇 `454 passed` + `All checks passed` | ✅ |
 | 백엔드 `BUILD SUCCESSFUL` | ✅ |
 | 하나라도 실패 | ❌ — 아래에서 어느 영역인지 좁힌다 |
 
 > 숫자는 티켓이 진행되며 늘어납니다. **줄어들면 누가 테스트를 지운 것**이므로 확인하십시오.
 
 ---
+
+### 정서 표현에 대답하는지 (263)
+
+```bash
+cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py -q
+```
+
+`20 passed` 여야 합니다. 특히 다음 두 개가 이 티켓의 핵심입니다.
+
+| 테스트 | 무엇이 깨지면 잡히는가 |
+|---|---|
+| `test_a_lonely_utterance_gets_an_answer` | "외로워"에 무응답. 외로움이 1번 문제인데 하필 그 표현에만 침묵하는 상태 |
+| `test_the_consent_question_is_not_asked_in_the_same_turn` | 속마음을 꺼낸 직후 "가족분께 전해도 될까요"로 끊는 것. 로봇이 문장 하나로 감시 장치가 됩니다 |
+| `test_the_gate_defers_a_proposal_that_is_not_due_yet` | 45분 지연이 장식이 되는 것. 게이트가 `not_before` 를 안 보면 다음 틱에 바로 나갑니다 |
+
+**실기에서 확인할 것**(233): 마이크에 "외로워"라고 말하고 대답이 나오는지, 그 대답에 가족·공유 이야기가 섞이지 않는지. 그리고 45분 뒤에 동의 질문이 실제로 나오는지 — 압축 시계로는 `SimClock` 을 advance 해서 볼 수 있지만, 실시간 45분은 실기에서만 확인됩니다.
 
 ## 2. 영역별 검증
 
