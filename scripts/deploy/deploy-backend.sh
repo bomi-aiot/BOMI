@@ -20,6 +20,10 @@ verify_container_health bomi-postgres
 # healthy 가 되지 않았다"로만 실패하고, 원인이 색인 서버라는 사실이 로그에 없다.
 verify_container_health bomi-qdrant
 verify_container_health bomi-backend
+# 공용 Nginx 가 마운트하는 conf.d 는 이 워크스페이스의 것이다(compose.prod.yml).
+# 방금 checkout 으로 파일이 바뀌었을 수 있으니 여기서 반영한다. Frontend 배포에는
+# 넣지 않는다 — nginx 는 fe 워크스페이스를 마운트하지 않으므로 리로드할 이유가 없다.
+reload_nginx_config
 curl --fail --silent --show-error --retry 5 --retry-delay 2 \
   "https://$BOMI_DOMAIN/api/health" >/dev/null
 deploy_log "Backend deployment completed successfully: $GIT_SHA"
