@@ -53,19 +53,22 @@ public class HomecomingOrchestrator {
     private final RobotCommandPublisher commandPublisher;
     private final ConversationGateway conversationGateway;
     private final HomecomingProperties properties;
+    private final ScenarioStartGuard startGuard;
 
     public HomecomingOrchestrator(
         ScenarioRepository scenarioRepository,
         RobotRepository robotRepository,
         RobotCommandPublisher commandPublisher,
         ConversationGateway conversationGateway,
-        HomecomingProperties properties
+        HomecomingProperties properties,
+        ScenarioStartGuard startGuard
     ) {
         this.scenarioRepository = scenarioRepository;
         this.robotRepository = robotRepository;
         this.commandPublisher = commandPublisher;
         this.conversationGateway = conversationGateway;
         this.properties = properties;
+        this.startGuard = startGuard;
     }
 
     /**
@@ -103,8 +106,22 @@ public class HomecomingOrchestrator {
      */
     @Transactional
     public void startHomecoming(UUID seniorId, String sensorId, String greeting) {
-        Robot robot = robotRepository.findBySeniorId(seniorId)
-            .orElseThrow(() -> new IllegalStateException("No robot assigned to senior: " + seniorId));
+        // 문 열림은 이산 사건이므로 쿨다운 없음(Duration.ZERO) — 30분에 두 번 귀가는
+        // 정상이다. 활성 시나리오 검사만 적용: 이미 다른 시나리오가 돌고 있으면
+        // 로봇이 두 명령 사이에서 찢어지므로 이번 인사는 조용히 접는다.
+        var blocked = startGuard.check(seniorId, ScenarioType.HOMECOMING, Duration.ZERO);
+        if (blocked.isPresent()) {
+            log.info("Homecoming suppressed ({}): seniorId={}", blocked.get(), seniorId);
+            return;
+        }
+
+        Robot robot = robotRepository.findBySeniorId(seniorId).orElse(null);
+        if (robot == null) {
+            // 예외를 던지면 ack 가 생략되어 브로커가 무한 재전송한다(A-3과 같은 원리).
+            // 로봇 미배정은 재전송으로 해결되는 문제가 아니므로 경고 후 폐기한다.
+            log.warn("No robot assigned to senior; dropping homecoming: seniorId={}", seniorId);
+            return;
+        }
 
         Scenario scenario = Scenario.create(seniorId, robot.getId(), ScenarioType.HOMECOMING, sensorId);
         scenario.beginMovingToEntrance();

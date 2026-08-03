@@ -107,6 +107,19 @@ def build_walk(args):
     return topic, body
 
 
+def build_conv_end(args):
+    """대화 종료 이벤트. AI(대화 런타임)가 스텁인 동안 손으로 쏘는 용도."""
+    topic = TOPIC_ROBOT_EVENTS.format(device_id=args.robot)
+    body = {
+        "eventId": new_event_id(),
+        "type": "CONVERSATION_ENDED",
+        "occurredAt": now_iso(),
+        "robotId": args.robot,
+        "payload": {"scenarioId": args.scenario},
+    }
+    return topic, body
+
+
 def build_result(args):
     """로봇 결과를 수동 발행한다. scenarioId echo가 핵심 계약."""
     topic = TOPIC_ROBOT_RESULTS.format(device_id=args.robot)
@@ -250,6 +263,11 @@ def main():
     p.add_argument("--robot", default=DEFAULT_ROBOT_ID)
     p.add_argument("--source", default="VOICE", choices=["VOICE", "APP"])
     p.set_defaults(builder=build_walk)
+
+    p = sub.add_parser("conv-end", help="대화 종료 (복귀 유도)")
+    p.add_argument("--robot", default=DEFAULT_ROBOT_ID)
+    p.add_argument("--scenario", required=True, help="진행 중인 scenarioId")
+    p.set_defaults(builder=build_conv_end)
 
     p = sub.add_parser("result", help="로봇 결과 수동 발행")
     p.add_argument("--robot", default=DEFAULT_ROBOT_ID)

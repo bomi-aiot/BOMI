@@ -91,6 +91,13 @@ bomi:
     # 값은 seed-kim-sunja.sql 기준 김순자 UUID.
     ambient-sensor-to-senior:
       ambient-sensor-01: 10000000-0000-4000-8000-000000000001
+  wellness:
+    # 온습도 안부 확인(WELLNESS_CHECK) 임계값. 이 값 이상이면 로봇이 이동해
+    # 안부를 묻는다. 시연 연출(드라이기 등)로 유발 가능한 수준이 기본값.
+    temperature-threshold-c: ${WELLNESS_TEMP_THRESHOLD:30.0}
+    humidity-threshold-percent: ${WELLNESS_HUMIDITY_THRESHOLD:80.0}
+    # 같은 어르신에게 완료 후 재시작 금지 시간(분). 온습도는 연속 신호라 필수.
+    cooldown-minutes: ${WELLNESS_COOLDOWN_MINUTES:30}
   # 의미 검색 벡터 스토어 (S15P11E102-218).
   #
   # host 가 비면 의미 검색이 꺼진 채로 뜬다. 지원되는 상태다 — 기억 조회가
