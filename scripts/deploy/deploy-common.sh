@@ -109,3 +109,36 @@ verify_container_health() {
   health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")"
   [[ "$health" == healthy ]] || deploy_fail "$container is not healthy (state: $health)"
 }
+
+# 공용 Nginx 에 새 설정을 적용한다.
+#
+# 왜 필요한가
+#   nginx 설정은 이미지에 굽지 않고 이 저장소의 infra/nginx/conf.d 를 그대로
+#   마운트한다(compose.prod.yml). 그래서 배포 때 checkout 만으로 파일은 새것이
+#   되지만, 실행 중인 nginx 는 시작 시점에 읽은 설정을 계속 쓴다.
+#
+#   이게 없으면 무엇이 조용히 깨지는가
+#   허용 경로를 추가해도 반영되지 않고, 그 경로 요청은 fallback 인 프론트엔드로
+#   넘어가 200 + SPA HTML 을 돌려준다. 상태 코드만 보면 정상처럼 보여서
+#   "배포됐다"고 오판하기 쉽다. 실제로 그렇게 한 번 놓쳤다.
+#
+# 컨테이너를 재생성하지 않는 이유
+#   reload 는 무중단이고 설정이 잘못돼도 기존 프로세스가 그대로 살아 있다.
+#   --force-recreate 는 짧게라도 502 를 만든다.
+reload_nginx_config() {
+  local container="${1:-bomi-nginx}" running
+
+  running="$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)"
+  if [[ "$running" != true ]]; then
+    deploy_log "$container is not running; skipping nginx reload"
+    return 0
+  fi
+
+  # 검증을 먼저 한다. 잘못된 설정으로 reload 하면 nginx 는 살아남지만 새 설정이
+  # 적용되지 않은 채 배포가 성공으로 끝나 버린다.
+  docker exec "$container" nginx -t \
+    || deploy_fail "$container has an invalid configuration; not reloading"
+  docker exec "$container" nginx -s reload \
+    || deploy_fail "$container failed to reload its configuration"
+  deploy_log "$container reloaded its configuration"
+}
