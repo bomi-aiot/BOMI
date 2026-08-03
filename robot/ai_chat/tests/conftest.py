@@ -72,6 +72,22 @@ def isolated_environment(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def reset_degradation():
+    """저하 단계는 모듈 전역이다. 테스트 사이에 새면 원인을 찾기 어렵다.
+
+    새면 어떻게 보이는가
+        느린 턴을 만든 테스트 뒤에 도는 테스트가 갑자기 top_k 가 작고 잡담이 막힌
+        상태로 시작한다. 그 테스트는 자기가 무엇을 잘못했는지 알 수 없고, 실패는
+        테스트 실행 순서에 따라 나타나거나 사라진다 (S15P11E102-212).
+    """
+    from bomi_ai_chat import degradation
+
+    degradation.reset()
+    yield
+    degradation.reset()
+
+
+@pytest.fixture(autouse=True)
 def block_external_http(monkeypatch, request):
     """기본 테스트에서 실수로 실제 HTTP 요청을 보내면 즉시 실패시킨다."""
 

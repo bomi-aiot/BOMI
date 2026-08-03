@@ -94,6 +94,7 @@
 | `graph/output.py` | 정제 + 재생 시작 |
 | `graph/turn.py` | 반응형 한 턴 실행 |
 | `prompts/builder.py` | 프롬프트 조립 (순수 함수) |
+| `degradation.py` | 압박이 올 때 무엇을 먼저 버리는가 (**212**). 안전 경로는 여기서 아예 쳐다보지 않는다 |
 | `prompts/templates/*.md` | 실제 프롬프트 문구. **여기를 고치면 로봇 말투가 바뀐다** |
 | `graph/contract_dialogue.py` | **무엇을 LLM 에게 맡기지 않는가.** 확인 판정의 규칙 |
 | `backend_client/contract_client.py` | 온보딩·재질의 API. **실패하면 예외** (문맥 조회와 반대) |
@@ -131,6 +132,8 @@
 | 알고 싶은 것 | 읽을 것 |
 |---|---|
 | 로봇이 언제 말하는가 | `CLAUDE.md` §7 → `policy.py` 우선순위 표 → `graph/gate.py` |
+| 느려질 때 무엇을 버리는가 | `CLAUDE.md` §18 → `policy.DEGRADATION_ORDER` → `degradation.py` → `graph/context.py`·`graph/gate.py` |
+| 자연스러움을 어떻게 재는가 | `CLAUDE.md` §17 → `tests/scenarios/naturalness_v1.json` → `tests/test_naturalness_replay.py` |
 | 속마음을 언제 가족과 나누는가 | `CLAUDE.md` §9 → `policy.py` `T3_CONSENT_DELAY_SEC` → `graph/handlers.py` `_queue_t3_consent_question` → `graph/gate.py` `is_too_early` |
 | 로봇이 왜 이렇게 말하는가 | `prompts/templates/system.md` → `prompts/builder.py` |
 | 무엇을 기억하는가 | `CLAUDE.md` §8 → `MemoryRepository.findRetrievable` → `ConversationContextService` |
