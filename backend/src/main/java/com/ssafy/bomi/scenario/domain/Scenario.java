@@ -8,6 +8,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import java.time.OffsetDateTime;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.Map;
@@ -16,6 +17,8 @@ import java.util.UUID;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.UpdateTimestamp;
 
 /**
  * Scenario triggered for a senior/robot (maps table {@code scenario}).
@@ -70,6 +73,18 @@ public class Scenario {
     @Enumerated(EnumType.STRING)
     @Column(name = "final_status", nullable = false, length = 50)
     private ScenarioStatus finalStatus = ScenarioStatus.RECEIVED;
+
+    @CreationTimestamp
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private OffsetDateTime createdAt;
+
+    /**
+     * 마지막 상태 전이 시각. 시나리오는 상태가 바뀔 때만 저장되므로 터미널 상태
+     * 행에서는 "끝난 시각"을 뜻한다. {@code ScenarioStartGuard}의 쿨다운 판정이 읽는다.
+     */
+    @UpdateTimestamp
+    @Column(name = "updated_at", nullable = false)
+    private OffsetDateTime updatedAt;
 
     private Scenario(UUID seniorId, UUID robotId, ScenarioType scenarioType, String externalEventId) {
         this.seniorId = requireNonNull(seniorId, "seniorId");

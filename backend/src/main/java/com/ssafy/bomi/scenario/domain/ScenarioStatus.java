@@ -1,5 +1,9 @@
 package com.ssafy.bomi.scenario.domain;
 
+import java.util.Arrays;
+import java.util.Set;
+import java.util.stream.Collectors;
+
 /**
  * Current coarse status of a {@link Scenario}.
  *
@@ -27,5 +31,17 @@ public enum ScenarioStatus {
     /** Terminal statuses admit no further transition. */
     public boolean isTerminal() {
         return this == COMPLETED || this == FAILED || this == CANCELLED || this == TIMED_OUT;
+    }
+
+    /**
+     * 진행 중(터미널이 아닌) 상태의 집합.
+     *
+     * <p>"이 어르신에게 지금 돌고 있는 시나리오가 있는가"를 물을 때 쓴다. 상태가
+     * 늘어나도 이 목록을 따로 고칠 필요가 없도록 {@link #isTerminal()}에서 유도한다.</p>
+     */
+    public static Set<ScenarioStatus> activeStatuses() {
+        return Arrays.stream(values())
+            .filter(status -> !status.isTerminal())
+            .collect(Collectors.toUnmodifiableSet());
     }
 }

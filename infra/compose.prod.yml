@@ -116,6 +116,11 @@ services:
       MQTT_CLIENT_ID_PREFIX: bomi-backend-prod
       MQTT_USERNAME: ${MQTT_USERNAME:?MQTT_USERNAME is required}
       MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD is required}
+      # 온습도 안부 확인(WELLNESS_CHECK) 임계값·쿨다운. 시연장에서 드라이기 연출에
+      # 맞춰 재배포 없이 조정할 수 있어야 한다 (env 만 바꾸고 컨테이너 재시작).
+      WELLNESS_TEMP_THRESHOLD: ${WELLNESS_TEMP_THRESHOLD:-30.0}
+      WELLNESS_HUMIDITY_THRESHOLD: ${WELLNESS_HUMIDITY_THRESHOLD:-80.0}
+      WELLNESS_COOLDOWN_MINUTES: ${WELLNESS_COOLDOWN_MINUTES:-30}
       # 의미 검색 (S15P11E102-218). gRPC 포트다 — 공식 Java 클라이언트가 gRPC 를 쓴다.
       QDRANT_HOST: qdrant
       QDRANT_GRPC_PORT: 6334

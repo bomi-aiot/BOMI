@@ -13,6 +13,12 @@ package com.ssafy.bomi.scenario.domain;
 public enum ScenarioType {
     /** 귀가 환영 — fully implemented this sprint. */
     HOMECOMING,
+    /**
+     * 온습도 이상 안부 확인 — 온습도 관측이 임계값을 넘으면 어르신에게 이동해
+     * 안부를 묻는다. 상태 경로는 HOMECOMING 과 같은 선형 경로를 공유한다
+     * (MOVING_TO_ENTRANCE 는 "시나리오 목적지로 이동 중"의 범용 의미로 쓴다).
+     */
+    WELLNESS_CHECK,
     /** 낙상 대응 — value reserved; flow not implemented yet. */
     FALL_RESPONSE,
     /** 수동 상호작용 — value reserved; flow not implemented yet. */

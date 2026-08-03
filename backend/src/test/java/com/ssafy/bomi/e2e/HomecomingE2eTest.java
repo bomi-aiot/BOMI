@@ -17,6 +17,7 @@ import com.ssafy.bomi.mqtt.outbound.RobotCommandType;
 import com.ssafy.bomi.mqtt.topic.MqttInboundCategory;
 import com.ssafy.bomi.observation.application.RobotObservationService;
 import com.ssafy.bomi.observation.config.ObservationProperties;
+import com.ssafy.bomi.observation.config.WellnessProperties;
 import com.ssafy.bomi.observation.inbound.AmbientObservedHandler;
 import com.ssafy.bomi.observation.inbound.NavigationStatusHandler;
 import com.ssafy.bomi.observation.inbound.RestStateChangedHandler;
@@ -25,6 +26,8 @@ import com.ssafy.bomi.robot.domain.RobotMode;
 import com.ssafy.bomi.robot.repository.RobotRepository;
 import com.ssafy.bomi.scenario.application.ConversationGateway;
 import com.ssafy.bomi.scenario.application.HomecomingOrchestrator;
+import com.ssafy.bomi.scenario.application.ScenarioStartGuard;
+import com.ssafy.bomi.scenario.application.WellnessCheckOrchestrator;
 import com.ssafy.bomi.scenario.config.HomecomingProperties;
 import com.ssafy.bomi.scenario.domain.Scenario;
 import com.ssafy.bomi.scenario.domain.ScenarioStatus;
@@ -69,6 +72,7 @@ class HomecomingE2eTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private static final String SENSOR_ID = "door-sensor-01";
+    private static final String AMBIENT_SENSOR_ID = "ambient-sensor-01";
     private static final String DEVICE_ID = "robot-01";
 
     private RecordingPublisher publisher;
@@ -89,21 +93,27 @@ class HomecomingE2eTest {
         HomecomingProperties homecomingProperties = new HomecomingProperties();
         homecomingProperties.setSensorToSenior(Map.of(SENSOR_ID, seniorId));
         ObservationProperties observationProperties = new ObservationProperties();
+        observationProperties.setAmbientSensorToSenior(Map.of(AMBIENT_SENSOR_ID, seniorId));
 
         publisher = new RecordingPublisher();
         gateway = new RecordingGateway();
 
+        ScenarioStartGuard startGuard = new ScenarioStartGuard(scenarioRepository);
         orchestrator = new HomecomingOrchestrator(
-            scenarioRepository, robotRepository, publisher, gateway, homecomingProperties);
+            scenarioRepository, robotRepository, publisher, gateway, homecomingProperties,
+            startGuard);
         RobotObservationService observationService = new RobotObservationService(
             robotRepository, careRecordRepository, observationProperties);
+        WellnessCheckOrchestrator wellnessOrchestrator = new WellnessCheckOrchestrator(
+            scenarioRepository, robotRepository, publisher, startGuard,
+            observationProperties, new WellnessProperties());
 
         List<MqttMessageHandler> handlers = List.of(
             new DoorOpenedHandler(orchestrator),
             new NavigationResultHandler(orchestrator),
             new ConversationEndedHandler(orchestrator),
             new RestStateChangedHandler(observationService),
-            new AmbientObservedHandler(observationService),
+            new AmbientObservedHandler(observationService, wellnessOrchestrator),
             new NavigationStatusHandler());
         dispatcher = new MqttInboundDispatcher(handlers, new InMemoryProcessedEventStore());
     }
@@ -162,6 +172,19 @@ class HomecomingE2eTest {
 
         assertThat(scenarioRepository.findAll()).hasSize(1);
         assertThat(publisher.commands).hasSize(2);  // 두 번째 문 열림은 무시된다
+    }
+
+    @Test
+    void secondDoorOpenedDuringActiveScenarioIsSuppressedByGuard() {
+        // eventId 중복 제거와는 다른 층의 방어다. 문이 실제로 두 번 열리면(새 eventId)
+        // 멱등성 저장소는 통과하지만, 첫 시나리오가 아직 진행 중이므로
+        // ScenarioStartGuard 가 두 번째 시나리오 생성을 막아야 한다.
+        dispatcher.dispatch(doorOpened("door-1"));
+        dispatcher.dispatch(doorOpened("door-2")); // 다른 eventId, 같은 어르신
+        sync();
+
+        assertThat(scenarioRepository.findAll()).hasSize(1);
+        assertThat(publisher.commands).hasSize(2); // NAVIGATE + SPEAK 한 세트뿐
     }
 
     @Test
@@ -248,6 +271,37 @@ class HomecomingE2eTest {
     }
 
     @Test
+    void highAmbientTemperatureStartsWellnessCheck() {
+        // 임계값(30°C) 초과 관측 → 기록 + WELLNESS_CHECK 시나리오 + 거실 이동 + 안부 발화.
+        dispatcher.dispatch(ambientObserved("amb-1", 31.5));
+        sync();
+
+        assertThat(publisher.commands).hasSize(2);
+        RobotCommand nav = publisher.commands.get(0);
+        assertThat(nav.type()).isEqualTo(RobotCommandType.NAVIGATE);
+        assertThat(nav.payload()).containsEntry("target", "LIVING_ROOM");
+        assertThat(publisher.commands.get(1).type()).isEqualTo(RobotCommandType.SPEAK);
+        assertThat(status(nav.scenarioId())).isEqualTo(ScenarioStatus.MOVING_TO_ENTRANCE);
+        assertThat(mode()).isEqualTo(RobotMode.SCENARIO_ACTIVE);
+
+        // 온습도는 연속 신호다: 진행 중에 또 임계값 초과가 와도 시나리오는 하나뿐.
+        dispatcher.dispatch(ambientObserved("amb-2", 32.0));
+        sync();
+        assertThat(scenarioRepository.findAll()).hasSize(1);
+    }
+
+    @Test
+    void normalAmbientTemperatureOnlyRecordsWithoutScenario() {
+        dispatcher.dispatch(ambientObserved("amb-3", 24.0));
+        sync();
+
+        assertThat(publisher.commands).isEmpty();
+        assertThat(scenarioRepository.findAll()).isEmpty();
+        assertThat(careRecordRepository.findAll())
+            .anySatisfy(r -> assertThat(r.getRecordType()).isEqualTo("ENVIRONMENT_OBSERVATION"));
+    }
+
+    @Test
     void restStateChangeRecordsObservationAndEntersRestGuard() {
         dispatcher.dispatch(restState("rest-1", "RESTING"));
         sync();
@@ -300,6 +354,15 @@ class HomecomingE2eTest {
         ObjectNode body = objectMapper.createObjectNode();
         body.putObject("payload").put("scenarioId", scenarioId.toString());
         return message(MqttInboundCategory.ROBOT_EVENT, "CONVERSATION_ENDED", DEVICE_ID, eventId, body);
+    }
+
+    private MqttInboundMessage ambientObserved(String eventId, double temperatureC) {
+        ObjectNode body = objectMapper.createObjectNode();
+        ObjectNode payload = body.putObject("payload");
+        payload.put("temperatureC", temperatureC);
+        payload.put("humidityPercent", 50.0);
+        return message(MqttInboundCategory.IOT_EVENT, "AMBIENT_ENVIRONMENT_OBSERVED",
+            AMBIENT_SENSOR_ID, eventId, body);
     }
 
     private MqttInboundMessage restState(String eventId, String state) {
