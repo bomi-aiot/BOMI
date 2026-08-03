@@ -47,7 +47,20 @@ services:
       # 로그를 조용하게. 기본 INFO 는 검색 한 건마다 한 줄을 남겨 다른 로그를 덮는다.
       QDRANT__LOG_LEVEL: WARN
     volumes:
-      - ${QDRANT_DATA_DIR:?QDRANT_DATA_DIR is required}:/qdrant/storage
+      # ★ named volume 이다. 호스트 경로를 받지 않는다.
+      #
+      #   원래는 ${QDRANT_DATA_DIR} bind mount 였다. 그 값에 Qdrant Cloud URL 이
+      #   들어간 채로 배포가 돌았고, 볼륨 짧은 문법이 콜론으로 쪼개면서 'https' 를
+      #   볼륨 이름으로 읽어 "undefined volume https" 로 실패했다.
+      #
+      #   값을 검증하는 대신 물어보지 않기로 했다. 근거는 바로 위 주석이다 —
+      #   이 볼륨은 파생 인덱스이고 백업 대상이 아니며 부기 컬럼으로 전량 재색인된다.
+      #   즉 '사람이 그 위치를 알아야 할 운영상의 이유가 없다'. 그것이 named volume 이
+      #   맞는 조건이고, 동시에 잘못된 값이 들어올 자리를 없애는 방법이다.
+      #
+      #   POSTGRES_DATA_DIR 은 반대다. Postgres 는 권위이고 일일 백업에 알려진 호스트
+      #   경로가 필요하므로 bind mount 로 남고, 배포 스크립트가 절대 경로인지 검증한다.
+      - qdrant-storage:/qdrant/storage
     healthcheck:
       # /readyz 는 컬렉션 적재까지 끝났는지 본다. /healthz 는 프로세스만 확인한다.
       #
@@ -259,6 +272,11 @@ services:
     volumes:
       - ${CERTBOT_CONF_DIR:?CERTBOT_CONF_DIR is required}:/etc/letsencrypt
       - ${CERTBOT_WEBROOT_DIR:?CERTBOT_WEBROOT_DIR is required}:/var/www/certbot
+
+volumes:
+  # Qdrant 저장소. 위 qdrant 서비스의 주석 참고 — 파생 인덱스라 위치를 물어보지 않는다.
+  qdrant-storage:
+    name: bomi-qdrant-storage
 
 networks:
   backend-net:
