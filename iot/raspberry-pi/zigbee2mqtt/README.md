@@ -44,6 +44,13 @@ cp mosquitto/bridge.example.conf mosquitto/config/conf.d/bridge.conf
 `bomi-iot-gateway` 계정 비밀번호를 입력한다. 이 파일은 Git에서 제외되며
 Raspberry Pi에만 보관한다.
 
+서비스를 실행하기 전에 장치 경로, 설정 파일, Bridge 계정과 Git 제외 규칙을
+검사한다.
+
+```bash
+./scripts/check-config.sh
+```
+
 ## 실행 및 확인
 
 ```bash
@@ -106,6 +113,25 @@ docker compose logs -f mqtt
 비밀번호 오류, 인증서 검증 오류 또는 네트워크 단절 시 로그에 연결 실패가
 출력된다. 비밀번호와 실제 `bridge.conf` 내용은 이슈, MR 또는 Git에 첨부하지
 않는다.
+
+## 가짜 도어 센서 Smoke Test
+
+Mosquitto와 Translator가 실행 중이면 실제 센서 없이 닫힘 → 열림 메시지를
+발행하고 `DOOR_OPENED` 계약 이벤트를 자동으로 확인할 수 있다.
+
+```bash
+./scripts/smoke-test.sh
+```
+
+실제 `friendly_name`과 `source_id`가 기본값 `door_sensor`와 다르면 인자로
+전달한다.
+
+```bash
+./scripts/smoke-test.sh <door_friendly_name> <expected_source_id>
+```
+
+이 검사는 로컬 메시지 변환까지 확인한다. EC2 수신 여부는 Mosquitto Bridge 로그와
+Backend 로그에서 별도로 확인한다.
 
 로그와 종료 명령은 다음과 같다.
 
