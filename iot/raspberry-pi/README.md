@@ -1,18 +1,18 @@
-# Raspberry Pi 5 — IoT 번역기
+# Raspberry Pi 5 — IoT Gateway
 
-Zigbee2MQTT 가 브로커로 발행한 센서 메시지를 백엔드 계약 형식
-(`bomi/v1/iot/<sourceId>/events`)으로 변환·재발행하는 번역기다. GPIO 를 직접
-읽지 않고, 이미 브로커에 올라온 Zigbee 메시지를 구독해 통역한다.
+Raspberry Pi에서 동작하는 IoT 게이트웨이 구성 영역이다. 현재는 Zigbee2MQTT가
+브로커로 발행한 센서 메시지를 백엔드 계약 형식
+(`bomi/v1/iot/<sourceId>/events`)으로 변환·재발행하는 번역기를 포함한다.
 
-## 구성 (관심사별 파일 분리)
+Zigbee2MQTT와 Mosquitto의 Docker 구성은 후속 작업에서 이 디렉터리에 추가한다.
 
-| 파일 | 역할 | I/O |
+## 현재 구성
+
+| 경로 | 역할 |
 | --- | --- | --- |
-| `contract.py` | 계약 봉투·토픽 빌더 | 없음(순수) |
-| `mapping.py` | Zigbee 값 → 계약 이벤트(엣지 판정) | 없음(순수) |
-| `translator.py` | 구독 메시지 → mapping → 발행(주입) | 없음(발행 주입) |
-| `main.py` | config 로드 + paho 로 실행 | paho-mqtt |
-| `test/` | 순수 모듈·코어 단위 테스트 | 없음(브로커 불필요) |
+| `translator/` | Zigbee2MQTT 메시지를 백엔드 MQTT 계약으로 변환 |
+| `translator/config/` | 번역기 장치 설정 예시 |
+| `translator/tests/` | 단위 테스트와 실제 브로커 E2E 테스트 |
 
 ## 매핑 규칙 (MVP)
 
@@ -24,13 +24,17 @@ Zigbee2MQTT 가 브로커로 발행한 센서 메시지를 백엔드 계약 형�
 ## 실행
 
 ```bash
-pip install -r ../requirements.txt
+cd raspberry-pi/translator
+pip install -r requirements.txt
+cp config/device.example.yaml config/device.yaml
 # 실제 설정은 config/device.yaml 로 복사(예시: config/device.example.yaml)
-python main.py            # 또는: python main.py /path/to/device.yaml
+python main.py             # 또는: python main.py /path/to/device.yaml
 ```
 
 ## 테스트
 
 ```bash
-python -m pytest        # iot/raspberry-pi 에서 실행
+cd raspberry-pi/translator
+pip install -r requirements-dev.txt
+python -m pytest
 ```
