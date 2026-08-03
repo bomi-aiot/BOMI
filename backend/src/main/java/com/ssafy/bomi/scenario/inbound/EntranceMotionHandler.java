@@ -7,6 +7,7 @@ import com.ssafy.bomi.occupancy.application.DoorEventService;
 import com.ssafy.bomi.occupancy.application.EntranceDirectionResolver.Signal;
 import com.ssafy.bomi.scenario.config.HomecomingProperties;
 import java.time.OffsetDateTime;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -51,14 +52,16 @@ public class EntranceMotionHandler implements MqttMessageHandler {
 
     @Override
     public void handle(MqttInboundMessage message) {
+        UUID seniorId = properties.findSenior(message.sourceId()).orElse(null);
+        if (seniorId == null) {
+            // 예외를 던지면 ack 가 생략되어 브로커가 무한 재전송한다. 경고 후 폐기.
+            log.warn("Motion event from unmapped sensor; dropping: sensorId={}", message.sourceId());
+            return;
+        }
         // 도착 시각을 쓴다. 라즈베리파이가 실은 시각이 아니다 — 배터리 백업 RTC 가
         // 없는 기기는 몇 년씩 어긋난 채로 부팅하고, 여기서 순서가 뒤집히면 귀가가
         // 외출로 판정된다 (CLAUDE.md §11).
-        doorEventService.accept(
-            properties.resolveSenior(message.sourceId()),
-            Signal.MOTION,
-            OffsetDateTime.now(),
-            null);
+        doorEventService.accept(seniorId, Signal.MOTION, OffsetDateTime.now(), null);
         log.debug("entrance motion from {}", message.sourceId());
     }
 }

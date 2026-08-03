@@ -81,7 +81,12 @@ public class RobotObservationService {
     /** Ambient sensor reported an environment reading: update snapshot + record it. */
     @Transactional
     public void recordAmbient(String sensorId, JsonNode body) {
-        UUID seniorId = properties.resolveSenior(sensorId);
+        UUID seniorId = properties.findSenior(sensorId).orElse(null);
+        if (seniorId == null) {
+            // 예외를 던지면 ack 가 생략되어 브로커가 무한 재전송한다. 경고 후 폐기.
+            log.warn("Ambient event from unmapped sensor; dropping: sensorId={}", sensorId);
+            return;
+        }
         JsonNode payload = ObservationContract.payload(body);
 
         BigDecimal temperature = ObservationContract.optionalDecimal(payload, ObservationContract.TEMPERATURE_KEY);
