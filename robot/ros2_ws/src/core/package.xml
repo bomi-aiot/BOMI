@@ -19,8 +19,11 @@
   <depend>ament_index_python</depend>
   <depend>std_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>lifecycle_msgs</depend>
   <depend>nav2_msgs</depend>
+
 
   <!-- 로봇 수동 조작에 필요한 실행 의존성 -->
   <exec_depend>twist_mux</exec_depend>
