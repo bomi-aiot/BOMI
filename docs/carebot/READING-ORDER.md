@@ -87,10 +87,10 @@
 | `turn_timer.py` | 턴 지연 실측. `clock` 이 아니라 `monotonic` 을 쓰는 이유가 적혀 있다 |
 | `graph/build.py` | 배선만 |
 | `graph/ingress.py` | 진입 **4경로** + barge-in. `door_event` 가 왜 END 로 끝나는지 여기 |
-| `graph/gate.py` | 능동 발화 게이트 (**206 에서 채움**) |
+| `graph/gate.py` | 능동 발화 게이트 (**206**). `not_before` 연기 확인은 263 — 지연이 필요한 제안(T3 동의)을 위한 것이고, 폐기가 아니라 연기다 |
 | `graph/triage.py` | 안전 분류. **부정을 먼저, 통증은 부위로, 애매하면 부른다** |
 | `graph/context.py` | 문맥 조회 + 인텐트 분류 |
-| `graph/handlers.py` | 7개 핸들러 (**6개 구현됨**, `handle_emotional` 만 남음) |
+| `graph/handlers.py` | 7개 핸들러 (**전부 구현됨**. `handle_emotional` 은 263) |
 | `graph/output.py` | 정제 + 재생 시작 |
 | `graph/turn.py` | 반응형 한 턴 실행 |
 | `prompts/builder.py` | 프롬프트 조립 (순수 함수) |
@@ -131,6 +131,7 @@
 | 알고 싶은 것 | 읽을 것 |
 |---|---|
 | 로봇이 언제 말하는가 | `CLAUDE.md` §7 → `policy.py` 우선순위 표 → `graph/gate.py` |
+| 속마음을 언제 가족과 나누는가 | `CLAUDE.md` §9 → `policy.py` `T3_CONSENT_DELAY_SEC` → `graph/handlers.py` `_queue_t3_consent_question` → `graph/gate.py` `is_too_early` |
 | 로봇이 왜 이렇게 말하는가 | `prompts/templates/system.md` → `prompts/builder.py` |
 | 무엇을 기억하는가 | `CLAUDE.md` §8 → `MemoryRepository.findRetrievable` → `ConversationContextService` |
 | 언제 보호자를 부르는가 | `CLAUDE.md` §9 → `localstore/outbox.py` → `graph/triage.py` |
