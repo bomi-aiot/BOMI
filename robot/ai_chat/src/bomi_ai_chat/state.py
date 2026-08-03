@@ -94,15 +94,40 @@ class SpeechProposal(TypedDict, total=False):
 
 
 class ConvState(TypedDict, total=False):
-    # ── 진입: 이 턴이 세 경로 중 어디에서 왔는가 (§6) ──
+    # ── 신원 ──
     #
-    # "user_utterance" -> 어르신이 말했다. note_interaction 다음 safety_triage 로.
-    #                     게이트를 절대 거치지 않는다. 우리에게 말을 건 사람에게
-    #                     대답할 허락을 받을 필요는 없다.
-    # "proactive"      -> 스케줄러나 침묵 사다리가 제안했다. 허락을 받아야 한다.
-    # "door_event"     -> 현관 센서가 발동했다. occupancy 를 즉시 반영한 '다음에'
-    #                     인사를 제안한다.
-    trigger_type: Literal["user_utterance", "proactive", "door_event"]
+    # senior_id 는 checkpointer 의 thread_id 와 같은 값이다. state 에도 두는 이유는
+    # 노드가 config 를 뒤지지 않고 문맥 조회·저장소 접근을 할 수 있어야 하기 때문이다.
+    senior_id: str
+    # 지금 진행 중인 대화. 최근 Raw 메시지를 어느 대화에서 가져올지 정한다.
+    # 새 대화의 첫 턴에서는 None 이고, 그러면 최근 메시지가 비어서 온다.
+    conversation_id: str | None
+    # 이 로봇의 id. 온보딩 세션을 '로봇에서' 시작할 때 서버가 요구한다
+    # (앱에서 시작한 세션은 robot_id 가 없어도 된다).
+    robot_id: str | None
+
+    # ── 진입: 이 턴이 네 경로 중 어디에서 왔는가 (§6) ──
+    #
+    # "user_utterance"  -> 어르신이 말했다. note_interaction 다음 safety_triage 로.
+    #                      게이트를 절대 거치지 않는다. 우리에게 말을 건 사람에게
+    #                      대답할 허락을 받을 필요는 없다.
+    # "proactive"       -> 스케줄러나 침묵 사다리가 제안했다. 허락을 받아야 한다.
+    # "door_event"      -> 현관 센서가 발동했다. occupancy 만 반영하고 여기서 끝난다.
+    #                      인사를 제안하지 않는다 — 판정은 백엔드다 (§11).
+    # "backend_command" -> 백엔드가 말하라고 명령했다. 게이트를 거치지 않는다.
+    #                      이미 판정한 쪽에서 온 것이므로 다시 판정하면 심판이 둘이 된다.
+    trigger_type: Literal["user_utterance", "proactive", "door_event", "backend_command"]
+
+    # 백엔드가 내려보낸 발화 명령. trigger_type == "backend_command" 일 때만 있다.
+    #
+    #   {"text": "비 와요, 우산 챙기세요", "intent": "greeting",
+    #    "priority": "event", "terse": false, "origin": "scenario:homecoming",
+    #    "occupancy": "AWAY", "occupancyObservedAt": 1754...}
+    #
+    # text 가 '최종 문구'다. 로봇이 다시 고르지 않는다 — 인사의 내용은 백엔드만 아는
+    # 사실(오늘 일정, 미복용 약, 동의 상태)에 달려 있고, 로봇에서 다시 고르면 같은
+    # 우선순위 규칙이 두 곳에 생긴다 (CLAUDE.md §11).
+    command: dict
 
     # 반응형 턴에서는 ASR 텍스트, 능동 턴에서는 이긴 제안의 seed.
     # 이름이 "user_input" 인 이유는 두 경우 모두 프롬프트 빌더가 이 값을 소비하기
@@ -122,17 +147,52 @@ class ConvState(TypedDict, total=False):
     terse: bool
     # 이긴 제안에서 복사해온다. 순수하게 로깅과 사후 튜닝을 위한 값.
     speech_origin: str
+    # 이긴 제안의 우선순위. barge-in 으로 잘렸을 때 나머지를 '원래 우선순위로'
+    # 되돌리려면 필요하고, critical(생존 확인 프로브)은 아예 재개하지 않아야 하므로
+    # 그 판단의 근거이기도 하다 (CLAUDE.md §13).
+    speech_priority: Priority
 
     # ── 안전 (§9, §10) ──
-    safety_level: Literal["T1", "T2", "T3", "T4", "none"]
+    #
+    # "confirm" 은 티어가 아니라 중간 상태다. 증상 표현을 들었지만 아직 부르지 않았고,
+    # 확인 질문 하나를 던진 턴이다. 키워드 한 번에 보호자를 부르지 않기 위한 장치다.
+    safety_level: Literal["T1", "T2", "T3", "T4", "confirm", "none"]
     # T1 일 때만 채워진다. outbox 로 넘기며, 프롬프트에는 절대 넣지 않는다.
     escalation: dict | None
+    # 확인 질문을 던져두고 답을 기다리는 상태. 다음 턴의 발화가 그 답이다.
+    #
+    #   {"reason": "emergency", "asked_at": float, "expires_at": float}
+    #
+    # 마감까지 답이 없으면 silence_tick 이 에스컬레이션한다. 어르신이 아예 대답하지
+    # 않으면 이 상태는 그래프로 돌아오지 않기 때문이다 — 그리고 증상을 말한 뒤의
+    # 침묵은 안심할 이유가 아니라 더 나쁜 신호다.
+    pending_safety_check: dict | None
 
     # ── 라우팅 ──
     intent: Intent
     # 로봇이 말하는 중 맞장구가 들어와서, 응답 없이 턴을 끝내야 할 때
     # note_interaction 이 설정한다. route_interaction 만 읽는다.
     is_backchannel: bool
+
+    # ── 계약 주도형 대화 (§12) ── 턴 사이에 유지된다
+    #
+    # 로봇이 방금 던진 '계약 질문'과 그 진행 상태. 다음 턴의 어르신 발화가 이 질문에
+    # 대한 답인지 판단하는 근거이며, 없으면 어르신의 대답이 그냥 잡담으로 흘러간다.
+    #
+    #   {"kind": "onboarding"|"clarification",
+    #    "session_id": str,        # onboarding
+    #    "candidate_id": str,      # clarification
+    #    "question_code": str,
+    #    "fields": ["dose"],       # 지금 받으려는 필드. 항상 하나다
+    #    "stage": "ask"|"confirm", # 묻는 중인가, 복창하고 확인받는 중인가
+    #    "value": {...},           # confirm 단계에서 확인받고 있는 값
+    #    "fact_type": str}
+    #
+    # 왜 state 에 두는가
+    #   checkpointer 가 어르신별로 저장하므로 턴을 넘어 살아남는다. localstore 에 또
+    #   두면 같은 사실이 두 곳에 생기고, 둘이 어긋나면 로봇이 이미 답한 질문을 다시
+    #   묻는다 (CLAUDE.md §17.3 — 아는 걸 다시 묻는 순간 몰입이 깨진다).
+    pending_contract: dict | None
 
     # ── 백엔드에서 온 컨텍스트 (§5, §8) ──
     #
@@ -143,6 +203,11 @@ class ConvState(TypedDict, total=False):
     # 백엔드에 닿지 못해 로컬 읽기 캐시에서 가져왔을 때 True.
     # 이 경우 핸들러는 사실에 대해 단정적으로 말하지 않아야 한다.
     ctx_is_cached: bool
+    # 이번 턴에 요청할 기억 개수. 비어 있으면 policy.MEMORY_TOP_K 를 쓴다.
+    # 성능 저하 모드가 이 값을 낮춰 넣는다(policy.DEGRADATION_ORDER 첫 단계).
+    memory_top_k: int
+    # 같은 종류의 알림에서 최근에 쓴 표현. 프롬프트에 넘겨 반복을 막는다(§17.8).
+    recent_phrasings: list[str]
 
     # ── 출력 (§14) ──
     response: str
@@ -180,7 +245,11 @@ class ConvState(TypedDict, total=False):
     occupancy: Occupancy
     occupancy_observed_at: float
     rest_state: RestState
-    last_door_event: dict | None      # {"direction": "in"|"out", "ts": float}
+    # 마지막 문 이벤트. ts 는 '도착' 시각이며 라즈베리파이가 주장한 시각이 아니다
+    # (contracts/door.py). direction 은 백엔드가 채워준 경우에만 값이 있고, 보통 None
+    # 이다 — 로봇은 방향을 판정하지 않는다 (CLAUDE.md §11).
+    #   {"type": "DOOR_OPENED", "ts": float, "direction": "in"|"out"|None}
+    last_door_event: dict | None
     door_heartbeat_at: float             # 현관 라즈베리파이의 마지막 하트비트
 
     # 값싼 로컬 오디오 판정. 녹음하지 않고, 저장하지 않고, 전송하지 않는다 (§10).

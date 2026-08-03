@@ -21,7 +21,13 @@
     CLAUDE.md §5 (소유권 경계), §18 (SD카드와 오프라인), §19 (Outbox)
 """
 
-from bomi_ai_chat.localstore import audio_cache, outbox, proposals, runtime
+from bomi_ai_chat.localstore import (
+    audio_cache,
+    context_cache,
+    outbox,
+    proposals,
+    runtime,
+)
 from bomi_ai_chat.localstore.db import (
     close_all,
     localstore_dir,
@@ -32,6 +38,7 @@ from bomi_ai_chat.localstore.db import (
 
 __all__ = [
     "audio_cache",
+    "context_cache",
     "outbox",
     "proposals",
     "runtime",

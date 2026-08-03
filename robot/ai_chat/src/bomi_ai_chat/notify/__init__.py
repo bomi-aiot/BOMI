@@ -4,7 +4,13 @@
 전송은 항상 localstore.outbox 를 거친다 — 저장이 전송보다 먼저다 (CLAUDE.md §18).
 """
 
+from bomi_ai_chat.notify.backend_notifier import BackendGuardianNotifier
 from bomi_ai_chat.notify.base import GuardianNotifier, NotifyError
 from bomi_ai_chat.notify.logging_notifier import LoggingGuardianNotifier
 
-__all__ = ["GuardianNotifier", "NotifyError", "LoggingGuardianNotifier"]
+__all__ = [
+    "BackendGuardianNotifier",
+    "GuardianNotifier",
+    "LoggingGuardianNotifier",
+    "NotifyError",
+]

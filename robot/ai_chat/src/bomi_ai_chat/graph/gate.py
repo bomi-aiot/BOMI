@@ -35,11 +35,18 @@
 
 from __future__ import annotations
 
+import logging
+from datetime import datetime, time, timezone
+from zoneinfo import ZoneInfo
+
 from langgraph.graph import END
 
 from bomi_ai_chat import policy
 from bomi_ai_chat.clock import clock
+from bomi_ai_chat.localstore import proposals as proposal_store
 from bomi_ai_chat.state import ConvState, SpeechProposal
+
+logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 네 개의 게이트
@@ -82,11 +89,54 @@ def is_still_valid(proposal: SpeechProposal, state: ConvState) -> bool:
     if expires_at is not None and clock.now() > expires_at:
         return False
 
-    # TODO(schedule): 이 제안이 이미 충족됐는지 localstore 에 확인한다.
-    #   예: 참조하는 복약 슬롯이 오늘 '복용 완료'로 표시됐는지.
-    #   이게 들어오기 전까지는 이미 먹은 약을 다시 알릴 수 있다. 알려진 공백이며
-    #   실수가 아니다. 완료 표시는 handlers.handle_schedule 이 한다.
+    # (b) 무효화 — 기다리는 동안 근본 필요가 충족됐는가.
+    #
+    # 8시 55분에 어르신이 "약 먹었어"라고 말하면 handle_schedule 이 그 슬롯을
+    # 완료로 표시한다. 9시 알림은 이제 이미 처리된 일을 잔소리하는 것이므로
+    # 조용히 사라져야 한다.
+    #
+    # 슬롯 키가 없는 제안(잡담, 수분 권유)은 무효화 대상이 아니다. 무엇이 충족을
+    # 뜻하는지 정의되지 않았고, 정의 없이 지우면 조용히 사라지는 발화가 생긴다.
+    slot_key = (proposal.get("meta") or {}).get("slot_key")
+    if slot_key and proposal_store.is_slot_completed(
+        state.get("senior_id") or "", slot_key
+    ):
+        return False
+
     return True
+
+
+def is_too_early(proposal: SpeechProposal) -> bool:
+    """게이트 1.5 — 아직 말할 '때'가 아닌가? (S15P11E102-263)
+
+    무엇을 하는가
+        제안의 meta.not_before 가 미래면 True. 없으면 항상 False 이므로 기존 제안은
+        영향을 받지 않는다.
+
+    왜 존재하는가
+        지연이 필요한 제안이 생겼다. T3 동의 질문("가족분께 전해도 될까요")은 어르신이
+        속마음을 이야기한 '직후'에 나가면 안 된다. 그 순간 로봇은 문장 하나로 말벗에서
+        감시 장치가 되고, 그 뒤로 어르신은 털어놓지 않는다 (CLAUDE.md §9).
+
+        이 확인이 없으면 T3_CONSENT_DELAY_SEC 는 장식이다. 큐에 넣은 제안은 다음 틱에
+        바로 후보가 되고, 45분 뒤에 묻겠다는 의도가 코드 어디에서도 지켜지지 않는다.
+
+    왜 만료(게이트 1)와 붙여 두지 않는가
+        결과가 다르다. 만료는 '폐기'이고 이것은 '연기'다. 같은 함수에 넣으면 아직
+        이른 제안이 폐기되어 영영 사라진다 — 정확히 반대 방향의 실수다.
+
+    누가 호출하는가  proactive_gate. 유효성 다음, quiet hours 앞.
+    반환값
+        True  -> 연기. 다음 틱에 다시 평가된다.
+        False -> 계속 평가한다.
+
+    주의사항
+        어떤 우선순위도 이것을 우회하지 않는다. PRIORITY_POLICY 에 항목을 만들지
+        않은 것도 그 이유다 — '아직 그 시점이 아니다'를 급하다고 앞당길 수 있으면
+        지연 자체가 의미를 잃는다. 급한 것은 애초에 not_before 를 달지 않는다.
+    """
+    not_before = (proposal.get("meta") or {}).get("not_before")
+    return not_before is not None and clock.now() < not_before
 
 
 def is_quiet_hours(state: ConvState) -> bool:
@@ -114,9 +164,74 @@ def is_quiet_hours(state: ConvState) -> bool:
         - 같은 창을 침묵 사다리(jobs/ticks.py)도 쓴다. 새벽 4시의 침묵은 경고 신호가
           아니라 수면이다. 여기 의미를 바꾸면 거기도 확인해야 한다.
     """
-    # TODO: ctx["profile"]["quiet_hours"] 와 ctx["profile"]["time_zone"] 을 읽고,
-    #   clock.now() 를 로컬 시간으로 변환한 뒤, 자정을 넘는 창을 처리한다.
-    raise NotImplementedError("quiet hours: 구현 전에 위 주의사항을 먼저 읽을 것")
+    profile = (state.get("ctx") or {}).get("profile") or {}
+
+    start = _parse_local_time(profile.get("quietHoursStart"))
+    end = _parse_local_time(profile.get("quietHoursEnd"))
+    if start is None or end is None:
+        # 창을 모른다. 막지 '않는' 쪽을 고른다.
+        #
+        # 왜 이 방향인가
+        #   여기서 True 를 돌려주면 quiet hours 를 모르는 어르신에게는 능동 발화가
+        #   영원히 안 나간다. 복약 알림이 조용히 사라지는 것이 새벽에 한 번 울리는
+        #   것보다 나쁘다. 다만 조용히 넘어가지는 않는다 — 프로필이 안 온 것 자체가
+        #   문제 신호다.
+        logger.warning("quiet hours missing from profile; treating as not quiet")
+        return False
+
+    if start == end:
+        # 시작과 끝이 같으면 '0분짜리 창'인지 '24시간 창'인지 알 수 없다.
+        # AppUser.changeQuietHours 가 이 값을 거부하지만, 옛 데이터가 있을 수 있다.
+        logger.warning("quiet hours start == end (%s); treating as not quiet", start)
+        return False
+
+    now_local = _local_now(profile.get("timeZone"))
+
+    # ★ 자정을 넘는 창.  22:00~07:00 이면 start(22) > end(07) 이다.
+    #
+    #   단순한 start <= now <= end 비교는 이 경우 '항상 False' 가 되고, 하필
+    #   밤새도록 틀린다. 즉 가장 중요한 시간대에서만 틀리는 버그가 된다.
+    #   그래서 창이 자정을 넘는지 먼저 보고 조건을 뒤집는다.
+    if start > end:
+        return now_local >= start or now_local < end
+
+    # 자정을 넘지 않는 평범한 창 (예: 13:00~15:00 낮잠).
+    return start <= now_local < end
+
+
+def _parse_local_time(value: object) -> time | None:
+    """백엔드가 준 "22:00" / "22:00:00" 을 time 으로. 못 읽으면 None."""
+    if isinstance(value, time):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        return time.fromisoformat(value.strip())
+    except ValueError:
+        logger.warning("unparsable quiet hours value: %r", value)
+        return None
+
+
+def _local_now(time_zone: object) -> time:
+    """지금을 '어르신의 로컬 시각'으로 바꾼다.
+
+    ★ clock.now() 는 UTC 다.  변환하지 않고 비교하면 시간대만큼 통째로 어긋나고,
+      그 오차는 일부 사용자에게만 나타나서 재현이 어렵다.
+
+    시간대를 못 읽으면 UTC 로 둔다. 이때도 조용히 넘어가지 않는다 — 한국 사용자에게
+    9시간 어긋난 quiet hours 는 사실상 창이 없는 것과 같다.
+    """
+    zone = None
+    if isinstance(time_zone, str) and time_zone.strip():
+        try:
+            zone = ZoneInfo(time_zone.strip())
+        except Exception:  # noqa: BLE001 - 알 수 없는 IANA 이름
+            logger.warning("unknown time zone %r; falling back to UTC", time_zone)
+    if zone is None:
+        logger.warning("no time zone in profile; quiet hours compared in UTC")
+        zone = timezone.utc
+
+    return datetime.fromtimestamp(clock.now(), tz=zone).time()
 
 
 def is_in_cooldown(state: ConvState) -> bool:
@@ -200,7 +315,8 @@ def proactive_gate(state: ConvState) -> dict:
         (CLAUDE.md §11).
 
     무엇을 호출하는가
-        is_still_valid, is_quiet_hours, is_in_cooldown, is_busy — 모두 값싸다.
+        is_still_valid, is_too_early, is_quiet_hours, is_in_cooldown, is_busy —
+        모두 값싸다.
 
     인자
         state: 여기서는 proposals, 런타임 타임스탬프, audio_ctx 만 의미가 있다.
@@ -235,7 +351,16 @@ def proactive_gate(state: ConvState) -> dict:
 
         # ── 게이트 1: 유효성 ─────────────────────────────────────────────────
         if not is_still_valid(proposal, state):
-            continue  # 폐기 — 재시도하지 않는다
+            # 폐기 — 재시도하지 않는다. 저장소에서도 실제로 지운다.
+            # 안 지우면 만료된 인사가 매 틱마다 다시 평가되고 큐가 무한히 자란다.
+            _discard(proposal)
+            continue
+
+        # ── 게이트 1.5: 아직 이른가 ──────────────────────────────────────────
+        #
+        # 폐기가 아니라 연기다. not_before 가 없는 제안은 이 확인을 그냥 통과한다.
+        if is_too_early(proposal):
+            continue  # 연기 — 그 시점이 오면 다시 평가된다
 
         # ── 게이트 2: quiet hours ────────────────────────────────────────────
         if quiet and "quiet_hours" not in bypass:
@@ -263,8 +388,19 @@ def proactive_gate(state: ConvState) -> dict:
     # 듣는 사람은 둘 다 기억하지 못한다.
     winner = max(survivors, key=lambda p: policy.PRIORITY_RANK[p["priority"]])
 
-    # TODO(queue): 진 생존자들을 버리지 말고 재큐한다.
-    #   게이트 1이 되돌아올 때 중복을 걸러주므로 재큐는 안전하다.
+    # 진 생존자들을 되살린다.
+    #
+    # 왜 필요한가
+    #   이들은 네 게이트를 '통과한' 제안이다. 말해도 되는 것들인데 단지 이번 턴에
+    #   우선순위가 밀렸을 뿐이다. 여기서 버리면 복약 알림에 밀린 수분 권유가
+    #   영구히 사라지고, 아무 로그도 남지 않는다.
+    #
+    #   재큐가 안전한 이유: 게이트 1 이 되돌아올 때 TTL 과 완료 여부를 다시 본다.
+    #   그사이 만료되거나 충족된 것은 그때 폐기된다.
+    _requeue_losers(state, survivors, winner)
+
+    # 이긴 제안은 큐에서 지운다. 안 지우면 다음 틱에 같은 말을 또 한다.
+    _discard(winner)
 
     return {
         "gate_decision": "speak",
@@ -274,7 +410,42 @@ def proactive_gate(state: ConvState) -> dict:
         "user_input": winner.get("seed", ""),
         # 사후에 "왜 로봇이 새벽 3시에 말했는가"에 답할 수 있게 남긴다.
         "speech_origin": winner.get("origin", "unknown"),
+        # barge-in 으로 잘렸을 때 나머지를 '원래 우선순위로' 되돌리기 위해 필요하다.
+        # critical(생존 확인 프로브)이면 아예 재개하지 않아야 하므로 그 판단의
+        # 근거이기도 하다 (CLAUDE.md §13).
+        "speech_priority": winner["priority"],
     }
+
+
+def _requeue_losers(
+    state: ConvState, survivors: list[SpeechProposal], winner: SpeechProposal
+) -> None:
+    """이번 턴에 밀린 생존자들을 큐에 남겨둔다.
+
+    구현 메모
+        제안은 이미 저장소에 들어 있으므로 '되살린다'기보다 '지우지 않는다'가 맞다.
+        저장소에서 온 제안은 meta._row_id 를 갖고 있고, 이긴 것만 지운다.
+
+        state["proposals"] 가 저장소를 거치지 않고 직접 주입된 경우(테스트, 문
+        이벤트가 만든 즉석 제안)는 _row_id 가 없다. 그때는 지울 것도 없다.
+    """
+    for proposal in survivors:
+        if proposal is winner:
+            continue
+        origin = proposal.get("origin", "?")
+        logger.debug("proposal deferred to a later tick: %s", origin)
+
+
+def _discard(proposal: SpeechProposal) -> None:
+    """제안을 저장소에서 지운다. 이겨서 말했거나, 만료돼 폐기할 때."""
+    row_id = (proposal.get("meta") or {}).get("_row_id")
+    if row_id is None:
+        # 저장소를 거치지 않은 제안이다. 지울 것이 없다.
+        return
+    try:
+        proposal_store.discard(int(row_id))
+    except Exception:  # noqa: BLE001 - 큐 정리 실패가 발화를 막으면 안 된다
+        logger.warning("failed to discard proposal row %s", row_id, exc_info=True)
 
 
 def route_gate(state: ConvState) -> str:

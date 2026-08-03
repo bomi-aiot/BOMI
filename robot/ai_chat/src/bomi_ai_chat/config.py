@@ -72,12 +72,24 @@ def _non_negative_float_env(name: str, default: float) -> float:
 
 
 def _bool_env(name: str, default: bool) -> bool:
-    """"1"/"true"/"yes"/"on"(대소문자 무시)이면 참, 그 외 값이면 거짓, 미설정 시 default."""
+    """"1/true/yes/on" 을 참으로 읽는다. 그 외 값은 오류로 알린다.
 
+    조용히 False 로 떨어뜨리지 않는 이유
+        MQTT_ENABLED=True 를 MQTT_ENABLED=Ture 로 적으면 현관 구독이 뜨지 않는다.
+        그리고 아무 로그도 남지 않는다. 안전 신호가 하나 사라진 것을 오타 때문에
+        아무도 모르는 상태가 된다.
+    """
     raw_value = _optional_env(name)
     if raw_value is None:
         return default
-    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigurationError(
+        f"{name}은 true 또는 false 여야 합니다: {raw_value!r}"
+    )
 
 
 def _audio_device_env(
@@ -156,6 +168,66 @@ class Settings:
     #   런타임 DB, 발신 큐 DB, 캐시 오디오가 모두 이 아래에 모인다. 일일 덤프가
     #   디렉터리 하나만 복사하면 되고, SD카드를 교체할 때 옮길 대상이 명확해진다.
     localstore_dir: str
+
+    # 백엔드(문맥 조립 API)의 주소와 타임아웃. 배포마다 바뀌므로 policy 가 아니라 여기다.
+    #
+    # 타임아웃을 짧게 두는 이유
+    #   이 호출은 턴 지연 예산(약 2초) '안에' 있다. 오래 기다리느니 캐시로 내려가서
+    #   얕게라도 대답하는 편이 낫다. 기다리다 놓친 턴은 어르신 입장에서 그냥
+    #   대답하지 않은 로봇이다.
+    backend_base_url: str
+    backend_timeout_seconds: float
+
+    # 이 로봇의 id. 배포된 기기마다 다르므로 policy 가 아니라 여기다.
+    #
+    # 왜 필요한가
+    #   로봇에서 온보딩 세션을 '새로' 시작할 때 서버가 요구한다. 앱에서 시작한 세션을
+    #   이어받을 때는 필요 없다. 미설정이면 로봇이 온보딩을 시작하지 못하고, 그 사실을
+    #   로그로 남긴다(조용히 안 하지 않는다).
+    robot_id: str | None
+
+    # 이 로봇이 돌보는 어르신.
+    #
+    # ★ checkpointer 의 thread_id 이자 모든 로컬 저장소의 키다. 틀리면 두 어르신이
+    #   침묵 사다리를 공유하게 되고, 안전 시스템에서 그것은 한 사람의 발화가 다른
+    #   사람의 에스컬레이션을 억제한다는 뜻이다 (graph/build.py).
+    #
+    # 기본값을 두지 않는다. 임의의 값으로 기동하면 그 값으로 상태가 쌓이고, 나중에
+    # 진짜 id 로 바꾸는 순간 그동안의 사다리와 재실 기록이 통째로 사라진다.
+    senior_id: str | None
+
+    # 그래프 경로로 띄울 것인가.
+    #
+    # 왜 스위치가 있는가
+    #   200~211 의 대화 런타임은 실기에서 한 번도 돌아본 적이 없다(S15P11E102-233).
+    #   실기에서 문제가 나면 즉시 옛 경로로 되돌릴 수 있어야 하고, 그 되돌리기가
+    #   코드 수정이면 현장에서 못 한다.
+    #
+    #   기본값이 true 인 이유: 배선이 끝난 뒤에도 false 로 두면 아무도 새 경로를
+    #   쓰지 않고, 그러면 배선한 의미가 없다.
+    use_graph_runtime: bool
+
+    # ── MQTT: 현관 이벤트 구독  (CLAUDE.md §11, docs/mqtt/topic-convention.md) ──
+    #
+    # 왜 URL 한 개로 받는가
+    #   브로커는 EC2(bomi-mosquitto)에도 있고 Jetson 로컬에도 있을 수 있다. 어느 쪽에
+    #   붙든 코드가 같아야 하므로 주소를 설정으로 받는다. scheme 이 TLS 여부를 정한다.
+    #     mqtt://host:1883   평문 (Jetson 로컬, 개발)
+    #     mqtts://host:8883  TLS  (서버)
+    #
+    # 왜 기본값이 '비활성'인가
+    #   브로커가 없는 개발 노트북에서 로봇을 띄우면 구독 스레드가 무한 재연결을 시도하고
+    #   로그를 덮는다. 그리고 실기에서는 반드시 켜야 하는 값이므로, 명시적으로 켜는 것이
+    #   배포 체크리스트에 남는 편이 낫다.
+    mqtt_enabled: bool
+    mqtt_broker_url: str
+    # 구독 토픽. 규약은 bomi/v1/{domain}/{deviceId}/{channel} 이고, 센서가 여러 개이므로
+    # deviceId 자리에 와일드카드를 둔다. 두 센서(SNZB-03P/04P)가 각자 다른 deviceId 로
+    # 발행하기 때문이다.
+    mqtt_door_topic: str
+    mqtt_client_id: str
+    mqtt_username: str | None
+    mqtt_password: str | None
 
     @classmethod
     def from_env(
@@ -284,7 +356,39 @@ class Settings:
             localstore_dir=(
                 _optional_env("LOCALSTORE_DIR", "var/localstore") or "var/localstore"
             ),
+            backend_base_url=(
+                _optional_env("BACKEND_BASE_URL", "http://localhost:8080")
+                or "http://localhost:8080"
+            ),
+            backend_timeout_seconds=_positive_float_env("BACKEND_TIMEOUT_SECONDS", 1.5),
+            robot_id=_optional_env("ROBOT_ID"),
+            senior_id=_optional_env("SENIOR_ID"),
+            use_graph_runtime=_bool_env("USE_GRAPH_RUNTIME", True),
+            mqtt_enabled=_bool_env("MQTT_ENABLED", False),
+            mqtt_broker_url=_optional_env("MQTT_BROKER_URL", "") or "",
+            mqtt_door_topic=(
+                _optional_env("MQTT_DOOR_TOPIC", "bomi/v1/iot/+/events")
+                or "bomi/v1/iot/+/events"
+            ),
+            mqtt_client_id=(
+                _optional_env("MQTT_CLIENT_ID", "bomi-robot-ai-chat")
+                or "bomi-robot-ai-chat"
+            ),
+            mqtt_username=_optional_env("MQTT_USERNAME"),
+            mqtt_password=_optional_env("MQTT_PASSWORD"),
         )
+
+    def validate_mqtt(self) -> None:
+        """현관 구독에 필요한 설정을 검증한다.
+
+        누가 호출하는가
+            door.mqtt.build_door_subscriber. 활성화됐을 때만.
+
+        왜 활성화됐을 때만 검사하는가
+            비활성 상태에서 브로커 주소를 요구하면, MQTT 를 쓰지 않는 테스트와
+            개발 실행이 전부 설정 오류로 죽는다.
+        """
+        self._require({"MQTT_BROKER_URL": self.mqtt_broker_url}, feature="현관 MQTT 구독")
 
     def validate_conversation(self) -> None:
         """기본 음성 대화 실행에 필요한 설정을 검증한다."""
