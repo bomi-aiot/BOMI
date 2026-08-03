@@ -22,6 +22,11 @@ dependencies = [
     # 침묵 틱·현관 감시·일일 요약의 주기 실행. 실제 시간으로만 발동하므로
     # SimClock 검증에는 jobs/ticks.py 의 틱 함수를 직접 호출한다(README "압축 시계").
     "APScheduler>=3.10",
+    # 웨이크워드('보미야') 로컬 감지(audio_io/wakeword.py). openwakeword 가 .onnx 를
+    # 돌리고, 실제 추론은 onnxruntime 이 담당한다. Jetson(aarch64)에서는 onnxruntime
+    # 이 ARM wheel 로 설치되는지 device 에서 확인해야 한다(CLAUDE.md §18).
+    "openwakeword>=0.6",
+    "onnxruntime",
 ]
 
 [project.scripts]

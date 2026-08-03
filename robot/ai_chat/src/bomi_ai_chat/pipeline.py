@@ -68,6 +68,7 @@ class ConversationPipeline:
         medical_query_detector: Callable[[str], bool] | None = None,
         weather_query_detector: Callable[[str], bool] | None = None,
         beam=None,
+        wake=None,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ):
@@ -88,6 +89,9 @@ class ConversationPipeline:
         )
         # 대화 턴 동안 마이크 빔을 앞쪽으로 고정하는 컨트롤러(없으면 미사용).
         self.beam = beam
+        # 웨이크워드('보미야') 감지기. 있으면 매 턴 대화 시작 전에 '깨우기'를 기다린다.
+        # None 이면(노트북 개발 등) 상시 청취 없이 곧바로 대화 턴을 돈다.
+        self.wake = wake
         self._monotonic = monotonic
         self._sleep = sleep
 
@@ -318,7 +322,13 @@ class ConversationPipeline:
         )
 
     def run(self, *, max_turns: int | None = None) -> int:
-        """Ctrl+C까지 반복 실행하고, 실패한 차례 뒤에도 다음 입력을 받는다."""
+        """Ctrl+C까지 반복 실행하고, 실패한 차례 뒤에도 다음 입력을 받는다.
+
+        웨이크워드(self.wake)가 있으면 매 턴 run_once() '직전에' "보미야"를 기다린다.
+        즉 한 턴의 흐름은: 웨이크 대기 → (감지) → run_once(빔 고정 → STT → LLM →
+        TTS → 빔 해제) → 다시 웨이크 대기. 종료 조건은 아직 없다(추후 run_once 뒤에
+        다회전/타임아웃을 붙일 자리다). wake 가 None 이면 대기 없이 곧바로 대화한다.
+        """
 
         if max_turns is not None and (
             not isinstance(max_turns, int)
@@ -331,6 +341,11 @@ class ConversationPipeline:
         LOGGER.info("conversation loop started")
         while max_turns is None or turns < max_turns:
             try:
+                # 웨이크워드가 붙어 있으면 "보미야"가 들릴 때까지 여기서 대기한다.
+                # 대기 중에는 빔을 고정하지 않는다(사방 어디서 불러도 듣기 위함).
+                # 빔 고정은 감지 뒤 run_once() 안에서만 걸린다.
+                if self.wake is not None:
+                    self.wake.wait_for_wake()
                 result = self.run_once()
                 turns += 1
                 if (
