@@ -38,7 +38,9 @@ import org.springframework.web.server.ResponseStatusException;
  */
 @RestController
 @RequestMapping("/api/v1/robot/onboarding")
-@Tag(name = "Robot Onboarding", description = "로봇 채널 온보딩 (계약 주도형 대화)")
+@Tag(
+        name = "Robot Onboarding",
+        description = "로봇 채널 온보딩(계약 주도형 대화) — 로봇(ai_chat contract_client)이 호출합니다.")
 public class RobotOnboardingController {
 
     private final RobotOnboardingService onboardingService;

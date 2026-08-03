@@ -3,6 +3,7 @@ package com.ssafy.bomi.occupancy.web;
 import com.ssafy.bomi.occupancy.application.DoorEventService;
 import com.ssafy.bomi.occupancy.application.DoorEventService.DoorEventOutcome;
 import com.ssafy.bomi.occupancy.application.EntranceDirectionResolver.Signal;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import java.time.Instant;
@@ -31,6 +32,9 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/seniors/{seniorId}/door-events")
+@Tag(
+        name = "Robot Door Event",
+        description = "현관 이벤트 전달 — 로봇(ai_chat door_client)이 호출합니다.")
 public class RobotDoorEventController {
 
     private static final Logger log = LoggerFactory.getLogger(RobotDoorEventController.class);

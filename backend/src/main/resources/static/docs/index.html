@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>BOMI API 문서</title>
+    <link rel="stylesheet" href="/asyncapi/style.css">
+</head>
+<body>
+<header class="topbar">
+    <div class="topbar-inner">
+        <span class="brand">BOMI API 문서</span>
+    </div>
+</header>
+
+<main>
+    <h1>BOMI API·메시지 계약</h1>
+    <p class="prose">서비스 간 계약을 여기서 전부 찾을 수 있습니다. HTTP 는 OpenAPI, 그 외 프로토콜은 AsyncAPI 로 관리합니다.</p>
+
+    <h2>문서 열람</h2>
+    <div class="table-scroll">
+        <table>
+            <thead>
+            <tr><th>구분</th><th>문서</th><th>담은 내용</th></tr>
+            </thead>
+            <tbody>
+            <tr>
+                <td>HTTP API</td>
+                <td><a href="/swagger-ui.html">Swagger UI</a></td>
+                <td>로봇·AI 채널, 가디언웹 채널, AI 서비스 계약</td>
+            </tr>
+            <tr>
+                <td>Event API</td>
+                <td><a href="/asyncapi/mqtt/">MQTT 계약</a></td>
+                <td>IoT 이벤트, 로봇 명령·상태·결과</td>
+            </tr>
+            <tr>
+                <td>Streaming API</td>
+                <td><a href="/asyncapi/websocket/">WebSocket 계약</a></td>
+                <td>아직 구현체가 없습니다</td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <h2>실제 통신 주소</h2>
+    <p class="prose">문서를 보는 주소와 실제로 호출하는 주소는 다릅니다.</p>
+    <div class="table-scroll">
+        <table>
+            <thead>
+            <tr><th>프로토콜</th><th>주소</th><th>상태</th></tr>
+            </thead>
+            <tbody>
+            <tr>
+                <td>HTTP</td>
+                <td class="field">https://i15e102.p.ssafy.io/api/v1/...</td>
+                <td><span class="yes">동작</span></td>
+            </tr>
+            <tr>
+                <td>WebSocket</td>
+                <td class="field">wss://i15e102.p.ssafy.io/api/v1/ws</td>
+                <td><span class="no">미구현</span></td>
+            </tr>
+            <tr>
+                <td>MQTT</td>
+                <td class="field">mqtts://i15e102.p.ssafy.io:8883</td>
+                <td><span class="yes">동작</span></td>
+            </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <h2>브라우저에서 되는 것과 안 되는 것</h2>
+    <div class="notice">
+        <p>
+            <strong>Swagger UI 의 Try it out 은 켜져 있습니다.</strong> 로봇·가디언웹 채널 API 는
+            브라우저에서 바로 호출해 응답을 볼 수 있습니다. <b>실제 데이터가 바뀝니다.</b>
+            쓰기 메서드는 무엇을 건드리는지 확인하고 누르십시오.
+        </p>
+        <p>
+            <code>(계약·미구현)</code> 이 붙은 AI Vision·대화음성 스펙은 켜져 있어도 호출되지
+            않습니다. 서버 주소가 <code>localhost</code> 이고 구현체도 아직 없습니다.
+        </p>
+        <p>
+            <strong>MQTT 와 WebSocket 은 브라우저에서 발행·구독 시험을 할 수 없습니다.</strong>
+            HTTP 가 아니기 때문이며, 두 페이지는 계약 열람 전용입니다. 실제 송수신은 MQTT
+            클라이언트나 로봇 코드로 확인하십시오.
+        </p>
+    </div>
+
+    <h2>계약을 바꿀 때</h2>
+    <p class="prose">스펙 원본은 모두 <code>backend/src/main/resources/static/openapi/</code> 에 있습니다. 변경 절차와 새 스펙을 추가할 때 함께 고쳐야 할 파일 목록은 저장소의 <code>docs/api/README.md</code> 와 <code>backend/CLAUDE.md</code> 에 있습니다.</p>
+</main>
+</body>
+</html>

@@ -3,6 +3,7 @@ package com.ssafy.bomi.care.web;
 import com.ssafy.bomi.care.application.GuardianAlertService;
 import com.ssafy.bomi.care.application.GuardianAlertService.AlertOutcome;
 import com.ssafy.bomi.care.domain.NotificationTier;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import java.util.Map;
@@ -23,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/robot/guardian-alerts")
+@Tag(name = "Robot Guardian Alert", description = "보호자 알림 수신 — 로봇(ai_chat notify)이 호출합니다.")
 public class RobotGuardianAlertController {
 
     private final GuardianAlertService service;

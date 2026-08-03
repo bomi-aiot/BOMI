@@ -1,8 +1,12 @@
 openapi: 3.0.3
 info:
-  title: BOMI AI Vision Recognition API
+  title: "[AI-Vision] 인식 요청 API (계약·미구현)"
   version: 1.0.0
   description: |
+    ⚠️ **아직 구현체가 없는 계약입니다.** 이 문서는 합의된 계약이며 호출할 수 있는
+    API가 아닙니다. `robot/ai_vision`은 현재 HTTP 서버가 아니라 빈 패키지 상태이고,
+    아래 서버 주소는 구현 시점의 예시입니다. 지금 호출하면 연결되지 않습니다.
+
     Spring Boot가 AI Vision 서버에 귀가 환영 시나리오의 사람 인식을 요청하는 내부 API 계약입니다.
 
     요청이 수락되면 AI Vision은 비동기로 처리하고, 결과는 Spring Boot의

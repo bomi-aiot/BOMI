@@ -1,6 +1,6 @@
 # BOMI MVP 데이터 모델
 
-> PostgreSQL + pgvector / 물리 테이블 12개 / 컬럼 151개
+> PostgreSQL (pgvector 미사용) + 외부 벡터 스토어 Qdrant / 물리 테이블 12개
 >
 > 범위: 앱·로봇 온보딩, Raw 대화, 대화 요약, 장기 기억, 민감정보 확인·PRIMARY 협의
 >
@@ -129,7 +129,9 @@ erDiagram
         INTEGER source_message_count
         TIMESTAMPTZ generated_at
         UUID superseded_by_id FK
-        VECTOR embedding
+        VARCHAR embedding_status
+        TIMESTAMPTZ embedding_synced_at
+        VARCHAR embedding_model
     }
     FACT_CANDIDATE {
         UUID id PK
@@ -179,7 +181,9 @@ erDiagram
         VARCHAR verification_status
         VARCHAR lifecycle_status
         VARCHAR visibility
-        VECTOR embedding
+        VARCHAR embedding_status
+        TIMESTAMPTZ embedding_synced_at
+        VARCHAR embedding_model
         UUID source_summary_id FK
         UUID source_candidate_id FK
         TEXT_ARRAY keywords
@@ -246,7 +250,7 @@ INDEX(occurred_at)
 
 `conversation_summary`는 `CONVERSATION`, `DAILY`만 사용한다. 대화 종료 또는 무응답 후 대화 요약을 만들고, 사용자 현지 새벽 2~3시 기본 배치에서 전날 일간 요약을 만든다. `(senior_id, summary_type, period_started_at, period_ended_at)` 유일성으로 중복을 막는다. 재생성은 새 행을 만들고 구버전의 `superseded_by_id`를 연결한다. `TIME_WINDOW`는 실제 긴 대화 문제가 확인될 때만 추가한다.
 
-`memory.content`는 대화 없이 읽어도 이해되는 장기 사실 하나다. Raw나 요약 전문을 복사하지 않는다. `keywords` 정확 일치와 `embedding` 의미 검색을 혼합하며 다음을 먼저 필터링한다.
+`memory.content`는 대화 없이 읽어도 이해되는 장기 사실 하나다. Raw나 요약 전문을 복사하지 않는다. `keywords` 정확 일치와 의미 검색을 혼합하며 다음을 먼저 필터링한다. 의미 검색 벡터는 이 DB에 없습니다(아래 §12a). 선필터가 먼저이고 벡터 점수는 순위만 바꿉니다 — 순서가 반대면 색인 당시의 낡은 공개범위로 답하게 됩니다.
 
 ```text
 senior_id 일치
@@ -405,9 +409,44 @@ V7 이전에는 시각이 `details` 안에 네 가지 규약으로 흩어져 있
 | 32 | 요약·반영 전 삭제 방지 | Raw 삭제 네 선행조건 |
 | 33 | 문맥 과적재 방지 | 관련 요약 선별·기억 3~10개 |
 
+## 12a. 의미 검색 벡터는 이 DB에 없습니다 (S15P11E102-218)
+
+`memory.embedding`과 `conversation_summary.embedding` **컬럼은 만들지 않았습니다.** ERD 초안에 `VECTOR embedding`으로 있던 자리는 V5의 부기 컬럼 세 개로 대체되었습니다.
+
+**왜 (실측)** — Upstage `solar-embedding-1-large`의 출력은 4096차원입니다. pgvector 0.8.5가 인덱싱할 수 있는 상한은 `vector` 2,000 / `halfvec` 4,000차원입니다. 즉 4096차원은 `halfvec`으로도 인덱스를 만들 수 없고, 남는 선택지는 인덱스 없는 순차 스캔뿐입니다. 한국어 품질 때문에 Upstage를 포기할 수 없다는 판단이라 저장소를 바꿨습니다.
+
+**어디로 갔는가** — Qdrant(`qdrant/qdrant:v1.18.3`) 컬렉션 두 개, 각 4096차원 코사인 HNSW입니다.
+
+| | PostgreSQL | Qdrant |
+| --- | --- | --- |
+| 역할 | **권위** | 파생 인덱스 |
+| 담는 것 | 내용, 공개범위, 수명, 확인 상태 | 벡터 + `seniorId` payload |
+| 잃으면 | 복구 불가 | 부기 컬럼으로 전량 재색인 |
+| 백업 | 필요 | **하지 않습니다** |
+
+Qdrant 볼륨을 백업하지 않는 것은 게으름이 아닙니다. 낡은 payload가 되살아나면 어르신이 거두어들인 기억이 다시 검색 대상이 됩니다.
+
+**부기 컬럼 세 개** (`memory`, `conversation_summary` 공통, V5)
+
+| 컬럼 | 의미 |
+| --- | --- |
+| `embedding_status` | `PENDING` / `SYNCED` / `STALE` / `FAILED` |
+| `embedding_synced_at` | 마지막으로 반영된 시각 |
+| `embedding_model` | 그 벡터를 만든 모델. 모델이 바뀌면 기존 벡터는 전부 무효입니다 — 벡터 공간이 달라서 유사도 숫자가 평범해 보이지만 아무것도 뜻하지 않습니다 |
+
+**검색 순서 (이 순서가 프라이버시 방어선입니다)**
+
+```text
+Qdrant (senior_id 필터 + 유사도) -> 후보 id
+  -> PostgreSQL 권위 재검증
+     (lifecycle_status=ACTIVE, verification_status!=REJECTED, visibility 허용)
+  -> 유사도 x importance x 최근성 재정렬 -> 상위 3~10
+```
+
+벡터 스토어의 hit는 **행을 추가하지 못합니다.** 순위만 바꿉니다. Qdrant payload는 색인 시점의 사본이라 임의로 낡을 수 있고, 공개범위가 바뀐 기억이 그 사본을 근거로 보호자에게 새어나가면 안 됩니다. 재검증은 성능 낭비가 아니라 방어 계층입니다.
+
 ## 12. 진짜 TBD와 FUTURE
 
-- `memory.embedding`, `conversation_summary.embedding` 모델·차원과 벡터 인덱스
 - 반복 연락·협의가 별도 생명주기를 요구할 때 `care_coordination_event`
 - 긴 대화 중간 압축 문제가 확인될 때 `TIME_WINDOW`
 - 무배포 질문 편집이 필요할 때 `onboarding_question`

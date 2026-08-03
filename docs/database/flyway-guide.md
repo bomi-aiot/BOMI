@@ -141,5 +141,5 @@ backend/src/main/resources/db/migration/
 
 - **Q. 엔티티 바꿀 때마다 SQL도 써야 해요?**  네. 대신 기존 파일은 두고 새 V파일만 추가.
 - **Q. V1을 잘못 썼으면?**  아직 어디에도 적용 전이면 고쳐도 되지만, 공유/배포된 DB에 한 번이라도 적용됐으면 수정 말고 V2로 바로잡기.
-- **Q. embedding(VECTOR)/pgvector는?**  현재 엔티티가 미매핑이라 V1에서 제외. 도입 시 별도 V파일에서 `CREATE EXTENSION vector;` + 컬럼 추가.
+- **Q. embedding(VECTOR)/pgvector는?**  **쓰지 않습니다. 계획이 취소되었습니다(S15P11E102-218).** Upstage 임베딩이 4096차원인데 pgvector 0.8.5의 인덱스 상한이 `vector` 2,000 / `halfvec` 4,000차원이라 인덱스를 만들 수 없습니다. 의미 검색은 외부 벡터 스토어(Qdrant)로 옮겼고, 이 DB에는 V5의 부기 컬럼(`embedding_status`/`embedding_synced_at`/`embedding_model`)만 있습니다. **`CREATE EXTENSION vector;` V파일을 추가하지 마십시오** — 검색 경로가 둘이 되고 그중 하나는 인덱스 없는 순차 스캔입니다. `FlywayMigrationValidationTest.pgvectorIsNotUsed`가 확장이 없는 것을 능동적으로 검증합니다.
 - **Q. 큰 변경의 DDL 초안을 자동으로 얻고 싶다.**  Hibernate 스키마 생성 스크립트로 초안을 뽑아 참고할 수 있음(팀에 문의).

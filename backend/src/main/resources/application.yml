@@ -29,24 +29,53 @@ springdoc:
   api-docs:
     enabled: true
   group-configs:
+    # 채널별로 나눈다. 같은 백엔드지만 호출 주체가 다르고, 섞어 두면
+    # "이건 누가 부르는 API인가"를 스펙만 보고 판단할 수 없다.
+    - group: bomi-robot
+      display-name: "[BE-Robot] 로봇·AI 채널 API"
+      paths-to-match:
+        - /api/v1/robot/**
+        - /api/v1/seniors/**
+    - group: bomi-guardian
+      display-name: "[BE-Guardian] 가디언웹 채널 API"
+      paths-to-match:
+        - /api/v1/guardian/**
+        - /api/v1/memories/**
+        - /api/v1/care-records/**
+        - /api/v1/confirmation-requests/**
+        - /api/v1/elders/**
     - group: bomi-backend
-      display-name: BOMI Backend API
+      display-name: "[BE-All] 백엔드 전체 API"
       packages-to-scan: com.ssafy.bomi
   swagger-ui:
     enabled: true
     path: /swagger-ui.html
     disable-swagger-default-url: true
-    supported-submit-methods: []
+    # Try it out 을 켠다. 계약만 있던 시절에는 실수로 연동 API 를 때리지 않도록
+    # 비워 두었지만(S15P11E102-63), 이제 로봇·가디언웹 채널은 실제로 동작하므로
+    # 브라우저에서 바로 호출해 보는 편이 낫다.
+    #
+    # 주의: 이 서비스에는 인증이 없다. 배포 Swagger 에서 쓰기 메서드까지 열리므로
+    # 문서 주소를 아는 사람은 운영 데이터를 바꿀 수 있다. 발표 기간 한정으로
+    # 감수한 결정이며, 외부 공개가 길어지면 문서 경로 인증을 먼저 붙여야 한다.
+    supported-submit-methods:
+      - get
+      - post
+      - put
+      - patch
+      - delete
+    # group-configs 의 세 그룹은 springdoc 이 display-name 으로 자동 등록한다.
+    # 여기에 다시 적으면 드롭다운에 같은 항목이 두 번 뜬다. 정적 YAML 만 적는다.
     urls:
-      - name: BOMI Backend API
-        url: /v3/api-docs/bomi-backend
-      - name: AI Vision Recognition API
+      - name: "[AI-Vision] 인식 요청 API (계약·미구현)"
         url: /openapi/vision-ai.openapi.yaml
-      - name: AI Vision Result Callback API
+      - name: "[AI-Vision] 결과 Callback API (계약·미구현)"
         url: /openapi/vision-callback.openapi.yaml
-      - name: Conversation and Voice AI API
+      - name: "[AI-Chat] 대화·음성 생성 API (계약·미구현)"
         url: /openapi/voice-ai.openapi.yaml
-    urls-primary-name: BOMI Backend API
+      # MQTT 계약은 OpenAPI 문법으로 표현할 수 없어 AsyncAPI 뷰어에서 본다.
+      # 진입점: /docs/ (docs/api/README.md 참고)
+    urls-primary-name: "[BE-Robot] 로봇·AI 채널 API"
 
 bomi:
   homecoming:
@@ -55,6 +84,42 @@ bomi:
     # 값은 seed-kim-sunja.sql 기준 김순자 UUID.
     sensor-to-senior:
       door_sensor: 10000000-0000-4000-8000-000000000001
+  # 의미 검색 벡터 스토어 (S15P11E102-218).
+  #
+  # host 가 비면 의미 검색이 꺼진 채로 뜬다. 지원되는 상태다 — 기억 조회가
+  # 키워드 x 중요도 x 최근성으로 내려앉을 뿐이고, 기동 로그에 남는다.
+  # 개발 노트북에 컨테이너가 없어도 앱은 떠야 한다.
+  qdrant:
+    host: ${QDRANT_HOST:}
+    # gRPC 포트다. 6333(REST)을 넣으면 프로토콜 오류가 네트워크 문제처럼 보인다.
+    grpc-port: ${QDRANT_GRPC_PORT:6334}
+    api-key: ${QDRANT_API_KEY:}
+    use-tls: ${QDRANT_USE_TLS:false}
+    # 임베딩 모델과 정확히 같아야 한다. 이 숫자가 pgvector 를 불가능하게 만든 값이다.
+    dimensions: ${QDRANT_DIMENSIONS:4096}
+    timeout-millis: ${QDRANT_TIMEOUT_MILLIS:1500}
+
+  # 임베딩 모델 (S15P11E102-218).
+  #
+  # ★ 기본값이 전부 꺼짐이다. 백엔드에서 유일하게 과금되는 외부 API 이고, 프로젝트
+  #   잔액이 프로토타입 시연까지 감당해야 한다. 기본값이 켜짐이면 테스트 실행·로컬
+  #   기동·CI 잡이 전부 돈을 쓴다. 켜는 것은 배포 env 한 줄이고, 소진된 잔액을
+  #   되돌리는 방법은 없다.
+  embedding:
+    enabled: ${EMBEDDING_ENABLED:false}
+    api-key: ${UPSTAGE_API_KEY:}
+    base-url: ${UPSTAGE_BASE_URL:https://api.upstage.ai/v1}
+    # 저장은 passage, 검색은 query. 섞으면 예외 없이 검색 품질만 조용히 나빠진다.
+    passage-model: ${UPSTAGE_PASSAGE_MODEL:embedding-passage}
+    query-model: ${UPSTAGE_QUERY_MODEL:embedding-query}
+    dimensions: ${EMBEDDING_DIMENSIONS:4096}
+    timeout-millis: ${EMBEDDING_TIMEOUT_MILLIS:1200}
+    # 한 행 = 과금 1회. 이것은 튜닝 값이 아니라 지출 상한이다.
+    sync-batch-size: ${EMBEDDING_SYNC_BATCH_SIZE:30}
+    # 배경 잡은 별도로 켠다. 시연 중에는 질의 임베딩만 돌고 백로그를 훑지 않게 한다.
+    sync-enabled: ${EMBEDDING_SYNC_ENABLED:false}
+    sync-interval-millis: ${EMBEDDING_SYNC_INTERVAL_MILLIS:300000}
+
   mqtt:
     enabled: ${MQTT_ENABLED:false}
     broker-url: ${MQTT_BROKER_URL:tcp://${MQTT_BROKER_HOST:localhost}:${MQTT_BROKER_PORT:1883}}

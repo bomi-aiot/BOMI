@@ -1,6 +1,7 @@
 package com.ssafy.bomi.guardian;
 
 import com.ssafy.bomi.guardian.dto.DashboardResponse;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -11,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
  */
 @RestController
 @RequestMapping("/api/v1/guardian")
+@Tag(name = "Guardian Dashboard", description = "보호자 대시보드 — 가디언웹이 호출합니다.")
 public class GuardianDashboardController {
 
     private final DashboardService dashboardService;

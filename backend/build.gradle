@@ -19,6 +19,10 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
     implementation 'org.springframework.integration:spring-integration-mqtt'
     implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.17'
+    // Qdrant 공식 Java 클라이언트(gRPC). Chroma 를 탈락시킨 이유가 이것이다 —
+    // 검색의 권위는 백엔드(Java)에 있고, Chroma 의 Java 클라이언트는 비공식이다.
+    // 서버 이미지와 마이너 버전을 맞춘다(infra/compose.prod.yml 의 qdrant/qdrant 태그).
+    implementation 'io.qdrant:client:1.18.3'
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'
     runtimeOnly 'org.postgresql:postgresql'
@@ -26,6 +30,11 @@ dependencies {
     annotationProcessor 'org.projectlombok:lombok'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'com.h2database:h2'
+    // application-docs.yml 의 "docs" Profile 은 H2 로 뜬다. testRuntimeOnly 만으로는
+    // bootRun 클래스패스에 없어서 docs/api/README.md 가 안내하는 로컬 문서 확인
+    // 절차가 "Cannot load driver class: org.h2.Driver" 로 죽는다.
+    // developmentOnly 는 bootRun 에는 들어가고 bootJar 에는 빠진다.
+    developmentOnly 'com.h2database:h2'
     // 실제 PostgreSQL 을 Docker 없이 띄운다. H2 는 배열·JSONB·부분 인덱스 차이를 못 잡으므로
     // "빈 PG 에서 V1~Vn 순차 실행 후 Hibernate validate 통과"는 H2 로 검증할 수 없다.
     testImplementation 'io.zonky.test:embedded-postgres:2.0.7'
@@ -33,7 +42,67 @@ dependencies {
     testRuntimeOnly 'org.postgresql:postgresql'
 }
 
-tasks.named('test') { useJUnitPlatform() }
+// 기본 test 는 외부 의존이 없는 것만 돌린다 (S15P11E102-218).
+//
+// 왜 태그로 가르는가
+//   1. Qdrant 는 임베디드 모드가 없다. Rust 서버라서 embedded-postgres 같은 수가 없고,
+//      Testcontainers 는 Docker 를 요구한다. 개발 노트북에 Docker 가 없는 사람이 있다.
+//   2. 임베딩 API 는 과금된다. 잔액이 프로토타입 시연까지 감당해야 한다. 기본 test 가
+//      돈을 쓰면 CI 가 한 번 폭주할 때 잔액이 사라진다.
+//
+// 그래서 기본은 제외하고, 돌릴 사람이 명시적으로 켠다.
+//   ./gradlew test                        단위 테스트만 (무료, 외부 의존 없음)
+//   ./gradlew integrationTest             Qdrant 필요. 무료(결정적 대역 임베딩)
+//   ./gradlew billedTest                  ★ 실제 Upstage 호출. 돈이 나간다
+tasks.named('test') {
+    useJUnitPlatform {
+        excludeTags 'integration', 'billed'
+    }
+
+    // ★ 저장소 밖(모듈 밖)의 파일을 읽는 테스트가 있다. Gradle 에 입력으로 알려준다.
+    //
+    // 왜 필요한가
+    //   ComposeEnvironmentPassthroughTest 는 ../infra/compose.prod.yml 을 읽는다. 그런데
+    //   Gradle 은 backend/ 안의 소스와 리소스만 입력으로 본다. compose 를 고쳐도 test
+    //   태스크가 UP-TO-DATE 로 판정되어 **아예 돌지 않는다.**
+    //
+    //   실제로 겪었다. compose 에서 EMBEDDING_ENABLED 를 지우고 테스트를 돌렸는데
+    //   "BUILD SUCCESSFUL in 1s" 가 나왔다. 통과한 것이 아니라 실행되지 않은 것이다.
+    //   CI 는 매번 새로 받으니 잡히지만, 로컬에서는 조용히 넘어간다 — 고친 사람이
+    //   초록을 보고 넘어가는 것이 이 테스트가 막으려던 실패와 같은 모양이다.
+    inputs.files(
+        rootProject.file('../infra/compose.prod.yml'),
+        rootProject.file('../infra/production.env.example'),
+    ).withPropertyName('deploymentDescriptors').optional()
+}
+
+// Qdrant 를 실제로 띄워 두고 도는 테스트. 임베딩은 결정적 대역이라 과금이 없다.
+//   QDRANT_HOST=localhost ./gradlew integrationTest
+tasks.register('integrationTest', Test) {
+    description = 'Qdrant 가 필요한 통합 테스트. 임베딩 대역을 쓰므로 과금되지 않는다.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform { includeTags 'integration' }
+    // 켜져 있지 않으면 테스트가 스스로 skip 한다(assumeTrue). 조용히 통과한 것처럼
+    // 보이지 않게, 무엇이 없어서 건너뛰었는지 테스트가 직접 말한다.
+    systemProperty 'bomi.test.qdrant.host', System.getenv('QDRANT_HOST') ?: ''
+    systemProperty 'bomi.test.qdrant.grpcPort', System.getenv('QDRANT_GRPC_PORT') ?: '6334'
+}
+
+// ★ 실제 Upstage API 를 호출한다. 호출 1건마다 과금된다.
+//   UPSTAGE_API_KEY=... ./gradlew billedTest
+tasks.register('billedTest', Test) {
+    description = '★ 과금됨. 실제 Upstage 임베딩 API 왕복을 확인한다.'
+    group = 'verification'
+    testClassesDirs = sourceSets.test.output.classesDirs
+    classpath = sourceSets.test.runtimeClasspath
+    useJUnitPlatform { includeTags 'billed' }
+    systemProperty 'bomi.test.upstage.apiKey', System.getenv('UPSTAGE_API_KEY') ?: ''
+    doFirst {
+        logger.lifecycle('★ 이 태스크는 실제 Upstage API 를 호출하며 과금됩니다.')
+    }
+}
 
 // 온보딩 질문 세트를 docs/ 에서 가져와 클래스패스에 넣는다.
 //
