@@ -57,6 +57,89 @@ ros2 run core nav2_waypoint_patrol --ros-args \
   -p waypoint_file:=/path/to/room_waypoints.yaml
 ```
 
+### BOMI 저장 지도 기반 Nav2 시뮬레이션
+
+`bomi_navigation_sim.launch.py`는 BOMI Gazebo 모델, 저장된 BOMI 지도,
+AMCL, Nav2와 RViz를 함께 실행합니다. SLAM으로 지도를 새로 만들지 않으며,
+기본 지도는 `mapping/maps/bomi_test_map.yaml`입니다. 시작 위치는 Gazebo의
+BOMI 생성 위치와 같은 `x=0.0`, `y=0.0`, `yaw=0.0`으로 AMCL에 전달합니다.
+
+```bash
+cd /mnt/c/ssafy/kh/S15P11E102/robot/ros2_ws
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install --packages-up-to core
+source install/setup.bash
+
+ros2 launch core bomi_navigation_sim.launch.py
+```
+
+기본 실행은 WSL의 그래픽 부하를 줄이기 위해 Gazebo 서버를 화면 없이
+실행하고 RViz만 표시합니다. Gazebo 월드 화면도 함께 확인해야 할 때만
+다음처럼 실행합니다.
+
+```bash
+ros2 launch core bomi_navigation_sim.launch.py headless:=False
+```
+
+현재 WSLg와 Gazebo Fortress 조합에서는 NVIDIA D3D12 렌더링을 사용할 때
+GPU LiDAR가 모든 거리를 최솟값으로 반환할 수 있습니다. 정확한 스캔과
+안정적인 실행을 위해 Gazebo와 RViz 모두 `llvmpipe` 소프트웨어 렌더링을
+사용하고 스레드 수를 2개로 제한합니다.
+또한 BOMI 전용 RViz 설정은 화면 갱신률을 5 FPS로 낮추고 지도, AMCL 입자,
+전역 경로와 로봇 footprint만 기본 표시하여 주행 확인 중의 CPU 부하를
+줄입니다. LiDAR 점은 왼쪽 `LaserScan` 항목이 필요할 때만 켭니다.
+
+Gazebo 화면 없이 서버와 LiDAR 물리만 실행하는 기본값을 명시하려면
+다음처럼 사용할 수 있습니다.
+
+```bash
+ros2 launch core bomi_navigation_sim.launch.py headless:=True
+```
+
+RViz가 열리면 `Nav2 Goal`로 저장 지도 안의 목표를 지정합니다. 이 launch는
+단일 목표 이동 확인용이므로 `nav2_waypoint_patrol`을 자동으로 실행하지
+않습니다. RViz를 실행하지 않으려면 `use_rviz:=False`를 지정할 수 있습니다.
+
+다른 지도를 사용할 때는 같은 Gazebo 월드에서 만든 지도 YAML의 절대 경로를
+전달합니다.
+
+```bash
+ros2 launch core bomi_navigation_sim.launch.py \
+  map:=/absolute/path/to/map.yaml
+```
+
+지도와 Gazebo 월드의 장애물 위치가 다르면 AMCL 위치 추정과 Nav2 경로 검증을
+신뢰할 수 없습니다. 이 launch는 BOMI 차동구동 시뮬레이션 검증용이며 실제
+모터 드라이버나 실물 Odometry를 실행하지 않습니다.
+
+#### 주행 중 차체 수평 유지 조건
+
+BOMI 시뮬레이션 모델에는 주행 안정성을 위한 두 가지 전제가 있습니다.
+
+- 구동륜 조인트 축을 `expressed_in="__model__"`로 모델 좌표계에 명시합니다.
+  바퀴 링크는 X축으로 90도 돌아가 있어 표현 좌표계를 생략하면 축이 모델
+  좌표계의 `-Y`로 해석되고, DiffDrive가 전진 명령에 후진합니다.
+- 구동륜 축의 앞뒤 양쪽에 캐스터를 두어 지지 다각형이 무게중심을 감싸게
+  합니다. 뒤쪽 캐스터만 있으면 지지 다각형의 앞 경계가 구동륜 축과 같아져
+  전진 가감속만으로도 차체가 앞으로 넘어집니다.
+
+차체가 기울면 Gazebo의 LiDAR가 함께 기울어 바닥을 스캔하지만 오도메트리
+TF는 평면 변환만 발행합니다. 그래서 바닥 반사가 로봇 주변의 가짜 근거리
+장애물로 코스트맵에 누적되고, Nav2는 `GridBased: failed to create plan`과
+`No valid trajectories`를 남기며 목표를 중단합니다. 주행이 중단될 때는
+Nav2 파라미터보다 먼저 Gazebo 실제 자세의 roll/pitch를 확인합니다.
+
+`simulation` 패키지의 `test_robot_model_stability.py`가 위 조건과 접지 높이,
+캐스터 마찰, 전복 임계 가속도를 모델 파일에서 검증합니다.
+
+#### 목표 반경 설정의 정합성
+
+`nav2_safe_params.yaml`에서 DWB `FollowPath`의 `xy_goal_tolerance`는
+`general_goal_checker`의 `xy_goal_tolerance`보다 크지 않아야 합니다. DWB의
+`RotateToGoal` critic이 자신의 목표 반경 안에서 전진을 막기 때문에, 이 값이
+목표 판정 반경보다 크면 두 반경 사이 구간에 갇혀 제자리 회전만 하다가
+`controller_server: Failed to make progress`로 목표가 중단됩니다.
+
 ### TurtleBot3 Nav2 통합 시뮬레이션 실행
 
 `nav2_patrol_sim.launch.py`는 Gazebo Classic의 TurtleBot3 Waffle,

@@ -92,5 +92,58 @@
       </link>
     </model>
 
+    <!-- AMCL과 Nav2 검증 시 LiDAR가 위치를 구분할 수 있도록 만든 6 m x 6 m 경계 벽 -->
+    <model name="north_wall">
+      <static>true</static>
+      <pose>0 3 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>6.1 0.1 1</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>6.1 0.1 1</size></box></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <model name="south_wall">
+      <static>true</static>
+      <pose>0 -3 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>6.1 0.1 1</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>6.1 0.1 1</size></box></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <model name="east_wall">
+      <static>true</static>
+      <pose>3 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 6.1 1</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.1 6.1 1</size></box></geometry>
+        </visual>
+      </link>
+    </model>
+
+    <model name="west_wall">
+      <static>true</static>
+      <pose>-3 0 0.5 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 6.1 1</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>0.1 6.1 1</size></box></geometry>
+        </visual>
+      </link>
+    </model>
+
   </world>
 </sdf>
