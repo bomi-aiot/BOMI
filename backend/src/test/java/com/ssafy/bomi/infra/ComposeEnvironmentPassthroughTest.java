@@ -11,6 +11,7 @@ import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.DisplayName;
@@ -182,5 +183,134 @@ class ComposeEnvironmentPassthroughTest {
         throw new IllegalStateException(
             "could not find " + relative + " above " + here
                 + "; this test compares application.yml with the deployed compose file");
+    }
+    // ─────────────────────────────────────────────────────────────────────────
+    // 볼륨 바인드 소스가 배포 스크립트의 검증 목록과 어긋나지 않는가
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * 배포 스크립트가 검증하지 않는 바인드 소스. <b>각 줄에 이유가 있어야 한다.</b>
+     *
+     * <p>기준은 "이 값이 {@code production.env} 에서 오는가"다. Jenkins 가 실행 시점에
+     * 넣어 주는 값은 배포 스크립트가 env 파일에서 읽을 수 없으므로 검증할 수 없다.</p>
+     */
+    private static final Map<String, String> BIND_SOURCES_NOT_GUARDED = Map.of(
+        "BOMI_SOURCE_DIR",
+        "production.env 에 없다. Jenkins 가 $WORKSPACE 로 넣어 주고 compose 는 기본값을 쓴다",
+        "BOMI_SECRETS_DIR",
+        "production.env 에 없다. compose 의 기본값(/home/ubuntu/bomi/secrets)을 쓴다");
+
+    @Test
+    @DisplayName("★ compose 의 바인드 소스가 전부 배포 스크립트에서 검증되거나, 이유가 있어야 한다")
+    void everyBindMountSourceIsGuarded() throws IOException {
+        Set<String> sources = bindMountSourceVariables();
+        Set<String> guarded = guardedVariables();
+
+        Set<String> unguarded = new TreeSet<>(sources);
+        unguarded.removeAll(guarded);
+        unguarded.removeAll(BIND_SOURCES_NOT_GUARDED.keySet());
+
+        assertThat(unguarded)
+            .as("""
+                compose 가 바인드 마운트의 '왼쪽'에 쓰는 변수인데 배포 스크립트가                 절대 경로인지 확인하지 않는다. 값이 경로가 아니면 compose 는 첫 조각을                 '이름 있는 볼륨'으로 읽고, 오류에 변수 이름이 나오지 않는다                 (실제로 QDRANT_DATA_DIR 에서 겪었다). deploy-common.sh 의                 initialize_deploy 에 require_absolute_path 를 추가하거나, 검증하지                 않는 이유를 BIND_SOURCES_NOT_GUARDED 에 적는다: %s""", unguarded)
+            .isEmpty();
+    }
+
+    @Test
+    @DisplayName("검증하지 않기로 한 바인드 소스에는 이유가 적혀 있다")
+    void everyUnguardedBindSourceCarriesAReason() {
+        BIND_SOURCES_NOT_GUARDED.forEach((name, reason) ->
+            assertThat(reason.length())
+                .as("%s 를 검증하지 않는 이유가 너무 짧다", name)
+                .isGreaterThan(20));
+    }
+
+    @Test
+    @DisplayName("★ Qdrant 저장소는 호스트 경로를 받지 않는다 — named volume 이다")
+    void theQdrantStoreDoesNotAskForAHostPath() throws IOException {
+        /*
+         * ★★ 이 티켓이 겪은 사고의 근본 수정이다. 값을 검증하는 대신 물어보지 않는다.
+         *
+         * 되돌아가려는 사람이 있으면 이 테스트가 먼저 실패한다. 그때 읽어야 하는 것:
+         * 이 볼륨은 파생 인덱스이고 백업 대상이 아니며 부기 컬럼으로 전량 재색인된다.
+         * 사람이 위치를 알아야 할 운영상의 이유가 없다.
+         */
+        assertThat(bindMountSourceVariables())
+            .as("QDRANT_DATA_DIR 이 돌아왔다. 값 검증으로는 '/qdrant'(컨테이너 경로)나 "
+                + "postgres 경로 복사 같은 실수를 잡지 못한다")
+            .doesNotContain("QDRANT_DATA_DIR");
+
+        assertThat(Files.readString(locate(Path.of("infra", "compose.prod.yml"))))
+            .contains("qdrant-storage:/qdrant/storage");
+    }
+
+    /**
+     * 바인드 마운트의 '소스' 쪽에 쓰인 {@code ${VAR}} 이름들.
+     *
+     * <p>YAML 을 파싱해서 {@code services.*.volumes} 만 본다. 처음에는 줄 단위로
+     * {@code "- ${"} 를 찾았는데 {@code group_add:} 의 {@code - ${DOCKER_GID:?...}} 가
+     * 걸렸다 — 항목이 콜론을 포함한다는 이유만으로 볼륨처럼 보였다. 파서가 이미
+     * 있으므로 추측할 이유가 없다.</p>
+     *
+     * <p>소스만 본다. {@code JENKINS_HOME_DIR} 은 콜론 양쪽에 쓰이는데, 잘못된 값이
+     * 문제를 만드는 것은 왼쪽이다.</p>
+     */
+    private static Set<String> bindMountSourceVariables() throws IOException {
+        Path compose = locate(Path.of("infra", "compose.prod.yml"));
+        Set<String> names = new TreeSet<>();
+
+        try (InputStream stream = Files.newInputStream(compose)) {
+            Map<String, Object> root = new Yaml().load(stream);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> services = (Map<String, Object>) root.get("services");
+
+            for (Object service : services.values()) {
+                @SuppressWarnings("unchecked")
+                Object volumes = ((Map<String, Object>) service).get("volumes");
+                if (!(volumes instanceof List<?> entries)) {
+                    continue;
+                }
+                for (Object entry : entries) {
+                    if (entry instanceof String mount) {
+                        addSourceVariable(mount, names);
+                    }
+                }
+            }
+        }
+        return names;
+    }
+
+    /**
+     * 마운트 한 줄의 소스 쪽에서 변수 이름을 뽑는다.
+     *
+     * <p>{@code "${VAR:?msg}:/container/path"} 의 소스는 닫는 중괄호까지다. 콜론으로
+     * 그냥 쪼개면 {@code :?} 안의 콜론에서 잘린다.</p>
+     */
+    private static void addSourceVariable(String mount, Set<String> names) {
+        if (!mount.startsWith("${")) {
+            return;   // 이름 있는 볼륨이거나 상대 경로다. 검증 대상이 아니다.
+        }
+        int close = mount.indexOf('}');
+        if (close < 0) {
+            return;
+        }
+        Matcher matcher = PLACEHOLDER.matcher(mount.substring(0, close + 1));
+        if (matcher.find()) {
+            names.add(matcher.group(1));
+        }
+    }
+
+    /** {@code initialize_deploy} 가 require_absolute_path 로 검증하는 변수들. */
+    private static Set<String> guardedVariables() throws IOException {
+        String script = Files.readString(
+            locate(Path.of("scripts", "deploy", "deploy-common.sh")), StandardCharsets.UTF_8);
+
+        Set<String> guarded = new TreeSet<>();
+        Matcher matcher = Pattern.compile("require_absolute_path\s+([A-Z_][A-Z0-9_]*)")
+            .matcher(script);
+        while (matcher.find()) {
+            guarded.add(matcher.group(1));
+        }
+        return guarded;
     }
 }
