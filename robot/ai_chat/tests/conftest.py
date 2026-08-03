@@ -66,6 +66,19 @@ def isolated_environment(monkeypatch, tmp_path):
     for variable in SETTING_VARIABLES:
         monkeypatch.delenv(variable, raising=False)
     monkeypatch.setenv("AI_CHAT_ENV_FILE", str(tmp_path / "missing.env"))
+
+    # ★ LOCALSTORE_DIR 은 '지우는' 것으로 부족하다 (S15P11E102-233).
+    #
+    #   지우면 config 의 기본값인 var/localstore 로 떨어진다 — **개발자의 실제
+    #   저장소다.** 그래서 자기 fixture 에서 LOCALSTORE_DIR 을 다시 세우지 않은
+    #   테스트는 조용히 실제 runtime.sqlite 에 쓴다.
+    #
+    #   실기 점검 중에 실제로 발견했다. runtime_state 에 senior-1 행이 있었고
+    #   last_user_interaction_at 이 5000.0(SimClock 값)이었다. 테스트가 남긴 것이다.
+    #   그 상태로 침묵 사다리를 관찰하면 관찰 대상이 오염돼 있다.
+    #
+    #   여기서 tmp_path 로 '세워' 두면 개별 테스트가 잊어도 실제 저장소에 닿지 않는다.
+    monkeypatch.setenv("LOCALSTORE_DIR", str(tmp_path / "localstore"))
     clear_settings_cache()
     yield
     clear_settings_cache()

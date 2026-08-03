@@ -166,6 +166,13 @@ ECHO_VAD_THRESHOLD_MULTIPLIER 최종:
 
 # 1. 어디를 봐야 하나 — 창 4개
 
+> **셸은 Git Bash(MINGW64) 기준입니다.** 이 문서의 명령은 전부 bash 로 적혀 있습니다.
+> PowerShell 을 쓰신다면 `tail -f` 는 `Get-Content -Wait -Tail`, `grep` 은 `Select-String`,
+> `while true; do ... done` 은 `while ($true) { ... }` 로 바꿔야 합니다.
+>
+> (초판은 PowerShell 로 적혀 있었고, 실기 점검 중에 `bash: Get-Content: command not found`
+> 로 막혔습니다. 문서의 명령이 안 도는 것은 체크리스트에서 가장 나쁜 종류의 오류입니다.)
+
 점검 내내 **터미널 4개**를 띄워 둡니다.
 
 ## 창 1 — 로봇 (여기서 말합니다)
@@ -189,7 +196,7 @@ cd C:/Users/workspaces/S15P11E102/robot/ai_chat && ./venv/Scripts/python.exe -m 
 ## 창 2 — 로그 파일 실시간
 
 ```bash
-cd C:/Users/workspaces/S15P11E102/robot/ai_chat; Get-Content var/localstore/logs/ai_chat.log -Wait -Tail 40
+cd C:/Users/workspaces/S15P11E102/robot/ai_chat && tail -f -n 40 var/localstore/logs/ai_chat.log
 ```
 
 창 1은 INFO 이상, **이 파일은 항상 DEBUG** 입니다. 판정 이유를 볼 때 여기를 봅니다.
@@ -197,21 +204,21 @@ cd C:/Users/workspaces/S15P11E102/robot/ai_chat; Get-Content var/localstore/logs
 관심 있는 것만:
 
 ```bash
-cd C:/Users/workspaces/S15P11E102/robot/ai_chat; Get-Content var/localstore/logs/ai_chat.log -Wait | Select-String "latency|gate|ladder|triage|degrad|occupancy"
+cd C:/Users/workspaces/S15P11E102/robot/ai_chat && tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "latency|echo guard|gate|ladder|triage|degrad|occupancy"
 ```
 
 ## 창 3 — 로컬 상태 (SQLite)
 
-로봇의 판단 결과가 여기 쌓입니다. 아래를 `watch_state.ps1` 로 저장해 두면 편합니다.
+로봇의 판단 결과가 여기 쌓입니다. 아래를 `watch_state.sh` 로 저장해 두면 편합니다.
 
 ```bash
-cd C:/Users/workspaces/S15P11E102/robot/ai_chat; while ($true) { Clear-Host; ./venv/Scripts/python.exe -c "
+cd C:/Users/workspaces/S15P11E102/robot/ai_chat && while true; do clear; ./venv/Scripts/python.exe -c "
 import sqlite3
 r = sqlite3.connect('var/localstore/runtime.sqlite'); r.row_factory = sqlite3.Row
 print('=== runtime_state ===')
 for row in r.execute('SELECT * FROM runtime_state'):
     d = dict(row)
-    print(f\"  occupancy={d['occupancy']}  silence_level={d['silence_level']}  rest={d['rest_state']}\")
+    print(f\"  senior={d['senior_id'][:8]}  occupancy={d['occupancy']}  silence_level={d['silence_level']}  rest={d['rest_state']}\")
     print(f\"  last_user_interaction_at={d['last_user_interaction_at']}  last_spoke_at={d['last_spoke_at']}\")
 print()
 print('=== speech_proposal (대기 중인 제안) ===')
@@ -220,9 +227,9 @@ for row in r.execute('SELECT intent, priority, seed FROM speech_proposal'):
 print()
 print('=== outbox (보호자 알림 큐) ===')
 o = sqlite3.connect('var/localstore/outbox.sqlite'); o.row_factory = sqlite3.Row
-for row in o.execute('SELECT tier, status, attempts FROM outbox ORDER BY rowid DESC LIMIT 5'):
+for row in o.execute('SELECT tier, status, attempt_count, delayed, last_error FROM outbox ORDER BY id DESC LIMIT 5'):
     print('  ', dict(row))
-"; Start-Sleep 20 }
+"; sleep 20; done
 ```
 
 ### 로컬에 무엇이 어디 저장되는가
@@ -314,7 +321,7 @@ cd C:/Users/workspaces/S15P11E102/robot/ai_chat && ./venv/Scripts/python.exe -m 
 창 2를 이렇게 걸어 두고:
 
 ```bash
-cd C:/Users/workspaces/S15P11E102/robot/ai_chat; Get-Content var/localstore/logs/ai_chat.log -Wait | Select-String "transcribe|intent|safety_level"
+cd C:/Users/workspaces/S15P11E102/robot/ai_chat && tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "transcribe|intent|safety_level"
 ```
 
 한 줄씩 **소리 내어 말하고** 결과를 적습니다.
@@ -363,7 +370,7 @@ cd robot/ai_chat && ./venv/Scripts/python.exe -c "from bomi_ai_chat import polic
 4번이 헷갈리기 쉽습니다. 프로브에서는 **끼어든 것 자체가 대답**입니다 — 살아 계시다는 뜻이므로 재개하지 않습니다.
 
 ```bash
-cd C:/Users/workspaces/S15P11E102/robot/ai_chat; Get-Content var/localstore/logs/ai_chat.log -Wait | Select-String "barge|echo|remaining|ladder"
+cd C:/Users/workspaces/S15P11E102/robot/ai_chat && tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "barge|echo guard|remaining|ladder"
 ```
 
 `docs/hardware/audio-echo-bargein-verification.md` 7개 항목:

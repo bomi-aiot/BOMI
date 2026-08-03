@@ -5,6 +5,7 @@ import logging
 from collections.abc import Sequence
 from logging.handlers import RotatingFileHandler
 
+from bomi_ai_chat import policy
 from bomi_ai_chat.audio_io.base import AudioInput, AudioOutput
 from bomi_ai_chat.config import ConfigurationError, Settings, get_settings
 
@@ -225,7 +226,16 @@ def _run_graph_runtime(settings: Settings, audio_in, audio_out, *, once: bool) -
         turns = bootstrap.run_conversation_loop(
             runtime, audio_in, settings, max_turns=1 if once else None)
     finally:
-        runtime.shutdown()
+        # --once 일 때만 재생이 끝나기를 기다린다 (S15P11E102-233).
+        #
+        # ★ 재생은 daemon 스레드다. --once 는 한 턴 뒤 바로 끝나므로, 기다리지 않으면
+        #   프로세스가 죽으면서 스레드도 죽고 **한 마디도 들리지 않는다.** 그래프는
+        #   정상으로 돌고 로그도 정상인데 스피커만 조용해서, 원인을 오디오 장치나
+        #   TTS 키에서 찾게 된다.
+        #
+        # 상시 실행(Ctrl+C)에서는 기다리지 않는다. 끄려는 사람을 문장이 끝날 때까지
+        # 붙잡아 두는 것은 다른 종류의 잘못이다.
+        runtime.shutdown(wait_for_speech_sec=policy.SPEECH_DRAIN_SEC if once else 0.0)
 
     return 0 if turns else 1
 
