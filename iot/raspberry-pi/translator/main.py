@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
+from collections.abc import Mapping
+from typing import Any
 
 import paho.mqtt.client as mqtt
 import yaml
@@ -44,22 +46,37 @@ def resolve_config_path(argv: list[str]) -> str:
     return _EXAMPLE_CONFIG
 
 
+def mqtt_connection_settings(
+    config: dict[str, Any], environ: Mapping[str, str] | None = None
+) -> dict[str, Any]:
+    """YAML 기본값에 컨테이너 환경변수를 덮어쓴 MQTT 연결 설정을 반환한다."""
+    env = environ if environ is not None else os.environ
+    mqtt_cfg = config.get("mqtt", {})
+    return {
+        "host": env.get("MQTT_HOST", mqtt_cfg.get("host", "localhost")),
+        "port": int(env.get("MQTT_PORT", mqtt_cfg.get("port", 1883))),
+        "qos": int(env.get("MQTT_QOS", mqtt_cfg.get("qos", 1))),
+        "username": env.get("MQTT_USERNAME", mqtt_cfg.get("username")),
+        "password": env.get("MQTT_PASSWORD", mqtt_cfg.get("password")),
+    }
+
+
 def main(argv: list[str] | None = None) -> None:
     argv = argv if argv is not None else sys.argv
     config = load_config(resolve_config_path(argv))
 
-    mqtt_cfg = config.get("mqtt", {})
-    host = mqtt_cfg.get("host", "localhost")
-    port = int(mqtt_cfg.get("port", 1883))
-    qos = int(mqtt_cfg.get("qos", 1))
+    mqtt_cfg = mqtt_connection_settings(config)
+    host = mqtt_cfg["host"]
+    port = mqtt_cfg["port"]
+    qos = mqtt_cfg["qos"]
 
     client = mqtt.Client(
         protocol=mqtt.MQTTv311,
         callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
     )
-    username = mqtt_cfg.get("username")
+    username = mqtt_cfg["username"]
     if username:
-        client.username_pw_set(username, mqtt_cfg.get("password"))
+        client.username_pw_set(username, mqtt_cfg["password"])
 
     # 계약: retain=false 로 발행.
     def publish(topic: str, payload: str) -> None:

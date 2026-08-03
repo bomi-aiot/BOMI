@@ -26,3 +26,21 @@ services:
     devices:
       - "${ZIGBEE_DEVICE_PATH}:/dev/ttyUSB0"
 
+  translator:
+    container_name: bomi-iot-translator
+    build:
+      context: ../translator
+    restart: unless-stopped
+    depends_on:
+      - mqtt
+    environment:
+      MQTT_HOST: mqtt
+      MQTT_PORT: 1883
+      MQTT_QOS: 1
+    volumes:
+      - type: bind
+        source: ../translator/config/device.yaml
+        target: /app/config/device.yaml
+        read_only: true
+        bind:
+          create_host_path: false

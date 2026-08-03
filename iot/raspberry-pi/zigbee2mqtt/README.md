@@ -9,6 +9,7 @@ Docker Compose 환경이다. Zigbee2MQTT와 로컬 Mosquitto Broker를 함께 �
 | --- | --- | --- |
 | `zigbee2mqtt` | Zigbee 센서 데이터를 MQTT 메시지로 변환하고 관리 UI 제공 | 8080 |
 | `zigbee-mqtt` | Zigbee2MQTT와 IoT 번역기가 사용하는 로컬 MQTT Broker | 1883 |
+| `bomi-iot-translator` | 센서 메시지를 BOMI MQTT 계약 이벤트로 변환 | 없음 |
 
 확인된 센서 값은 다음과 같다.
 
@@ -29,17 +30,26 @@ ls -l /dev/serial/by-id/
 cd iot/raspberry-pi/zigbee2mqtt
 cp .env.example .env
 cp data/configuration.example.yaml data/configuration.yaml
+cp ../translator/config/device.example.yaml ../translator/config/device.yaml
 ```
 
 `.env`의 `ZIGBEE_DEVICE_PATH`를 앞에서 확인한 `/dev/serial/by-id/...` 경로로
-변경한다. `.env`와 `data/configuration.yaml`은 장치별 실제 설정이므로 Git에
-커밋하지 않는다.
+변경한다. `../translator/config/device.yaml`의 `friendly_name`은 Zigbee2MQTT에
+등록된 실제 센서 이름과 일치시킨다. `.env`, `data/configuration.yaml`, 번역기의
+`device.yaml`은 장치별 실제 설정이므로 Git에 커밋하지 않는다.
 
 ## 실행 및 확인
 
 ```bash
 docker compose up -d
 docker compose ps
+```
+
+번역기는 Compose 내부에서 `mqtt:1883`에 연결한다. 연결 상태와 이벤트 변환 로그는
+다음 명령으로 확인한다.
+
+```bash
+docker compose logs -f translator
 ```
 
 같은 네트워크의 PC에서 다음 주소로 관리 화면에 접속한다.
@@ -53,6 +63,13 @@ http://<RASPBERRY_PI_IP>:8080
 ```bash
 docker exec -it zigbee-mqtt \
   mosquitto_sub -h localhost -t 'zigbee2mqtt/#' -v
+```
+
+변환된 BOMI 계약 이벤트는 다음 명령으로 확인한다.
+
+```bash
+docker exec -it zigbee-mqtt \
+  mosquitto_sub -h localhost -t 'bomi/v1/iot/+/events' -v
 ```
 
 로그와 종료 명령은 다음과 같다.
@@ -85,4 +102,3 @@ cp -a zigbee2mqtt zigbee2mqtt-backup
 현재 Mosquitto는 Raspberry Pi 로컬 게이트웨이에서의 초기 연동을 위해 익명
 접속을 허용한다. 외부 네트워크나 EC2 Broker에 연결할 때는 계정 인증, ACL 및
 TLS를 별도 구성해야 한다.
-

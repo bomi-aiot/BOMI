@@ -13,6 +13,9 @@ Raspberry Pi에서 동작하는 IoT 게이트웨이 구성 영역이다. 현재�
 | `translator/config/` | 번역기 장치 설정 예시 |
 | `translator/tests/` | 단위 테스트와 실제 브로커 E2E 테스트 |
 
+`zigbee2mqtt/compose.yaml`은 Zigbee2MQTT, 로컬 Mosquitto, MQTT 번역기를 함께
+실행한다. Raspberry Pi Docker 실행 방법은 `zigbee2mqtt/README.md`를 따른다.
+
 ## 매핑 규칙 (MVP)
 
 - 문(`contact`): `true`(닫힘)→`false`(열림) 전이에서만 `DOOR_OPENED`.
