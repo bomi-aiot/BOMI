@@ -31,12 +31,18 @@ cd iot/raspberry-pi/zigbee2mqtt
 cp .env.example .env
 cp data/configuration.example.yaml data/configuration.yaml
 cp ../translator/config/device.example.yaml ../translator/config/device.yaml
+mkdir -p mosquitto/config/conf.d
+cp mosquitto/bridge.example.conf mosquitto/config/conf.d/bridge.conf
 ```
 
 `.env`의 `ZIGBEE_DEVICE_PATH`를 앞에서 확인한 `/dev/serial/by-id/...` 경로로
 변경한다. `../translator/config/device.yaml`의 `friendly_name`은 Zigbee2MQTT에
 등록된 실제 센서 이름과 일치시킨다. `.env`, `data/configuration.yaml`, 번역기의
 `device.yaml`은 장치별 실제 설정이므로 Git에 커밋하지 않는다.
+
+`mosquitto/config/conf.d/bridge.conf`의 `remote_password`에는 EC2 Mosquitto의
+`bomi-iot-gateway` 계정 비밀번호를 입력한다. 이 파일은 Git에서 제외되며
+Raspberry Pi에만 보관한다.
 
 ## 실행 및 확인
 
@@ -72,6 +78,35 @@ docker exec -it zigbee-mqtt \
   mosquitto_sub -h localhost -t 'bomi/v1/iot/+/events' -v
 ```
 
+## EC2 MQTT Broker 전달
+
+로컬 Mosquitto Bridge는 Translator가 발행한 다음 토픽만 EC2 운영 Broker로
+단방향 전달한다.
+
+```text
+bomi/v1/iot/+/events
+```
+
+운영 연결 정보는 다음과 같다.
+
+| 항목 | 값 |
+| --- | --- |
+| Host | `i15e102.p.ssafy.io` |
+| Port | `8883` |
+| TLS | 사용, Let's Encrypt 서버 인증서 검증 |
+| Username | `bomi-iot-gateway` |
+| QoS | 1 |
+
+Bridge 연결 상태는 Mosquitto 로그에서 확인한다.
+
+```bash
+docker compose logs -f mqtt
+```
+
+비밀번호 오류, 인증서 검증 오류 또는 네트워크 단절 시 로그에 연결 실패가
+출력된다. 비밀번호와 실제 `bridge.conf` 내용은 이슈, MR 또는 Git에 첨부하지
+않는다.
+
 로그와 종료 명령은 다음과 같다.
 
 ```bash
@@ -100,5 +135,6 @@ cp -a zigbee2mqtt zigbee2mqtt-backup
 ## 보안 참고
 
 현재 Mosquitto는 Raspberry Pi 로컬 게이트웨이에서의 초기 연동을 위해 익명
-접속을 허용한다. 외부 네트워크나 EC2 Broker에 연결할 때는 계정 인증, ACL 및
-TLS를 별도 구성해야 한다.
+접속을 허용한다. 이 포트는 신뢰할 수 있는 로컬 네트워크에서만 사용해야 한다.
+EC2 연결은 `bomi-iot-gateway` 계정, 발행 전용 ACL, TLS 서버 인증서 검증을
+사용한다.
