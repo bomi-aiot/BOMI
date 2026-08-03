@@ -29,11 +29,13 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 
 from bomi_ai_chat import policy
 from bomi_ai_chat.clock import clock
 
+logger = logging.getLogger(__name__)
 
 class EchoGuard:
     """재생 상태를 보고 "지금 들어온 입력을 믿어도 되는가"를 판정한다.
@@ -63,11 +65,14 @@ class EchoGuard:
         with self._lock:
             self._playing = True
             self._started_at = clock.now()
+        logger.debug("echo guard: playback started (ignoring input for %.2fs)",
+                     policy.ECHO_GUARD_SEC)
 
     def mark_playback_stopped(self) -> None:
         """재생이 끝났거나 취소됐다."""
         with self._lock:
             self._playing = False
+        logger.debug("echo guard: playback stopped")
 
     @property
     def is_playing(self) -> bool:
@@ -116,5 +121,22 @@ class EchoGuard:
             캡처 루프. 이 판정이 False 면 그 프레임은 없었던 것으로 친다.
         """
         if self.should_ignore_input():
+            # ★ 실기에서 임계치를 재려면 '무엇을 왜 버렸는지'가 보여야 한다
+            #   (S15P11E102-233). 로그가 없으면 관찰할 수 있는 것이 "멈췄다 / 안
+            #   멈췄다"뿐이고, 그 둘 사이에서 ECHO_GUARD_SEC 을 조정할 근거가 없다.
+            logger.debug(
+                "echo guard: dropped level=%.0f (playback started %.2fs ago, "
+                "guard=%.2fs)", level, clock.now() - self._started_at,
+                policy.ECHO_GUARD_SEC)
             return False
-        return level >= self.vad_threshold(base_threshold)
+
+        threshold = self.vad_threshold(base_threshold)
+        accepted = level >= threshold
+        if self.is_playing:
+            # 재생 중의 판정만 남긴다. 조용할 때의 판정까지 남기면 캡처 루프가
+            # 매 프레임 로그를 찍어 다른 것을 전부 덮는다.
+            logger.debug(
+                "echo guard: %s level=%.0f threshold=%.0f (base=%.0f x%.1f, playing)",
+                "accepted" if accepted else "rejected", level, threshold,
+                base_threshold, policy.ECHO_VAD_THRESHOLD_MULTIPLIER)
+        return accepted

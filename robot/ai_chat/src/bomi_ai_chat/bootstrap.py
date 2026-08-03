@@ -47,12 +47,30 @@ class Runtime:
     scheduler: Any = None
     door_subscriber: Any = None
 
-    def shutdown(self) -> None:
+    def shutdown(self, *, wait_for_speech_sec: float = 0.0) -> None:
         """백그라운드 스레드를 정리한다. 실패해도 종료를 막지 않는다.
 
         정리하지 않으면 재시작할 때마다 스케줄러 스레드가 쌓이고, 침묵 틱이 두 번씩
         돌아 프로브가 겹쳐 나간다.
+
+        인자
+            wait_for_speech_sec: 종료 전에 재생이 끝나기를 이만큼 기다린다.
+
+        ★ 왜 기다리는 선택지가 필요한가 (S15P11E102-233)
+            재생은 daemon 스레드다. 그래서 프로세스가 끝나면 말하던 중이라도 그대로
+            죽는다. 평상시에는 그것이 옳다 — Ctrl+C 를 눌렀는데 로봇이 문장을 다
+            마칠 때까지 안 꺼지면 곤란하다.
+
+            그런데 --once 는 한 턴만 돌고 바로 끝난다. 그 결과 **한 마디도 들리지
+            않는다.** 그래프는 정상으로 돌고 로그도 정상인데 스피커만 조용하다.
+            실기 점검 0.6(에코 확인)이 --once 로 시작하는데, 소리가 안 나면 확인할
+            대상 자체가 없다.
+
+            기본값은 0 이다. 기다림은 --once 처럼 '끝을 보려는' 실행에서만 켠다.
         """
+        if wait_for_speech_sec > 0:
+            self._await_speech(wait_for_speech_sec)
+
         for name, closer in (
             ("door subscriber", getattr(self.door_subscriber, "stop", None)),
             ("scheduler", getattr(self.scheduler, "shutdown", None)),
@@ -63,6 +81,26 @@ class Runtime:
                 closer()
             except Exception:  # noqa: BLE001 - 종료 경로에서 예외를 올리지 않는다
                 logger.warning("could not stop the %s cleanly", name, exc_info=True)
+
+
+    def _await_speech(self, timeout_sec: float) -> None:
+        """재생 중인 발화가 끝나기를 기다린다.
+
+        핸들이 진행 상황의 권위다(graph/output.TTS_HANDLES). 여기서는 '아직 말하고
+        있는가'만 물어보고, 끝났거나 시간이 다 되면 넘어간다.
+        """
+        from bomi_ai_chat.graph.output import TTS_HANDLES
+
+        handle = TTS_HANDLES.get(self.senior_id)
+        if handle is None:
+            return
+        waiter = getattr(handle, "wait", None)
+        if waiter is None:
+            # 대역 핸들에는 wait 가 없을 수 있다. 없으면 기다리지 않는다 —
+            # 여기서 sleep 으로 때우면 테스트가 그 시간만큼 느려진다.
+            return
+        logger.info("waiting up to %.1fs for speech to finish", timeout_sec)
+        waiter(timeout_sec)
 
 
 def build_runtime(
