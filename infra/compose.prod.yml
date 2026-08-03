@@ -107,9 +107,26 @@ services:
       QDRANT_HOST: qdrant
       QDRANT_GRPC_PORT: 6334
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      # 컨테이너 안에서 TLS 를 쓸지. backend-net 은 internal 이라 지금은 false 가 맞다.
+      # Qdrant 를 그 네트워크 밖으로 옮기는 날에는 코드가 아니라 이 값을 바꾼다.
+      QDRANT_USE_TLS: ${QDRANT_USE_TLS:-false}
       # ★ 이 키가 없으면 임베딩을 만들 수 없고, 의미 검색은 꺼진 채로 뜬다(키워드·중요도·
       #   최근성 랭킹으로 계속 동작한다). 조용히 꺼지지 않고 기동 로그에 남는다.
       UPSTAGE_API_KEY: ${UPSTAGE_API_KEY:-}
+      # ★★ 이 두 줄이 없으면 production.env 에 EMBEDDING_ENABLED=true 를 적어도
+      #    아무 일도 일어나지 않는다. Docker 는 호스트 환경변수를 컨테이너로 흘려보내지
+      #    않으므로, environment 에 명시하지 않은 변수는 컨테이너에 존재하지 않는다.
+      #    application.yml 의 ${EMBEDDING_ENABLED:false} 가 기본값을 그대로 읽고
+      #    의미 검색이 영원히 꺼진 채로 뜬다 — 그리고 그 사실을 알려주는 것은
+      #    기동 로그의 "embedding OFF" 한 줄뿐이다.
+      #
+      #    218 에서 실제로 빠뜨렸다. UPSTAGE_API_KEY 만 넘기면 켜진다고 착각했다.
+      EMBEDDING_ENABLED: ${EMBEDDING_ENABLED:-false}
+      # 배경 동기화 잡. 켜는 것과 임베딩 자체를 켜는 것은 별개다 — 시연 중에는 질의
+      # 임베딩만 돌고 백로그를 훑지 않아야 한다.
+      EMBEDDING_SYNC_ENABLED: ${EMBEDDING_SYNC_ENABLED:-false}
+      # 한 실행에 과금되는 호출 수의 상한. 잔액이 작으므로 재배포 없이 줄일 수 있어야 한다.
+      EMBEDDING_SYNC_BATCH_SIZE: ${EMBEDDING_SYNC_BATCH_SIZE:-30}
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:8080/actuator/health"]
       interval: 10s
