@@ -4,12 +4,11 @@ Raspberry Pi에서 동작하는 IoT 게이트웨이 구성 영역이다. 현재�
 브로커로 발행한 센서 메시지를 백엔드 계약 형식
 (`bomi/v1/iot/<sourceId>/events`)으로 변환·재발행하는 번역기를 포함한다.
 
-Zigbee2MQTT와 Mosquitto의 Docker 구성은 후속 작업에서 이 디렉터리에 추가한다.
-
 ## 현재 구성
 
 | 경로 | 역할 |
 | --- | --- | --- |
+| `zigbee2mqtt/` | Zigbee2MQTT와 로컬 Mosquitto Docker 환경 |
 | `translator/` | Zigbee2MQTT 메시지를 백엔드 MQTT 계약으로 변환 |
 | `translator/config/` | 번역기 장치 설정 예시 |
 | `translator/tests/` | 단위 테스트와 실제 브로커 E2E 테스트 |
