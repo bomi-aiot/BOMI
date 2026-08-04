@@ -144,6 +144,12 @@ class WakeWordDetector:
         """
         model = self._ensure_model()
 
+        # 내부 오디오 특징 버퍼를 비운다. 직전 "보미야" 감지의 특징이 남아 있으면, 대화가
+        # 끝나고 다시 여기로 왔을 때 그 잔상 때문에 아무도 안 불렀는데 곧바로 재감지된다
+        # (종료 직후 대화가 저절로 다시 켜지는 원인). reset() 은 예측 버퍼와 전처리
+        # (melspec/embedding) 버퍼를 모두 비운다.
+        model.reset()
+
         device = _resolve_input_device(self.device)
         try:
             native_sr = int(sd.query_devices(device)["default_samplerate"])
