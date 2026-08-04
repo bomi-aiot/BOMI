@@ -150,6 +150,12 @@ def make_client(args):
         client = mqtt.Client()
     if args.username:
         client.username_pw_set(args.username, args.password or "")
+    if args.tls:
+        # EC2 프로덕션 브로커는 8883/TLS. --ca-certs 미지정 시 OS 신뢰 저장소 사용.
+        client.tls_set(ca_certs=args.ca_certs)
+        if args.tls_insecure:
+            # 자체서명 인증서 임시 대응. 검증을 끄므로 테스트 용도로만.
+            client.tls_insecure_set(True)
     return client
 
 
@@ -234,19 +240,26 @@ def run_robot_sim(args):
 # CLI
 # ---------------------------------------------------------------------------
 def main():
+    # 연결 옵션은 부모 파서로 정의해 모든 하위 명령 "뒤에" 쓸 수 있게 한다.
+    # (예: publish_event.py door --host ... --tls)
+    conn = argparse.ArgumentParser(add_help=False)
+    conn.add_argument("--host", default="localhost")
+    conn.add_argument("--port", type=int, default=1883)
+    conn.add_argument("--username", default=None)
+    conn.add_argument("--password", default=None)
+    conn.add_argument("--tls", action="store_true", help="TLS 연결 (EC2 8883 용)")
+    conn.add_argument("--ca-certs", default=None, help="CA 인증서 경로 (미지정 시 OS 기본)")
+    conn.add_argument("--tls-insecure", action="store_true", help="인증서 검증 생략 (테스트 전용)")
+    conn.add_argument("--dry-run", action="store_true", help="발행하지 않고 메시지만 출력")
+
     parser = argparse.ArgumentParser(description="BOMI MQTT 테스트 이벤트 발사기")
-    parser.add_argument("--host", default="localhost")
-    parser.add_argument("--port", type=int, default=1883)
-    parser.add_argument("--username", default=None)
-    parser.add_argument("--password", default=None)
-    parser.add_argument("--dry-run", action="store_true", help="발행하지 않고 메시지만 출력")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("door", help="문 열림 → 귀가 시나리오(⑤)")
+    p = sub.add_parser("door", parents=[conn], help="문 열림 → 귀가 시나리오(⑤)")
     p.add_argument("--sensor", default=DEFAULT_DOOR_SENSOR)
     p.set_defaults(builder=build_door)
 
-    p = sub.add_parser("ambient", help="온습도 관측(①)")
+    p = sub.add_parser("ambient", parents=[conn], help="온습도 관측(①)")
     p.add_argument("--sensor", default=DEFAULT_AMBIENT_SENSOR)
     p.add_argument("--temp", type=float, default=31.0, help="기본 31.0 (임계값 30 초과)")
     p.add_argument("--humidity", type=float, default=50.0)
@@ -254,22 +267,22 @@ def main():
                    choices=["COMFORTABLE", "UNCOMFORTABLE"])
     p.set_defaults(builder=build_ambient)
 
-    p = sub.add_parser("wake", help='"보미야" 호출(③)')
+    p = sub.add_parser("wake", parents=[conn], help='"보미야" 호출(③)')
     p.add_argument("--robot", default=DEFAULT_ROBOT_ID)
     p.add_argument("--confidence", type=float, default=0.92)
     p.set_defaults(builder=build_wake)
 
-    p = sub.add_parser("walk", help="산책 요청(④)")
+    p = sub.add_parser("walk", parents=[conn], help="산책 요청(④)")
     p.add_argument("--robot", default=DEFAULT_ROBOT_ID)
     p.add_argument("--source", default="VOICE", choices=["VOICE", "APP"])
     p.set_defaults(builder=build_walk)
 
-    p = sub.add_parser("conv-end", help="대화 종료 (복귀 유도)")
+    p = sub.add_parser("conv-end", parents=[conn], help="대화 종료 (복귀 유도)")
     p.add_argument("--robot", default=DEFAULT_ROBOT_ID)
     p.add_argument("--scenario", required=True, help="진행 중인 scenarioId")
     p.set_defaults(builder=build_conv_end)
 
-    p = sub.add_parser("result", help="로봇 결과 수동 발행")
+    p = sub.add_parser("result", parents=[conn], help="로봇 결과 수동 발행")
     p.add_argument("--robot", default=DEFAULT_ROBOT_ID)
     p.add_argument("--type", default="NAVIGATION_RESULT",
                    choices=["NAVIGATION_RESULT", "SPEAK_RESULT", "CANCEL_RESULT", "FOLLOW_RESULT"])
@@ -278,7 +291,7 @@ def main():
     p.add_argument("--reason", default=None)
     p.set_defaults(builder=build_result)
 
-    p = sub.add_parser("robot-sim", help="로봇 흉내: 명령 구독 → 자동 결과 회신")
+    p = sub.add_parser("robot-sim", parents=[conn], help="로봇 흉내: 명령 구독 → 자동 결과 회신")
     p.add_argument("--robot", default=DEFAULT_ROBOT_ID)
     p.add_argument("--delay", type=float, default=3.0, help="NAVIGATE 주행 흉내 시간(초)")
     p.add_argument("--fail", action="store_true", help="모든 명령에 FAILED 회신 (실패 경로 테스트)")

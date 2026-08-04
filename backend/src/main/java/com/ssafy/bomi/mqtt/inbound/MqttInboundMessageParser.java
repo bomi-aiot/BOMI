@@ -16,9 +16,14 @@ import org.springframework.stereotype.Component;
 public class MqttInboundMessageParser {
 
     private static final int MAX_OPAQUE_ID_LENGTH = 64;
+    // PRESENCE_DETECTED: 초기 계약의 방향-판정 이벤트. IoT는 이제 DOOR_OPENED +
+    // MOTION_DETECTED(현관 PIR)로 직접 보낸다 (S15P11E102-226). 아직 이 타입을 보내는
+    // 배포가 남아있을 수 있어 당장 제거하지 않고 허용 목록에 남겨둔다 — 지워도 되는지는
+    // IoT 쪽에서 완전히 넘어온 뒤 별도로 확인한다.
     private static final Map<MqttInboundCategory, Set<String>> ALLOWED_TYPES = Map.of(
         MqttInboundCategory.IOT_EVENT,
-        Set.of("DOOR_OPENED", "PRESENCE_DETECTED", "AMBIENT_ENVIRONMENT_OBSERVED"),
+        Set.of("DOOR_OPENED", "MOTION_DETECTED", "DOOR_CLOSED", "PRESENCE_DETECTED",
+            "AMBIENT_ENVIRONMENT_OBSERVED"),
         MqttInboundCategory.ROBOT_EVENT,
         Set.of("ONBOARDING_ANSWER_CAPTURED", "CONVERSATION_ENDED"),
         MqttInboundCategory.ROBOT_STATUS,
