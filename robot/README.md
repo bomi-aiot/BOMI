@@ -2,13 +2,15 @@
 
 Ubuntu 22.04, ROS 2 Humble, Python 3.10을 기준으로 하는 로봇 워크스페이스입니다.
 
-`core`는 Mock 단계이며 실제 모터를 제어하지 않습니다.
+`core`의 `pico_driver`가 Pico H와 실제로 시리얼 통신하는 드라이버입니다.
+실기로 전진·후진·좌우회전·제자리회전까지 확인했습니다. 그 외 이동 관련
+기능은 아직 Mock 단계입니다.
 
 ## 패키지
 
 | 패키지 | 역할 |
 | --- | --- |
-| `core` | 이동 명령, 상태 발행, Mock 모터 드라이버, waypoint 순찰, 사용자 추종, Nav2 설정과 launch |
+| `core` | 이동 명령, 상태 발행, Pico 시리얼 드라이버, Mock 모터 드라이버, waypoint 순찰, 사용자 추종, Nav2 설정과 launch |
 | `description` | Gazebo용 BOMI 차동구동 로봇과 LiDAR 모델 |
 | `simulation` | 테스트 월드, 로봇 배치, Gazebo·ROS 2 토픽 브리지 |
 | `mapping` | SLAM Toolbox 설정, 통합 launch, RViz 설정과 지도 파일 |
@@ -26,6 +28,7 @@ Git으로 추적하지 않습니다. 준비 방법은
 | --- | --- |
 | `ros2 run core status_publisher` | `/bomi/status`에 `bomi is ready`를 1초마다 발행 |
 | `ros2 run core keyboard_teleop` | 키보드 입력을 `/cmd_vel`의 `geometry_msgs/Twist`로 발행 |
+| `ros2 launch core pico_driver.launch.py` | `/cmd_vel`을 Pico H로 보내고 `/odom`·`/imu` 발행 |
 | `ros2 run core mock_motor_driver` | `/cmd_vel`을 구독해 값을 로그로 출력 |
 | `ros2 run core joy_cmd_filter` | 조이스틱 입력을 `/cmd_vel` 명령으로 변환 |
 | `ros2 run core nav2_waypoint_patrol` | YAML 순찰 지점을 Nav2 목표로 순서대로 전송 |
@@ -35,8 +38,9 @@ Git으로 추적하지 않습니다. 준비 방법은
 ## 하드웨어
 
 차량은 JGB37-520 엔코더 모터 4개, MDD10A와 Pico H를 사용하는 차동구동
-구조입니다. 조립과 모터 구동 확인까지 완료했고 엔코더 값 확인과 IMU 설정이
-진행 중입니다. Odometry 보정과 ROS 2 실제 드라이버는 아직 남아 있습니다.
+구조입니다. 조립, 모터 구동 확인, Jetson↔Pico 프로토콜과 ROS 2
+드라이버(`pico_driver`)까지 실기로 검증했습니다. Odometry의 유효 트레드
+정밀 보정은 진행 중입니다.
 
 구성, 진행 상태와 안전 기준은
 [`docs/hardware-control.md`](docs/hardware-control.md)에 있습니다.
