@@ -21,7 +21,9 @@
 
 Pico 펌웨어는 목표 회전 속도(rev/s)를 받아 엔코더 피드백으로 PWM을 맞추는
 폐루프 제어까지 동작한다. 자이로 z축으로 방향을 유지하고 주행 거리를 누적한다.
-펌웨어는 Git 저장소가 아니라 Jetson의 `~/test/closed_loop_speed.py`에만 있다.
+펌웨어 원본은 `robot/pico/closed_loop_speed.py`다. Jetson의
+`~/test/closed_loop_speed.py`에서 반입했으며 아직 프로토콜 스펙을 반영하지 않았다.
+올리는 방법은 [`../pico/README.md`](../pico/README.md)에 있다.
 
 Jetson과 Pico가 주고받는 형식은 [`pico-serial-protocol.md`](pico-serial-protocol.md)가
 정한다.

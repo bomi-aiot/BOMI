@@ -41,6 +41,8 @@ Git으로 추적하지 않습니다. 준비 방법은
 구성, 진행 상태와 안전 기준은
 [`docs/hardware-control.md`](docs/hardware-control.md)에 있습니다.
 
+Pico H 펌웨어 원본은 [`pico/`](pico/)에 있습니다.
+
 ## 시작하기
 
 아래 경로는 저장소가 `C:\S15P11E102`에 있는 경우를 기준으로 합니다.
