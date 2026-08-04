@@ -8,7 +8,10 @@ from bomi_ai_chat.llm import medical_flow
 
 
 class StubAudioInput:
-    def capture(self):
+    # 시그니처는 실제 어댑터(audio_io/base.py:14)와 같아야 한다. 어긋나면
+    # pipeline 이 TypeError 를 '마이크 고장'으로 삼켜(_run_once_inner 의
+    # except Exception), 이 파일의 의료 검증이 전부 capture 단계에서 죽는다.
+    def capture(self, onset_timeout_seconds: float | None = None):
         return b"wav"
 
 

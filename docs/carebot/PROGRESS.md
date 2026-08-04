@@ -45,8 +45,9 @@
 | **232** | **런타임 배선** | 완료 | 통과 | **미실시** | 푸시됨 |
 | **233** | **실기 통합 점검** | 체크리스트 + 준비단계 수정 6건 | 통과 | **부분 실시** (준비단계만, A~G 미완) | 푸시됨, **미머지** |
 | **263** | **정서 핸들러·T3 지연** | 완료 | 통과 (신규 20건) | **미실시** | **ai-develop** |
-| **296** | **작업 규칙 자동화 커밋** | 완료 | 해당 없음 | 해당 없음 | 푸시됨, 미머지 |
-| **297** | **인계 전 문서 정합** | 완료 | 해당 없음 | 해당 없음 | 푸시됨, 미머지 |
+| **296** | **작업 규칙 자동화 커밋** | 완료 | 해당 없음 | 해당 없음 | ai-develop |
+| **297** | **인계 전 문서 정합** | 완료 | 해당 없음 | 해당 없음 | ai-develop |
+| **299** | **테스트 게이트 복구 (222 낙진)** | 완료 | 통과 (`454 passed`) | 해당 없음 | 푸시됨 |
 
 **212 를 "절반 완료"로 적은 이유.** 티켓 제목이 "회귀 세트 **및** 임계치 실측 튜닝"입니다. 회귀 세트는 만들었고, **실측 튜닝은 하지 않았습니다** — 실제 어르신도, 실기 하드웨어도 없이 측정한 숫자는 측정이 아닙니다. 자세한 것은 §2.8.
 
@@ -60,9 +61,13 @@
 
 | 대상 | lint | 테스트 |
 |---|---|---|
-| `ai-develop` (222 머지 후) | `All checks passed` | 🔴 **완주하지 못합니다.** §2.0 참고 |
+| `ai-develop` + 299 | `All checks passed` | `454 passed in 16.70s` |
+| `ai-develop` (299 이전, 222 머지 후) | `All checks passed` | 🔴 완주 불가 — §2.0 참고 |
 | `S15P11E102-233-ai-실기-점검` (222 이전) | `All checks passed` | `504 passed in 11.49s` |
 | 백엔드 | 통과 | 178건 (232 시점 측정, AI 라인에서는 재측정 불가) |
+
+**233 브랜치의 504건과 `ai-develop`+299 의 454건은 서로 다른 집합입니다.** 233 이
+212 의 회귀 세트를 얹고 있어서 그쪽이 많습니다. 304 가 두 갈래를 합칩니다.
 
 **233 브랜치에 263 이 중복으로 들어 있습니다.** `ai-develop` 에 `9fd1dfa` 로 머지된 것과 같은 변경이 `S15P11E102-233-ai-실기-점검` 에 `bcdd8af` 로도 있습니다. 233 브랜치를 263 이 얹힌 지점에서 딴 결과입니다. **233 을 머지하기 전에 `git log origin/ai-develop..S15P11E102-233-ai-실기-점검` 으로 무엇이 실제로 올라가는지 확인하십시오.** 지금 그대로 MR 을 열면 `PROGRESS.md`·`READING-ORDER.md`·`VERIFICATION.md`·`graph/gate.py` 에서 충돌합니다(218·222 와 겹칩니다).
 
@@ -72,24 +77,41 @@
 
 읽는 순서대로 중요합니다.
 
-### 2.0 `ai-develop` 의 테스트가 지금 빨갛고, 한 건은 영원히 멈춥니다 (222)
+### 2.0 해소됨 — `ai-develop` 의 테스트가 다시 초록입니다 (299)
 
-**다른 무엇보다 이것이 먼저입니다.** 297 작업 중 발견했습니다.
+297 이 발견하고 **299 가 고쳤습니다.** 고치기 전에는 이랬습니다.
 
 ```
 tests/test_pipeline.py  ->  13 failed, 6 passed, 1 deselected in 2.73s
 tests/test_pipeline.py::test_loop_stops_cleanly_on_keyboard_interrupt  ->  응답 없음(무한 대기)
 ```
 
-- `ruff check src tests` 는 `All checks passed` 입니다. **린트가 아니라 테스트 문제입니다.**
-- 같은 명령이 `S15P11E102-233-ai-실기-점검`(222 이전)에서는 `504 passed in 11.49s` 입니다.
-- `pipeline.py` / `test_pipeline.py` 를 마지막으로 건드린 커밋은 `fcefc65` **S15P11E102-222(웨이크워드 및 종료조건 설정)** 이고, 오늘 `603b2a7` 로 `ai-develop` 에 머지됐습니다.
+299 이후:
 
-**왜 조용히 위험한가.** 무한 대기 쪽이 실패보다 나쁩니다. `pre-push-gate.sh` 는 파이썬을 건드린 push 앞에서 `pytest` 를 돌리므로, **`ai-develop` 기반으로 파이썬을 고친 사람은 push 할 때마다 훅이 300초 타임아웃까지 매달립니다.** 실패 메시지가 아니라 "그냥 안 끝남"으로 보이기 때문에, 원인을 게이트나 자기 코드에서 찾게 됩니다.
+```
+venv/Scripts/pytest.exe -q -m "not integration and not manual"  ->  454 passed in 16.70s
+venv/Scripts/ruff.exe check src tests                           ->  All checks passed!
+```
 
-**원인은 대역 하나입니다.** `pipeline.py` 가 `capture(onset_timeout_seconds=...)` 로 부르는데 테스트의 `SequenceAudioInput.capture()` 가 그 인자를 받지 않습니다. `run_once()` 를 타는 테스트가 전부 첫 단계에서 죽고, `medical` 을 검증하는 테스트가 `capture` 때문에 실패하므로 **각 기능이 고장난 것처럼 보입니다.**
+**원인은 222 의 낙진 네 갈래였고, 전부 테스트 대역 쪽이었습니다.**
 
-→ **S15P11E102-299** 로 등록했습니다. 고쳐지면 이 절(§2.0)을 지웁니다. 그전까지 `ai-develop` 을 기준으로 한 "테스트 통과" 주장은 성립하지 않습니다.
+| # | 무엇이 깨졌나 | 왜 |
+|---|---|---|
+| 1 | `test_pipeline.py` 13건 + 무한 대기 | `SequenceAudioInput.capture()` 가 `onset_timeout_seconds` 를 안 받음 |
+| 2 | `test_medical_pipeline_safety.py` 1건 | 같은 이유로 `StubAudioInput.capture()` 도 시그니처 불일치 |
+| 3 | `test_main.py` 5건 | `WAKEWORD_ENABLED` 기본값이 `True` 라 단위 테스트가 `openwakeword` 를 import·다운로드하려 함 |
+| 4 | `test_project_contract.py` 1건 | `.env.example` 이 `WAKEWORD_ENABLED`·`WAKEWORD_MODEL_PATH` 를 문서화하지 않음 |
+
+**무한 대기의 정체가 이 사건의 교훈입니다.** `_run_once_inner` 는 capture 실패를
+`except Exception` 으로 삼키고 루프를 계속 돕니다(단계 하나가 실패해도 로봇이 멈추면
+안 되기 때문에 옳은 설계입니다). 그런데 대역의 시그니처가 어긋나자 매 호출이 그
+자리에서 `TypeError` 로 죽어 **결과를 하나도 소비하지 못한 채 영원히 돌았습니다.**
+`pre-push-gate.sh` 가 300초 타임아웃까지 매달렸고, 증상이 "실패"가 아니라 "안 끝남"
+이라 원인을 게이트나 자기 코드에서 찾게 만들었습니다.
+
+→ 재발 방지로 대역에 `AudioSequenceExhausted(BaseException)` 를 넣었습니다.
+`Exception` 이 아니라 `BaseException` 인 것이 핵심입니다 — 파이프라인의 관용이
+무한 반복으로 바뀌기 전에 pytest 가 잡습니다.
 
 ### 2.1 실기를 아직 끝까지 돌려보지 못했습니다 (232 로 전제조건 해소, 233 준비단계 통과)
 
