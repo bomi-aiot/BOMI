@@ -33,15 +33,23 @@ def test_door_first_fresh_open_emits() -> None:
     assert event["type"] == "DOOR_OPENED"
 
 
+def test_door_first_fresh_closed_establishes_state_without_emit() -> None:
+    event, prev = mapping.map_message(DOOR, {"contact": True}, None, now=_now)
+    assert event is None
+    assert prev["contact"] is True
+
+
 def test_door_repeated_open_does_not_emit() -> None:
     # 이미 열림 상태에서 같은 열림 메시지 반복 → 발행 안 함
     event, _ = mapping.map_message(DOOR, {"contact": False}, {"contact": False}, now=_now)
     assert event is None
 
 
-def test_door_close_does_not_emit() -> None:
+def test_door_close_emits_door_closed() -> None:
     event, prev = mapping.map_message(DOOR, {"contact": True}, {"contact": False}, now=_now)
-    assert event is None
+    assert event is not None
+    assert event["type"] == "DOOR_CLOSED"
+    assert event["payload"] == {"location": "ENTRANCE"}
     assert prev["contact"] is True
 
 
@@ -74,13 +82,12 @@ def test_battery_only_message_ignored() -> None:
 
 # --- PIR(occupancy) -----------------------------------------------------------
 
-def test_pir_occupancy_edge_emits_presence_detected() -> None:
+def test_pir_occupancy_edge_emits_motion_detected() -> None:
     event, prev = mapping.map_message(PIR, {"occupancy": True}, {"occupancy": False}, now=_now)
     assert event is not None
-    assert event["type"] == "PRESENCE_DETECTED"
+    assert event["type"] == "MOTION_DETECTED"
     assert event["sourceId"] == "entrance-sensor-hub-01"
-    assert event["payload"]["direction"] == "UNKNOWN"
-    assert event["payload"]["detectionMethod"] == "SENSOR_SEQUENCE"
+    assert event["payload"] == {"location": "ENTRANCE"}
     assert prev["occupancy"] is True
 
 

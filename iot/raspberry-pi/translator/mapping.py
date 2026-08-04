@@ -8,10 +8,10 @@ MQTT 나 파일 I/O 에 의존하지 않는다. "이 센서의 이번 메시지�
 * **retained 메시지는 이벤트를 내지 않는다.** 브로커에 남아 있던 현재 상태가
   번역기 재시작 때 재수신되며 시나리오를 잘못 시작시키는 것을 막는다.
   상태(prev)만 갱신한다.
-* 문(``contact``): ``true``(닫힘) → ``false``(열림) 로 **바뀌는 순간에만**
-  ``DOOR_OPENED`` 를 낸다. 같은 열림 상태 반복 메시지는 무시한다.
+* 문(``contact``): 상태가 바뀌는 순간 열림은 ``DOOR_OPENED``, 닫힘은
+  ``DOOR_CLOSED`` 를 낸다. 같은 상태 반복 메시지는 무시한다.
 * PIR(``occupancy``): ``false`` → ``true`` 로 바뀌는 순간에만
-  ``PRESENCE_DETECTED`` 를 낸다.
+  ``MOTION_DETECTED`` 를 낸다.
 * 배터리·링크품질만 담긴 메시지처럼 해당 키가 없으면 상태를 바꾸지 않고 무시한다.
 """
 
@@ -54,24 +54,53 @@ def map_message(
     kind = sensor.get("kind")
 
     if kind == KIND_DOOR:
-        return _map_edge(
-            sensor, data, prev,
-            key=CONTACT_KEY, active_value=False,  # contact=false 가 "열림"
-            event_type=contract.TYPE_DOOR_OPENED,
-            payload_fn=lambda: contract.door_opened_payload(sensor["location"]),
-            retained=retained, now=now,
-        )
+        return _map_door(sensor, data, prev, retained=retained, now=now)
     if kind == KIND_PIR:
         return _map_edge(
             sensor, data, prev,
             key=OCCUPANCY_KEY, active_value=True,  # occupancy=true 가 "감지"
-            event_type=contract.TYPE_PRESENCE_DETECTED,
-            payload_fn=lambda: contract.presence_detected_payload(sensor["location"]),
+            event_type=contract.TYPE_MOTION_DETECTED,
+            payload_fn=lambda: contract.location_payload(sensor["location"]),
             retained=retained, now=now,
         )
 
     # 알 수 없는 종류는 무시(상태 변경 없음).
     return None, prev
+
+
+def _map_door(
+    sensor: dict[str, Any],
+    data: dict[str, Any],
+    prev: dict[str, Any],
+    *,
+    retained: bool,
+    now: Callable[[], datetime] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """문 상태가 바뀔 때 열림/닫힘 이벤트를 각각 만든다."""
+    if CONTACT_KEY not in data:
+        return None, prev
+
+    current = data[CONTACT_KEY]
+    previous = prev.get(CONTACT_KEY)
+    prev[CONTACT_KEY] = current
+
+    if type(current) is not bool or retained or current == previous:
+        return None, prev
+
+    # 최초 fresh 닫힘은 기준 상태만 확립한다. 열림은 기존 동작대로 즉시 알린다.
+    if previous is None and current is True:
+        return None, prev
+
+    event_type = (
+        contract.TYPE_DOOR_CLOSED if current is True else contract.TYPE_DOOR_OPENED
+    )
+    event = contract.build_event(
+        sensor["source_id"],
+        event_type,
+        contract.location_payload(sensor["location"]),
+        now=now,
+    )
+    return event, prev
 
 
 def _map_edge(

@@ -44,19 +44,29 @@ def test_door_open_publishes_contract_event_on_correct_topic() -> None:
     assert event["sourceId"] == "door-sensor-01"
 
 
+def test_door_close_publishes_door_closed() -> None:
+    t, published = _make()
+    t.on_zigbee_message("zigbee2mqtt/door-sensor-01", json.dumps({"contact": False}))
+    t.on_zigbee_message("zigbee2mqtt/door-sensor-01", json.dumps({"contact": True}))
+
+    assert [json.loads(payload)["type"] for _, payload in published] == [
+        "DOOR_OPENED", "DOOR_CLOSED"
+    ]
+
+
 def test_retained_message_does_not_publish() -> None:
     t, published = _make()
     t.on_zigbee_message("zigbee2mqtt/door-sensor-01", json.dumps({"contact": False}), retained=True)
     assert published == []
 
 
-def test_pir_maps_to_presence_on_hub_source_id() -> None:
+def test_pir_maps_to_motion_on_hub_source_id() -> None:
     t, published = _make()
     t.on_zigbee_message("zigbee2mqtt/entrance-pir-01", json.dumps({"occupancy": True}))
     assert len(published) == 1
     topic, payload = published[0]
     assert topic == "bomi/v1/iot/entrance-sensor-hub-01/events"
-    assert json.loads(payload)["type"] == "PRESENCE_DETECTED"
+    assert json.loads(payload)["type"] == "MOTION_DETECTED"
 
 
 def test_unknown_sensor_ignored() -> None:

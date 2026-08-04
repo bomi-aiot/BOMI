@@ -24,7 +24,7 @@ def test_build_event_has_required_envelope_fields() -> None:
     event = contract.build_event(
         "door-sensor-01",
         contract.TYPE_DOOR_OPENED,
-        contract.door_opened_payload("ENTRANCE"),
+        contract.location_payload("ENTRANCE"),
         now=_fixed_now,
         event_id="fixed-event-id",
     )
@@ -50,7 +50,5 @@ def test_build_event_generates_opaque_event_id_when_absent() -> None:
     assert len(event["eventId"]) <= contract.MAX_OPAQUE_ID_LENGTH
 
 
-def test_presence_payload_defaults_to_unknown_direction() -> None:
-    payload = contract.presence_detected_payload("ENTRANCE")
-    assert payload["direction"] == contract.DIRECTION_UNKNOWN
-    assert payload["detectionMethod"] == contract.DETECTION_SENSOR_SEQUENCE
+def test_location_payload_contains_only_location() -> None:
+    assert contract.location_payload("ENTRANCE") == {"location": "ENTRANCE"}

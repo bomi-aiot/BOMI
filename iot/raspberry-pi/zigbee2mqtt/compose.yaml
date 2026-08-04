@@ -9,13 +9,20 @@ services:
       - ./mosquitto/log:/mosquitto/log
     ports:
       - "${MQTT_PORT:-1883}:1883"
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-p", "1883", "-t", "bomi/internal/healthcheck", "-n"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   zigbee2mqtt:
     container_name: zigbee2mqtt
     image: ghcr.io/koenkk/zigbee2mqtt:latest
     restart: unless-stopped
     depends_on:
-      - mqtt
+      mqtt:
+        condition: service_healthy
     volumes:
       - ./data:/app/data
       - /run/udev:/run/udev:ro
@@ -26,3 +33,22 @@ services:
     devices:
       - "${ZIGBEE_DEVICE_PATH}:/dev/ttyUSB0"
 
+  translator:
+    container_name: bomi-iot-translator
+    build:
+      context: ../translator
+    restart: unless-stopped
+    depends_on:
+      mqtt:
+        condition: service_healthy
+    environment:
+      MQTT_HOST: mqtt
+      MQTT_PORT: 1883
+      MQTT_QOS: 1
+    volumes:
+      - type: bind
+        source: ../translator/config/device.yaml
+        target: /app/config/device.yaml
+        read_only: true
+        bind:
+          create_host_path: false
