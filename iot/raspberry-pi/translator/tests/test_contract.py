@@ -20,6 +20,14 @@ def test_iot_events_topic_rejects_unsafe_id() -> None:
         contract.iot_events_topic("bad id/with space")
 
 
+def test_ambient_payload_uses_contract_field_names() -> None:
+    assert contract.ambient_payload("LIVING_ROOM", 26.0, 58.0) == {
+        "location": "LIVING_ROOM",
+        "temperature": 26.0,
+        "humidity": 58.0,
+    }
+
+
 def test_build_event_has_required_envelope_fields() -> None:
     event = contract.build_event(
         "door-sensor-01",
