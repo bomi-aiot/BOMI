@@ -83,10 +83,13 @@ class OpenApiDocumentationTest {
             .andExpect(jsonPath("$.urls.length()")
                 .value(org.hamcrest.Matchers.greaterThanOrEqualTo(SPECS.size() + 1)))
             .andExpect(jsonPath("$['urls.primaryName']").value(PRIMARY_GROUP_NAME))
-            // Try it out 이 켜져 있어야 한다. 빈 배열이면 버튼이 사라진다.
+            // Try it out 은 읽기(GET)만 허용된다 (S15P11E102-310). 완전히 빈 배열이면
+            // GET 조차 실행할 수 없어 문서의 실용성이 죽고, post/put/delete 가 섞여
+            // 있으면 배포 Swagger 에서 그대로 쓰기 API 를 실행할 수 있다 — 정확히
+            // ["get"] 하나여야 두 실패를 동시에 막는다.
             .andExpect(jsonPath("$.supportedSubmitMethods").isNotEmpty())
             .andExpect(jsonPath("$.supportedSubmitMethods",
-                org.hamcrest.Matchers.hasItems("get", "post")))
+                org.hamcrest.Matchers.contains("get")))
             .andReturn()
             .getResponse()
             .getContentAsString();
@@ -152,6 +155,48 @@ class OpenApiDocumentationTest {
             .contains("/api/v1/confirmation-requests")
             .contains("/api/v1/elders");
         assertThat(guardian).doesNotContain("/api/v1/robot/");
+    }
+
+    /**
+     * S15P11E102-310 — Try it out 의 파괴적 동작(DELETE·PUT 실행)이 응답 "본문"에서
+     * 사라졌는지 확인한다.
+     *
+     * <p>왜 상태 코드가 아니라 본문을 보는가 (CLAUDE.md §26) — 상태 코드만 보면
+     * "200 이니까 됐다"고 오판하기 쉽다. supportedSubmitMethods 배열 안에 post·put·
+     * patch·delete 가 하나라도 남아 있으면 swagger-ui 는 해당 메서드의 오퍼레이션에
+     * "Try it out" / "Execute" 버튼을 그대로 그린다.</p>
+     *
+     * <p>동시에 문서로서의 가치는 유지돼야 한다 — DELETE·PUT 오퍼레이션 자체가
+     * 스펙에서 사라지면 안 된다. 그래서 실제로 DELETE 메서드를 갖고 있는
+     * {@code CareRecordController#deleteMedication}(어르신 복약 스케줄 삭제)이
+     * bomi-guardian 스펙에 여전히 문서화돼 있는지도 함께 확인한다.</p>
+     */
+    @Test
+    void swaggerTryItOutAllowsOnlyGetAndDocumentationStaysIntact() throws Exception {
+        String config = mockMvc.perform(get("/v3/api-docs/swagger-config"))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+
+        List<String> submitMethods = com.jayway.jsonpath.JsonPath.read(config, "$.supportedSubmitMethods");
+        assertThat(submitMethods)
+            .as("Try it out 허용 메서드 — 본문(supportedSubmitMethods), 상태 코드가 아니다")
+            .containsExactly("get");
+        assertThat(submitMethods).doesNotContain("post", "put", "patch", "delete");
+
+        // 문서 값 자체는 유지된다: 복약 삭제 DELETE 오퍼레이션이 여전히 나열된다.
+        String guardian = mockMvc.perform(get("/v3/api-docs/bomi-guardian"))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+
+        Map<String, Object> medicationPath = com.jayway.jsonpath.JsonPath.read(
+            guardian, "$.paths['/api/v1/care-records/medications/{id}']"
+        );
+        assertThat(medicationPath)
+            .as("복약 스케줄 삭제(DELETE) 오퍼레이션이 문서에서 사라지면 안 된다")
+            .containsKey("delete");
+        assertThat(medicationPath)
+            .as("복약 스케줄 수정(PUT) 오퍼레이션이 문서에서 사라지면 안 된다")
+            .containsKey("put");
     }
 
     /**

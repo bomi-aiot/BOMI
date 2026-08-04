@@ -102,6 +102,10 @@ initialize_deploy() {
   require_absolute_path JENKINS_HOME_DIR
   require_absolute_path CERTBOT_CONF_DIR
   require_absolute_path CERTBOT_WEBROOT_DIR
+  # 가디언웹 채널 단기 접근 제어용 htpasswd 파일 (S15P11E102-310). 값이 경로가
+  # 아니면 compose 가 첫 조각을 '이름 있는 볼륨'으로 읽어 오류에 변수 이름이
+  # 나오지 않는다 — QDRANT_DATA_DIR 에서 겪은 것과 같은 실패 모양이다.
+  require_absolute_path NGINX_GUARDIAN_HTPASSWD_FILE
 }
 
 verify_container_health() {
