@@ -18,6 +18,9 @@ public interface CareRecordRepository extends JpaRepository<CareRecord, UUID> {
     // 복약 자식 스케줄 조회 (S15P11E102-224).
     List<CareRecord> findByParentRecordId(UUID parentRecordId);
 
+    // 복약 알림 스케줄러의 폴링 대상: 전 어르신의 ACTIVE 복약 스케줄 (시나리오 ②).
+    List<CareRecord> findByRecordTypeAndStatus(String recordType, CareRecordStatus status);
+
     List<CareRecord> findBySeniorIdAndStatus(UUID seniorId, CareRecordStatus status);
 
     List<CareRecord> findBySeniorIdAndRecordTypeAndStatus(
