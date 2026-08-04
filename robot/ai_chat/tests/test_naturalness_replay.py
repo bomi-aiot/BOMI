@@ -95,7 +95,11 @@ class CollectingPlayer:
 
 class NullConversationClient:
     def record_turn(self, senior_id, **fields):
-        return "conversation-1"
+        # (conversationId, messageId) 튜플 계약은 S15P11E102-306 이 세웠다.
+        # 단일 문자열을 돌려주면 build.py._record_turn 의 튜플 언패킹이
+        # "too many values to unpack" 으로 죽는다 — 그러면 memory_write 가
+        # 터지고, 정작 이 파일이 재려는 '자연스러움'과 무관한 이유로 실패한다.
+        return "conversation-1", "message-1"
 
 
 DEFAULT_REPLY = "그러셨어요. 좀 더 말씀해 주시겠어요?"
