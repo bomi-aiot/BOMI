@@ -232,6 +232,24 @@ class ConvState(TypedDict, total=False):
     # (state 는 어르신별로 checkpoint 되어 턴을 넘어 살아남기 때문이다).
     is_medical_query: bool | None
     # 같은 종류의 알림에서 최근에 쓴 표현. 프롬프트에 넘겨 반복을 막는다(§17.8).
+    #
+    # 누가 채우는가 (S15P11E102-256)
+    #   context_read(graph/context.py) 가 localstore.phrasings.recent 로 조회해
+    #   채운다. 능동/명령 턴(trigger_type in "proactive"/"backend_command")에서만
+    #   채우고, 반응형 턴에는 항상 빈 리스트를 명시적으로 돌려준다 — 안 그러면
+    #   지난 능동 턴의 값이 checkpoint 에 남아 다음 반응형 턴까지 샌다(이 필드도
+    #   reducer 가 없는 LastValue 채널이다).
+    #
+    #   누가 읽는가
+    #   handlers._generate 가 build_prompt(recent_phrasings=...) 로 그대로
+    #   넘기고, prompts/builder.py._format_recent_phrasings 가 "표현 반복 피하기"
+    #   섹션으로 렌더한다.
+    #
+    #   누가 쓰는가(다음 턴을 위해)
+    #   graph/build.py.memory_write 가 발화가 확정된 직후
+    #   localstore.phrasings.record 로 저장한다. 이 필드 자체에는 쓰지 않는다 —
+    #   그 저장은 다음 턴의 context_read 조회를 위한 것이지, 이번 턴의 state 를
+    #   위한 것이 아니다.
     recent_phrasings: list[str]
 
     # ── 출력 (§14) ──
