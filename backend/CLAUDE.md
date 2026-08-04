@@ -37,18 +37,19 @@ Swagger 드롭다운은 `springdoc.group-configs` 의 `paths-to-match` 로 갈�
 로봇용 `/api/v1/robot/clarifications` 와 가디언웹용 `/api/v1/confirmation-requests` 로 나눈
 것이 그 예입니다. 권한과 행위자가 다르기 때문입니다.
 
-## 3. MQTT 를 바꾸면 두 파일을 함께 고칩니다
+## 3. MQTT 를 바꾸면 세 파일을 함께 고칩니다
 
 MQTT 는 REST 가 아니므로 Swagger 에 넣지 않습니다. OpenAPI 3.x 에는 토픽·QoS·발행자를
 표현할 문법이 없고, 억지로 `paths` 에 넣으면 호출 가능한 REST 처럼 보여 오해를 만듭니다.
 
-토픽이나 메시지 필드를 바꾸면 **반드시 둘 다** 고칩니다.
+5개 시나리오의 토픽이나 메시지 필드를 바꾸면 **반드시 세 파일을 함께** 고칩니다.
 
-1. `src/main/resources/static/openapi/bomi-mqtt.asyncapi.yaml` — 기계가 읽는 스펙
-2. `../docs/mqtt/topic-convention.md` — 산문 계약서
+1. `../docs/mqtt/scenario-contract-v1.md` — 메시지 의미의 최종 기준
+2. `src/main/resources/static/openapi/bomi-mqtt.asyncapi.yaml` — 기계가 읽는 스펙
+3. `../docs/mqtt/topic-convention.md` — 공통 토픽·봉투 규칙
 
-`AsyncApiDocumentationTest.everyDocumentedTopicExistsInTheMarkdownContract` 가 한쪽만 고친
-경우를 잡습니다.
+`AsyncApiDocumentationTest`는 토픽 누락, 내부 참조, 핵심 메시지 예시 존재 여부를
+검사합니다. 필드나 enum의 의미 변경은 세 파일을 함께 리뷰해야 합니다.
 
 ## 4. 정적 스펙을 추가하면 세 곳을 함께 고칩니다
 

@@ -18,9 +18,11 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * Serves the AsyncAPI contract as JSON so the docs page can render it.
  *
  * <p><b>Why a conversion endpoint instead of shipping a second file.</b> The YAML is the
- * single source — hand-edited, commented, and consistent with the OpenAPI specs next to
- * it. Committing a JSON copy alongside it would give us two files to keep in step, which
- * {@code docs/api/README.md} §6 exists to prevent.</p>
+ * single source for the rendered AsyncAPI YAML/JSON pair. Committing a JSON copy alongside
+ * it would give us two representations to keep in step. This statement concerns the rendered
+ * representation only: {@code docs/mqtt/scenario-contract-v1.md} is the precedence source for
+ * scenario message semantics, and the AsyncAPI spec must stay aligned with it. See
+ * {@code docs/api/README.md} §10.</p>
  *
  * <p><b>Why the browser cannot read the YAML directly.</b> Production Nginx sends
  * {@code Content-Security-Policy: script-src 'self'}, so no CDN YAML parser can load, and

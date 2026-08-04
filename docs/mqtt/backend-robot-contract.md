@@ -1,7 +1,8 @@
 # MQTT 로봇 ↔ 백엔드 메시지 계약서
 
+> **대체됨(SUPERSEDED):** 이 문서는 이전 백엔드 가정값을 보존한 문서입니다. 5개 시나리오 메시지의 최종 기준은 [`scenario-contract-v1.md`](./scenario-contract-v1.md)이며, 충돌 시 해당 문서를 따릅니다.
 > 상태: **DRAFT (백엔드 가정값)** — 로봇/IoT 팀 검토·확정 대기
-> 정본 코드 출처: `MqttTopics`, `MqttInboundMessageParser`, `HomecomingContract`, `ObservationContract`, `RobotCommand`
+> 당시 코드 출처: `MqttTopics`, `MqttInboundMessageParser`, `HomecomingContract`, `ObservationContract`, `RobotCommand`
 > 관련 문서: [`topic-convention.md`](./topic-convention.md)
 
 이 문서는 백엔드가 **현재 구현 기준으로 가정한** MQTT 계약입니다. payload 필드 이름·타입 문자열은 아직 로봇/IoT 팀과 공식 합의되지 않았습니다. 각 항목을 검토해 O/X·수정안을 남겨 주세요. 차이가 확정되면 백엔드는 계약소 파일(`HomecomingContract`, `ObservationContract`) 한 곳만 고치면 됩니다.
@@ -165,5 +166,5 @@ Robot NAVIGATION_RESULT ──────▶ BE  (scenarioId echo)   → 완료
 
 ## 9. 변경 관리
 
-- 이 문서가 계약 **정본**입니다. 값이 바뀌면 이 문서를 먼저 갱신하고 버전/일자를 남깁니다.
+- 이 문서는 이전 가정값의 참고 기록입니다. 시나리오 메시지 변경은 [`scenario-contract-v1.md`](./scenario-contract-v1.md)를 먼저 갱신하고 버전/일자를 남깁니다.
 - 백엔드 반영 지점: payload 키는 `HomecomingContract`/`ObservationContract`, 타입 문자열은 각 핸들러·`MqttInboundMessageParser`, 토픽은 `MqttTopics`.
