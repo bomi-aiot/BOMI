@@ -248,7 +248,10 @@ RR_C2 = Pin(7, Pin.IN, Pin.PULL_UP)
 # 바퀴마다 배선 순서가 달라 부호가 뒤집힐 수 있다.
 # 손으로 앞으로 돌렸을 때 카운트가 줄어드는 바퀴가 있으면
 # 그 자리를 -1로 바꾼다. 순서는 LF, LR, RF, RR.
-ENCODER_DIRECTION = [1, 1, 1, 1]
+#
+# 실측 결과(robot/docs/hardware-control.md `## 7`): 전진에서 왼쪽
+# 원본 신호가 음수로 나와 왼쪽을 반전한다.
+ENCODER_DIRECTION = [-1, -1, 1, 1]
 
 # main.py가 걸어둔 IRQ는 Ctrl-C로 중단해도 남는다.
 for encoder_pin in (LF_C1, LR_C1, RF_C1, RR_C1):
