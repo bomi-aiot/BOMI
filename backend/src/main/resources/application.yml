@@ -84,6 +84,25 @@ bomi:
     # 값은 seed-kim-sunja.sql 기준 김순자 UUID.
     sensor-to-senior:
       door_sensor: 10000000-0000-4000-8000-000000000001
+  observation:
+    # 온습도 센서(디바이스 id) → 어르신(UUID) 매핑. IoT가 발행하는
+    # AMBIENT_ENVIRONMENT_OBSERVED의 sourceId를 해당 어르신에게 연결한다.
+    # 이 매핑이 없으면 온습도 이벤트가 기록되지 않는다(미등록 센서는 경고 후 폐기).
+    # 값은 seed-kim-sunja.sql 기준 김순자 UUID.
+    ambient-sensor-to-senior:
+      ambient-sensor-01: 10000000-0000-4000-8000-000000000001
+  medication-reminder:
+    # 복약 알림 창의 뒤쪽 유예(분): 예정 시각 + 이 값까지는 알릴 가치가 있다고 본다.
+    # 창을 넘긴 슬롯은 침묵한다 — 한참 지난 약을 뒤늦게 알리는 것은 혼란이다.
+    # 앞쪽(미리 알림)은 기록별 reminderLeadMinutes 가 담당한다.
+    grace-minutes: ${MEDICATION_GRACE_MINUTES:15}
+  wellness:
+    # 온습도 안부 확인(WELLNESS_CHECK) 임계값. 이 값 이상이면 로봇이 이동해
+    # 안부를 묻는다. 시연 연출(드라이기 등)로 유발 가능한 수준이 기본값.
+    temperature-threshold-c: ${WELLNESS_TEMP_THRESHOLD:30.0}
+    humidity-threshold-percent: ${WELLNESS_HUMIDITY_THRESHOLD:80.0}
+    # 같은 어르신에게 완료 후 재시작 금지 시간(분). 온습도는 연속 신호라 필수.
+    cooldown-minutes: ${WELLNESS_COOLDOWN_MINUTES:30}
   # 의미 검색 벡터 스토어 (S15P11E102-218).
   #
   # host 가 비면 의미 검색이 꺼진 채로 뜬다. 지원되는 상태다 — 기억 조회가

@@ -82,6 +82,19 @@ class RobotObservationServiceTest {
     }
 
     @Test
+    void ambientFromUnmappedSensorIsDroppedWithoutThrowing() {
+        // 예외가 새어 나가면 인바운드 엔드포인트가 ack 를 생략해 브로커가
+        // 같은 메시지를 무한 재전송한다. 미등록 센서는 조용히 폐기해야 한다.
+        ObjectNode body = objectMapper.createObjectNode();
+        body.putObject("payload").put("temperatureC", 31.0);
+
+        service.recordAmbient("unmapped-sensor", body); // must not throw
+
+        verifyNoInteractions(careRecordRepository);
+        verifyNoInteractions(robotRepository);
+    }
+
+    @Test
     void ambientUpdatesRobotSnapshotAndRecordsObservation() {
         Robot robot = Robot.create(seniorId, deviceId);
         when(robotRepository.findBySeniorId(seniorId)).thenReturn(Optional.of(robot));

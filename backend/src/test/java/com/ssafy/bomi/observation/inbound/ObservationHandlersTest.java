@@ -8,12 +8,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.ssafy.bomi.mqtt.inbound.MqttInboundMessage;
 import com.ssafy.bomi.mqtt.topic.MqttInboundCategory;
 import com.ssafy.bomi.observation.application.RobotObservationService;
+import com.ssafy.bomi.scenario.application.WellnessCheckOrchestrator;
 import java.time.OffsetDateTime;
 import org.junit.jupiter.api.Test;
 
 class ObservationHandlersTest {
 
     private final RobotObservationService service = mock(RobotObservationService.class);
+    private final WellnessCheckOrchestrator wellnessOrchestrator = mock(WellnessCheckOrchestrator.class);
 
     private MqttInboundMessage message(MqttInboundCategory category, String type, String sourceId) {
         JsonNode body = null;
@@ -37,7 +39,7 @@ class ObservationHandlersTest {
 
     @Test
     void ambientHandlerSupportsAndDelegates() {
-        AmbientObservedHandler handler = new AmbientObservedHandler(service);
+        AmbientObservedHandler handler = new AmbientObservedHandler(service, wellnessOrchestrator);
 
         MqttInboundMessage msg =
             message(MqttInboundCategory.IOT_EVENT, "AMBIENT_ENVIRONMENT_OBSERVED", "ambient-sensor-01");
@@ -47,6 +49,7 @@ class ObservationHandlersTest {
 
         handler.handle(msg);
         verify(service).recordAmbient("ambient-sensor-01", msg.body());
+        verify(wellnessOrchestrator).onAmbientObserved("ambient-sensor-01", msg.body());
     }
 
     @Test
