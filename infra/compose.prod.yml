@@ -123,6 +123,10 @@ services:
       WELLNESS_COOLDOWN_MINUTES: ${WELLNESS_COOLDOWN_MINUTES:-30}
       # 복약 알림 유예(분). 시연 리허설에서 재배포 없이 조정 가능해야 한다.
       MEDICATION_GRACE_MINUTES: ${MEDICATION_GRACE_MINUTES:-15}
+      # 활성 시나리오 강제 타임아웃(ScenarioTimeoutWatchdog). 대화 핸드오프가 로깅
+      # 스텁이거나 이벤트가 유실됐을 때의 마지막 안전망 — 너무 짧으면 정상적으로
+      # 길어진 대화를 끊으므로, 재배포 없이 현장에서 조정 가능해야 한다.
+      SCENARIO_ACTIVE_TIMEOUT: ${SCENARIO_ACTIVE_TIMEOUT:-20m}
       # 의미 검색 (S15P11E102-218). gRPC 포트다 — 공식 Java 클라이언트가 gRPC 를 쓴다.
       QDRANT_HOST: qdrant
       QDRANT_GRPC_PORT: 6334

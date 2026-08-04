@@ -137,4 +137,50 @@ class MqttInboundMessageParserTest {
             .isInstanceOf(MqttContractViolationException.class)
             .hasMessageContaining("Unsupported MQTT type");
     }
+
+    @Test
+    void acceptsMotionDetectedForIotEvent() {
+        String payload = """
+            {
+              "eventId": "event-motion-01",
+              "type": "MOTION_DETECTED",
+              "occurredAt": "2026-08-04T02:36:55+09:00",
+              "sourceId": "pir",
+              "payload": {}
+            }
+            """;
+
+        MqttInboundMessage message = parser.parse(
+            "bomi/v1/iot/pir/events",
+            payload,
+            1,
+            false
+        );
+
+        assertThat(message.type()).isEqualTo("MOTION_DETECTED");
+        assertThat(message.sourceId()).isEqualTo("pir");
+    }
+
+    @Test
+    void acceptsDoorClosedForIotEvent() {
+        String payload = """
+            {
+              "eventId": "event-door-closed-01",
+              "type": "DOOR_CLOSED",
+              "occurredAt": "2026-08-04T02:37:41+09:00",
+              "sourceId": "door-sensor-01",
+              "payload": {}
+            }
+            """;
+
+        MqttInboundMessage message = parser.parse(
+            "bomi/v1/iot/door-sensor-01/events",
+            payload,
+            1,
+            false
+        );
+
+        assertThat(message.type()).isEqualTo("DOOR_CLOSED");
+    }
+
 }

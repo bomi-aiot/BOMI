@@ -75,4 +75,18 @@ class ScenarioMqttHandlersTest {
             message(MqttInboundCategory.ROBOT_RESULT, "NAVIGATION_RESULT", body, "robot-01"));
         verify(orchestrator).onNavigationFailed(scenarioId);
     }
+
+    @Test
+    void doorClosedHandlerAcceptsAndDoesNotThrow() {
+        DoorClosedHandler handler = new DoorClosedHandler();
+
+        MqttInboundMessage doorClosed =
+            message(MqttInboundCategory.IOT_EVENT, "DOOR_CLOSED", null, "door-sensor-01");
+        assertThat(handler.supports(doorClosed)).isTrue();
+        assertThat(handler.supports(
+            message(MqttInboundCategory.IOT_EVENT, "DOOR_OPENED", null, "door-sensor-01"))).isFalse();
+
+        handler.handle(doorClosed); // no side effects to verify; must simply not throw
+    }
+
 }
