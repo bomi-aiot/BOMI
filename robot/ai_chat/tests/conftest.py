@@ -50,6 +50,7 @@ SETTING_VARIABLES = (
     "BACKEND_SHARED_SECRET",
     "ROBOT_ID",
     "T3_CONSENT_ENABLED",
+    "EXTRACTION_ENABLED",
     # 개발자 .env 의 MQTT 설정이 테스트로 새면, 브로커에 실제로 붙으려 하거나
     # 비활성 기본값을 검증하는 테스트가 머신마다 다른 결과를 낸다.
     "MQTT_ENABLED",

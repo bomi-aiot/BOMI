@@ -318,6 +318,59 @@ CREATE INDEX IF NOT EXISTS idx_consent_request_senior
 """
 
 
+# 대화에서 뽑아낼 '사실 추출' 대기열 (S15P11E102-255).
+#
+# 어디서 채워지고 어디서 비워지는가
+#   graph/build.memory_write 가 반응형 턴이 끝날 때마다(스킵 조건을 통과하면)
+#   한 행을 남긴다. LLM 호출은 여기서 하지 않는다 — jobs/ticks.extraction_flush
+#   가 턴 밖에서 이 표를 읽어 뽑고, backend_client/fact_client 로 제출한 뒤에만
+#   extracted = 1 로 표시한다.
+#
+# 왜 conversation_id / source_message_id 가 nullable 인가
+#   서버가 이번 턴의 대화·메시지 id 를 못 돌려준 경우(오프라인, 일시 장애)가
+#   있다. memory_write 는 그 경우 애초에 큐잉하지 않지만(sourceMessageId 없이
+#   넣으면 백엔드의 FactCandidate.fromConversationMessage 가 항상 거절한다),
+#   표 자체는 두 값이 비어 있는 행을 받아들일 수 있어야 한다 — 그래야 이후
+#   호출부가 바뀌어도(예: 로봇이 스스로 판단해 넣는 경로가 생겨도) 스키마를
+#   다시 손대지 않는다.
+#
+# 왜 발화 원문(content)을 그대로 담는가
+#   emotional_signal 과 다르다. 저 표는 "정서 발화가 있었다"는 사실만 있으면
+#   되지만, 이 표는 LLM 이 나중에(flush 시점에) 실제로 무엇을 뽑을지 다시
+#   읽어야 하므로 원문이 필요하다. 대신 이 표는 처리되고 나면(extracted=1)
+#   더 이상 아무도 읽지 않는 죽은 행이 된다 — 원문을 영구 보관하는 표가 아니다.
+#
+# preceding_robot_utterance 가 왜 필요한가
+#   "요즘 손자가 자주 놀러 와요"만 보면 자연스러운 문장이지만, 로봇이 방금
+#   "요즘 가족들은 잘 지내세요?"라고 물었다는 맥락이 있어야 추출 프롬프트가
+#   무엇에 대한 답인지 안다. 이 값이 없으면 LLM 이 맥락 없는 한 문장만 보고
+#   추측하게 된다.
+_EXTRACTION_JOB = """
+CREATE TABLE IF NOT EXISTS extraction_job (
+    id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+    senior_id                 TEXT    NOT NULL,
+    conversation_id           TEXT,
+    source_message_id         TEXT,
+    content                   TEXT    NOT NULL,
+    preceding_robot_utterance TEXT    NOT NULL DEFAULT '',
+    -- 0 = 아직 flush 가 처리하지 않았다. 1 = 처리 완료(뽑을 것이 없었거나,
+    -- 뽑아서 백엔드 제출까지 성공했다). 제출에 실패하면 0 인 채로 남아
+    -- 다음 flush 가 다시 시도한다 (jobs/ticks.extraction_flush 참고).
+    extracted                 INTEGER NOT NULL DEFAULT 0,
+    created_at                REAL    NOT NULL
+)
+"""
+
+# flush 는 "아직 처리 안 된" 행만, 오래된 순으로 찾는다. outbox 와 같은 이유로
+# 부분 인덱스를 쓴다 — 대부분의 행은 곧 extracted=1 이 되므로 대기 중인 것만
+# 색인하는 편이 표가 커져도 조회가 느려지지 않는다.
+_EXTRACTION_JOB_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_extraction_job_pending
+    ON extraction_job (created_at)
+    WHERE extracted = 0
+"""
+
+
 def init_runtime(connection: sqlite3.Connection) -> None:
     """운영 상태 DB 의 표를 만든다. 멱등하다."""
     connection.execute(_RUNTIME_STATE)
@@ -336,6 +389,8 @@ def init_runtime(connection: sqlite3.Connection) -> None:
     connection.execute(_EMOTIONAL_SIGNAL_INDEX)
     connection.execute(_CONSENT_REQUEST)
     connection.execute(_CONSENT_REQUEST_INDEX)
+    connection.execute(_EXTRACTION_JOB)
+    connection.execute(_EXTRACTION_JOB_INDEX)
 
 
 def _add_missing_columns(

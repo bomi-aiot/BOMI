@@ -234,6 +234,17 @@ class Settings:
     #   남는 편이 안전하다.
     t3_consent_enabled: bool
 
+    # 사실 추출 기능의 운영 킬스위치 (S15P11E102-255).
+    #
+    # policy.EXTRACTION_ENABLED 와 무엇이 다른가
+    #   t3_consent_enabled 와 같은 구도다. policy 쪽은 '제품 판단'(코드 상수)이고,
+    #   이 값은 '오늘 당장 끄고 싶다'는 운영 판단이다. LLM 비용이 튀거나 잘못된
+    #   사실 후보가 쏟아진다는 신고가 들어왔을 때, 코드를 고치고 재배포할 시간이
+    #   없어도 이 환경변수 하나로 그날 안에 끌 수 있어야 한다. graph/build.py 의
+    #   큐잉과 jobs/ticks.extraction_flush 둘 다 이 값과 policy 값을 모두 확인하고,
+    #   둘 중 하나라도 꺼지면 아무것도 하지 않는다.
+    extraction_enabled: bool
+
     # ── MQTT: 현관 이벤트 구독  (CLAUDE.md §11, docs/mqtt/topic-convention.md) ──
     #
     # 왜 URL 한 개로 받는가
@@ -403,6 +414,7 @@ class Settings:
             senior_id=_optional_env("SENIOR_ID"),
             use_graph_runtime=_bool_env("USE_GRAPH_RUNTIME", True),
             t3_consent_enabled=_bool_env("T3_CONSENT_ENABLED", True),
+            extraction_enabled=_bool_env("EXTRACTION_ENABLED", True),
             mqtt_enabled=_bool_env("MQTT_ENABLED", False),
             mqtt_broker_url=_optional_env("MQTT_BROKER_URL", "") or "",
             mqtt_door_topic=(

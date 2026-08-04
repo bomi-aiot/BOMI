@@ -126,6 +126,18 @@ def build_scheduler(senior_id: str, app=None):
         coalesce=True,
         max_instances=1,
     )
+    scheduler.add_job(
+        # 사실 추출도 급하지 않다 (S15P11E102-255). 어제 나눈 이야기가 오늘
+        # 기억이 되어도 문제 없고, 이 틱마다 LLM 호출이 최대
+        # policy.EXTRACTION_FLUSH_BATCH_SIZE 번 붙으므로 침묵 틱(60초)만큼
+        # 자주 돌릴 이유가 없다.
+        _guard(ticks.extraction_flush, senior_id),
+        "interval",
+        seconds=policy.EXTRACTION_FLUSH_INTERVAL_SEC,
+        id="extraction_flush",
+        coalesce=True,
+        max_instances=1,
+    )
 
     logger.info(
         "scheduler built: silence/door=%ds outbox=%ds",
@@ -194,6 +206,7 @@ def run_all_ticks_once(senior_id: str, app=None) -> None:
     _guard(ticks.schedule_tick, senior_id)()
     _guard(_contract_tick_job, senior_id)()
     _guard(ticks.consent_tick, senior_id)()
+    _guard(ticks.extraction_flush, senior_id)()
     for tick in (ticks.silence_tick, ticks.door_watch_tick):
         _guard(tick, senior_id, app)()
     _guard(ticks.outbox_flush)()

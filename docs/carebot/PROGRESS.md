@@ -869,6 +869,32 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 
 미검증: 실기(Jetson) 전체. `emotion.is_conversation_sealed`·`consent_tick` 의 자연스러운 창 판정은 자동 테스트로만 확인했고, 실제 발화 리듬에서 문턱(3회)이 적절한지는 실사용 데이터로 튜닝해야 합니다.
 
+### 255 — 사실 추출 큐 (로봇 절반) ✅ (BE 절반은 별도 티켓, 실기 미실시)
+
+| 완료 조건 | 결과 |
+|---|---|
+| "요즘 손자가 자주 놀러 와요" 발화 뒤 큐에 대기 행 1건, 그 턴의 생성 호출은 여전히 1회 | ✅ (`test_turn_end_to_end.py::test_a_memorable_utterance_queues_one_extraction_job_without_extra_llm_calls`) |
+| 큐를 비우면 사실 후보 1행·기억 1행이 생기고, "본인만 보기·자동 저장"으로 표시된다 | ⏸️ 백엔드 책임(255-be). 로봇 쪽은 `fact-candidates` 로 제출까지만 검증(`test_extraction_flush.py`) |
+| "이제 아침 약 안 먹어" 류는 자동 저장 안 되고 보호자 확인 대기로 남는다 | ⏸️ 백엔드의 위험도 분류(factType→targetDomain 화이트리스트) 책임. 로봇은 factType 을 붙여 그대로 실어 보낼 뿐 판정하지 않음 |
+| 동의 거부·회피 대상·허용 목록 밖 내용은 저장되지 않는다 | ⏸️ 동의·회피 목록은 백엔드 책임. 로봇 쪽 "회피"는 계약 대화 진행 중 스킵·봉인된 대화 스킵으로 한정(§ 아래) |
+| "본인만 보기" 기억이 보호자 화면에 노출되지 않고, 응급 응답이 저장 작업을 기다리지 않는다 | 앞절 백엔드 책임 / 뒷절 ✅ (`test_graph_build.py::test_emit_runs_before_memory_write`, `test_turn_end_to_end.py::test_speaking_starts_before_the_blocking_conversation_record_call`) |
+| 마이그레이션 검증 테스트 통과 | 해당 없음(로봇 절반에는 마이그레이션이 없음) |
+| 로봇 테스트 전체·lint 통과 | ✅ (`620 passed`, ruff 0 오류) |
+
+**무엇을 만들었는가.** `localstore/extraction.py`(신규) + `schema.py` 의 `extraction_job` 표(conversation_id/source_message_id nullable, content, preceding_robot_utterance, extracted)가 큐다. `graph/build.py.memory_write` 가 `_enqueue_extraction` 으로 반응형 턴마다(스킵 조건을 다 통과하면) LLM 없이 한 행만 남기고, `jobs/ticks.extraction_flush`(신규, `EXTRACTION_FLUSH_INTERVAL_SEC` = 계약 틱과 같은 10분 주기)가 턴 밖에서 이 행을 읽어 `prompts.build_memory_extraction_prompt`(신규 템플릿 `memory_extract.md`, `contract_extract.md` 의 금지 규칙을 계승)로 생성 호출을 한 뒤, `backend_client/fact_client.py`(신규)의 `BackendFactClient.submit_fact_candidates` 로 `POST /api/v1/robot/fact-candidates` 에 제출합니다.
+
+**일곱 번째 스킵 조건 — 티켓에 없던 것을 추가했습니다.** 티켓 본문은 여섯 가지(킬스위치·능동턴·T1·onboarding/clarification·6자 미만·봉인)만 요구했지만, 서버의 `FactCandidate.fromConversationMessage` 가 `sourceMessageId` 를 `requireNonNull` 로 강제한다는 티켓 자신의 각주를 따라, **메시지 id 를 서버가 못 돌려준 턴은 애초에 큐잉하지 않습니다**(`graph/build.py._enqueue_extraction`). 이 표에는 재시도 횟수 컬럼이 없어서, id 없이 큐잉하면 그 행은 매 flush 마다 조용히 같은 400 을 반복해서 받습니다 — outbox 처럼 `GAVE_UP` 으로 포기할 수단도 없습니다. 발화량 지표가 유실돼도 되는 것과 같은 판단(`_record_turn` 의 `(None, None)` 경로)으로, 이 손실을 감수하는 편을 택했습니다.
+
+**엣지 재배선 — `response_shaper → emit → memory_write → END`.** 티켓이 지정한 대로, 기존 `response_shaper → memory_write → emit` 순서를 뒤집었습니다. `memory_write` 는 `conversation_client.record_turn` 을 블로킹 HTTP 로 부르는데(`backend_timeout_seconds` 만큼, 기본값 기준 최대 몇 초), 이게 `emit`(비블로킹 TTS 시작) 앞에 있으면 T1 확인 응답조차 재생 시작 전에 그 호출을 기다립니다. `test_graph_build.py::test_emit_runs_before_memory_write` 로 배선 자체를, `test_turn_end_to_end.py::test_speaking_starts_before_the_blocking_conversation_record_call` 로 실제 호출 순서(재생 시작이 `record_turn` 보다 먼저)를 검증했습니다.
+
+**킬스위치 둘 — T3 패턴 그대로.** `policy.EXTRACTION_ENABLED`(코드 상수, 기본 켜짐) + `config.py` 의 `EXTRACTION_ENABLED` 환경변수(운영 비상구). `_enqueue_extraction` 과 `extraction_flush` 둘 다 확인하고, 하나라도 꺼지면 아무것도 하지 않습니다. `.env.example` 에도 추가했습니다(`test_project_contract.py::test_env_example_covers_every_runtime_setting` 가 문서·코드 불일치를 잡아냈습니다).
+
+**백엔드 계약과 교차 확인이 필요합니다 — 미검증.** `POST /api/v1/robot/fact-candidates` 의 정확한 요청·응답 필드명은 255-be 쪽 구현이 이 시점에 확정돼 있지 않아, CLAUDE.md §12 의 계약 형태(`seniorId`/`conversationId`/`sourceMessageId`)를 따라 합리적으로 추정했습니다(`{"seniorId", "conversationId", "sourceMessageId", "facts": [{"factType", "content"}]}`). `factType` 값 목록(FAMILY/HOBBY/DAILY_LIFE/HEALTH/OTHER)도 백엔드의 `factType→targetDomain` 화이트리스트와 이름이 맞는지 확인되지 않았습니다. 255-be 가 먼저 배포돼야 하고(티켓 본문의 "배포 순서는 백엔드 → 로봇" 경고), 배포 후 실제 계약과 맞춰야 합니다.
+
+**253 의 `is_conversation_sealed` 스텁을 그대로 소비했습니다.** `emotion.is_conversation_sealed` 는 253 시점 그대로이고(하드 블로커 아님, 티켓 본문의 명시적 지시), 이 값이 어긋나 있으면 "봉인된 대화에서 큐 미적재" 조건은 실질 검증되지 않습니다 — 253 의 PROGRESS 절과 같은 미검증 범위입니다.
+
+미검증: 실기(Jetson) 전체. 실제 백엔드 엔드포인트에 대고 제출해 본 적이 없고, LLM 이 실제로 무엇을 "기억할 만하다"고 고르는지도 대역 LLM 으로만 확인했습니다.
+
 ---
 
 ## 7. 갱신 이력
@@ -890,6 +916,7 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 | 256 푸시 후 | **표현 다양성 배선.** 있던 자리(프롬프트 빌더, `state.recent_phrasings`, `RECENT_PHRASING_LOOKBACK`)를 채우는 코드가 없어 조용히 꺼져 있던 것을 배선했다. `graph/phrasing.phrasing_key`(순수 함수), `localstore/phrasings.py`(기록/조회/정리), `spoken_phrasing` 표를 신설했다. `memory_write`가 기록, `context_read`가 조회하며 `trigger_type` 가드로 반응형 턴에 새지 않게 했다. 침묵 프로브·T3 동의 질문은 `policy.RECENT_PHRASING_EXCLUDED_ORIGIN_PREFIXES` 로 제외. `test_naturalness_replay.py`의 우회 헬퍼(`_run_with_phrasings`)를 걷어내고 시나리오 08 이 실제 게이트 경로를 타도록 다시 썼다. |
 | 253 푸시 후 | **정서 동의 지연 완성.** 263 의 즉시-큐잉을 걷어내고 누적 문턱(`localstore/emotion.py`, `jobs/ticks.consent_tick`)으로 바꿨다. `ConvState.pending_consent` + `localstore/consent.py` 로 "응"/"아니" 답을 규칙 판정하고 GRANTED 만 outbox 로 보낸다. "우리끼리 얘기" 봉인, 두 개의 킬스위치, `_generate` 의 `build_prompt` try 누락 수정, 온보딩 대기 중 정서 표현이 필드값으로 삼켜지던 결함도 함께 고쳤다. 상위 동의 확인은 BE 별도 티켓으로 남김 |
 | 309 푸시 후 | **검증 문서 4종 + CLAUDE.md §20 정합.** `VERIFICATION.md` §3 에서 이미 머지된 263·226·218·227·232 를 참조하던 항목을 걷어냈다(263/232/226/227 은 표에서 삭제, 218 은 "완료됐지만 기본값이 꺼짐"으로 정정). §0 에 백엔드 명령이 `be-develop` 전용이라는 전제를 추가하고 각 백엔드 절에 표시를 붙였다. 존재하지 않던 테스트 이름(`test_sim_clock_compresses_a_day_into_ten_seconds`)을 실제 이름으로 고쳤다. `V1~V5` 하드코딩을 `FlywayMigrationValidationTest` 자기참조로 바꿨다. `READING-ORDER.md` 에 `mvp-erd.md` 가 `be-develop` 전용이라는 것, `bootstrap.py` 와 232 이후 신규 모듈들을 추가했다. `CLAUDE.md` §20 의 "아직 없음" 구분선을 지우고 실제 트리로 승격했다. 저장소 루트의 일회성 인계 문서를 지우고 6곳의 참조를 `docs/carebot/PROGRESS.md §2.2` 로 옮겼다(스프린트 경위·선행조건 순서·자해 목록 검토 요구사항의 유래는 §8 로 보존). |
+| 255 푸시 후 | **사실 추출 큐 (로봇 절반).** `localstore/extraction.py` + `extraction_job` 표를 신설해 `memory_write` 가 반응형 턴마다(스킵 조건 7가지를 통과하면) LLM 없이 큐잉만 하고, `jobs/ticks.extraction_flush`(신규 틱, 양쪽 스케줄러 경로에 등록)가 턴 밖에서 생성 호출로 사실을 뽑아 `backend_client/fact_client.py`(신규, 실패 시 예외를 올려 conversation_client 와 반대 방향)로 제출한다. 티켓의 여섯 스킵 조건에 "서버가 메시지 id 를 못 돌려준 턴은 큐잉하지 않는다"를 추가로 넣었다(재시도 횟수 컬럼이 없어 영구 실패 행이 조용히 쌓이는 것을 막기 위해). `response_shaper → memory_write → emit` 이던 엣지를 `response_shaper → emit → memory_write` 로 재배선해, 블로킹 대화 적재 호출이 TTS 시작을 더 이상 막지 않게 했다. 백엔드 `POST /api/v1/robot/fact-candidates` 의 정확한 페이로드는 255-be 미확정 상태에서 추정했다 — 교차 확인 필요. |
 
 ---
 

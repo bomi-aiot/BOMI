@@ -305,6 +305,103 @@ def test_record_turn_returns_a_message_id_for_the_senior_row(wired):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 사실 추출 큐잉 (S15P11E102-255)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_a_memorable_utterance_queues_one_extraction_job_without_extra_llm_calls(wired):
+    """(완료 조건) "요즘 손자가 자주 놀러 와요" 뒤 큐에 1행, 생성 호출은 여전히 1회.
+
+    큐잉(graph/build.py._enqueue_extraction)은 LLM 을 부르지 않는다 — 실제
+    추출은 jobs/ticks.extraction_flush 가 턴 밖에서 한다(CLAUDE.md §16).
+    """
+    from bomi_ai_chat.localstore import extraction
+
+    app, _client, llm, _player = wired
+
+    run_user_turn(app, SENIOR, "요즘 손자가 자주 놀러 와요")
+
+    assert llm.calls == 1
+    assert extraction.pending_count(SENIOR) == 1
+    assert extraction.pending()[0]["content"] == "요즘 손자가 자주 놀러 와요"
+
+
+def test_a_short_backchannel_like_reply_does_not_queue_an_extraction_job(wired):
+    from bomi_ai_chat.localstore import extraction
+
+    app, _client, _llm, _player = wired
+
+    run_user_turn(app, SENIOR, "네")
+
+    assert extraction.pending_count(SENIOR) == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# emit 이 memory_write 의 블로킹 호출보다 먼저 일어난다 (S15P11E102-255)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class OrderTrackingConversationClient(FakeConversationClient):
+    """record_turn 호출 순서를 공유 리스트에 남기는 대역."""
+
+    def __init__(self, events: list[str]):
+        super().__init__()
+        self._events = events
+
+    def record_turn(self, senior_id, **fields):
+        self._events.append(f"record:{fields.get('role')}")
+        return super().record_turn(senior_id, **fields)
+
+
+class OrderTrackingPlayer(FakePlayer):
+    """speak_async 호출 순서를 공유 리스트에 남기는 대역."""
+
+    def __init__(self, events: list[str]):
+        super().__init__()
+        self._events = events
+
+    def speak_async(self, sentences):
+        self._events.append("speak")
+        return super().speak_async(sentences)
+
+
+def test_speaking_starts_before_the_blocking_conversation_record_call(
+    monkeypatch, tmp_path,
+):
+    """(완료 조건) 재생 시작이 대화 적재(블로킹 HTTP)보다 먼저 일어난다.
+
+    순서가 뒤집혀 있으면 T1 확인 응답조차 record_turn 의 HTTP 왕복을 다 기다린
+    뒤에야 말하기 시작한다 — 응급 응답이 통계성 기록 뒤에 줄을 서는 것과 같다
+    (graph/build.py 의 엣지 재배선 참고).
+    """
+    monkeypatch.setenv("LOCALSTORE_DIR", str(tmp_path / "localstore"))
+    db.close_all()
+
+    events: list[str] = []
+    client = FakeContextClient()
+    llm = FakeLLM()
+    player = OrderTrackingPlayer(events)
+    conversations = OrderTrackingConversationClient(events)
+    context_node.set_client(client)
+    handlers.set_llm(llm)
+    output.set_player(player)
+    build.set_conversation_client(conversations)
+
+    app = build_graph(checkpoint_path=str(tmp_path / "checkpoint.sqlite"))
+    try:
+        run_user_turn(app, SENIOR, "무릎이 아파")
+    finally:
+        context_node.set_client(None)
+        handlers.set_llm(None)
+        output.set_player(None)
+        build.set_conversation_client(None)
+        db.close_all()
+
+    assert "speak" in events
+    assert events.index("speak") < events.index("record:ROBOT")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 날씨·의료 조회 — context_read 에서 그래프를 태워 확인한다 (S15P11E102-311)
 #
 # 이 절만 build_prompt() 를 직접 부르지 않고 app.invoke 로 전체 그래프를
