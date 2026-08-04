@@ -148,3 +148,16 @@ bomi:
     qos: 1
     connection-timeout: 10s
     completion-timeout: 5s
+
+  # 로봇 채널 인증 (S15P11E102-307).
+  #
+  # 지금 이 API 들에는 인증이 전혀 없어서 익명 호출자가 어르신의 이름·복약
+  # 스케줄·회피 주제(CLAUDE.md §8)를 읽거나 가짜 T1 보호자 알림(CLAUDE.md §9)을
+  # 만들 수 있다. RobotChannelAuthFilter 가 /api/v1/robot/**, /api/v1/seniors/**
+  # 를 이 값과 비교한다.
+  #
+  # ★ 기본값은 빈 문자열이고, 비어 있으면 필터가 아무것도 막지 않는다 —
+  #   embedding 과 같은 이유다: 로컬 개발과 기존 테스트가 이 값 없이도 그대로
+  #   통과해야 한다. 배포에서 실제 값을 채우는 것은 별도 결정이다.
+  robot-channel:
+    shared-secret: ${ROBOT_SHARED_SECRET:}
