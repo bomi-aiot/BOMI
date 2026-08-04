@@ -65,6 +65,36 @@ def install_runtime_stubs(monkeypatch, *, once_succeeded=True):
         router_module,
     )
 
+    # 웨이크워드 감지기도 같은 이유로 대역이다 (S15P11E102-222 가 붙인 경로).
+    #
+    # 왜 필요한가
+    #   WAKEWORD_ENABLED 의 기본값이 True 라서(config.py) main 은 legacy 경로에서
+    #   항상 WakeWordDetector 를 만들고 warm_up() 으로 모델을 미리 올린다. 그
+    #   warm_up 은 openwakeword 를 import 하고 없으면 내려받는다 — 단위 테스트가
+    #   무거운 패키지와 네트워크에 의존하게 된다. 라우터를 대역으로 바꾼 것과
+    #   똑같은 판단이다.
+    # 이 대역은 calls 에 기록하지 않는다. 기존 테스트들이 calls 를 파이프라인
+    # 호출 순서(init → run_once/run)로 단언하고 있어서, 여기에 한 줄을 끼우면
+    # 웨이크워드와 무관한 다섯 건이 한꺼번에 깨진다.
+    wakeword_module = ModuleType("bomi_ai_chat.audio_io.wakeword")
+
+    class WakeWordDetector:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def warm_up(self):
+            pass
+
+        def wait_for_wake(self):
+            pass
+
+    wakeword_module.WakeWordDetector = WakeWordDetector
+    monkeypatch.setitem(
+        sys.modules,
+        "bomi_ai_chat.audio_io.wakeword",
+        wakeword_module,
+    )
+
     monkeypatch.setitem(
         sys.modules,
         "bomi_ai_chat.audio_io.laptop",
