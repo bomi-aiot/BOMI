@@ -247,69 +247,169 @@ def run_conversation_loop(
     settings: Settings | None = None,
     *,
     max_turns: int | None = None,
+    wake=None,
+    audio_out=None,
 ) -> int:
-    """캡처 -> STT -> 그래프 를 반복한다.
+    """캡처 -> STT -> 그래프 를 반복한다. (웨이크워드가 있으면 대화 단위로 묶는다.)
 
     ★ 옛 ConversationPipeline 과 무엇이 다른가
         저쪽은 LLM 을 직접 부르고 응답을 바로 재생한다. 여기는 그래프에 태운다 —
         그래서 트리아지가 생성보다 위에 있고, 능동 발화가 게이트를 거치고, 모든
-        출력이 정제기를 통과한다.
+        출력이 정제기를 통과한다. 기억(context_read/memory_write)도 run_user_turn 안이다.
+
+    웨이크워드 (wake 가 주어지면)
+        매 발화가 아니라 '대화 단위'로 동작한다: "보미야"를 기다렸다가, "저를
+        부르셨나요?"로 먼저 응답하고, 그 대화 안에서는 재호출 없이 여러 발화를 이어
+        처리한다. 15초 무응답 또는 마무리 언급이면 대화를 끝내고 다시 "보미야"를
+        기다린다. wake 가 None 이면 예전처럼 매 발화를 그냥 처리한다(팀원 기본 동작).
+
+    호출 응답은 왜 audio_out 으로 직접 재생하나
+        그래프의 응답 출력(emit)은 barge-in 위해 논블로킹이다. "저를 부르셨나요?"를
+        그걸로 내보내면 인사와 녹음이 겹친다. 그래서 audio_out.play 로 '블로킹' 재생해
+        인사가 끝난 뒤에 듣기 시작한다.
 
     누가 호출하는가
         main.py. 테스트는 max_turns 로 횟수를 묶는다.
 
-    반환값
-        처리한 턴 수.
-
     주의사항
         - 한 턴의 실패가 루프를 죽이지 않는다. run_user_turn 이 이미 예외를 삼키지만,
-          캡처와 STT 는 그 밖이라 여기서 감싼다. 로봇이 멈추면 어르신은 고장 난
-          기계 앞에 남는다.
-        - 재생 완료를 기다리지 않는다. 기다리면 barge-in 이 원리적으로 불가능해진다
-          (CLAUDE.md §13).
+          캡처와 STT 는 그 밖이라 여기서 감싼다.
+        - 대화 턴 응답 재생은 기다리지 않는다(barge-in 유지). 다만 그로 인해 다음
+          리슨이 로봇 목소리를 잡는 에코 겹침은 실기에서 EchoGuard 를 캡처에 연결해
+          다룬다(현재는 미연결 — docs/hardware 확인 항목).
     """
     from bomi_ai_chat.graph.turn import run_user_turn
     from bomi_ai_chat.stt.client import STTClient
 
     settings = settings or get_settings()
     stt = STTClient(settings)
+
+    # 호출 응답("저를 부르셨나요?") 재생용 TTS. 웨이크워드 + 출력이 있을 때만 만든다.
+    tts = None
+    if wake is not None and audio_out is not None:
+        from bomi_ai_chat.tts.client import TTSClient
+        tts = TTSClient(settings)
+
     turns = 0
     logger.info("conversation loop started (graph path)")
 
     while max_turns is None or turns < max_turns:
         try:
-            text, duration = _listen(audio_in, stt)
+            if wake is not None:
+                # "보미야" 대기. 대기 중 Ctrl+C = 프로그램 종료(아래 except 로 나감).
+                wake.wait_for_wake()
+                _speak_ack(tts, audio_out)          # "저를 부르셨나요?" (블로킹)
+                turns = _run_graph_conversation(runtime, audio_in, stt, turns, max_turns)
+            else:
+                # 웨이크워드 없음(팀원 기본): 매 발화를 그냥 처리한다.
+                text, duration, _ = _listen(audio_in, stt)
+                if not text:
+                    continue
+                run_user_turn(
+                    runtime.app, runtime.senior_id, text, duration_sec=duration
+                )
+                turns += 1
         except KeyboardInterrupt:
             logger.info("conversation loop stopped by user after %d turns", turns)
             break
         except Exception:  # noqa: BLE001 - 한 번의 수음 실패가 루프를 죽이면 안 된다
-            logger.exception("could not capture or transcribe; waiting for the next turn")
+            logger.exception("turn failed; continuing")
             continue
 
+    return turns
+
+
+def _speak_ack(tts, audio_out) -> None:
+    """호출 응답("저를 부르셨나요?")을 블로킹으로 재생한다(없으면 조용히 넘어감).
+
+    실패해도 대화를 막지 않는다 — 인사는 곁가지다. 재생이 블로킹이므로 이 함수가
+    끝난 뒤에 녹음이 시작된다.
+    """
+    if tts is None or audio_out is None:
+        return
+    from bomi_ai_chat import conversation_control
+
+    try:
+        audio_out.play(tts.synthesize(conversation_control.WAKE_ACK_MESSAGE))
+    except Exception:  # noqa: BLE001 - 호출 응답 실패가 대화를 막으면 안 된다
+        logger.exception("failed to speak wake ack")
+
+
+def _run_graph_conversation(runtime, audio_in, stt, turns: int, max_turns) -> int:
+    """'보미야'로 시작된 하나의 대화를 여러 발화로 이어간다(그래프 경로).
+
+    종료 (세 가지)
+        1) 무응답: 단일 15초 리슨(_listen 의 onset 타임아웃)으로 발화 시작을 기다린다.
+           없으면 로봇은 아무 말도 하지 않고 조용히 대화를 끝낸다.
+        2) 마무리 언급: is_farewell 이면 그 발화를 그래프로 처리(응답)한 뒤 끝낸다.
+        3) Ctrl+C: 대화만 끝내고 바깥 루프가 다시 "보미야"를 기다린다(프로그램 종료 아님).
+
+    각 발화는 run_user_turn 으로 그래프에 태운다 -> context_read(기억 조회) +
+    memory_write(대화 저장)가 여기서 돈다.
+    """
+    from bomi_ai_chat import conversation_control, policy
+    from bomi_ai_chat.graph.turn import run_user_turn
+
+    print("[대화 시작] 말씀하세요. ('보미야' 다시 부를 필요 없음)")
+    while max_turns is None or turns < max_turns:
+        try:
+            text, duration, no_speech = _listen(
+                audio_in, stt,
+                onset_timeout_seconds=policy.CONVERSATION_IDLE_TIMEOUT_SEC,
+            )
+        except KeyboardInterrupt:
+            print("[대화 종료] 다시 '보미야'로 부르면 새 대화를 시작합니다.")
+            break
+
+        if no_speech:
+            logger.info(
+                "conversation ended: no speech within %ss",
+                policy.CONVERSATION_IDLE_TIMEOUT_SEC,
+            )
+            print("[대화 종료] 무응답으로 종료. 다시 '보미야'로 부르면 새 대화.")
+            break
+
         if not text:
-            # 조용한 구간이거나 인식되지 않았다. 되묻지 않는다 — 아무 말도 안 한
-            # 사람에게 "네?"라고 하는 로봇은 성가시다.
+            # 발화는 있었으나 못 알아들었다. 되묻지 않고 다음 리슨으로 넘어간다.
             continue
 
         run_user_turn(runtime.app, runtime.senior_id, text, duration_sec=duration)
         turns += 1
 
+        if conversation_control.is_farewell(text):
+            logger.info("conversation ended: farewell detected")
+            print("[대화 종료] 마무리 언급 감지. 다시 '보미야'로 부르면 새 대화.")
+            break
+
     return turns
 
 
-def _listen(audio_in, stt) -> tuple[str, float]:
-    """한 번 수음해서 텍스트와 길이를 돌려준다.
+def _listen(
+    audio_in, stt, onset_timeout_seconds: float | None = None
+) -> tuple[str, float, bool]:
+    """한 번 수음해서 (텍스트, 길이, 무응답여부)를 돌려준다.
 
     길이를 함께 돌려주는 이유
         맞장구("응")와 진짜 끼어들기를 구분하는 데 필요하다. 텍스트만으로는
         부족하다 — "네"는 질문에 대한 진짜 대답일 수도 있다 (CLAUDE.md §13).
+
+    onset_timeout_seconds (단일 리슨)
+        값을 주면 capture 가 '발화 시작'을 그 시간까지 기다린다. 그 안에 아무 말도
+        없으면 capture 가 빈 바이트를 주고, 여기서 no_speech=True 로 알린다. 대화
+        세션의 '무응답 종료'가 이걸 쓴다. None 이면 기존 동작(첫 순간부터 녹음).
+
+    반환값
+        (text, duration, no_speech)
+        - no_speech=True : onset 타임아웃 동안 발화 자체가 없었다(무응답).
+        - text="" & no_speech=False : 발화는 있었으나 STT 가 못 알아들었다.
     """
     from bomi_ai_chat.clock import clock
 
     started = clock.now()
-    audio = audio_in.capture()
+    audio = audio_in.capture(onset_timeout_seconds=onset_timeout_seconds)
     if not isinstance(audio, bytes) or not audio:
-        return "", 0.0
+        # capture 가 빈 바이트 -> onset 모드면 '무응답', 일반 모드면 그냥 빈 수음.
+        return "", 0.0, onset_timeout_seconds is not None
 
     text = (stt.transcribe(audio) or "").strip()
-    return text, max(0.0, clock.now() - started)
+    return text, max(0.0, clock.now() - started), False
