@@ -151,6 +151,11 @@ services:
       EMBEDDING_SYNC_ENABLED: ${EMBEDDING_SYNC_ENABLED:-false}
       # 한 실행에 과금되는 호출 수의 상한. 잔액이 작으므로 재배포 없이 줄일 수 있어야 한다.
       EMBEDDING_SYNC_BATCH_SIZE: ${EMBEDDING_SYNC_BATCH_SIZE:-30}
+      # 로봇 채널 인증 공유 비밀키 (S15P11E102-307). 비어 있으면 필터가 전부
+      # 통과시킨다 — 실제 값을 정하는 것은 별도 배포 결정이고 이 티켓의 범위 밖이다.
+      # 여기 넘기지 않으면 production.env 에 값을 적어도 컨테이너에 도달하지
+      # 않는다(EMBEDDING_ENABLED 가 겪은 것과 같은 실패 모양, S15P11E102-218).
+      ROBOT_SHARED_SECRET: ${ROBOT_SHARED_SECRET:-}
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:8080/actuator/health"]
       interval: 10s
