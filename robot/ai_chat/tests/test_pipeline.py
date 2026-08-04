@@ -15,11 +15,44 @@ from bomi_ai_chat.pipeline import (
 )
 
 
+class AudioSequenceExhausted(BaseException):
+    """대역의 녹음 결과가 동나면 던진다. 일부러 Exception 이 아니라 BaseException 이다.
+
+    왜 BaseException 인가
+        pipeline._run_once_inner 는 capture 실패를 `except Exception` 으로 삼키고
+        루프를 계속 돈다(단계 하나가 실패해도 로봇이 멈추면 안 되기 때문이다).
+        대역이 평범한 예외를 던지면 그 관용이 '무한 반복'으로 바뀌어, 테스트가
+        실패하지 않고 그냥 안 끝난다. Exception 밖으로 나가야 pytest 가 잡는다.
+
+    이게 없으면 무엇이 조용히 망가지는가
+        S15P11E102-299 가 정확히 이것이었다. capture 시그니처가 어긋나 매 호출이
+        TypeError 로 죽었고, 루프가 outcome 을 하나도 소비하지 못한 채 영원히 돌았다.
+        push 훅이 300초 타임아웃까지 매달렸고, 증상이 '실패'가 아니라 '안 끝남'이라
+        원인을 게이트에서 찾게 만들었다.
+    """
+
+
 class SequenceAudioInput:
+    """정해진 순서대로 녹음 결과를 돌려주는 마이크 대역.
+
+    주의사항
+        - capture 의 시그니처는 실제 어댑터(audio_io/base.py:14)와 '같아야 한다'.
+          어긋나면 파이프라인은 그것을 마이크 고장과 구분하지 못한다.
+        - onset_timeout_seconds 를 기록해 두는 이유: 대화 세션의 무응답 종료가 이
+          값을 실제로 넘기는지 테스트가 확인할 수 있어야 하기 때문이다.
+    """
+
     def __init__(self, *outcomes):
         self.outcomes = list(outcomes)
+        self.onset_timeouts: list[float | None] = []
 
-    def capture(self):
+    def capture(self, onset_timeout_seconds: float | None = None):
+        self.onset_timeouts.append(onset_timeout_seconds)
+        if not self.outcomes:
+            raise AudioSequenceExhausted(
+                "SequenceAudioInput 의 녹음 결과가 동났습니다. "
+                "루프가 예상보다 많이 돌고 있습니다."
+            )
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, BaseException):
             raise outcome
