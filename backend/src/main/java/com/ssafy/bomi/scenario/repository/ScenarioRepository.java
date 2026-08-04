@@ -5,6 +5,7 @@ import com.ssafy.bomi.scenario.domain.ScenarioStatus;
 import com.ssafy.bomi.scenario.domain.ScenarioType;
 import java.time.OffsetDateTime;
 import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 
@@ -37,4 +38,16 @@ public interface ScenarioRepository extends JpaRepository<Scenario, UUID> {
      * 별도 테이블 없이 재시작에도 안전하다 (키 형식은 {@code ScenarioType} 참고).</p>
      */
     boolean existsByScenarioTypeAndExternalEventId(ScenarioType scenarioType, String externalEventId);
+
+    /**
+     * 주어진 상태들에 머물러 있으면서 {@code before} 이전에 마지막으로 갱신된 시나리오.
+     *
+     * <p>{@link ScenarioStatus#activeStatuses()}를 넘기면 "너무 오래 멈춰 있는 진행 중
+     * 시나리오"가 된다. {@code updated_at}은 마지막 상태 전이 시각이므로, 이 값이 오래됐다는
+     * 것은 그 상태에서 다음으로 넘어가는 이벤트가 한참 오지 않았다는 뜻이다.
+     * {@code ScenarioTimeoutWatchdog}가 안전망으로 사용한다 — 대화 핸드오프가 아직 로깅
+     * 스텁이거나 이벤트가 유실돼도, 그 어르신의 다음 시나리오가 영원히 막히지 않게 한다.</p>
+     */
+    List<Scenario> findByFinalStatusInAndUpdatedAtBefore(
+        Collection<ScenarioStatus> statuses, OffsetDateTime before);
 }

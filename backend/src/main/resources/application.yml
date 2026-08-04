@@ -83,6 +83,11 @@ bomi:
     # DOOR_OPENED의 sourceId를 해당 어르신 시나리오로 연결한다.
     # 값은 seed-kim-sunja.sql 기준 김순자 UUID.
     sensor-to-senior:
+      # 실배포 IoT가 실제로 보내는 값 (docs/mqtt/topic-convention.md 예시와 일치).
+      door-sensor-01: 10000000-0000-4000-8000-000000000001
+      pir: 10000000-0000-4000-8000-000000000001
+      # TODO: 위 door-sensor-01 등록 전, IoT가 임시로 이 값을 보내도록 맞춰뒀던
+      # 워크어라운드. IoT가 door-sensor-01로 되돌리면 이 줄은 지운다.
       door_sensor: 10000000-0000-4000-8000-000000000001
   observation:
     # 온습도 센서(디바이스 id) → 어르신(UUID) 매핑. IoT가 발행하는
@@ -103,6 +108,11 @@ bomi:
     humidity-threshold-percent: ${WELLNESS_HUMIDITY_THRESHOLD:80.0}
     # 같은 어르신에게 완료 후 재시작 금지 시간(분). 온습도는 연속 신호라 필수.
     cooldown-minutes: ${WELLNESS_COOLDOWN_MINUTES:30}
+  scenario-timeout:
+    # 활성 상태로 이 시간을 넘긴 시나리오는 강제로 TIMED_OUT 처리한다
+    # (ScenarioTimeoutWatchdog). 대화 핸드오프가 로깅 스텁이거나 이벤트가 유실돼도
+    # 다음 시나리오가 영원히 막히지 않도록 하는 마지막 안전망.
+    active-timeout: ${SCENARIO_ACTIVE_TIMEOUT:20m}
   # 의미 검색 벡터 스토어 (S15P11E102-218).
   #
   # host 가 비면 의미 검색이 꺼진 채로 뜬다. 지원되는 상태다 — 기억 조회가
