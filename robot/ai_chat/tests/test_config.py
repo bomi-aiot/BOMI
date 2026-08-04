@@ -17,15 +17,18 @@ def test_defaults_are_explicit():
     settings = load_settings()
 
     assert settings.audio_mode == "laptop"
-    # 입력 장치의 기본값은 S15P11E102-214 에서 "reSpeaker" 로 바뀌었다. USB 인덱스가
-    # 재부팅마다 달라져서 이름으로 잡도록 한 의도된 변경이다(config.py 주석 참고).
-    # 출력은 여전히 기본값이 없다 — 스피커는 장치 지정이 필수다.
-    assert settings.audio_input_device == "reSpeaker"
+    # 214 가 입력 장치 기본값을 "reSpeaker" 로, 채널을 2 로 바꿨다. USB 인덱스가
+    # 재부팅마다 달라져서 이름으로 잡도록 한 의도된 변경이었다.
+    #
+    # 233 에서 그 기본값을 **robot 모드로 한정**했다. 의도를 되돌린 것이 아니라
+    # 적용 범위를 좁힌 것이다 — laptop 모드에서도 ReSpeaker 를 찾다가 실기 점검이
+    # 첫 명령에서 막혔다. 노트북에 그 USB 마이크가 없는 것은 정상이고, laptop 모드의
+    # 뜻이 "OS 기본 장치를 쓴다"인데 없는 장치를 요구하면 그 모드가 의미를 잃는다.
+    # robot 모드의 동작은 그대로다(아래 test_robot_mode_still_finds_the_respeaker_by_name).
+    assert settings.audio_input_device is None
     assert settings.audio_output_device is None
     assert settings.audio_sample_rate == 16000
-    # 채널 기본값도 214 에서 2 로 바뀌었다. ReSpeaker 는 마이크 배열이라 스테레오로
-    # 잡아야 빔 제어가 동작한다.
-    assert settings.audio_channels == 2
+    assert settings.audio_channels == 1
     assert settings.audio_chunk_seconds == 0.5
     assert settings.audio_silence_threshold == 300.0
     assert settings.audio_silence_limit_seconds == 3.0
@@ -196,3 +199,42 @@ def test_ssh_database_accepts_complete_settings(monkeypatch):
     monkeypatch.setenv("SSH_KEY_PATH", "keys/example.pem")
 
     load_settings().validate_database()
+
+# ── 하드웨어 전용 기본값은 robot 모드에서만 (S15P11E102-233) ────────────────
+
+
+def test_laptop_mode_uses_the_os_default_microphone(settings_factory):
+    """★★ 실기 점검이 첫 명령에서 막혔던 지점이다.
+
+        RuntimeError: 이름에 'reSpeaker'가 들어간 입력 장치를 찾을 수 없습니다
+
+    laptop 모드의 뜻은 "OS 기본 장치를 쓴다"인데, 없는 USB 마이크를 요구하면 그
+    모드가 의미를 잃는다. 노트북에 ReSpeaker 가 없는 것은 정상이다.
+    """
+    settings = settings_factory(AUDIO_MODE="laptop")
+
+    assert settings.audio_input_device is None, (
+        "laptop 모드에서 특정 USB 마이크 이름을 기본값으로 요구하면 안 된다")
+    assert settings.audio_channels == 1
+
+
+def test_robot_mode_still_finds_the_respeaker_by_name(settings_factory):
+    """★ 로봇 위에서는 이름 검색이 옳다.
+
+    USB 를 다시 꽂으면 PortAudio 인덱스가 바뀐다. 인덱스를 박아 두면 재부팅 한 번에
+    마이크를 잃는다. 그 편의를 없애자는 것이 아니라, 맞는 자리에만 두자는 것이다.
+    """
+    settings = settings_factory(AUDIO_MODE="robot")
+
+    assert settings.audio_input_device == "reSpeaker"
+    assert settings.audio_channels == 2, (
+        "ReSpeaker 는 2채널(왼쪽=처리된 빔)로 열어 왼쪽만 쓴다")
+
+
+def test_an_explicit_device_always_wins(settings_factory):
+    """어느 모드든 .env 가 이긴다. 기본값은 '아무것도 안 적었을 때'의 값이다."""
+    assert settings_factory(AUDIO_MODE="laptop", AUDIO_INPUT_DEVICE="1").audio_input_device == 1
+    assert settings_factory(
+        AUDIO_MODE="robot", AUDIO_INPUT_DEVICE="7").audio_input_device == 7
+    assert settings_factory(
+        AUDIO_MODE="laptop", AUDIO_CHANNELS="2").audio_channels == 2
