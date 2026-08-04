@@ -96,6 +96,22 @@
       "materialization": {"table": "app_user", "field": "preferred_name"}
     },
     {
+      "code": "BIRTH_DATE",
+      "required": false,
+      "channels": ["APP", "ROBOT"],
+      "targetDomain": "PROFILE",
+      "targetType": "birth_date",
+      "requiredFields": ["birthDate"],
+      "sensitive": false,
+      "requiresConfirmation": false,
+      "prerequisiteConsent": "PERSONALIZATION_CONSENT",
+      "appControl": "DATE",
+      "robotPrompt": "생신이 언제이신지 여쭤봐도 될까요?",
+      "clarification": "생년월일만 짧게 다시 묻는다.",
+      "answerSchema": {"type": "object", "required": ["birthDate"], "properties": {"birthDate": {"type": "string", "format": "date"}}},
+      "materialization": {"table": "app_user", "field": "birth_date"}
+    },
+    {
       "code": "DAILY_ROUTINE",
       "required": false,
       "channels": ["APP", "ROBOT"],

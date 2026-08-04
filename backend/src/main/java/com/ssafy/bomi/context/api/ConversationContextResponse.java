@@ -49,6 +49,12 @@ public record ConversationContextResponse(
      *     up a deceased spouse. Enforced deterministically, never by similarity.
      * @param quietHoursStart local time, to be read with {@code timeZone}. The window
      *     normally crosses midnight, so start may be later than end.
+     * @param age computed from {@code app_user.birth_date} at assembly time, not stored
+     *     (S15P11E102-259). {@code null} when the senior has no birth date on file —
+     *     the prompt builder drops the line rather than failing (CLAUDE.md §8).
+     * @param conditions confirmed {@code HEALTH_CONDITION} care records, exact lookup
+     *     only (never vector search, CLAUDE.md §8). Empty when health-data consent is
+     *     not granted, same gate as the other health-consented fields.
      */
     public record SeniorProfile(
         UUID seniorId,
@@ -58,7 +64,9 @@ public record ConversationContextResponse(
         String quietHoursStart,
         String quietHoursEnd,
         Map<String, Object> conversationPreferences,
-        List<String> avoidTopics
+        List<String> avoidTopics,
+        Integer age,
+        List<String> conditions
     ) {}
 
     /**
