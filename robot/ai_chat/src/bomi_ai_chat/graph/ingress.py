@@ -167,6 +167,13 @@ def note_interaction(state: ConvState) -> dict:
         "is_backchannel": False,
     }
 
+    # 대화 경계 판정 — 이어 붙일지, 새로 열지 (S15P11E102-306).
+    #
+    # 반드시 last_user_interaction_at 을 위에서 '덮어쓰기 전'의 값(= state 에 남아
+    # 있던 지난 상호작용 시각)으로 판정해야 한다. out 은 아직 state 에 합쳐지지
+    # 않았으므로 여기서 state.get(...) 을 읽는 것이 정확하다.
+    out.update(_conversation_boundary(state, now))
+
     # 맞장구로 끝나는 턴에서도 먼저 저장한다. "응" 한마디도 생존 증거다.
     _persist_interaction(state, now)
 
@@ -220,6 +227,67 @@ def _persist_interaction(state: ConvState, now: float) -> None:
 
     runtime_store.reset_silence(senior_id)
     occupancy_rules.set_occupancy(senior_id, "HOME", observed_at=now, source="speech")
+
+
+def _conversation_boundary(state: ConvState, now: float) -> dict:
+    """이번 발화가 이어지는 대화인가, 새 대화의 시작인가 (S15P11E102-306).
+
+    왜 필요한가
+        conversation_id 를 무조건 이어 붙이면 로봇이 켜져 있는 내내 대화가 하나로
+        무한히 커진다 — "최근 대화" 문맥 조립이 의미를 잃는다. 반대로 매 턴 새로
+        열면(306 에서 고친 결함) 로봇이 방금 자기가 한 말도 기억하지 못한다.
+        그래서 '유휴 시간'이라는 중간 기준이 필요하다.
+
+    무엇을 하는가
+        state 에 남아 있던(= 이번 턴이 last_user_interaction_at 을 덮어쓰기 '전'의)
+        마지막 상호작용 시각과 지금 사이의 간격을 본다. 간격이
+        policy.CONVERSATION_BOUNDARY_IDLE_SEC 를 넘으면 conversation_id 를 명시적으로
+        None 으로 되돌린다.
+
+    왜 {"conversation_id": None} 을 반환하는 것으로 충분한가
+        state.py 의 conversation_id 에는 reducer 가 없다(기본 LastValue 채널). 이
+        함수가 그 키를 돌려주면 이번 턴부터 체크포인트 값이 덮인다.
+        graph/build.py 의 memory_write(_record_turn) 는 conversation_id=None 을
+        "새로 열어라"는 뜻으로 백엔드에 보내고(backend_client/conversation_client.py),
+        백엔드가 새 id 를 배정해 돌려준다.
+
+    누가 호출하는가
+        note_interaction. 세 반환 경로(맞장구 포함) 전부가 이 함수의 결과를 이미
+        담은 out 을 공유하므로, 어느 경로로 끝나든 경계 판정은 빠지지 않는다.
+
+    반환값
+        {"conversation_id": None} -> 경계를 넘었다. 새 대화가 열린다.
+        {}                        -> 아직 같은 대화다. 키를 아예 안 넣어서 체크포인트
+                                      값을 그대로 둔다.
+
+    주의사항
+        - 첫 턴(콜드 스타트)의 last_user_interaction_at 은 initial_state 가 부팅
+          시각으로 채운 값이다. 그 값과 지금 사이의 간격이 우연히 임계값을 넘어도
+          해가 없다 — 새 thread 의 conversation_id 는 애초에 None 이었다.
+        - runtime_store 에도 즉시 써 둔다. 스케줄러(jobs/scheduler.py)의
+          contract_tick 은 그래프 checkpoint 를 보지 못하고 runtime_store 를 읽으므로,
+          여기서 갱신하지 않으면 이미 닫힌 대화의 id 로 "한 대화에 후보 하나"를
+          계속 세게 된다. memory_write 가 새 id 로 다시 덮어쓴다.
+    """
+    previous = state.get("last_user_interaction_at") or 0.0
+    if previous <= 0.0:
+        # 상호작용 기록이 없다(콜드 스타트 직후 또는 테스트가 직접 넣은 최소 state).
+        # 비교할 '이전'이 없으니 경계를 판정하지 않는다.
+        return {}
+
+    idle_for = now - previous
+    if idle_for < policy.CONVERSATION_BOUNDARY_IDLE_SEC:
+        return {}
+
+    logger.info(
+        "conversation idle for %.0fs (boundary=%ds); starting a new conversation",
+        idle_for, policy.CONVERSATION_BOUNDARY_IDLE_SEC)
+
+    senior_id = state.get("senior_id")
+    if senior_id:
+        runtime_store.save(senior_id, conversation_id=None)
+
+    return {"conversation_id": None}
 
 
 def _yield_playback(state: ConvState) -> SpeechProposal | None:

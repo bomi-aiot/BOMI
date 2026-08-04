@@ -670,6 +670,62 @@ CLAUDE.md 가 경고한 **`_is_absence_expected` 함정**을 처리했습니다.
 
 ---
 
+### 306 — 대화 연속성 결함 수정 ✅ (실기 미실시, 백엔드 실제 messageId 필드 미검증)
+
+**무엇이 깨져 있었는가.** `graph/turn.py` 가 매 턴 `"conversation_id": conversation_id` 를
+무조건 입력에 실었는데, 실런타임 호출부(`bootstrap.py`)는 이 인자를 넘기지 않아 값이
+항상 `None` 이었습니다. `state.py` 의 `conversation_id` 에는 reducer 가 없어(기본
+LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 턴 덮어썼습니다.
+백엔드는 `conversationId=null` 을 "새 대화"로 해석하므로, 실제로는 **발화마다 새
+`conversation` 행이 생기고 있었습니다** — "최근 대화" 문맥 조립이 항상 비어 있던
+근본 원인입니다. 테스트 대역 둘(`FakeConversationClient`, `RecordingConversationClient`)
+이 호출마다 무조건 `"conversation-1"` 을 돌려줘서, 이 결함이 있어도 테스트는 계속
+초록이었습니다.
+
+| 완료 조건 | 결과 |
+|---|---|
+| 3턴 실행 후 발급된 대화가 1개, 2턴째 SENIOR 행의 conversation_id 가 null 아님 | ✅ |
+| fetch_context 가 2턴째부터 conversation_id 를 싣는다 | ✅ |
+| 유휴 임계값(`policy.CONVERSATION_BOUNDARY_IDLE_SEC`, 30분)을 넘기면 새 대화로 연다 (SimClock 검증) | ✅ |
+| record_turn 이 messageId 를 돌려주고 state(`last_message_id`)에 남는다 | ✅ (대역·실제 클라이언트 파싱 모두 테스트, 백엔드가 실제로 그 필드를 채우는지는 255 선행 필요) |
+| 전 테스트 초록 | ✅ `462 passed in 17.62s` |
+
+**고친 것 다섯 가지.**
+
+1. `graph/turn.py` — `conversation_id` 를 조건부로만 입력에 넣습니다. 값이 없으면 키
+   자체를 빼서 LangGraph 가 체크포인트 값을 그대로 보존하게 합니다.
+2. `graph/ingress.note_interaction` — 새 헬퍼 `_conversation_boundary` 가 마지막
+   상호작용과 지금 사이의 간격을 재서, `policy.CONVERSATION_BOUNDARY_IDLE_SEC`(30분,
+   조정 방향 주석 포함)를 넘으면 `conversation_id` 를 명시적으로 `None` 으로 되돌려
+   새 대화를 엽니다. `door_event`·`backend_command`·능동 발화 경로는 이 로직을 타지
+   않으므로(트리거가 다름) 결함도 없고 동작도 그대로입니다 — 회귀 확인 완료.
+3. `backend_client/conversation_client.py` 와 `graph/build.py._record_turn` —
+   반환을 `conversationId` 단일 값에서 `(conversationId, messageId)` 로 넓혔습니다.
+   `messageId` 는 '어르신 발화' 행에 대해서만 `state.last_message_id`(state.py 에 신설)
+   로 남습니다 — 255 번(fact_candidate 추출)의 `sourceMessageId` 가 이 값을 요구합니다.
+4. `jobs/scheduler.py` — `contract_tick` 에 conversation_id 를 등록 시점이 아니라
+   **매 틱마다** 새로 읽어 넘기는 `_contract_tick_job` 래퍼를 추가했습니다. 스케줄러는
+   그래프 checkpoint 를 못 보므로 `localstore/runtime`(신설 컬럼 `conversation_id`)을
+   읽습니다 — `memory_write` 가 `last_spoke_at` 을 찍는 자리에서 같이 찍습니다.
+5. 테스트 대역 두 개를 서버와 같은 계약으로 바꿨습니다 — `conversation_id` 가
+   `None` 이면 새 id 를 발급하고 카운터를 올리고, 아니면 그대로 에코합니다. 예전
+   대역(무조건 `"conversation-1"`)은 이 결함이 있어도 초록으로 보이는 함정이었습니다.
+
+**의도적으로 판단한 것.** `CONVERSATION_BOUNDARY_IDLE_SEC` 이름을 티켓 예시
+(`CONVERSATION_IDLE_TIMEOUT_SEC`)와 다르게 지었습니다 — 그 이름은 이미
+웨이크워드 '리슨 세션'을 얼마 만에 끊을지(15초)에 쓰이고 있어서, 같은 이름을 다른
+의미로 재사용하면 값을 덮어써 리슨 세션 타임아웃이 30분으로 바뀌는 사고가 납니다.
+값은 30분으로 잡았습니다 — 화장실 다녀오는 정도의 공백은 이어 붙이되, 자리를
+비웠다 한참 뒤에 돌아온 것은 새 대화로 봅니다. 실측 튜닝 전의 추정값입니다.
+
+**새로 드러난 것.** 이 브랜치가 `ai-develop`(298 반영 후)에서 갈라진 뒤, 별개의
+결함(298 이 `bootstrap.py` 의 `capture()` 호출에 `onset_timeout_seconds` 를 추가했지만
+`tests/test_bootstrap.py` 의 대역 둘은 그 인자를 안 받아 테스트가 무한 대기에
+빠지는 문제)이 발견되어 **S15P11E102-319** 로 분리되었고, 그 수정이 게이트를
+초록으로 만들기 위해 이 브랜치에도 반영되어 있습니다. 306 의 범위 밖입니다.
+
+---
+
 ## 7. 갱신 이력
 
 | 시점 | 내용 |

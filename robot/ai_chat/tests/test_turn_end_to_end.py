@@ -15,6 +15,7 @@
 
 import pytest
 
+from bomi_ai_chat import policy
 from bomi_ai_chat.backend_client import ContextResult
 from bomi_ai_chat.graph import build, handlers, output
 from bomi_ai_chat.graph import context as context_node
@@ -32,9 +33,14 @@ class FakeContextClient:
         self.ctx = ctx if ctx is not None else {"profile": {"preferredName": "순자님"}}
         self.is_cached = is_cached
         self.calls = 0
+        # 이번 턴이 fetch_context 에 실어 보낸 conversation_id 를 순서대로 기록한다.
+        # S15P11E102-306 의 완료 조건("2턴째부터 conversation_id 가 실린다")을
+        # 검증하는 유일한 창구다.
+        self.received_conversation_ids: list[str | None] = []
 
     def fetch_context(self, senior_id, **kwargs):
         self.calls += 1
+        self.received_conversation_ids.append(kwargs.get("conversation_id"))
         return ContextResult(ctx=self.ctx, is_cached=self.is_cached)
 
 
@@ -83,14 +89,33 @@ class FakeConversationClient:
 
     순서를 보존하는 것이 중요하다 — 서버가 올라온 순서로 순번을 매기므로,
     로봇이 로봇 발화를 먼저 올리면 기록상 로봇이 먼저 말한 것이 된다.
+
+    ★ 서버와 같은 계약을 흉내낸다 (S15P11E102-306)
+        conversation_id 가 None 으로 들어오면 "새 대화"로 보고 새 id 를 발급한다.
+        값이 이미 있으면 그대로 에코한다 — 실제 서버가 하는 일과 같다.
+
+        예전 대역은 호출마다 무조건 "conversation-1"을 돌려줬다. 그러면 turn.py 가
+        매 턴 conversation_id=None 을 무조건 흘려보내는 결함이 있어도 겉보기 대화는
+        계속 이어지는 것처럼 보여서, 테스트가 그 결함을 가리는 함정이었다. 여기서
+        같은 함정을 다시 만들지 않는다.
     """
 
     def __init__(self):
         self.turns = []
+        self._next_conversation_id = 1
+        self._next_message_id = 1
 
     def record_turn(self, senior_id, **fields):
         self.turns.append({"seniorId": senior_id, **fields})
-        return fields.get("conversation_id") or "conversation-1"
+
+        conversation_id = fields.get("conversation_id")
+        if conversation_id is None:
+            conversation_id = f"conversation-{self._next_conversation_id}"
+            self._next_conversation_id += 1
+
+        message_id = f"message-{self._next_message_id}"
+        self._next_message_id += 1
+        return conversation_id, message_id
 
 
 @pytest.fixture
@@ -197,3 +222,83 @@ def test_state_persists_across_turns(wired):
 
     # messages 는 add_messages 로 누적된다. 두 번째 턴에서 첫 턴의 흔적이 보여야 한다.
     assert second.get("last_user_interaction_at") is not None
+
+
+# ── 대화 연속성 (S15P11E102-306) ────────────────────────────────────────────
+#
+# graph/turn.py 가 conversation_id 를 매 턴 무조건 None 으로 덮어써서, 실런타임에서는
+# 모든 발화가 새 conversation 행을 만들던 결함의 회귀 테스트. 아래 네 개가 티켓의
+# 완료 조건과 1:1 로 대응한다.
+
+
+def test_three_turns_stay_in_one_conversation(wired):
+    """(완료 조건) 3턴을 돌려도 서버가 발급한 대화는 하나이고,
+    2턴째 SENIOR 행의 conversation_id 는 비어 있지 않다."""
+    app, _client, _llm, _player = wired
+
+    run_user_turn(app, SENIOR, "안녕하세요")
+    second = run_user_turn(app, SENIOR, "오늘 뭐 했어")
+    run_user_turn(app, SENIOR, "졸리다")
+
+    conversations = build._conversation_client()
+    # 대역이 "새 대화"로 판단해 실제로 새 id 를 발급한 횟수. 세 턴이 한 대화로
+    # 이어졌다면 이 값은 정확히 1 이어야 한다(첫 턴에서 딱 한 번).
+    assert conversations._next_conversation_id - 1 == 1
+
+    senior_rows = [turn for turn in conversations.turns if turn["role"] == "SENIOR"]
+    assert len(senior_rows) == 3
+    assert senior_rows[1]["conversation_id"] is not None, (
+        "2턴째부터는 1턴째가 받은 conversation_id 를 실어 보내야 한다"
+    )
+    assert second["conversation_id"] == senior_rows[1]["conversation_id"]
+
+
+def test_fetch_context_carries_conversation_id_from_the_second_turn(wired):
+    """(완료 조건) fetch_context 가 2턴째부터 null 이 아닌 conversation_id 를 싣는다."""
+    app, client, _llm, _player = wired
+
+    run_user_turn(app, SENIOR, "안녕하세요")
+    run_user_turn(app, SENIOR, "오늘 뭐 했어")
+
+    assert client.received_conversation_ids[0] is None, "첫 턴은 아직 대화가 없다"
+    assert client.received_conversation_ids[1] is not None
+
+
+def test_idle_gap_past_the_boundary_opens_a_new_conversation(wired, frozen_clock):
+    """(완료 조건) 유휴 임계값을 넘긴 뒤의 발화는 새 대화로 연다 (압축 시계로 검증)."""
+    app, _client, _llm, _player = wired
+    sim = frozen_clock(start=1_700_000_000.0)
+
+    first = run_user_turn(app, SENIOR, "안녕하세요")
+    assert first["conversation_id"]
+
+    sim.advance(policy.CONVERSATION_BOUNDARY_IDLE_SEC + 1)
+
+    second = run_user_turn(app, SENIOR, "오랜만이에요")
+
+    assert second["conversation_id"] != first["conversation_id"]
+
+
+def test_idle_gap_under_the_boundary_keeps_the_same_conversation(wired, frozen_clock):
+    """대비 사례: 임계값 '밑'이면 그대로 이어 붙어야 한다."""
+    app, _client, _llm, _player = wired
+    sim = frozen_clock(start=1_700_000_000.0)
+
+    first = run_user_turn(app, SENIOR, "안녕하세요")
+    sim.advance(policy.CONVERSATION_BOUNDARY_IDLE_SEC - 1)
+    second = run_user_turn(app, SENIOR, "밥은 먹었어")
+
+    assert second["conversation_id"] == first["conversation_id"]
+
+
+def test_record_turn_returns_a_message_id_for_the_senior_row(wired):
+    """(완료 조건) record_turn 이 messageId 를 돌려주고 state 에 남는다.
+
+    255 번의 fact_candidate 추출이 FactCandidate.fromConversationMessage 의
+    sourceMessageId 로 이 값을 요구한다.
+    """
+    app, _client, _llm, _player = wired
+
+    state = run_user_turn(app, SENIOR, "무릎이 아파")
+
+    assert state["last_message_id"]

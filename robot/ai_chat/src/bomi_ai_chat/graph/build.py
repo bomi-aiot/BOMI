@@ -72,7 +72,9 @@ def memory_write(state: ConvState) -> dict:
         build.py, response_shaper 다음 emit 앞.
 
     반환값
-        {"last_spoke_at": ..., "conversation_id": ...}
+        {"last_spoke_at": ..., "conversation_id": ..., "last_message_id": ...}
+        conversation_id 와 last_message_id 는 얻었을 때만 넣는다 — 못 얻었으면 키
+        자체를 빼서 체크포인트에 있던 이전 값이 그대로 남게 한다(state.py 참고).
 
     주의사항
         - 추출된 건강·복약 사실은 fact_candidate 로 가며, care_record 로 직행하지
@@ -84,7 +86,7 @@ def memory_write(state: ConvState) -> dict:
 
     # TODO(jobs): 사실 추출을 큐에 넣고, 일간 지표를 버퍼링한다.
     now = clock.now()
-    conversation_id = _record_turn(state, now)
+    conversation_id, senior_message_id = _record_turn(state, now)
 
     # 내구 저장소에도 찍는다.
     #
@@ -92,14 +94,26 @@ def memory_write(state: ConvState) -> dict:
     #   재부팅 후 복원의 출처가 runtime_state 다. 여기 안 쓰면 로봇이 재시작한 직후
     #   쿨다운이 0 으로 보이고, 방금 말했는데도 알림이 바로 또 나간다.
     #   같은 이음이 note_interaction 과 door_event 에도 있다(ingress.py 참고).
+    #
+    # conversation_id 는 '얻었을 때만' 함께 찍는다 (S15P11E102-306). 실패해서 None 이
+    # 돌아온 경우까지 여기 넣으면, 방금 전 턴이 남겨둔 유효한 id 를 실패 한 번으로
+    # 지워버린다 — 스케줄러의 contract_tick 이 그 지워진 값을 읽는다
+    # (jobs/scheduler.py). 경계를 넘어 '의도적으로' 비우는 결정은
+    # graph/ingress._conversation_boundary 가 그 순간에 직접 한다.
     senior_id = state.get("senior_id")
     if senior_id:
-        runtime_store.save(senior_id, last_spoke_at=now)
+        fields: dict = {"last_spoke_at": now}
+        if conversation_id:
+            fields["conversation_id"] = conversation_id
+        runtime_store.save(senior_id, **fields)
 
     out: dict = {"last_spoke_at": now}
     if conversation_id:
         # 다음 턴이 같은 대화에 이어 붙도록 서버가 배정한 id 를 들고 간다.
         out["conversation_id"] = conversation_id
+    if senior_message_id:
+        # fact_candidate 추출(255)의 sourceMessageId 가 필요로 한다 (state.py 참고).
+        out["last_message_id"] = senior_message_id
     return out
 
 
@@ -123,7 +137,7 @@ def set_conversation_client(client) -> None:
     _CONVERSATION_CLIENT = client
 
 
-def _record_turn(state: ConvState, now: float) -> str | None:
+def _record_turn(state: ConvState, now: float) -> tuple[str | None, str | None]:
     """이 턴을 백엔드에 남긴다. 실패해도 턴을 막지 않는다.
 
     무엇을 올리는가
@@ -141,21 +155,29 @@ def _record_turn(state: ConvState, now: float) -> str | None:
         줄을 서게 된다 (backend_client/conversation_client.py).
 
     반환값
-        서버가 배정한 conversation_id, 또는 아무것도 올리지 못했으면 None.
+        (conversation_id, senior_message_id) — S15P11E102-306 에서 단일 값에서 넓혔다.
+
+        conversation_id: 서버가 배정한 id. 이번 턴에서 아무것도 못 올렸으면 턴이
+            시작될 때 들고 있던 값 그대로(둘 다 없으면 None).
+        senior_message_id: '어르신 발화' 행에 대해 서버가 돌려준 메시지 id.
+            어르신 발화가 없는 턴(능동 발화 등)에는 항상 None 이다 — 이 값은
+            fact_candidate 추출(255)이 sourceMessageId 로 요구하는데, 그 사실은
+            어르신이 실제로 한 말에서만 나와야 한다. 로봇 혼잣말에는 근거가 없다.
     """
     from bomi_ai_chat.graph import context as context_node
 
     senior_id = state.get("senior_id")
     if not senior_id:
-        return None
+        return None, None
 
     client = _conversation_client()
     conversation_id = state.get("conversation_id")
+    senior_message_id: str | None = None
     trigger, priority = _provenance(state)
 
     utterance = (state.get("user_input") or "").strip()
     if state.get("trigger_type") == "user_utterance" and utterance:
-        returned = client.record_turn(
+        returned_conversation_id, returned_message_id = client.record_turn(
             senior_id,
             role="SENIOR",
             content=utterance,
@@ -166,11 +188,14 @@ def _record_turn(state: ConvState, now: float) -> str | None:
             # 되돌아가면 어조에 새어나가서 열 번째 답변이 짜증스럽게 들린다 (§8).
             orientation_question=context_node.is_orientation_question(utterance),
         )
-        conversation_id = returned or conversation_id
+        conversation_id = returned_conversation_id or conversation_id
+        senior_message_id = returned_message_id
 
     spoken = (state.get("final_utterance") or state.get("response") or "").strip()
     if spoken:
-        returned = client.record_turn(
+        # 로봇 행의 messageId 는 여기서 버린다 — state 에 남기는 것은 '어르신' 행의
+        # id 뿐이다(위 반환값 설명 참고).
+        returned_conversation_id, _returned_robot_message_id = client.record_turn(
             senior_id,
             role="ROBOT",
             content=spoken,
@@ -179,9 +204,9 @@ def _record_turn(state: ConvState, now: float) -> str | None:
             trigger_type=trigger,
             priority=priority,
         )
-        conversation_id = returned or conversation_id
+        conversation_id = returned_conversation_id or conversation_id
 
-    return conversation_id
+    return conversation_id, senior_message_id
 
 
 def _provenance(state: ConvState) -> tuple[str, str | None]:
