@@ -1,5 +1,7 @@
 package com.ssafy.bomi.onboarding.application;
 
+import com.ssafy.bomi.fact.application.FactMaterializer;
+import com.ssafy.bomi.fact.domain.FactCandidate;
 import com.ssafy.bomi.user.domain.AppUser;
 import com.ssafy.bomi.user.domain.ConsentStatus;
 import java.time.LocalDate;
@@ -18,18 +20,20 @@ import org.springframework.stereotype.Component;
  * class is deliberately the single place that write happens, so "what did onboarding
  * actually change" is answerable by reading one file.</p>
  *
- * <h2>What it covers today, and what it does not</h2>
+ * <h2>What it covers</h2>
  *
- * <p>It materializes the {@code app_user} targets — the four consent questions and the
- * preferred name. That is every <b>required</b> question in the contract, and it is also
- * what the rest of the flow depends on: consent gates every later question, so leaving it
- * unwritten would stall onboarding at the first medication prompt.</p>
+ * <p>It materializes every target the onboarding contract can produce today:
+ * {@code app_user} (the four consent questions, preferred name, and the other profile
+ * fields), and — via the shared {@link FactMaterializer} — {@code memory} and
+ * {@code care_record} (S15P11E102-258). The three write the same way a guardian-web
+ * confirmation and a robot re-ask (clarification) do, so a value confirmed on any of the
+ * three channels lands in the same place with the same {@code source_candidate_id}
+ * bookkeeping.</p>
  *
- * <p>{@code memory}, {@code care_record} and {@code care_relationship} targets are
- * <b>not</b> written yet. Those candidates stay CONFIRMED rather than MATERIALIZED, which
- * is the honest state: the value is agreed, the final row is not created. They need their
- * own write paths (idempotency, {@code source_candidate_id} uniqueness, PRIMARY
- * coordination for the guardian one) and that is more than an API ticket.</p>
+ * <p>{@code care_relationship} (PRIMARY 보호자 돌봄관리 권한 동의) is <b>not</b> written
+ * yet — that flow is entangled with PRIMARY coordination and is out of this ticket's
+ * scope. Its candidate stays CONFIRMED rather than MATERIALIZED, which is the honest
+ * state: the value is agreed, the final row is not created.</p>
  *
  * <p>The gap is visible rather than silent: {@link #materialize} returns false and logs,
  * and the candidate's status shows CONFIRMED in the database.</p>
@@ -39,71 +43,78 @@ public class OnboardingMaterializer {
 
     private static final Logger log = LoggerFactory.getLogger(OnboardingMaterializer.class);
 
+    private final FactMaterializer factMaterializer;
+
+    public OnboardingMaterializer(FactMaterializer factMaterializer) {
+        this.factMaterializer = factMaterializer;
+    }
+
     /**
-     * Applies a confirmed value.
+     * Applies a confirmed value and, on success, advances {@code candidate} to
+     * MATERIALIZED.
      *
-     * @return true when the value reached its final source; false when this ticket
-     *     cannot write that target yet.
+     * <p>무엇을 하는가 — 대상이 {@code app_user} 면 이 클래스가 직접 필드를 쓰고
+     * candidate 를 실체화한다. {@code memory}/{@code care_record} 면 같은 일을
+     * {@link FactMaterializer} 에 위임한다 — 가디언웹·재질의 경로와 같은 컴포넌트를
+     * 쓰게 하려는 것이다(CLAUDE.md §12, §17.3). {@code care_relationship} 등 아직 쓰기
+     * 경로가 없는 대상은 false 를 돌려주고 candidate 는 CONFIRMED 로 남는다.</p>
+     *
+     * @return true when the value reached its final source and {@code candidate} is now
+     *     MATERIALIZED; false when this ticket cannot write that target yet.
      */
     public boolean materialize(QuestionDefinition question, AppUser senior,
-        Map<String, Object> confirmedValue) {
+        FactCandidate candidate, Map<String, Object> confirmedValue) {
 
-        if (!question.materializesIntoAppUser()) {
-            log.info("onboarding answer {} confirmed but not materialized: target {} has no write "
-                    + "path yet; the candidate stays CONFIRMED",
-                question.code(),
-                question.materialization() == null ? "unknown" : question.materialization().table());
-            return false;
+        if (question.materializesIntoAppUser()) {
+            applyToAppUser(question, senior, confirmedValue);
+            // PROFILE 대상은 app_user 행 자체가 최종 위치라서 별도의 생성된 행 id 가
+            // 없다. senior 자신의 id 를 materialized_target_id 로 남긴다.
+            candidate.materialize(senior.getId());
+            return true;
         }
 
+        String table = question.materialization() == null ? null : question.materialization().table();
+        if ("memory".equals(table) || "care_record".equals(table)) {
+            // 계약의 recordType(예: MEDICATION_SCHEDULE)을 그대로 쓴다. candidate.factType
+            // 을 대신 쓰면(가디언 경로가 하듯) 두 채널의 record_type 이 갈라질 수 있다.
+            String recordType = question.materialization().recordType();
+            return factMaterializer.materialize(candidate, confirmedValue, recordType).isPresent();
+        }
+
+        log.info("onboarding answer {} confirmed but not materialized: target {} has no write "
+                + "path yet; the candidate stays CONFIRMED",
+            question.code(),
+            table == null ? "unknown" : table);
+        return false;
+    }
+
+    /** app_user 필드 쓰기 — 대상이 PROFILE 인 경우만 여기로 온다. */
+    private void applyToAppUser(QuestionDefinition question, AppUser senior,
+        Map<String, Object> confirmedValue) {
         String field = question.materialization().field();
-        return switch (field) {
-            case "personalization_consent_status" -> {
-                senior.changePersonalizationConsent(consentOf(confirmedValue));
-                yield true;
-            }
-            case "health_data_consent_status" -> {
-                senior.changeHealthDataConsent(consentOf(confirmedValue));
-                yield true;
-            }
-            case "schedule_consent_status" -> {
-                senior.changeScheduleConsent(consentOf(confirmedValue));
-                yield true;
-            }
-            case "guardian_sharing_consent_status" -> {
+        applyField(field, question, senior, confirmedValue);
+    }
+
+    private void applyField(String field, QuestionDefinition question, AppUser senior,
+        Map<String, Object> confirmedValue) {
+        switch (field) {
+            case "personalization_consent_status" -> senior.changePersonalizationConsent(consentOf(confirmedValue));
+            case "health_data_consent_status" -> senior.changeHealthDataConsent(consentOf(confirmedValue));
+            case "schedule_consent_status" -> senior.changeScheduleConsent(consentOf(confirmedValue));
+            case "guardian_sharing_consent_status" ->
                 senior.changeGuardianSharingConsent(consentOf(confirmedValue));
-                yield true;
-            }
-            case "preferred_name" -> {
-                senior.changePreferredName(text(confirmedValue, "preferredName"));
-                yield true;
-            }
-            case "birth_date" -> {
-                senior.changeBirthDate(birthDateOf(confirmedValue));
-                yield true;
-            }
-            case "wake_time" -> {
-                senior.changeWakeTime(localTimeOf(confirmedValue, "wakeTime"));
-                yield true;
-            }
-            case "sleep_time" -> {
-                senior.changeSleepTime(localTimeOf(confirmedValue, "sleepTime"));
-                yield true;
-            }
-            case "chronic_pain_area" -> {
-                senior.changeChronicPainArea(text(confirmedValue, "chronicPainArea"));
-                yield true;
-            }
-            case "preferred_hospital" -> {
-                senior.changePreferredHospital(text(confirmedValue, "preferredHospital"));
-                yield true;
-            }
+            case "preferred_name" -> senior.changePreferredName(text(confirmedValue, "preferredName"));
+            case "birth_date" -> senior.changeBirthDate(birthDateOf(confirmedValue));
+            case "wake_time" -> senior.changeWakeTime(localTimeOf(confirmedValue, "wakeTime"));
+            case "sleep_time" -> senior.changeSleepTime(localTimeOf(confirmedValue, "sleepTime"));
+            case "chronic_pain_area" -> senior.changeChronicPainArea(text(confirmedValue, "chronicPainArea"));
+            case "preferred_hospital" -> senior.changePreferredHospital(text(confirmedValue, "preferredHospital"));
             // 계약에 app_user 필드가 추가됐는데 여기 분기를 안 만든 경우다. 조용히 넘어가면
             // "동의했는데 반영이 안 되는" 상태가 되므로 요란하게 실패한다.
             default -> throw new IllegalStateException(
                 "no materialization branch for app_user field " + field
                     + " (question " + question.code() + ")");
-        };
+        }
     }
 
     /**

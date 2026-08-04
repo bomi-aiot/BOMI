@@ -45,9 +45,12 @@ public class RobotClarificationService {
         FactCandidateStatus.NEEDS_CONFIRMATION);
 
     private final FactCandidateRepository candidateRepository;
+    private final FactMaterializer materializer;
 
-    public RobotClarificationService(FactCandidateRepository candidateRepository) {
+    public RobotClarificationService(FactCandidateRepository candidateRepository,
+        FactMaterializer materializer) {
         this.candidateRepository = candidateRepository;
+        this.materializer = materializer;
     }
 
     /**
@@ -180,6 +183,12 @@ public class RobotClarificationService {
 
         candidate.confirm(merged, candidate.getSeniorId());
         log.info("candidate {} confirmed via the robot channel", candidateId);
+
+        // 확정만 하고 memory/care_record 에 쓰지 않으면, 음성으로 확정한 값이 다음 날
+        // 로봇 인사 시나리오에 아무 흔적도 남기지 못한 채 증발한다(S15P11E102-258).
+        // 가디언웹(ConfirmationRequestService)이 쓰는 것과 같은 공용 컴포넌트를 호출해
+        // candidate.materialize(savedRowId) 까지 연결한다.
+        materializer.materialize(candidate, merged);
         return new ClarificationResult(Outcome.CONFIRMED, candidateId, List.of(), null, merged);
     }
 
