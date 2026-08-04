@@ -51,19 +51,21 @@ springdoc:
     enabled: true
     path: /swagger-ui.html
     disable-swagger-default-url: true
-    # Try it out 을 켠다. 계약만 있던 시절에는 실수로 연동 API 를 때리지 않도록
-    # 비워 두었지만(S15P11E102-63), 이제 로봇·가디언웹 채널은 실제로 동작하므로
-    # 브라우저에서 바로 호출해 보는 편이 낫다.
+    # Try it out 은 읽기(GET)만 허용한다 (S15P11E102-310).
     #
-    # 주의: 이 서비스에는 인증이 없다. 배포 Swagger 에서 쓰기 메서드까지 열리므로
-    # 문서 주소를 아는 사람은 운영 데이터를 바꿀 수 있다. 발표 기간 한정으로
-    # 감수한 결정이며, 외부 공개가 길어지면 문서 경로 인증을 먼저 붙여야 한다.
+    # 이 서비스에는 인증이 없다(가디언웹 채널은 nginx 단기 완화만 걸려 있고,
+    # 로봇 채널은 별도 티켓 307 에서 공유 비밀로 막는다). 예전에는 쓰기 메서드까지
+    # 전부 열어 뒀는데(S15P11E102-63 에서 계약 검토용으로 켠 뒤 그대로 방치),
+    # 그 상태에서는 배포 문서 주소를 아는 사람이 DELETE 버튼 하나로 어르신의
+    # 복약 스케줄(`CareRecordController#deleteMedication`)을 지울 수 있었다.
+    #
+    # supportedSubmitMethods 는 springdoc 설정이 아니라 swagger-ui 자체의 표준
+    # 옵션이다(springdoc 은 이 값을 그대로 swagger-ui 초기화 스크립트에 넘긴다).
+    # 여기 없는 메서드는 오퍼레이션이 계속 문서에 나열되고 스키마도 그대로
+    # 보이지만 "Try it out" 버튼이 없어 브라우저에서 실행할 수 없다 — 문서로서의
+    # 가치는 유지하고 파괴적 실행만 막는다.
     supported-submit-methods:
       - get
-      - post
-      - put
-      - patch
-      - delete
     # group-configs 의 세 그룹은 springdoc 이 display-name 으로 자동 등록한다.
     # 여기에 다시 적으면 드롭다운에 같은 항목이 두 번 뜬다. 정적 YAML 만 적는다.
     urls:
