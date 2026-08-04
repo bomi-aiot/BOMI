@@ -450,6 +450,86 @@ crontab -l
 
 갱신 로그는 `/home/ubuntu/bomi/logs/certbot-renew.log`에서 확인합니다.
 
+## 가디언 API 접근 제어 (S15P11E102-310)
+
+`/api/v1/guardian`, `/memories`, `/care-records`, `/confirmation-requests`, `/elders` 다섯
+접두어는 어르신의 기억·돌봄기록·복약 스케줄을 반환하거나 수정합니다. 가디언웹은
+브라우저에서 직접 호출하는 SPA라서 로봇 채널(S15P11E102-307)처럼 공유 비밀을 번들에
+넣을 수 없습니다 — 브라우저 번들 안의 비밀은 비밀이 아니기 때문입니다.
+
+**이번 티켓의 범위는 단기 완화까지입니다.** `infra/nginx/conf.d/bomi.conf`가 위 다섯
+접두어만 별도 `location`으로 쪼개 `auth_basic`을 겁니다. 세션·로그인 같은 진짜 인증은
+범위 밖이며 언제 넣을지는 이 티켓에서 결정하지 않습니다. 로봇 채널(`/api/v1/robot/**`,
+`/api/v1/seniors/**`)은 이 변경과 무관하게 기존 `location /api/` 캐치올을 그대로 타고,
+그쪽 인증은 307이 애플리케이션 레이어에서 별도로 붙입니다 — 두 메커니즘을 섞지 않습니다.
+
+### 1. htpasswd 파일 생성 (최초 1회, 이후 자격 증명 변경 시 재실행)
+
+htpasswd 파일 자체(해시된 자격 증명)는 저장소에 커밋하지 않습니다. EC2에서 직접
+생성해 `production.env`가 가리키는 경로에 둡니다.
+
+```bash
+sudo install -d -o ubuntu -g ubuntu -m 700 /home/ubuntu/bomi/secrets
+docker run --rm httpd:2.4-alpine htpasswd -Bbn <가디언용 아이디> '<가디언용 비밀번호>' \
+  > /home/ubuntu/bomi/secrets/guardian.htpasswd
+chmod 600 /home/ubuntu/bomi/secrets/guardian.htpasswd
+```
+
+`production.env`에 다음 값이 있어야 합니다(예제는 `production.env.example` 참고).
+
+```dotenv
+NGINX_GUARDIAN_HTPASSWD_FILE=/home/ubuntu/bomi/secrets/guardian.htpasswd
+```
+
+이 값이 없으면 `compose.prod.yml`의 `${NGINX_GUARDIAN_HTPASSWD_FILE:?...}`가 compose를
+바로 실패시킵니다 — nginx가 무인증으로 조용히 뜨는 것보다 배포가 막히는 편이
+안전하다는 판단입니다.
+
+### 2. 실행 중인 컨테이너가 이 설정을 실제로 마운트했는지 확인 (CLAUDE.md §26)
+
+설정 파일을 고쳤다는 사실과 그 설정이 실제로 반영됐다는 사실은 다릅니다. 배포 후
+반드시 컨테이너 내부에서 확인합니다.
+
+```bash
+# compose.prod.yml 의 nginx 서비스가 ./nginx/conf.d 를 :ro 로 마운트하는 볼륨과
+# guardian.htpasswd 마운트가 실제로 붙었는지 확인합니다.
+docker inspect bomi-nginx --format '{{ range .Mounts }}{{ .Source }} -> {{ .Destination }} ({{ .Mode }}){{ "\n" }}{{ end }}'
+
+# 컨테이너 안의 파일 내용이 저장소의 bomi.conf 와 같은지 직접 비교합니다.
+docker exec bomi-nginx cat /etc/nginx/conf.d/bomi.conf | diff - infra/nginx/conf.d/bomi.conf \
+  && echo "OK: 컨테이너가 마운트한 설정이 저장소 파일과 같다"
+
+# guardian.htpasswd 도 마운트됐는지(내용 출력 없이 존재만) 확인합니다.
+docker exec bomi-nginx test -f /etc/nginx/guardian.htpasswd && echo "OK: htpasswd mounted"
+```
+
+### 3. 문법 검사와 실제 접근 차단 확인 (본문 기준, 상태 코드만으로 판단하지 않음)
+
+```bash
+docker exec bomi-nginx nginx -t
+```
+
+가디언 경로는 자격 증명 없이 401을, 자격 증명이 있으면 정상 응답을 반환해야 합니다.
+로봇 채널은 이 변경으로 동작이 바뀌지 않아야 합니다.
+
+```bash
+# 무인증 — 401 이어야 한다 (guardian.htpasswd 를 만들기 전이면 nginx 자체가 안 뜬다).
+curl -i https://i15e102.p.ssafy.io/api/v1/care-records/medications | head -1
+
+# 자격 증명 포함 — 상태 코드가 아니라 본문으로 확인한다. SPA 폴백이 200 에 index.html
+# 을 실어 보내 배포 성공으로 오인된 사고가 이 팀에 실제로 있었다(CLAUDE.md §26).
+curl -su '<가디언용 아이디>:<가디언용 비밀번호>' \
+  https://i15e102.p.ssafy.io/api/v1/care-records/medications
+
+# 로봇 채널은 영향받지 않아야 한다 — 이 요청은 401 이 아니라 로봇 채널 자체의
+# 인증 규칙(307)을 따른다.
+curl -i https://i15e102.p.ssafy.io/api/v1/robot/conversation-events | head -1
+
+# Swagger 문서에서 DELETE/PUT Try it out 버튼이 사라졌는지는 응답 본문으로 본다.
+curl -s https://i15e102.p.ssafy.io/v3/api-docs/swagger-config | grep -o '"supportedSubmitMethods":\[[^]]*\]'
+# -> "supportedSubmitMethods":["get"] 이어야 한다.
+```
+
 ## Mosquitto 주의사항
 
 `docker/mosquitto/config/mosquitto.conf`는 로컬 개발용 설정입니다. 운영 배포는
