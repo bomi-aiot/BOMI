@@ -29,4 +29,12 @@ public interface ScenarioRepository extends JpaRepository<Scenario, UUID> {
      */
     boolean existsBySeniorIdAndScenarioTypeAndFinalStatusAndUpdatedAtAfter(
         UUID seniorId, ScenarioType scenarioType, ScenarioStatus finalStatus, OffsetDateTime after);
+
+    /**
+     * 이 타입의 시나리오가 주어진 외부 이벤트 키로 이미 만들어진 적이 있는가.
+     *
+     * <p>복약 알림의 "같은 슬롯 하루 1회" 판정에 쓴다. 슬롯 키가 곧 알림 이력이므로
+     * 별도 테이블 없이 재시작에도 안전하다 (키 형식은 {@code ScenarioType} 참고).</p>
+     */
+    boolean existsByScenarioTypeAndExternalEventId(ScenarioType scenarioType, String externalEventId);
 }
