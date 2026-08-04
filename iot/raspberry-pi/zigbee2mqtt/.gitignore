@@ -1,0 +1,10 @@
+.env
+
+# Zigbee 네트워크 키와 페어링 상태가 포함되는 런타임 데이터
+data/*
+!data/configuration.example.yaml
+
+# Mosquitto가 실행 중 생성하는 영속 데이터와 로그
+mosquitto/data/*
+mosquitto/log/*
+
