@@ -738,3 +738,144 @@ ros2 run core mock_motor_driver
 ```bash
 ros2 run core keyboard_teleop
 ```
+
+## 조이스틱 수동주행 + SLAM 지도 생성 (시뮬레이션)
+
+아래 경로는 각 PC의 실제 `robot/ros2_ws` 경로로 변경합니다.
+
+### 1. 최초 1회 설치 및 빌드
+
+Gazebo, RViz, SLAM, 조이스틱 관련 패키지를 설치합니다. 최초 설치와 첫 빌드는
+다운로드가 많아 시간이 걸릴 수 있습니다.
+
+```bash
+sudo apt update
+sudo apt install -y \
+  ros-humble-desktop \
+  ros-humble-gazebo-ros-pkgs \
+  ros-humble-slam-toolbox \
+  ros-humble-nav2-map-server \
+  ros-humble-joy \
+  ros-humble-joy-linux \
+  ros-humble-teleop-twist-joy \
+  ros-humble-twist-mux \
+  ros-humble-twist-mux-msgs \
+  joystick \
+  python3-colcon-common-extensions \
+  python3-rosdep
+```
+
+```bash
+cd /path/to/S15P11E102/robot/ros2_ws
+source /opt/ros/humble/setup.bash
+
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install
+source install/setup.bash
+```
+
+조이스틱이 WSL에 연결되어 `/dev/input/js0`가 보여야 합니다.
+
+```bash
+ls -l /dev/input/js*
+jstest /dev/input/js0
+```
+
+### 2. 실행
+
+```bash
+cd /path/to/S15P11E102/robot/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+unset QT_XCB_GL_INTEGRATION
+unset QT_OPENGL
+export LIBGL_ALWAYS_SOFTWARE=1
+export GALLIUM_DRIVER=llvmpipe
+export LP_NUM_THREADS=2
+
+ros2 launch core joystick_slam_mapping.launch.py
+```
+
+Gazebo와 RViz가 열린 뒤 약 10초 기다리고 조이스틱으로 천천히 이동합니다.
+RViz에서 `/map`이 주행 영역에 따라 확장되면 정상입니다.
+
+### 3. 지도 저장
+
+통합 launch를 끄지 않고 새 Ubuntu 터미널에서 실행합니다.
+
+```bash
+cd /path/to/S15P11E102/robot/ros2_ws
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+mkdir -p ~/bomi_maps
+
+ros2 run nav2_map_server map_saver_cli \
+  -f ~/bomi_maps/bomi_slam_map
+```
+
+저장 결과:
+
+```text
+~/bomi_maps/bomi_slam_map.pgm
+~/bomi_maps/bomi_slam_map.yaml
+```
+
+### 4. 저장 지도에서 좌표 찍기
+
+SLAM 통합 launch를 종료한 뒤 저장 지도를 다시 불러옵니다.
+
+첫 번째 터미널:
+
+```bash
+source /opt/ros/humble/setup.bash
+
+ros2 run nav2_map_server map_server --ros-args \
+  -p yaml_filename:=$HOME/bomi_maps/bomi_slam_map.yaml
+```
+
+두 번째 터미널:
+
+```bash
+source /opt/ros/humble/setup.bash
+
+ros2 lifecycle set /map_server configure
+ros2 lifecycle set /map_server activate
+```
+
+세 번째 터미널:
+
+```bash
+source /opt/ros/humble/setup.bash
+
+export LIBGL_ALWAYS_SOFTWARE=1
+export GALLIUM_DRIVER=llvmpipe
+export LP_NUM_THREADS=2
+
+rviz2
+```
+
+RViz에서 `Fixed Frame`을 `map`으로 설정하고 `Map`을 추가한 뒤 Topic을
+`/map`으로 지정합니다.
+
+새 터미널에서 좌표 출력을 확인합니다.
+
+```bash
+source /opt/ros/humble/setup.bash
+ros2 topic echo /goal_pose
+```
+
+RViz 상단의 `2D Goal Pose`를 선택하고 지도에서 원하는 위치를 누른 뒤,
+로봇이 바라볼 방향으로 드래그합니다.
+
+기록할 값:
+
+```text
+position.x
+position.y
+orientation.z
+orientation.w
+```
+
+좌표는 현재 저장된 지도 기준이므로 지도를 새로 만들면 다시 지정합니다.
