@@ -36,6 +36,8 @@ TYPE_AMBIENT_ENVIRONMENT_OBSERVED = "AMBIENT_ENVIRONMENT_OBSERVED"
 
 # --- payload 필드/값 ---
 LOCATION_KEY = "location"
+TEMPERATURE_KEY = "temperature"
+HUMIDITY_KEY = "humidity"
 
 # 백엔드 토픽/식별자 안전 규칙: [A-Za-z0-9._-] 1~64자
 _SAFE_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
@@ -88,6 +90,17 @@ def build_event(
 def location_payload(location: str) -> dict[str, Any]:
     """문·PIR 센서 이벤트의 위치 payload 를 만든다."""
     return {LOCATION_KEY: location}
+
+
+def ambient_payload(
+    location: str, temperature: float, humidity: float
+) -> dict[str, Any]:
+    """온습도 이벤트 payload를 만든다. 단위는 °C와 % RH다."""
+    return {
+        LOCATION_KEY: location,
+        TEMPERATURE_KEY: temperature,
+        HUMIDITY_KEY: humidity,
+    }
 
 
 def _require_safe_id(value: str, field: str) -> None:
