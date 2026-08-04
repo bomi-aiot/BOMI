@@ -30,15 +30,12 @@ DEFAULT_PREFIX = "bomi/v1"
 
 # --- 이벤트 타입 (백엔드 MqttInboundMessageParser 의 IOT_EVENT 허용값) ---
 TYPE_DOOR_OPENED = "DOOR_OPENED"
-TYPE_PRESENCE_DETECTED = "PRESENCE_DETECTED"
+TYPE_DOOR_CLOSED = "DOOR_CLOSED"
+TYPE_MOTION_DETECTED = "MOTION_DETECTED"
 TYPE_AMBIENT_ENVIRONMENT_OBSERVED = "AMBIENT_ENVIRONMENT_OBSERVED"
 
 # --- payload 필드/값 ---
 LOCATION_KEY = "location"
-DIRECTION_KEY = "direction"
-DETECTION_METHOD_KEY = "detectionMethod"
-DIRECTION_UNKNOWN = "UNKNOWN"
-DETECTION_SENSOR_SEQUENCE = "SENSOR_SEQUENCE"
 
 # 백엔드 토픽/식별자 안전 규칙: [A-Za-z0-9._-] 1~64자
 _SAFE_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
@@ -88,26 +85,9 @@ def build_event(
     }
 
 
-def door_opened_payload(location: str) -> dict[str, Any]:
-    """DOOR_OPENED payload 를 만든다."""
+def location_payload(location: str) -> dict[str, Any]:
+    """문·PIR 센서 이벤트의 위치 payload 를 만든다."""
     return {LOCATION_KEY: location}
-
-
-def presence_detected_payload(
-    location: str,
-    direction: str = DIRECTION_UNKNOWN,
-    detection_method: str = DETECTION_SENSOR_SEQUENCE,
-) -> dict[str, Any]:
-    """PRESENCE_DETECTED payload 를 만든다.
-
-    문 센서 1개 + PIR 1개로는 방향을 항상 확정할 수 없어 기본값은
-    ``UNKNOWN`` 이다(하드웨어 문서 기준).
-    """
-    return {
-        LOCATION_KEY: location,
-        DIRECTION_KEY: direction,
-        DETECTION_METHOD_KEY: detection_method,
-    }
 
 
 def _require_safe_id(value: str, field: str) -> None:
