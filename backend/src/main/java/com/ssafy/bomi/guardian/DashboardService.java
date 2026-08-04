@@ -4,8 +4,6 @@ import com.ssafy.bomi.care.domain.CareRecord;
 import com.ssafy.bomi.care.domain.CareRecordStatus;
 import com.ssafy.bomi.care.domain.NotificationTier;
 import com.ssafy.bomi.care.repository.CareRecordRepository;
-import com.ssafy.bomi.conversation.domain.ConversationSummary;
-import com.ssafy.bomi.conversation.repository.ConversationSummaryRepository;
 import com.ssafy.bomi.fact.domain.FactCandidate;
 import com.ssafy.bomi.fact.domain.FactCandidateStatus;
 import com.ssafy.bomi.fact.repository.FactCandidateRepository;
@@ -82,7 +80,6 @@ public class DashboardService {
     private final CareRecordRepository careRecordRepository;
     private final FactCandidateRepository factCandidateRepository;
     private final MemoryRepository memoryRepository;
-    private final ConversationSummaryRepository conversationSummaryRepository;
     private final FactCandidateMapper factCandidateMapper;
 
     public DashboardService(
@@ -91,14 +88,12 @@ public class DashboardService {
             CareRecordRepository careRecordRepository,
             FactCandidateRepository factCandidateRepository,
             MemoryRepository memoryRepository,
-            ConversationSummaryRepository conversationSummaryRepository,
             FactCandidateMapper factCandidateMapper) {
         this.appUserRepository = appUserRepository;
         this.robotRepository = robotRepository;
         this.careRecordRepository = careRecordRepository;
         this.factCandidateRepository = factCandidateRepository;
         this.memoryRepository = memoryRepository;
-        this.conversationSummaryRepository = conversationSummaryRepository;
         this.factCandidateMapper = factCandidateMapper;
     }
 
@@ -267,24 +262,19 @@ public class DashboardService {
         return new MedicationProgressDto(total, confirmed, 0, upcoming, missed);
     }
 
-    // --- 최근 알게 된 것 (요약 + 기억) --------------------------------------
+    // --- 최근 알게 된 것 (기억) ----------------------------------------------
+    //
+    // 대화 요약(conversation_summary)은 여기 섞지 않는다 (S15P11E102-254, CLAUDE.md §9
+    // T4). 요약은 로봇이 "지난 대화"를 참고하기 위한 원문 압축이지, 보호자에게 읽어
+    // 주려고 만드는 것이 아니다 — memory 처럼 visibility 로 건별 공개 여부를 고르는
+    // 장치가 요약에는 없다. 예전에는 요약이 0건이라 우연히 무해했을 뿐이다: 이
+    // 티켓이 요약을 실제로 채우기 시작하면 그 우연이 사라진다.
 
     private List<ActivityDto> buildActivities(UUID seniorId) {
         record Timed(ActivityDto dto, OffsetDateTime at) {
         }
         List<Timed> merged = new ArrayList<>();
 
-        for (ConversationSummary s : conversationSummaryRepository.findTop5BySeniorIdOrderByGeneratedAtDesc(seniorId)) {
-            merged.add(new Timed(
-                    new ActivityDto(
-                            s.getId().toString(),
-                            "대화 요약",
-                            s.getContent(),
-                            iso(s.getGeneratedAt()),
-                            "AI",
-                            "NORMAL"),
-                    s.getGeneratedAt()));
-        }
         // S15P11E102-262: 가시성 필터 없는 findTop5...는 PRIVATE 기억까지 그대로
         // 돌려준다 — "이건 나만 알고 있을래요"라고 답한 내용이 보호자 화면에 새던
         // 경로가 이것이었다. 씨앗이 2건뿐이던 지금까지는 우연히 조용했을 뿐이다.

@@ -51,27 +51,51 @@ class ComposeEnvironmentPassthroughTest {
      * 있으면 넘긴다. 없으면(바꾸려면 재배포나 데이터 재구축이 필요하면) 넘기지 않는다.
      * 넘기지 않는 변수를 env 파일에 적어 두면, 적은 사람은 그것이 먹는다고 믿는다.</p>
      */
-    private static final Map<String, String> INTENTIONALLY_NOT_FORWARDED = Map.of(
-        "MQTT_BROKER_HOST",
-        "MQTT_BROKER_URL 의 기본값을 조립하는 데만 쓰인다. compose 는 완성된 URL 을 직접 넘긴다",
-        "MQTT_BROKER_PORT",
-        "MQTT_BROKER_HOST 와 함께 기본 URL 을 만드는 조각이다. URL 을 넘기므로 도달할 필요가 없다",
-        "QDRANT_DIMENSIONS",
-        "차원을 바꾸면 컬렉션을 다시 만들어야 하고 전량 재색인이다. env 를 고쳐서 되는 일이 아니다",
-        "EMBEDDING_DIMENSIONS",
-        "모델의 출력 차원이므로 코드 상수에 가깝다. 바꾸려면 컬렉션부터 다시 만들어야 한다",
-        "UPSTAGE_PASSAGE_MODEL",
-        "모델을 바꾸면 기존 벡터 전체가 무효다(벡터 공간이 다르다). 의도된 재배포 작업이다",
-        "UPSTAGE_QUERY_MODEL",
-        "passage 모델과 짝을 유지해야 한다. 한쪽만 바꿀 수 있으면 검색이 조용히 나빠진다",
-        "UPSTAGE_BASE_URL",
-        "API 엔드포인트가 바뀌는 것은 배포 사건이고, 운영 중 전환할 대상이 아니다",
-        "QDRANT_TIMEOUT_MILLIS",
-        "턴 지연 예산(약 2초)에서 나온 값이다. 늘리는 것은 예산을 다시 정하는 판단이다",
-        "EMBEDDING_TIMEOUT_MILLIS",
-        "질의 임베딩이 턴 예산 안에 있다. 이 값을 늘리면 어르신이 더 오래 침묵을 듣는다",
-        "EMBEDDING_SYNC_INTERVAL_MILLIS",
-        "배치 간격이다. 급하면 sync-enabled 를 끄면 되므로 간격만 따로 조정할 이유가 없다");
+    private static final Map<String, String> INTENTIONALLY_NOT_FORWARDED = Map.ofEntries(
+        Map.entry("MQTT_BROKER_HOST",
+            "MQTT_BROKER_URL 의 기본값을 조립하는 데만 쓰인다. compose 는 완성된 URL 을 직접 넘긴다"),
+        Map.entry("MQTT_BROKER_PORT",
+            "MQTT_BROKER_HOST 와 함께 기본 URL 을 만드는 조각이다. URL 을 넘기므로 도달할 필요가 없다"),
+        Map.entry("QDRANT_DIMENSIONS",
+            "차원을 바꾸면 컬렉션을 다시 만들어야 하고 전량 재색인이다. env 를 고쳐서 되는 일이 아니다"),
+        Map.entry("EMBEDDING_DIMENSIONS",
+            "모델의 출력 차원이므로 코드 상수에 가깝다. 바꾸려면 컬렉션부터 다시 만들어야 한다"),
+        Map.entry("UPSTAGE_PASSAGE_MODEL",
+            "모델을 바꾸면 기존 벡터 전체가 무효다(벡터 공간이 다르다). 의도된 재배포 작업이다"),
+        Map.entry("UPSTAGE_QUERY_MODEL",
+            "passage 모델과 짝을 유지해야 한다. 한쪽만 바꿀 수 있으면 검색이 조용히 나빠진다"),
+        Map.entry("UPSTAGE_BASE_URL",
+            "API 엔드포인트가 바뀌는 것은 배포 사건이고, 운영 중 전환할 대상이 아니다"),
+        Map.entry("QDRANT_TIMEOUT_MILLIS",
+            "턴 지연 예산(약 2초)에서 나온 값이다. 늘리는 것은 예산을 다시 정하는 판단이다"),
+        Map.entry("EMBEDDING_TIMEOUT_MILLIS",
+            "질의 임베딩이 턴 예산 안에 있다. 이 값을 늘리면 어르신이 더 오래 침묵을 듣는다"),
+        Map.entry("EMBEDDING_SYNC_INTERVAL_MILLIS",
+            "배치 간격이다. 급하면 sync-enabled 를 끄면 되므로 간격만 따로 조정할 이유가 없다"),
+        // 대화 요약 생성형 LLM (S15P11E102-254). enabled/api-key/max-calls-per-run 셋만
+        // 넘긴다 — embedding 이 이미 정한 "과금 스위치·키·지출 상한만 운영 다이얼"
+        // 기준을 그대로 따른다.
+        Map.entry("LLM_BASE_URL",
+            "API 엔드포인트가 바뀌는 것은 배포 사건이다. UPSTAGE_BASE_URL 과 같은 판단이다"),
+        Map.entry("LLM_MODEL",
+            "모델을 바꾸면 응답 품질·비용·말투가 달라진다. 신중한 배포 판단이지 운영 중 즉흥 전환 대상이 아니다"),
+        Map.entry("LLM_TIMEOUT_MILLIS",
+            "요약 스윕은 턴 예산(약 2초) 밖에서 돈다(GeminiTextGenerator 참고). 늦장 호출 대응은 재배포로 다룬다"),
+        Map.entry("LLM_MAX_OUTPUT_TOKENS",
+            "요약 길이 정책이다. 프롬프트·저장 형태와 함께 바뀌어야 하므로 배포 판단이다"),
+        Map.entry("LLM_MAX_SUMMARY_MESSAGES",
+            "프롬프트에 실을 발화 수 상한이다. 프롬프트 설계와 함께 바뀌어야 하는 값이다"),
+        Map.entry("LLM_SWEEP_INTERVAL_MILLIS",
+            "배치 간격이다. 급하면 LLM_ENABLED 를 끄면 스윕 빈 자체가 사라지므로 간격만 따로 조정할 이유가 없다"),
+        // 대화 경계 (S15P11E102-254). idle-timeout 만 넘긴다 — 완료 조건이 명시한
+        // 30분을 현장에서 조정할 수 있어야 하는 값이라 SCENARIO_ACTIVE_TIMEOUT 과
+        // 같은 기준으로 뽑았다. 나머지는 재배포 없이 바꿀 운영상의 이유가 없다.
+        Map.entry("CONVERSATION_RAW_RETENTION_DAYS",
+            "삭제 잡이 아직 없다(이 티켓 범위 밖). 삭제 잡이 생기면 그때 함께 노출한다"),
+        Map.entry("CONVERSATION_LIFECYCLE_SWEEP_ENABLED",
+            "끄면 이 티켓이 고치는 문제(대화가 영원히 OPEN)로 되돌아간다. 끌 이유가 있다면 재배포로 다룰 사고 대응이다"),
+        Map.entry("CONVERSATION_LIFECYCLE_SWEEP_INTERVAL_MILLIS",
+            "배치 간격이다. 유휴시간(30분) 대비 기본 1분이면 촘촘하다. 급하면 sweep-enabled 를 끄면 된다"));
 
     @Test
     @DisplayName("★ application.yml 이 읽는 변수는 compose 가 넘기거나, 안 넘기는 이유가 있어야 한다")

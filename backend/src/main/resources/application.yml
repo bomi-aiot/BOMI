@@ -152,6 +152,35 @@ bomi:
     sync-enabled: ${EMBEDDING_SYNC_ENABLED:false}
     sync-interval-millis: ${EMBEDDING_SYNC_INTERVAL_MILLIS:300000}
 
+  # 대화 요약 생성형 LLM — Gemini, GMS 경유 (S15P11E102-254).
+  #
+  # ★ embedding 과 같은 이유로 기본값이 전부 꺼짐이다. 이것이 백엔드의 두 번째(현재로는
+  #   마지막) 과금 외부 API 다. 키만 컨테이너에 넘기고 LLM_ENABLED 를 빠뜨리면
+  #   application.yml 의 기본값(false)이 조용히 이긴다 — EMBEDDING_ENABLED 가 218 에서
+  #   실제로 겪은 바로 그 실패 모양이다. 두 값을 항상 같이 확인한다.
+  llm:
+    enabled: ${LLM_ENABLED:false}
+    api-key: ${GEMINI_API_KEY:}
+    base-url: ${LLM_BASE_URL:https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com}
+    model: ${LLM_MODEL:gemini-2.5-flash-lite}
+    timeout-millis: ${LLM_TIMEOUT_MILLIS:8000}
+    max-output-tokens: ${LLM_MAX_OUTPUT_TOKENS:220}
+    # 한 번의 스윕(요약 잡)이 부를 수 있는 호출 수 상한. 튜닝 값이 아니라 지출 상한이다.
+    max-calls-per-run: ${LLM_MAX_CALLS_PER_RUN:20}
+    max-summary-messages: ${LLM_MAX_SUMMARY_MESSAGES:60}
+    sweep-interval-millis: ${LLM_SWEEP_INTERVAL_MILLIS:300000}
+
+  # 대화 경계 판단 — 유휴시간으로 대화를 닫고 요약 대상을 만든다 (S15P11E102-254).
+  #
+  # llm 과 달리 과금 API 가 없어 기본값이 켜짐이다(ConversationLifecycleProperties
+  # 참고) — 꺼두면 이 티켓이 고치는 문제(대화가 영원히 OPEN)로 되돌아간다. 그래도
+  # 재배포 없이 조정할 수 있도록 env 로 노출한다(SCENARIO_ACTIVE_TIMEOUT 과 같은 이유).
+  conversation-lifecycle:
+    idle-timeout: ${CONVERSATION_IDLE_TIMEOUT:30m}
+    raw-retention-days: ${CONVERSATION_RAW_RETENTION_DAYS:30}
+    sweep-enabled: ${CONVERSATION_LIFECYCLE_SWEEP_ENABLED:true}
+    sweep-interval-millis: ${CONVERSATION_LIFECYCLE_SWEEP_INTERVAL_MILLIS:60000}
+
   mqtt:
     enabled: ${MQTT_ENABLED:false}
     broker-url: ${MQTT_BROKER_URL:tcp://${MQTT_BROKER_HOST:localhost}:${MQTT_BROKER_PORT:1883}}
