@@ -22,7 +22,7 @@
         계약 대화와 정반대다. 애매하면 부른다.
 
 참고
-    CLAUDE.md §9 (티어), §10 (약한 신호), HANDOFF §7 (자해 목록은 사람이 검토)
+    CLAUDE.md §9 (티어), §10 (약한 신호), docs/carebot/PROGRESS.md §2.2 (자해 목록은 사람이 검토)
 """
 
 import json
@@ -473,7 +473,8 @@ def test_the_unreviewed_marker_list_is_announced_once(frozen_clock, caplog):
     """★ 다른 경고는 남아 있다. 자해 표현 목록이 아직 사람의 검토를 받지 않았다.
 
     판별기는 동작한다. 검토 여부를 코드 밖에서만 관리하면 잊히므로 런타임으로 끌어낸다
-    (HANDOFF §7). 검토가 끝나면 policy.SELF_HARM_MARKERS_REVIEWED 를 True 로 바꾼다.
+    (docs/carebot/PROGRESS.md §2.2). 검토가 끝나면 policy.SELF_HARM_MARKERS_REVIEWED 를
+    True 로 바꾼다.
     """
     frozen_clock(start=MORNING_UTC)
     triage._REVIEW_WARNED = False
