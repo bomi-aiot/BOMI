@@ -910,6 +910,31 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 
 미검증: 실기(Jetson) 전체. 실제 백엔드 엔드포인트에 대고 제출해 본 적이 없고, LLM 이 실제로 무엇을 "기억할 만하다"고 고르는지도 대역 LLM 으로만 확인했습니다.
 
+### 295 — 기여 문서 정합 ✅ (문서 전용, 코드 변경 없음)
+
+| 완료 조건 | 결과 |
+|---|---|
+| `CONTRIBUTING.md` 를 처음 읽는 사람이 올바른 브랜치를 만들 수 있음 | ✅ 라인별 4갈래 구조로 교체 |
+| 예시 브랜치 이름이 원격에 실제로 존재하는 서식과 일치 | ✅ 경로형/슬러그형 실측 분포(78:49)를 라인별로 그대로 기술, 통일하지 않음 |
+| 단일 `develop` 을 전제하는 문장이 남아 있지 않음 | ✅ §1~§15 전체 치환 |
+| 라인 간 untracked 현상이 문서에 설명됨 | ✅ §2 신규 절 추가 |
+| GitHub 과 GitLab 이 혼용되어 있지 않음 | ✅ clone 주소·MR 용어 전부 GitLab 기준으로 치환, `.github/PULL_REQUEST_TEMPLATE.md` 는 죽은 파일이라고 §6.1 에 명시(이전 여부는 범위 밖) |
+| `CLAUDE.md` §25 와의 권위 관계가 문서상 명확 | ✅ 문서 머리에 한 줄 선언 |
+
+**무엇을 고쳤나**: `CONTRIBUTING.md`(456줄) 절반 이상을 다시 썼습니다 — 전면 재작성이 아니라
+정정입니다. 커밋 위생, 리뷰 예절, 체크리스트의 취지처럼 사실과 어긋나지 않는 서술은 그대로
+남기고, 단일 `develop` 전제·GitHub 용어·`type: 요약` 커밋 형식만 실제(라인 4갈래, GitLab MR,
+`[영역](카테고리) S15P11E102-<n> 제목 — 부제`)로 교체했습니다. §10(로봇 최소 테스트)에는
+`ruff`/`pytest` 두 줄과 `.claude/hooks/pre-push-gate.sh` 가 이를 강제로 검사한다는 사실을
+추가했습니다.
+
+**의도적으로 통일하지 않은 것**: 브랜치 이름 서식(경로형 vs 한글슬러그형)은 라인마다 실제
+관행이 다릅니다(FE·ROBOT·INFRA 는 경로형만, AI 는 슬러그형 우세 30:13, BE 는 경로형 우세
+33:19). 통일하려면 `pre-push-gate.sh` 의 라인 파싱과 `ticket` 스킬도 함께 고쳐야 해서 범위가
+커지므로, 이 티켓에서는 분포를 있는 그대로 문서화만 했습니다.
+
+**미검증**: 없음 — 순수 문서 변경이라 코드 게이트(ruff/pytest) 대상이 아닙니다.
+
 ---
 
 ## 7. 갱신 이력
@@ -931,6 +956,7 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 | 256 푸시 후 | **표현 다양성 배선.** 있던 자리(프롬프트 빌더, `state.recent_phrasings`, `RECENT_PHRASING_LOOKBACK`)를 채우는 코드가 없어 조용히 꺼져 있던 것을 배선했다. `graph/phrasing.phrasing_key`(순수 함수), `localstore/phrasings.py`(기록/조회/정리), `spoken_phrasing` 표를 신설했다. `memory_write`가 기록, `context_read`가 조회하며 `trigger_type` 가드로 반응형 턴에 새지 않게 했다. 침묵 프로브·T3 동의 질문은 `policy.RECENT_PHRASING_EXCLUDED_ORIGIN_PREFIXES` 로 제외. `test_naturalness_replay.py`의 우회 헬퍼(`_run_with_phrasings`)를 걷어내고 시나리오 08 이 실제 게이트 경로를 타도록 다시 썼다. |
 | 253 푸시 후 | **정서 동의 지연 완성.** 263 의 즉시-큐잉을 걷어내고 누적 문턱(`localstore/emotion.py`, `jobs/ticks.consent_tick`)으로 바꿨다. `ConvState.pending_consent` + `localstore/consent.py` 로 "응"/"아니" 답을 규칙 판정하고 GRANTED 만 outbox 로 보낸다. "우리끼리 얘기" 봉인, 두 개의 킬스위치, `_generate` 의 `build_prompt` try 누락 수정, 온보딩 대기 중 정서 표현이 필드값으로 삼켜지던 결함도 함께 고쳤다. 상위 동의 확인은 BE 별도 티켓으로 남김 |
 | 294 푸시 후 | **CI 파이프라인이 존재하지 않는 `ai/` 를 보던 문제 수정.** `Jenkinsfile.ai`·`verify-ai.sh` 가 실제 경로 `robot/ai_chat` 을 보게 정정하고, 경로 없을 때 보류(`unstable`)가 아니라 실패(`error`)하도록 바꿨다. `verify-ai.sh` 에 없던 `ruff check` 를 신규 추가하고 pytest 에 마커 제외를 넣었다. `ci/README.md`·`pre-push-gate.sh` 주석의 낡은 `ai/` 전제를 정정했다. 트리거 브랜치 확장(develop 대상)과 pip 캐시 전략은 사람 결정 사항으로 미결 남김. 실제 Jenkins 실패 증명은 `ai-main` 릴리스 이후 선행 조건 |
+| 295 푸시 후 | **`CONTRIBUTING.md` 를 라인 4갈래 구조로 정정.** 단일 `develop` 전제·GitHub 용어·`type: 요약` 커밋 형식을 실제 관행(ai/be/fe/robot-develop, GitLab MR, `[영역](카테고리) S15P11E102-<n>`)으로 치환. "한 라인 체크아웃 시 다른 라인 소스가 untracked 로 보이는 것이 정상"이라는 신규 절 추가. 브랜치 서식(경로형/슬러그형)은 라인별 실측 분포를 그대로 두고 통일하지 않음. 코드 변경 없는 순수 문서 티켓 |
 | 309 푸시 후 | **검증 문서 4종 + CLAUDE.md §20 정합.** `VERIFICATION.md` §3 에서 이미 머지된 263·226·218·227·232 를 참조하던 항목을 걷어냈다(263/232/226/227 은 표에서 삭제, 218 은 "완료됐지만 기본값이 꺼짐"으로 정정). §0 에 백엔드 명령이 `be-develop` 전용이라는 전제를 추가하고 각 백엔드 절에 표시를 붙였다. 존재하지 않던 테스트 이름(`test_sim_clock_compresses_a_day_into_ten_seconds`)을 실제 이름으로 고쳤다. `V1~V5` 하드코딩을 `FlywayMigrationValidationTest` 자기참조로 바꿨다. `READING-ORDER.md` 에 `mvp-erd.md` 가 `be-develop` 전용이라는 것, `bootstrap.py` 와 232 이후 신규 모듈들을 추가했다. `CLAUDE.md` §20 의 "아직 없음" 구분선을 지우고 실제 트리로 승격했다. 저장소 루트의 일회성 인계 문서를 지우고 6곳의 참조를 `docs/carebot/PROGRESS.md §2.2` 로 옮겼다(스프린트 경위·선행조건 순서·자해 목록 검토 요구사항의 유래는 §8 로 보존). |
 | 255 푸시 후 | **사실 추출 큐 (로봇 절반).** `localstore/extraction.py` + `extraction_job` 표를 신설해 `memory_write` 가 반응형 턴마다(스킵 조건 7가지를 통과하면) LLM 없이 큐잉만 하고, `jobs/ticks.extraction_flush`(신규 틱, 양쪽 스케줄러 경로에 등록)가 턴 밖에서 생성 호출로 사실을 뽑아 `backend_client/fact_client.py`(신규, 실패 시 예외를 올려 conversation_client 와 반대 방향)로 제출한다. 티켓의 여섯 스킵 조건에 "서버가 메시지 id 를 못 돌려준 턴은 큐잉하지 않는다"를 추가로 넣었다(재시도 횟수 컬럼이 없어 영구 실패 행이 조용히 쌓이는 것을 막기 위해). `response_shaper → memory_write → emit` 이던 엣지를 `response_shaper → emit → memory_write` 로 재배선해, 블로킹 대화 적재 호출이 TTS 시작을 더 이상 막지 않게 했다. 백엔드 `POST /api/v1/robot/fact-candidates` 의 정확한 페이로드는 255-be 미확정 상태에서 추정했다 — 교차 확인 필요. |
 
