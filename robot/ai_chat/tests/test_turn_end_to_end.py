@@ -302,3 +302,123 @@ def test_record_turn_returns_a_message_id_for_the_senior_row(wired):
     state = run_user_turn(app, SENIOR, "무릎이 아파")
 
     assert state["last_message_id"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 날씨·의료 조회 — context_read 에서 그래프를 태워 확인한다 (S15P11E102-311)
+#
+# 이 절만 build_prompt() 를 직접 부르지 않고 app.invoke 로 전체 그래프를
+# 돌린다. 완료 조건이 "그래프를 태워서" 확인하라고 명시했다 — context_read 가
+# 채운 ctx["documents"] 가 실제로 handle_info -> build_prompt 까지 살아서
+# 도착하는지는 노드 하나만 불러서는 보증할 수 없기 때문이다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class FakeWeather:
+    """weather/client.WeatherClient 대역. 도시별 조회 결과나 실패를 흉내낸다."""
+
+    def __init__(self, forecast=None, error=None):
+        self.forecast = forecast or {"기온": "20", "하늘상태": "1"}
+        self.error = error
+        self.calls: list[str] = []
+
+    def get_forecast(self, city):
+        self.calls.append(city)
+        if self.error:
+            raise self.error
+        return self.forecast
+
+
+def test_weather_question_makes_exactly_one_generation_call(wired):
+    """(완료 조건) 날씨 질문 1턴에서 생성 LLM 호출이 1회로 유지된다.
+
+    조회(기상청 API) 자체는 LLM 호출이 아니다. handle_info._generate() 가
+    부르는 한 번이 이 턴의 유일한 생성 호출이어야 한다(CLAUDE.md §16).
+    """
+    app, _client, llm, _player = wired
+    weather = FakeWeather({"기온": "22", "하늘상태": "1"})
+    context_node.set_weather_client(weather)
+    try:
+        run_user_turn(app, SENIOR, "오늘 서울 날씨 어때")
+    finally:
+        context_node.set_weather_client(None)
+
+    assert weather.calls == ["서울"]
+    assert llm.calls == 1, "조회가 늘어도 생성 호출은 여전히 1회여야 한다"
+
+
+def test_weather_question_renders_reference_material_in_the_prompt(wired):
+    """(완료 조건) 날씨 질문의 프롬프트에 '참고 자료' 섹션이 실제로 렌더된다.
+
+    build_prompt() 를 직접 부르는 것이 아니라 app.invoke 로 그래프를 태워
+    확인한다 — context_read 가 채운 문서가 handle_info 까지 실제로 전달되는지
+    보려면 그 경로 전체가 살아 있어야 한다.
+    """
+    app, _client, llm, _player = wired
+    context_node.set_weather_client(FakeWeather({"기온": "22", "하늘상태": "1"}))
+    try:
+        run_user_turn(app, SENIOR, "오늘 서울 날씨 어때")
+    finally:
+        context_node.set_weather_client(None)
+
+    assert "참고 자료" in llm.prompts[0]
+    assert "서울" in llm.prompts[0]
+    assert "22" in llm.prompts[0]
+
+
+def test_weather_lookup_failure_leads_to_an_honest_reply_not_fabrication(wired):
+    """(완료 조건) 조회 실패는 지어내지 않고 솔직히 답하도록 지시한다."""
+    app, _client, llm, _player = wired
+    context_node.set_weather_client(FakeWeather(error=RuntimeError("기상청 다운")))
+    try:
+        state = run_user_turn(app, SENIOR, "오늘 서울 날씨 어때")
+    finally:
+        context_node.set_weather_client(None)
+
+    # 턴이 죽지 않고 끝까지 간다 — 예외가 새어나가 침묵하는 것이 아니라
+    # 대체 응답을 말한다.
+    assert state["final_utterance"]
+    assert llm.calls == 1
+    assert "확인이 어렵다" in llm.prompts[0] or "지어내지" in llm.prompts[0]
+
+
+def test_medical_question_renders_reference_material_through_the_graph(
+    wired, monkeypatch,
+):
+    """(완료 조건) 의료 질문의 프롬프트에도 '참고 자료' 섹션이 실제로 렌더된다.
+
+    실제 llm/router.py 는 SentenceTransformer 를 로딩하므로(§16), 이 테스트는
+    context_node._is_medical 을 직접 대역으로 바꿔 무거운 모델 로딩을 피한다.
+    """
+    app, _client, llm, _player = wired
+
+    monkeypatch.setattr(context_node, "_is_medical", lambda text: True)
+    monkeypatch.setattr(
+        context_node, "handle_medical_query",
+        lambda text: "서울대병원은 종로구에 있습니다.")
+
+    run_user_turn(app, SENIOR, "근처 병원 어디야")
+
+    assert llm.calls == 1, "의료 조회(function-calling)가 있어도 응답 생성은 1회다"
+    assert "참고 자료" in llm.prompts[0]
+    assert "서울대병원" in llm.prompts[0]
+
+
+def test_medical_lookup_failure_leads_to_an_honest_reply_not_fabrication(
+    wired, monkeypatch,
+):
+    """(완료 조건) 의료 조회 실패도 예외를 던지지 않고 솔직히 답한다."""
+    app, _client, llm, _player = wired
+
+    monkeypatch.setattr(context_node, "_is_medical", lambda text: True)
+
+    def boom(text):
+        raise RuntimeError("gemini down")
+
+    monkeypatch.setattr(context_node, "handle_medical_query", boom)
+
+    state = run_user_turn(app, SENIOR, "근처 병원 어디야")
+
+    assert state["final_utterance"]
+    assert llm.calls == 1
+    assert "확인이 어렵다" in llm.prompts[0] or "지어내지" in llm.prompts[0]

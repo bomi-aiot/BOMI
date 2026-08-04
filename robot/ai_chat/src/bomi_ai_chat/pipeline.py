@@ -14,7 +14,8 @@ from bomi_ai_chat.llm.client import LLMClient
 from bomi_ai_chat.llm.medical_flow import handle_medical_query
 from bomi_ai_chat.stt.client import STTClient
 from bomi_ai_chat.tts.client import TTSClient
-from bomi_ai_chat.weather.client import CITY_GRID, WeatherClient
+from bomi_ai_chat.weather.client import WeatherClient
+from bomi_ai_chat.weather.client import extract_city as _extract_city_shared
 
 LOGGER = logging.getLogger(__name__)
 
@@ -100,12 +101,14 @@ class ConversationPipeline:
         self._sleep = sleep
 
     def _extract_city(self, text: str) -> str | None:
-        """텍스트 안에서 지원하는 도시명을 찾는다."""
+        """텍스트 안에서 지원하는 도시명을 찾는다.
 
-        for city in CITY_GRID:
-            if city in text:
-                return city
-        return None
+        S15P11E102-311: 원래 CITY_GRID 를 직접 순회했으나, 그래프 경로
+        (graph/context.py)도 같은 판정이 필요해져서 weather/client.py 로
+        옮겼다. 도시 목록이 두 곳에 생기지 않도록 여기서는 그 구현을
+        그대로 위임한다.
+        """
+        return _extract_city_shared(text)
 
     def _finish(
         self,
