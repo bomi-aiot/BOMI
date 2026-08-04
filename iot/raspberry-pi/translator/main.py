@@ -8,7 +8,7 @@ Zigbee2MQTT 토픽을 구독해 들어온 메시지를 Translator 로 넘긴다.
 
     python main.py [config_path]
 
-기본 config_path 는 ../config/device.yaml (없으면 device.example.yaml).
+기본 config_path 는 config/device.yaml (없으면 device.example.yaml).
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("iot.translator")
 
 _HERE = os.path.dirname(__file__)
-_DEFAULT_CONFIG = os.path.join(_HERE, "..", "config", "device.yaml")
-_EXAMPLE_CONFIG = os.path.join(_HERE, "..", "config", "device.example.yaml")
+_DEFAULT_CONFIG = os.path.join(_HERE, "config", "device.yaml")
+_EXAMPLE_CONFIG = os.path.join(_HERE, "config", "device.example.yaml")
 
 
 def load_config(path: str) -> dict:
