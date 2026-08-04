@@ -500,6 +500,10 @@ def main() -> int:
                 "PREFERRED_NAME", "BIRTH_DATE", "DAILY_ROUTINE", "MEDICATION",
                 "MEDICATION_SCHEDULE", "APPOINTMENT",
                 "PRIMARY_GUARDIAN_CARE_MANAGEMENT_CONSENT",
+                # S15P11E102-261: 개인차가 있어야 하는 값 세 가지(기상·취침 시각,
+                # 만성 통증 부위, 단골 병원)를 온보딩으로 묻는다.
+                "WAKE_TIME", "SLEEP_TIME", "CHRONIC_PAIN_AREA",
+                "PREFERRED_HOSPITAL",
             }
             if set(question_codes) != required_codes:
                 fail(errors, f"질문 코드 목록이 다릅니다: {sorted(question_codes)}")

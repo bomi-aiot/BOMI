@@ -361,6 +361,71 @@ class RobotOnboardingServiceTest {
         assertThat(candidate.getStatus()).isEqualTo(FactCandidateStatus.MATERIALIZED);
     }
 
+    // ── S15P11E102-261: 개인차가 있어야 하는 값 세 가지 ──────────────────────
+
+    @Test
+    void aConfirmedWakeTimeReachesAppUserImmediately() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+
+        AnswerResult result = onboardingService.submitAnswer(session.getId(), "WAKE_TIME",
+            Map.of("wakeTime", "06:30"), true, null, null);
+
+        // BIRTH_DATE 와 같은 모양이다: 민감하지 않고 확인을 요구하지 않으므로,
+        // 확정 즉시 app_user 에 반영된다.
+        assertThat(result.outcome()).isEqualTo(Outcome.ACCEPTED);
+        assertThat(result.materialized()).isTrue();
+        assertThat(reloadSenior().getWakeTime()).isEqualTo(java.time.LocalTime.of(6, 30));
+    }
+
+    @Test
+    void aConfirmedSleepTimeReachesAppUserImmediately() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+
+        AnswerResult result = onboardingService.submitAnswer(session.getId(), "SLEEP_TIME",
+            Map.of("sleepTime", "22:30"), true, null, null);
+
+        assertThat(result.materialized()).isTrue();
+        assertThat(reloadSenior().getSleepTime()).isEqualTo(java.time.LocalTime.of(22, 30));
+    }
+
+    /**
+     * 만성 통증 부위·단골 병원은 care_record 가 아니라 app_user 로 가는 값이라서,
+     * MEDICATION(sensitive, care_record 대상, 아직 쓰기 경로 없음)과 달리 민감·확인
+     * 필수임에도 confirm=true 즉시 app_user 에 반영된다.
+     */
+    @Test
+    void aConfirmedChronicPainAreaReachesAppUserImmediately() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "HEALTH_DATA_CONSENT");
+        Map<String, Object> value = Map.of("chronicPainArea", "왼쪽 무릎");
+
+        onboardingService.submitAnswer(session.getId(), "CHRONIC_PAIN_AREA", value, false, null, null);
+        AnswerResult confirmed = onboardingService.submitAnswer(
+            session.getId(), "CHRONIC_PAIN_AREA", value, true, null, null);
+
+        assertThat(confirmed.materialized()).isTrue();
+        assertThat(reloadSenior().getChronicPainArea()).isEqualTo("왼쪽 무릎");
+        FactCandidate candidate = candidateRepository.findById(confirmed.factCandidateId())
+            .orElseThrow();
+        assertThat(candidate.getStatus()).isEqualTo(FactCandidateStatus.MATERIALIZED);
+    }
+
+    @Test
+    void aConfirmedPreferredHospitalReachesAppUserImmediately() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "HEALTH_DATA_CONSENT");
+        Map<String, Object> value = Map.of("preferredHospital", "행복내과의원");
+
+        onboardingService.submitAnswer(session.getId(), "PREFERRED_HOSPITAL", value, false, null, null);
+        AnswerResult confirmed = onboardingService.submitAnswer(
+            session.getId(), "PREFERRED_HOSPITAL", value, true, null, null);
+
+        assertThat(confirmed.materialized()).isTrue();
+        assertThat(reloadSenior().getPreferredHospital()).isEqualTo("행복내과의원");
+    }
+
     @Test
     void anUnknownQuestionCodeIsRejected() {
         OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
