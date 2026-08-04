@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from bomi_ai_chat import policy
+from bomi_ai_chat import conversation_control, policy
 from bomi_ai_chat.audio_io.base import AudioInput, AudioOutput
 from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.llm.client import LLMClient
@@ -31,9 +31,9 @@ WEATHER_ERROR_MESSAGE = (
 RESPONSE_ERROR_MESSAGE = (
     "답변을 준비하는 중 문제가 생겼어요. 잠시 후 다시 말씀해주세요."
 )
-# "보미야" 로 대화가 시작될 때 녹음 전에 먼저 말하는 호출 응답. 사용자에게 '지금
-# 들을 준비가 됐다'는 신호를 주고, 잘못 깨웠을 때도 바로 알아챌 수 있게 한다.
-WAKE_ACK_MESSAGE = "저를 부르셨나요?"
+# "보미야" 로 대화가 시작될 때 녹음 전에 먼저 말하는 호출 응답. 정의는 공용 모듈에
+# 두어 그래프 경로(bootstrap.py)와 문구가 갈라지지 않게 한다.
+WAKE_ACK_MESSAGE = conversation_control.WAKE_ACK_MESSAGE
 LOOP_FAILURE_DELAY_SECONDS = 1.0
 
 
@@ -436,18 +436,12 @@ class ConversationPipeline:
 
     @staticmethod
     def _is_farewell(user_text: str) -> bool:
-        """사용자 발화가 '대화를 그만하겠다'는 뜻인지 부분일치로 판단한다.
+        """사용자 발화가 '대화를 그만하겠다'는 뜻인지 판단한다(공용 로직에 위임).
 
-        무엇을 하는가
-            발화에서 공백을 없앤 뒤, policy.CONVERSATION_FAREWELL_CUES 의 큐가 하나라도
-            들어 있으면 True. "대화는 여기까지만 하자" -> "여기까지" 포함 -> True.
-
-        왜 LLM 을 안 쓰나
-            종료 판정에 생성 LLM 을 또 부르면 턴마다 왕복이 늘어 2초 예산이 무너진다
-            (CLAUDE.md §16). 값싼 키워드 매칭으로 시작한다. 큐 목록은 policy 에 있다.
+        판정 규칙은 conversation_control.is_farewell 에 있다 — 그래프 경로와 같은
+        정의를 쓰기 위해서다. 이 래퍼는 기존 호출부(self._is_farewell)를 유지한다.
         """
-        text = user_text.replace(" ", "")
-        return any(cue in text for cue in policy.CONVERSATION_FAREWELL_CUES)
+        return conversation_control.is_farewell(user_text)
 
     def _run_conversation(self, turns: int, max_turns: int | None) -> int:
         """'보미야'로 시작된 하나의 대화를 여러 발화로 이어간다.
