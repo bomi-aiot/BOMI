@@ -46,6 +46,41 @@ def _resolve_input_device(device: AudioDevice) -> AudioDevice:
     return matches[0][0]
 
 
+def _resolve_output_device(device: AudioDevice) -> AudioDevice:
+    """device가 '이름(문자열)'이면 그 이름을 포함하는 '출력' 장치를 찾아 인덱스로 바꾼다.
+
+    _resolve_input_device 의 출력판. USB를 다시 꽂아 인덱스가 바뀌어도 매번 이름으로
+    다시 찾으므로 항상 올바른 스피커를 잡는다. 정수 인덱스나 None이면 그대로 둔다.
+
+    핵심은 max_output_channels > 0 인 장치만 후보로 본다는 것이다. 같은 이름이 입력·
+    출력 양쪽으로 잡히는 장치(예: reSpeaker)에서, 이 필터가 없으면 출력이 0채널인
+    입력 항목을 골라 "Invalid number of channels" 로 재생이 실패한다.
+
+    같은 이름이 여러 호스트 API(MME/DirectSound/WASAPI/WDM-KS)로 잡히면 'MME'를
+    우선한다(Windows 기본 출력 경로로 무난). 없으면 첫 출력 매칭을 쓴다.
+    """
+    if not isinstance(device, str):
+        return device
+
+    name_hint = device.lower()
+    matches = []
+    for idx, dev in enumerate(sd.query_devices()):
+        if dev["max_output_channels"] > 0 and name_hint in dev["name"].lower():
+            hostapi = sd.query_hostapis(dev["hostapi"])["name"]
+            matches.append((idx, hostapi))
+
+    if not matches:
+        raise RuntimeError(
+            f"이름에 '{device}'가 들어간 출력 장치를 찾을 수 없습니다. "
+            "tests/list_audio_devices.py로 장치 이름을 확인하세요."
+        )
+
+    for idx, hostapi in matches:
+        if "mme" in hostapi.lower():
+            return idx
+    return matches[0][0]
+
+
 def _resample_int16(mono: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
     """선형 보간으로 모노 int16 신호의 샘플레이트를 변환한다.
 
@@ -227,8 +262,12 @@ class SoundDeviceAudioOutput(AudioOutput):
             if channels > 1:
                 data = data.reshape(-1, channels)
 
+        # 이름으로 지정한 경우 현재 인덱스로 변환(재연결로 번호가 바뀌어도 자동 대응).
+        # 입력 캡처가 _resolve_input_device 로 하는 것과 대칭이다.
+        device = _resolve_output_device(self.device)
+
         try:
-            sd.play(data, samplerate=sample_rate, device=self.device)
+            sd.play(data, samplerate=sample_rate, device=device)
             sd.wait()
         finally:
             sd.stop()
