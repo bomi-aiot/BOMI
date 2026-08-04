@@ -12,9 +12,10 @@
 #   3. 안 건드렸으면 통과시킨다 — 문서만 고친 push 를 14초 기다리게 하지 않는다.
 #
 # 왜 scripts/ci/verify-ai.sh 를 쓰지 않는가
-#   그 스크립트는 존재하지 않는 `ai/` 디렉터리를 가리켜 exit 3 으로 죽는다(런타임은
-#   robot/ai_chat/ 이다, CLAUDE.md §20). 도커로 pip install 까지 하므로 분 단위이기도 하다.
-#   push 직전 게이트는 초 단위여야 한다.
+#   그 스크립트는 이제 robot/ai_chat/ 을 올바르게 가리킨다(S15P11E102-294 에서 경로를
+#   고쳤다). 하지만 도커로 pip install -e ".[dev]" 까지 하므로 분 단위 소요다(torch
+#   의존성 때문에 캐시 없이는 더 길다). push 직전 게이트는 초 단위여야 하므로 여전히
+#   이 로컬 스크립트를 쓴다 — verify-ai.sh 는 서버(Jenkins) 파이프라인의 몫이다.
 #
 # 출력  통과 → exit 0 (조용히). 거부 → exit 2 + stderr.
 set -uo pipefail

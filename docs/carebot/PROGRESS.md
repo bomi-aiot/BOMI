@@ -804,7 +804,22 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 
 **미검증**: 실기(Jetson, 실제 기상청/Gemini API 왕복). 자동 테스트는 전부 대역입니다.
 
----
+### 294 — CI 파이프라인이 없는 경로를 보는 문제 수정 ✅ (일부 미결)
+
+| 완료 조건 | 결과 |
+|---|---|
+| `ci/Jenkinsfile.ai` 가 `robot/ai_chat` 확인, 경로 없으면 `error`(UNSTABLE 아님) | ✅ |
+| `scripts/ci/verify-ai.sh` 가 `robot/ai_chat` 에서 `ruff check src tests` + 마커 제외 `pytest` 실행 | ✅ |
+| 통과 로그에 실제 건수·소요 시간 | ✅ `540 passed in 14.87s`(로컬 venv), ruff `All checks passed!` |
+| `ci/README.md`·`verify-ai.sh` 에 `ai/` 전제 미잔존, `pre-push-gate.sh:14-17` 주석이 새 사실과 일치 | ✅ |
+| 고의로 깨뜨린 커밋이 파이프라인을 실패시키는 것을 실제 Jenkins 로 확인 | ❌ **미실시 — `ai-main` 에 `robot/ai_chat` 이 아직 릴리스되지 않아 불가능(선행 조건)** |
+
+**손댄 파일 4개**: `ci/Jenkinsfile.ai`(`fileExists('ai')` → `fileExists('robot/ai_chat')`, `unstable(...)` → `error(...)`), `scripts/ci/verify-ai.sh`(경로 `ai` → `robot/ai_chat`, `ruff check src tests` 신규 추가, pytest 에 `-m "not integration and not manual"` 추가), `ci/README.md`(향후 생성/`UNSTABLE` 문단을 실제 경로/`실패`로 교체), `.claude/hooks/pre-push-gate.sh`(14~17행 주석 — "verify-ai.sh 가 존재하지 않는 ai/ 를 가리켜 죽는다"는 낡은 전제를 "경로는 고쳤지만 도커 빌드가 분 단위라 push 직전 게이트로는 여전히 부적합하다"로 정정).
+
+**의도적으로 범위에서 뺀 것 (티켓 본문이 명시)**: 작업 내용 5번(트리거 브랜치를 `ai-main` 외에 `develop` 대상까지 넓힐지)과 6번(pip 캐시 전략, torch 의존성 timeout 대응)은 사람이 결정할 사항이라 이 워크트리에서 건드리지 않았습니다. 둘 다 `Jenkinsfile.ai`/`verify-ai.sh` 를 추가로 고쳐야 하는 미결 항목으로 남습니다.
+
+**Jenkinsfile.ai 를 코드로 직접 실행해 검증하지 못한 이유**: Jenkins 서버 자체가 이 워크트리에서 접근 불가합니다. `fileExists('robot/ai_chat')`/`error(...)` 분기는 Groovy 문법을 읽고 고쳤을 뿐 Jenkins 파서로 돌려보지 않았습니다 — **UNVERIFIED**.
+
 
 ### 256 — 표현 다양성 배선 ✅ (실기 미실시)
 
@@ -915,6 +930,7 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 | 311 푸시 후 | **날씨·의료 조회를 그래프에 연결.** `context_read` 가 조회를 맡고 `ctx["documents"]` 로 "참고 자료"를 채워, `handle_info` 는 그대로 얇게 남김(§16 생성 호출 1회, §23 핸들러 직접 I/O 금지 유지). 반응형 턴은 `classify_intent` 전이라 의료 힌트 표지로 좁힌 사전 판정을 도입, 라우터 판정을 `state["is_medical_query"]` 로 캐시해 두 번 안 부르게 함. 도시 추출을 `weather/client.py` 로 옮겨 legacy·그래프 경로가 공유. 테스트 도중 **선행 버그**(`test_bootstrap.py` 의 오디오 대역이 `onset_timeout_seconds` 를 안 받아 전체 스위트가 무한 대기)를 발견 — 범위 밖이라 별도 세션이 S15P11E102-319 로 분리 처리 |
 | 256 푸시 후 | **표현 다양성 배선.** 있던 자리(프롬프트 빌더, `state.recent_phrasings`, `RECENT_PHRASING_LOOKBACK`)를 채우는 코드가 없어 조용히 꺼져 있던 것을 배선했다. `graph/phrasing.phrasing_key`(순수 함수), `localstore/phrasings.py`(기록/조회/정리), `spoken_phrasing` 표를 신설했다. `memory_write`가 기록, `context_read`가 조회하며 `trigger_type` 가드로 반응형 턴에 새지 않게 했다. 침묵 프로브·T3 동의 질문은 `policy.RECENT_PHRASING_EXCLUDED_ORIGIN_PREFIXES` 로 제외. `test_naturalness_replay.py`의 우회 헬퍼(`_run_with_phrasings`)를 걷어내고 시나리오 08 이 실제 게이트 경로를 타도록 다시 썼다. |
 | 253 푸시 후 | **정서 동의 지연 완성.** 263 의 즉시-큐잉을 걷어내고 누적 문턱(`localstore/emotion.py`, `jobs/ticks.consent_tick`)으로 바꿨다. `ConvState.pending_consent` + `localstore/consent.py` 로 "응"/"아니" 답을 규칙 판정하고 GRANTED 만 outbox 로 보낸다. "우리끼리 얘기" 봉인, 두 개의 킬스위치, `_generate` 의 `build_prompt` try 누락 수정, 온보딩 대기 중 정서 표현이 필드값으로 삼켜지던 결함도 함께 고쳤다. 상위 동의 확인은 BE 별도 티켓으로 남김 |
+| 294 푸시 후 | **CI 파이프라인이 존재하지 않는 `ai/` 를 보던 문제 수정.** `Jenkinsfile.ai`·`verify-ai.sh` 가 실제 경로 `robot/ai_chat` 을 보게 정정하고, 경로 없을 때 보류(`unstable`)가 아니라 실패(`error`)하도록 바꿨다. `verify-ai.sh` 에 없던 `ruff check` 를 신규 추가하고 pytest 에 마커 제외를 넣었다. `ci/README.md`·`pre-push-gate.sh` 주석의 낡은 `ai/` 전제를 정정했다. 트리거 브랜치 확장(develop 대상)과 pip 캐시 전략은 사람 결정 사항으로 미결 남김. 실제 Jenkins 실패 증명은 `ai-main` 릴리스 이후 선행 조건 |
 | 309 푸시 후 | **검증 문서 4종 + CLAUDE.md §20 정합.** `VERIFICATION.md` §3 에서 이미 머지된 263·226·218·227·232 를 참조하던 항목을 걷어냈다(263/232/226/227 은 표에서 삭제, 218 은 "완료됐지만 기본값이 꺼짐"으로 정정). §0 에 백엔드 명령이 `be-develop` 전용이라는 전제를 추가하고 각 백엔드 절에 표시를 붙였다. 존재하지 않던 테스트 이름(`test_sim_clock_compresses_a_day_into_ten_seconds`)을 실제 이름으로 고쳤다. `V1~V5` 하드코딩을 `FlywayMigrationValidationTest` 자기참조로 바꿨다. `READING-ORDER.md` 에 `mvp-erd.md` 가 `be-develop` 전용이라는 것, `bootstrap.py` 와 232 이후 신규 모듈들을 추가했다. `CLAUDE.md` §20 의 "아직 없음" 구분선을 지우고 실제 트리로 승격했다. 저장소 루트의 일회성 인계 문서를 지우고 6곳의 참조를 `docs/carebot/PROGRESS.md §2.2` 로 옮겼다(스프린트 경위·선행조건 순서·자해 목록 검토 요구사항의 유래는 §8 로 보존). |
 | 255 푸시 후 | **사실 추출 큐 (로봇 절반).** `localstore/extraction.py` + `extraction_job` 표를 신설해 `memory_write` 가 반응형 턴마다(스킵 조건 7가지를 통과하면) LLM 없이 큐잉만 하고, `jobs/ticks.extraction_flush`(신규 틱, 양쪽 스케줄러 경로에 등록)가 턴 밖에서 생성 호출로 사실을 뽑아 `backend_client/fact_client.py`(신규, 실패 시 예외를 올려 conversation_client 와 반대 방향)로 제출한다. 티켓의 여섯 스킵 조건에 "서버가 메시지 id 를 못 돌려준 턴은 큐잉하지 않는다"를 추가로 넣었다(재시도 횟수 컬럼이 없어 영구 실패 행이 조용히 쌓이는 것을 막기 위해). `response_shaper → memory_write → emit` 이던 엣지를 `response_shaper → emit → memory_write` 로 재배선해, 블로킹 대화 적재 호출이 TTS 시작을 더 이상 막지 않게 했다. 백엔드 `POST /api/v1/robot/fact-candidates` 의 정확한 페이로드는 255-be 미확정 상태에서 추정했다 — 교차 확인 필요. |
 
