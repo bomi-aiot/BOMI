@@ -93,6 +93,28 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     pipeline.beam = BeamController()
 
+    # 웨이크워드('보미야') 감지기. 설정에서 켜져 있을 때만 붙인다. 붙으면 매 턴
+    # 대화 시작 전에 "보미야"를 기다린다(pipeline.run 참고). 노트북 개발 등에서
+    # WAKEWORD_ENABLED=0 이면 붙이지 않아 상시 청취 없이 곧바로 대화한다.
+    if settings.wakeword_enabled:
+        from bomi_ai_chat import policy
+        from bomi_ai_chat.audio_io.wakeword import WakeWordDetector
+
+        pipeline.wake = WakeWordDetector(
+            model_path=settings.wakeword_model_path,
+            # 마이크 장치/채널은 캡처와 동일하게 맞춘다(같은 ReSpeaker 왼쪽 채널).
+            device=settings.audio_input_device,
+            channels=settings.audio_channels,
+            target_sample_rate=settings.audio_sample_rate,
+            threshold=policy.WAKEWORD_THRESHOLD,
+            window=policy.WAKEWORD_WINDOW,
+            min_hits=policy.WAKEWORD_MIN_HITS,
+            frame_samples=policy.WAKEWORD_FRAME_SAMPLES,
+        )
+        # 첫 감지가 느려지지 않게 대기 루프 전에 모델을 미리 로드한다(warm-up).
+        logging.getLogger("bomi_ai_chat.main").info("웨이크워드 모델 로딩(warm-up)...")
+        pipeline.wake.warm_up()
+
     def _semantic_weather(text: str) -> bool:
         # 무거운 임베딩 라우터는 실제 판정 시점에만 불러온다.
         from bomi_ai_chat.llm.router import is_weather_query

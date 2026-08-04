@@ -132,6 +132,14 @@ class Settings:
     audio_silence_limit_seconds: float
     audio_max_seconds: float
 
+    # 웨이크워드('보미야') 감지 설정.
+    #   enabled  = 상시 청취로 로봇을 깨울지. 노트북 개발/테스트에서는 꺼서(0) 매 턴
+    #              바로 대화하도록 할 수 있다. 로봇 배포에서는 켠다.
+    #   model_path = 학습한 .onnx 경로. 배포 위치마다 달라질 수 있어 여기(config)에 둔다.
+    # 감지 임계값·창 크기 등 '튜닝값'은 policy.py 에 있다(값의 수명이 다르다).
+    wakeword_enabled: bool
+    wakeword_model_path: str
+
     http_timeout_seconds: float
     http_max_attempts: int
     http_backoff_seconds: float
@@ -294,6 +302,12 @@ class Settings:
             audio_max_seconds=_positive_float_env(
                 "AUDIO_MAX_SECONDS",
                 15.0,
+            ),
+            # 웨이크워드: 로봇 배포에선 켜는 게 기본. 노트북 개발에선 .env 로 끌 수 있다.
+            wakeword_enabled=_bool_env("WAKEWORD_ENABLED", True),
+            wakeword_model_path=(
+                _optional_env("WAKEWORD_MODEL_PATH", "models/bomiya.onnx")
+                or "models/bomiya.onnx"
             ),
             http_timeout_seconds=_positive_float_env(
                 "HTTP_TIMEOUT_SECONDS",
