@@ -1,5 +1,7 @@
 # MQTT 토픽 및 메시지 계약
 
+> **계약 우선순위:** 이 문서는 공통 토픽·봉투 규칙의 일반 기준입니다. 5개 시나리오 메시지의 최종 기준은 [`scenario-contract-v1.md`](./scenario-contract-v1.md)이며, 두 문서가 충돌하면 시나리오 계약 v1을 따릅니다.
+
 ## 1. 목적과 범위
 
 이 문서는 BOMI 외부 장치와 Spring Boot 사이의 MQTT 통신 계약을 정의합니다.
@@ -26,13 +28,14 @@ Robot 내부의 MQTT Bridge가 MQTT 메시지와 ROS 2 명령·결과를 변환�
 기본 형식은 다음과 같습니다.
 
 ```text
-bomi/v1/{domain}/{deviceId}/{channel}
+bomi/v1/{domain}/{sourceId}/{channel}
 ```
 
 | 용도 | 토픽 | 발행자 | 구독자 | QoS |
 | --- | --- | --- | --- | ---: |
-| IoT 이벤트 | `bomi/v1/iot/{deviceId}/events` | IoT 센서 | Backend | 1 |
+| IoT 이벤트 | `bomi/v1/iot/{sourceId}/events` | IoT 센서 | Backend | 1 |
 | Robot 명령 | `bomi/v1/robot/{robotId}/commands` | Backend | Robot MQTT Bridge | 1 |
+| AI 대화 명령 | `bomi/v1/ai/{robotId}/commands` | Backend | 해당 Robot의 AI Chat | 1 |
 | Robot 업무 이벤트 | `bomi/v1/robot/{robotId}/events` | Robot MQTT Bridge | Backend | 1 |
 | Robot 진행 상태 | `bomi/v1/robot/{robotId}/status` | Robot MQTT Bridge | Backend | 1 |
 | Robot 최종 결과 | `bomi/v1/robot/{robotId}/results` | Robot MQTT Bridge | Backend | 1 |

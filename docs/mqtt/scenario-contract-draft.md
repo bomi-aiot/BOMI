@@ -1,6 +1,7 @@
-# 시나리오 1~5 MQTT 계약 v1.0 (확정)
+# 시나리오 1~5 MQTT 계약 v1.0 (이전 초안 · 대체됨)
 
-> 이의는 24시간 내. 이후 이 문서가 정본. 기존 문서와 충돌 시 이 문서 우선.
+> **대체됨(SUPERSEDED):** 이 문서는 이전 논의 기록입니다. 시나리오 메시지의 최종 기준은 [`scenario-contract-v1.md`](./scenario-contract-v1.md)이며, 충돌 시 해당 문서를 따릅니다.
+> 아래 예시와 작업 목록은 당시 기록이므로 새 구현에 복사하지 않습니다.
 
 ## 1. 시나리오별 이벤트/명령
 
@@ -14,7 +15,7 @@
 
 - 시나리오 시작 판정은 항상 백엔드. 시작 후 실시간 제어(사람 추적 등)는 전부 로봇 내부.
 - 온습도 임계값 판단은 백엔드 (30°C 또는 습도 80%, 설정값).
-- 봉투 규칙(eventId, occurredAt, QoS 1, retain=false, scenarioId echo)은 기존 `backend-robot-contract.md` 그대로.
+- 당시에는 봉투 규칙을 기존 `backend-robot-contract.md`와 같게 두었다. 최종 규칙은 `scenario-contract-v1.md`를 따른다.
 
 ## 2. NAVIGATE payload 확정
 
@@ -63,7 +64,7 @@ ai-develop의 `robot/ai_chat`, `robot/ai_vision` 구현본을 robot-develop으�
 |---|---|
 | 로봇 | `Nav2RobotDriver`(Mock 대체) + `named_waypoints.yaml` 좌표 실측 + 브릿지 비동기화 — **전 시나리오 공통 병목, 최우선** |
 | AI | 4절 병합 → STT 포함 매칭으로 `WAKE_WORD_DETECTED` / `WALK_REQUESTED` 발행부 |
-| IoT | `DOOR_OPENED`, `AMBIENT_ENVIRONMENT_OBSERVED` 발행 코드 (형식은 이 문서 + 기존 계약 준수) |
+| IoT | `DOOR_OPENED`, `AMBIENT_ENVIRONMENT_OBSERVED` 발행 코드 (최종 형식은 `scenario-contract-v1.md` 준수) |
 | 백엔드 | 신규 타입 수신 허용 + 시나리오 오케스트레이터 (P0 순) |
 | FE | 산책 시작/종료 REST 필드 협의 (P2 시점) |
 
