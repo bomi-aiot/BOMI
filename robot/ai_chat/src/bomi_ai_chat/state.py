@@ -222,6 +222,15 @@ class ConvState(TypedDict, total=False):
     # 이번 턴에 요청할 기억 개수. 비어 있으면 policy.MEMORY_TOP_K 를 쓴다.
     # 성능 저하 모드가 이 값을 낮춰 넣는다(policy.DEGRADATION_ORDER 첫 단계).
     memory_top_k: int
+    # 의료(병원·약국·의약품) 라우터 판정 결과 캐시 (S15P11E102-311).
+    #
+    # context_read 가 날씨·의료 조회 여부를 정하려면 classify_intent 가 돌기 전에
+    # 같은 판정이 미리 필요하다. 그때 라우터(local SentenceTransformer 추론)를
+    # 부른 결과를 여기 남겨서, classify_intent 가 다시 그 라우터를 부르지 않게
+    # 한다. context_read 는 이 턴에 판정했으면 매번 명시적으로 True/False 를
+    # 쓰고, 판정하지 않은 턴에는 None 을 써서 지난 턴의 값이 새는 것을 막는다
+    # (state 는 어르신별로 checkpoint 되어 턴을 넘어 살아남기 때문이다).
+    is_medical_query: bool | None
     # 같은 종류의 알림에서 최근에 쓴 표현. 프롬프트에 넘겨 반복을 막는다(§17.8).
     recent_phrasings: list[str]
 
