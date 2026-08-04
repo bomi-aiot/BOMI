@@ -51,6 +51,9 @@ def run_user_turn(
         app: build_graph() 가 컴파일한 그래프.
         senior_id: checkpointer 의 thread_id 이자 문맥 조회 키.
         text: STT 결과.
+        conversation_id: 명시적으로 이어 붙일 대화 id. 보통은 넘기지 않는다 — 실기
+            호출부(bootstrap.py)는 넘기지 않고, 체크포인터에 저장된 값이 이어진다
+            (S15P11E102-306). 테스트가 특정 대화를 강제로 지정하고 싶을 때만 쓴다.
         duration_sec: VAD 가 잰 발화 길이. 맞장구 판별에 쓰인다 — 텍스트만으로는
             "응"이 맞장구인지 짧은 대답인지 구분되지 않는다.
         timer: 지연 측정기. 없으면 새로 만든다. 호출부가 STT 단계까지 함께 재고
@@ -63,6 +66,9 @@ def run_user_turn(
         - 반환 시점에 재생은 '시작만' 됐다. 끝나기를 기다리지 않는다.
         - 예외를 밖으로 던지지 않는다. 한 턴의 실패가 입력 루프를 죽이면 로봇이
           그대로 멈춘다.
+        - conversation_id=None 은 "대화 없음"이 아니라 "이 호출은 관여하지 않는다"는
+          뜻이다. 진짜 "새 대화를 열어라"는 graph/ingress.note_interaction 의 유휴
+          경계 판정이 결정한다 (policy.CONVERSATION_BOUNDARY_IDLE_SEC).
     """
     timer = timer or TurnTimer()
     thread = {"configurable": {"thread_id": senior_id}}
@@ -70,10 +76,26 @@ def run_user_turn(
     inputs: ConvState = {
         "trigger_type": "user_utterance",
         "senior_id": senior_id,
-        "conversation_id": conversation_id,
         "user_input": text,
         "user_input_duration_sec": duration_sec,
     }
+
+    # conversation_id 는 '조건부로만' 넣는다 (S15P11E102-306).
+    #
+    # ★ 여기서 있었던 결함
+    #   예전에는 "conversation_id": conversation_id 를 무조건 넣었다. 이 함수의
+    #   실런타임 호출부(bootstrap.py 의 run_conversation_loop)는 이 인자를 넘기지
+    #   않으므로 값은 늘 None 이었다. state.py 의 conversation_id 에는 reducer 가
+    #   없어(기본 LastValue 채널) 매 턴 그 None 이 체크포인터에 저장돼 있던 값을
+    #   덮어썼다. 백엔드는 conversationId=null 을 "새 대화를 열어라"로 해석하므로,
+    #   실제로는 발화마다 새 conversation 행이 생겼다 — "최근 대화" 문맥 조립이
+    #   항상 비어 있던 이유다.
+    #
+    #   키 자체를 안 넣으면 LangGraph 가 이 채널을 건드리지 않고, 체크포인트에 있던
+    #   이전 값이 그대로 살아남는다. 값을 넘기고 싶은 호출부(테스트 등)를 위해 인자는
+    #   남겨두되, None 이면 아무것도 하지 않는다.
+    if conversation_id is not None:
+        inputs["conversation_id"] = conversation_id
 
     try:
         with timer.stage("graph"):
