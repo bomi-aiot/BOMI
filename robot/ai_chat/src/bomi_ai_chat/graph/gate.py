@@ -41,7 +41,7 @@ from zoneinfo import ZoneInfo
 
 from langgraph.graph import END
 
-from bomi_ai_chat import policy
+from bomi_ai_chat import degradation, policy
 from bomi_ai_chat.clock import clock
 from bomi_ai_chat.localstore import proposals as proposal_store
 from bomi_ai_chat.state import ConvState, SpeechProposal
@@ -355,6 +355,15 @@ def proactive_gate(state: ConvState) -> dict:
             # 안 지우면 만료된 인사가 매 틱마다 다시 평가되고 큐가 무한히 자란다.
             _discard(proposal)
             continue
+
+        # ── 게이트 1.2: 성능 저하로 잡담이 꺼져 있는가 ───────────────────────
+        #
+        # 3단계에서 잡담을 끊는다(policy.DEGRADATION_ORDER, S15P11E102-212).
+        # 기능적 발화(복약·안전)는 그대로 남는다 — 저하는 잡담부터 버린다.
+        #
+        # 폐기가 아니라 연기다. 저하가 풀리면 다시 후보가 되어야 한다.
+        if proposal["priority"] == "ambient" and not degradation.ambient_allowed():
+            continue  # 연기
 
         # ── 게이트 1.5: 아직 이른가 ──────────────────────────────────────────
         #
