@@ -11,7 +11,7 @@ def _now() -> datetime:
 def test_valid_observation_publishes_contract_event() -> None:
     published = []
     publisher = AmbientPublisher(
-        "living-room-ambient-01",
+        "living-room-ambient",
         "LIVING_ROOM",
         lambda topic, payload: published.append((topic, payload)),
         now=_now,
@@ -21,9 +21,9 @@ def test_valid_observation_publishes_contract_event() -> None:
     assert len(published) == 1
     topic, raw = published[0]
     event = json.loads(raw)
-    assert topic == "bomi/v1/iot/living-room-ambient-01/events"
+    assert topic == "bomi/v1/iot/living-room-ambient/events"
     assert event["type"] == "AMBIENT_ENVIRONMENT_OBSERVED"
-    assert event["sourceId"] == "living-room-ambient-01"
+    assert event["sourceId"] == "living-room-ambient"
     assert event["occurredAt"] == "2026-08-04T12:00:00+00:00"
     assert event["payload"] == {
         "location": "LIVING_ROOM",

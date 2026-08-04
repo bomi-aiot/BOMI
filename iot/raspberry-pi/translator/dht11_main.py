@@ -31,7 +31,7 @@ def main() -> None:
     port = env_int("MQTT_PORT", 1883)
     qos = int(os.environ.get("MQTT_QOS", "1"))
     interval = env_int("READ_INTERVAL_SECONDS", 30)
-    source_id = os.environ.get("SENSOR_ID", "living-room-ambient-01")
+    source_id = os.environ.get("SENSOR_ID", "living-room-ambient")
     location = os.environ.get("LOCATION", "LIVING_ROOM")
 
     client = mqtt.Client(

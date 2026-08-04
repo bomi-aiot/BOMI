@@ -37,8 +37,8 @@ sensors:
     #   ※ PRESENCE_DETECTED는 방향 판정 결과용 예약어라 직접 발행하지 않는다.
 
   # 온습도 센서를 붙일 때 예시 (선택)
-  # - friendly_name: living-room-ambient-01
-  #   source_id: living-room-ambient-01
+  # - friendly_name: living-room-ambient
+  #   source_id: living-room-ambient
   #   kind: ambient
   #   location: LIVING_ROOM
   #   # temperature/humidity -> type=AMBIENT_ENVIRONMENT_OBSERVED

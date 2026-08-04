@@ -43,7 +43,7 @@ DHT11은 Zigbee 장치가 아니므로 Zigbee2MQTT 번역기를 거치지 않는
 ```json
 {
   "type": "AMBIENT_ENVIRONMENT_OBSERVED",
-  "sourceId": "living-room-ambient-01",
+  "sourceId": "living-room-ambient",
   "payload": {
     "location": "LIVING_ROOM",
     "temperature": 26.0,
