@@ -67,7 +67,7 @@ class BackendConversationClient:
         trigger_type: str | None = None,
         priority: str | None = None,
         orientation_question: bool | None = None,
-    ) -> str | None:
+    ) -> tuple[str | None, str | None]:
         """발화 하나를 올린다. 예외를 던지지 않는다.
 
         인자
@@ -84,8 +84,15 @@ class BackendConversationClient:
             기다리게 하지 않는다. 한 번 실패하면 그 턴의 기록은 포기한다.
 
         반환값
-            서버가 배정한 conversation_id, 또는 실패했으면 None.
-            호출부는 이 값을 다음 턴에 넘겨 같은 대화에 이어 붙인다.
+            (conversationId, messageId) — S15P11E102-306 에서 단일 값에서 넓혔다.
+            실패하면 (None, None). 호출부(graph/build.py)는 conversationId 를 다음
+            턴에 넘겨 같은 대화에 이어 붙이고, messageId 는 어르신 발화 행에 대해서만
+            state 에 남긴다(fact_candidate 추출(255)의 sourceMessageId 근거).
+
+            ★ messageId 는 아직 서버가 안 돌려줄 수 있다. 이 티켓 시점에는 백엔드가
+              그 필드를 보내도록 바뀌지 않았다(255 번이 그 작업이다). body 에 없으면
+              .get() 이 조용히 None 을 준다 — 로봇 쪽은 이미 그 None 을 다룰 준비가
+              되어 있고, 서버가 나중에 필드를 채우기 시작하면 코드 변경 없이 이어진다.
         """
         url = f"{self.base_url}/api/v1/robot/conversation-events"
         payload: dict[str, Any] = {
@@ -118,9 +125,9 @@ class BackendConversationClient:
             logger.warning(
                 "conversation event not recorded (%s); the turn continues, but the T2 "
                 "utterance count will be short by one", error)
-            return None
+            return None, None
 
-        return body.get("conversationId")
+        return body.get("conversationId"), body.get("messageId")
 
 
 def _to_iso(epoch_seconds: float) -> str:

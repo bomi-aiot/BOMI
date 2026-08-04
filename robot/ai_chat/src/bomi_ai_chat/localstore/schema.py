@@ -47,6 +47,15 @@ CREATE TABLE IF NOT EXISTS runtime_state (
     -- 재부팅을 넘어 살아남아야 한다 — 재부팅 사이에 열린 채 방치된 문이 바로
     -- 알려야 할 상황이다.
     door_open_since          REAL    NOT NULL DEFAULT 0,
+    -- 지금 열려 있는 대화의 id. NULL 이면 열린 대화가 없다(유휴 임계값을 넘겼거나
+    -- 아직 시작 전). graph/ingress.note_interaction 이 경계를 넘을 때 여기를 지우고,
+    -- graph/build.memory_write 가 서버가 배정한 id 로 다시 채운다.
+    --
+    -- 왜 여기 있는가 (S15P11E102-306)
+    --   스케줄러(jobs/scheduler.py)의 contract_tick 은 그래프 checkpoint 를 직접
+    --   보지 못한다(별도 스레드). "지금 이 대화" 를 알아야 "한 대화에 후보 하나"
+    --   규칙(CLAUDE.md §12)을 지킬 수 있으므로, 다른 운영 상태와 같은 자리에 둔다.
+    conversation_id          TEXT,
     updated_at               REAL    NOT NULL DEFAULT 0
 )
 """
@@ -70,6 +79,9 @@ _RUNTIME_STATE_ADDED_COLUMNS = (
     #   틱이 마감을 보려면 그래프 밖에서 읽을 수 있어야 하고, 재부팅을 넘어야 한다 —
     #   증상을 말한 직후에 로봇이 재시작했다고 그 확인이 사라지면 안 된다.
     ("safety_check_until", "REAL NOT NULL DEFAULT 0"),
+    # 지금 열려 있는 대화의 id. NULL 허용 — "아직 모른다"가 아니라 "열린 대화가
+    # 없다"는 뜻이라 0 같은 자리표시자 대신 진짜 NULL 이 맞다 (S15P11E102-306).
+    ("conversation_id", "TEXT"),
 )
 
 # 게이트를 기다리는 발화 제안.

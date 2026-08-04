@@ -101,7 +101,23 @@ class ConvState(TypedDict, total=False):
     senior_id: str
     # 지금 진행 중인 대화. 최근 Raw 메시지를 어느 대화에서 가져올지 정한다.
     # 새 대화의 첫 턴에서는 None 이고, 그러면 최근 메시지가 비어서 온다.
+    #
+    # reducer 가 없다(기본 LastValue 채널) — 이 필드를 다루는 모든 코드가 지켜야
+    # 하는 규칙 하나: 정말로 값을 바꾸고 싶을 때만 이 키를 반환한다. 안 그러면
+    # 그래프를 부르는 쪽이 실수로 None 을 넣기만 해도 체크포인트 값이 지워진다
+    # (S15P11E102-306, graph/turn.py 의 조건부 입력 참고).
     conversation_id: str | None
+    # 방금 서버에 올라간 '어르신 발화' 행의 메시지 id.
+    #
+    # 왜 필요한가  (S15P11E102-306, 이후 255 번이 이 값을 쓴다)
+    #   백엔드의 FactCandidate.fromConversationMessage 는 sourceMessageId 를
+    #   requireNonNull 로 강제한다. 대화에서 사실을 추출하려면 "어느 메시지에서
+    #   나왔는지"가 있어야 하고, 그 근원이 여기다.
+    #
+    # 로봇 혼잣말(능동 발화)에는 이 값이 없다 — 어르신이 실제로 한 말에만 의미가
+    # 있다. memory_write 가 SENIOR 행을 올릴 때만 갱신하고, 그 외에는 이전 값을
+    # 그대로 들고 간다(반환하지 않으면 LastValue 채널이 보존한다).
+    last_message_id: str | None
     # 이 로봇의 id. 온보딩 세션을 '로봇에서' 시작할 때 서버가 요구한다
     # (앱에서 시작한 세션은 robot_id 가 없어도 된다).
     robot_id: str | None
