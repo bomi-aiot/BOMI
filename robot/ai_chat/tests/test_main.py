@@ -261,3 +261,84 @@ def test_once_does_not_start_background_work(monkeypatch, settings_factory):
     main.main(["--once"])
 
     assert seen["once"] is True
+
+# ── 로깅 (S15P11E102-233) ───────────────────────────────────────────────────
+
+
+def test_logging_is_actually_configured(monkeypatch, tmp_path, settings_factory):
+    """★★ basicConfig 가 주석 처리되어 있었다. 그래서 로그가 통째로 사라졌다.
+
+    핸들러가 하나도 없으면 INFO 는 버려지고 WARNING 만 형식 없이 stderr 로 나간다.
+    사라졌던 것들: "turn latency 1.83s", "scheduler built", "occupancy UNKNOWN ->
+    HOME", "degrading to level 1". 실기 점검에서 봐야 할 것이 정확히 그것들이다.
+
+    주석 한 줄로 다시 사라질 수 있는 종류의 실패라서 테스트로 고정한다.
+    """
+    import logging
+
+    from bomi_ai_chat import main as main_module
+
+    monkeypatch.setenv("LOCALSTORE_DIR", str(tmp_path / "localstore"))
+    root = logging.getLogger()
+    original = list(root.handlers)
+    for handler in original:
+        root.removeHandler(handler)
+
+    try:
+        main_module._setup_logging(
+            settings_factory(RTZR_CLIENT_ID="i", RTZR_CLIENT_SECRET="s",
+                             GEMINI_API_KEY="g", TYPECAST_API_KEY="t"),
+            verbose=False)
+
+        assert root.handlers, "핸들러가 없으면 INFO 로그가 통째로 사라진다"
+        assert root.level <= logging.INFO
+
+        # 파일에도 남아야 한다. 스크롤로 흘러간 화면은 다음 날 없고,
+        # 실기 점검의 산출물은 기록이다.
+        log_file = tmp_path / "localstore" / "logs" / "ai_chat.log"
+        logging.getLogger("bomi_ai_chat.test").info("field-test marker")
+        for handler in root.handlers:
+            handler.flush()
+        assert log_file.exists(), f"{log_file} 이 없다"
+        assert "field-test marker" in log_file.read_text(encoding="utf-8")
+    finally:
+        for handler in list(root.handlers):
+            handler.close()
+            root.removeHandler(handler)
+        for handler in original:
+            root.addHandler(handler)
+
+
+def test_verbose_lowers_the_console_level_only(monkeypatch, tmp_path, settings_factory):
+    """-v 는 화면만 바꾼다. 파일은 -v 없이도 항상 DEBUG 다.
+
+    되돌릴 수 없는 것은 '남기지 않은 로그'다. 문제가 생긴 뒤에 -v 를 켜고 재현하는
+    것은, 재현되지 않는 문제 앞에서 아무 의미가 없다.
+    """
+    import logging
+
+    from bomi_ai_chat import main as main_module
+
+    monkeypatch.setenv("LOCALSTORE_DIR", str(tmp_path / "localstore"))
+    root = logging.getLogger()
+    original = list(root.handlers)
+    for handler in original:
+        root.removeHandler(handler)
+
+    try:
+        main_module._setup_logging(
+            settings_factory(RTZR_CLIENT_ID="i", RTZR_CLIENT_SECRET="s",
+                             GEMINI_API_KEY="g", TYPECAST_API_KEY="t"),
+            verbose=False)
+
+        console = [h for h in root.handlers if not hasattr(h, "baseFilename")]
+        files = [h for h in root.handlers if hasattr(h, "baseFilename")]
+
+        assert console and console[0].level == logging.INFO
+        assert files and files[0].level == logging.DEBUG
+    finally:
+        for handler in list(root.handlers):
+            handler.close()
+            root.removeHandler(handler)
+        for handler in original:
+            root.addHandler(handler)

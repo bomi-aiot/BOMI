@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from bomi_ai_chat import degradation
 from bomi_ai_chat.state import ConvState
 from bomi_ai_chat.turn_timer import TurnTimer
 
@@ -80,8 +81,14 @@ def run_user_turn(
             state = app.invoke(inputs, thread)
     except Exception:  # noqa: BLE001 - 한 턴의 실패가 루프를 죽이면 안 된다
         logger.exception("turn failed for senior=%s", senior_id)
+        # 실패한 턴의 시간은 저하 판단에 넣지 않는다. 예외로 0.1초에 끝난 턴이
+        # '빠른 턴'으로 세어지면, 고장 중에 저하가 풀린다.
         timer.finish(senior_id=senior_id, intent="error")
         return {}
 
-    timer.finish(senior_id=senior_id, intent=str(state.get("intent") or ""))
+    elapsed = timer.finish(senior_id=senior_id, intent=str(state.get("intent") or ""))
+    # 저하 단계는 어르신이 실제로 느끼는 것(왕복 시간)으로 움직인다 (S15P11E102-212).
+    # 8GB 램이 얼마나 찼는지는 어르신에게 아무 의미가 없고, 대답이 4초 뒤에 오는 것은
+    # 의미가 있다.
+    degradation.note_turn_latency(elapsed)
     return state

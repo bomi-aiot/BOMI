@@ -272,21 +272,31 @@ class Settings:
             ),
             kma_api_key=_optional_env("KMA_API_KEY"),
             audio_mode=audio_mode,
-            # 이 프로젝트는 ReSpeaker XVF3800을 마이크로 쓴다. 미설정 시 이름으로
-            # 자동 검색되도록 기본값을 "reSpeaker"로 둔다(USB 재연결로 인덱스가
-            # 바뀌어도 자동 대응). 다른 마이크를 쓰려면 .env에서 AUDIO_INPUT_DEVICE를
-            # 지정하면 이 기본값을 덮어쓴다.
-            # 원래 기본값: audio_input_device=_audio_device_env("AUDIO_INPUT_DEVICE"),
-            audio_input_device=_audio_device_env("AUDIO_INPUT_DEVICE", "reSpeaker"),
+            # 하드웨어 전용 기본값은 robot 모드에서만 적용한다 (S15P11E102-233).
+            #
+            # ★ 이 프로젝트는 ReSpeaker XVF3800 을 마이크로 쓰고, USB 재연결로 인덱스가
+            #   바뀌어도 따라가도록 이름으로 자동 검색한다. 그 편의가 맞는 것은 로봇
+            #   위에서뿐이다.
+            #
+            # 왜 모드별로 갈랐나
+            #   laptop 모드에서도 "reSpeaker" 를 찾다가 실기 점검이 첫 명령에서 막혔다.
+            #       RuntimeError: 이름에 'reSpeaker'가 들어간 입력 장치를 찾을 수 없습니다
+            #   노트북에는 그 마이크가 없는 것이 정상이다. laptop 모드의 뜻이 "OS 기본
+            #   장치를 쓴다"인데, 없는 USB 장치를 요구하면 그 모드가 의미를 잃는다.
+            #   .env 로 덮어쓸 수는 있었지만, 기본값이 틀린 것을 사용자가 매번 고치는
+            #   것은 설정이 아니라 우회다.
+            audio_input_device=_audio_device_env(
+                "AUDIO_INPUT_DEVICE", "reSpeaker" if audio_mode == "robot" else None),
             audio_output_device=_audio_device_env("AUDIO_OUTPUT_DEVICE"),
             audio_sample_rate=_positive_integer_env(
                 "AUDIO_SAMPLE_RATE",
                 16000,
             ),
-            # ReSpeaker는 2채널(왼쪽=처리된 빔, 오른쪽=원본 mic0)로 열어 왼쪽만
-            # 사용하므로 기본값을 2로 둔다.
-            # 원래 기본값: audio_channels=_positive_integer_env("AUDIO_CHANNELS", 1),
-            audio_channels=_positive_integer_env("AUDIO_CHANNELS", 2),
+            # ReSpeaker 는 2채널(왼쪽=처리된 빔, 오른쪽=원본 mic0)로 열어 왼쪽만 쓴다.
+            # 위와 같은 이유로 robot 모드에서만 2다 — 노트북 마이크에 2채널을 요구하면
+            # 장치에 따라 InputStream 열기가 실패한다 (S15P11E102-233).
+            audio_channels=_positive_integer_env(
+                "AUDIO_CHANNELS", 2 if audio_mode == "robot" else 1),
             audio_chunk_seconds=_positive_float_env(
                 "AUDIO_CHUNK_SECONDS",
                 0.5,
