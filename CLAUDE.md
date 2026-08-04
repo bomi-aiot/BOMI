@@ -1263,3 +1263,135 @@ and writing it that way is what lets someone else trust the parts that *are* fin
 | Battery runtime under continuous operation | Measure; it constrains tick frequency (§18). |
 | Cognitive-stimulation content (quizzes, games) | Not designed yet. |
 | Reference document corpus for welfare-program RAG | Source and chunking not decided (§8). |
+
+---
+
+## 25–29. Working agreement (process, not design)
+
+> **Why these are numbered 25+ and not inserted where they thematically belong.** Code and
+> docs across this repo cite sections by number — 38 references to §11, 28 to §9, 26 to §13.
+> Renumbering would silently invalidate hundreds of pointers. **Never renumber §1–§24.** New
+> material goes at the end.
+
+Sections §1–§24 describe *what we are building*. §25–§29 describe *how we work on it*. They
+were extracted from a review of 13 sessions (2026-07-31 → 08-03) in which the same four
+mistakes recurred, and each one is now backed by automation so it cannot depend on memory:
+
+| Enforced by | Lives in | Covers |
+| --- | --- | --- |
+| `PostToolUse` hook | `.claude/hooks/ruff-touched-file.sh` | ruff on every Python file you edit (§26) |
+| `PreToolUse` hook | `.claude/hooks/pre-push-gate.sh` | blocks `git push` when ruff/pytest are red (§26) |
+| Skills | `.claude/skills/` | `branch-preflight` `ticket` `parallel-tickets` `mr-body` `jira-safe-edit` `verify-evidence` `trace-readonly` `deploy-verify` `explain-ticket` |
+
+---
+
+## 25. Branch and git state
+
+The repo has **four parallel lines**, not one `develop`. A checkout of one line shows the
+other lines' sources as untracked — that is normal, not a deletion.
+
+```text
+main
+├── ai-main     ← ai-develop     ← S15P11E102-<n>-ai-<한글슬러그>
+├── be-main     ← be-develop     ← S15P11E102-<n>-be-<한글슬러그>
+├── fe-main     ← fe-develop     ← S15P11E102-<n>-fe-<한글슬러그>
+└── robot-main  ← robot-develop  ← robot/feat/S15P11E102-<n>-<slug>
+```
+
+- **Before planning, ticketing, or implementing, run `git fetch --all --prune`** and check
+  what is already merged into the relevant `<line>-develop`. Never assume branch state from
+  memory or from earlier in the session. Check commits **and** search the code — a feature
+  can land under a different ticket's commits.
+- **Work one ticket per branch, sequentially.** Do not create worktrees or start a second
+  ticket branch without explicit approval.
+- **If the target path does not belong to the checked-out line, do not edit it.** Write the
+  cause, design, and completion conditions into a ticket and let the user switch lines.
+- `CONTRIBUTING.md` still describes `feat/*` off a single `develop`. That is **not** what is
+  deployed; follow the real branches above and fix the doc when someone owns it.
+
+Failure this prevents: tickets 230, 218, and the emotional handler were already merged while
+being planned as if they were not. The session was halted with "꼬일거같음" and one
+implementation was thrown away.
+
+## 26. Definition of done (before push / MR)
+
+- **All tests pass AND `ruff check` is green.** Never push with a red gate, even when the
+  failures look pre-existing. **A pre-existing failure in a file you touched is yours.** If
+  it is genuinely unrelated and large, stop and ask — do not push and do not rationalize.
+
+  ```bash
+  cd robot/ai_chat
+  venv/Scripts/ruff.exe check src tests
+  venv/Scripts/pytest.exe -q -m "not integration and not manual"
+  ```
+
+  `integration` and `manual` are excluded on purpose: they need hardware, credentials, or
+  external APIs, and a laptop without a microphone must not block a push (§18).
+
+- **Verify config and deploy changes end to end, against reality rather than files.**
+  - For web endpoints, confirm the **response body and content-type**, not the status code.
+    A SPA fallback returns 200 with `index.html`; that is how a broken docs deploy was once
+    reported as successful.
+  - For env/compose changes, read the variable **inside the running container**. Writing it
+    into `.env` is not the same as it reaching the process — `${VAR:default}` in
+    `application.yml` silently wins when compose does not pass the name through. This broke
+    production once (S15P11E102-218).
+  - For nginx, determine which config the **running container actually mounts**; do not guess
+    a host path. File edited ≠ reloaded ≠ in effect.
+
+- **MR bodies follow the team's six-section template** (`mr-body` skill). The
+  「테스트 내용」 section carries real numbers (`504 passed in 14.38s`), never "로컬 테스트 완료".
+- **Verify the MR link resolves before sharing it**: `git ls-remote --heads origin <branch>`.
+- **Update `docs/carebot/PROGRESS.md` in the same push** (§22a). This is part of finishing,
+  not paperwork afterwards.
+- **Never describe something as done when it is only implemented.** "Logic verified, hardware
+  unverified" is the honest shape of most of this work. Mark anything you did not actually
+  run as `UNVERIFIED` rather than guessing.
+
+## 27. Jira and ticket editing
+
+Ticket bodies are Korean, and this is where encoding bugs keep landing.
+
+- **Never write Jira text via unicode escape sequences (`\uXXXX`). Always send raw UTF-8.**
+- **After any create/update, re-read the issue and confirm the Korean renders correctly
+  before reporting done.** Three separate sessions shipped mangled text; the surviving
+  evidence is `꼬일거같음` → `易질거같음` and `쉽게 다시설명바람` → `쒬게 다시설명바람`.
+- Write ticket bodies in **존댓말** ("~합니다"), including short table cells and completion
+  -condition checklist items. Set the tone in the first draft; converting afterwards misses
+  the table cells.
+- Title: `[영역](카테고리) 제목 — 부제`. 영역 ∈ {`AI`, `BE`, `AI+BE`, `ROBOT`, `HW`};
+  카테고리 is one lowercase word (`infra` `api` `jobs` `rag` `schema` `dialogue` `prompt`
+  `memory` `test`). The ticket number does not go in the title — Jira already prefixes it.
+- Body sections, in order: `## 무엇이 문제인가` → `## 왜 지금인가` → `## 작업 내용` →
+  `## 완료 조건` → optional → `## 참고` (always last, one line). **`## 왜 지금인가` is where
+  this team records what breaks *silently* without the work** — omit it and half the ticket
+  is gone.
+- **2,500–5,000 characters.** Detailed implementation plans belong in `docs/carebot/`, not in
+  the ticket.
+- Before creating a ticket, read a recent one (e.g. S15P11E102-232) to match the format, and
+  check whether the ticket already exists — if it does, comment instead of duplicating.
+- Commit subjects are a different format and are not templated:
+  `[영역](카테고리) S15P11E102-<n> 제목 — 부제`.
+
+## 28. Scope discipline
+
+- **Do not introduce new services, servers, or frameworks unless the ticket asks for it.**
+  Propose first, implement after approval. An unwanted FastAPI server was once scoped into a
+  documentation ticket.
+- **Before claiming a file, doc, or directory does not exist, search for it** with Grep/Glob
+  across the repo *and* the other lines' worktrees. Two separate claims of "this doesn't
+  exist" were self-corrected minutes later.
+- **Do not renumber §1–§24** (see the preamble above).
+- When you find a real problem outside the ticket's scope, record it — do not silently widen
+  the change, and do not silently drop it either.
+
+## 29. Response style
+
+- **Default to short: conclusion first, then a few bullets.** Expand only when asked.
+- **When explaining merged tickets or features, use the two-pass format** — (1) plain-language
+  쉬운 설명 built on an analogy, with no code; then (2) a code-level walkthrough in the same
+  order with a comment on every meaningful line. Verify AS-IS claims against the pre-change
+  code before asserting them. The `explain-ticket` skill holds the full format.
+- **Report with evidence, not adjectives.** Claim | command | real output. See §26.
+- Comments and docstrings in code stay Korean (§21). Chat responses follow the user's
+  language; identifiers and log messages stay English.
