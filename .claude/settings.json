@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/ruff-touched-file.sh\"",
+            "timeout": 30,
+            "statusMessage": "ruff 검사 중"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/pre-push-gate.sh\"",
+            "if": "Bash(git push*)",
+            "timeout": 300,
+            "statusMessage": "push 게이트: ruff + pytest"
+          }
+        ]
+      }
+    ]
+  }
+}
