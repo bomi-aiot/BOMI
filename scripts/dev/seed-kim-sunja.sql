@@ -318,6 +318,68 @@ INSERT INTO onboarding_answer (
     CURRENT_TIMESTAMP - INTERVAL '94 minutes',
     CURRENT_TIMESTAMP - INTERVAL '93 minutes',
     CURRENT_TIMESTAMP - INTERVAL '93 minutes'
+),
+-- S15P11E102-262: 회상 씨앗 네 문항. DAILY_ROUTINE 과 같은 모양(memory 대상,
+-- 확인 불필요)이라 답변 즉시 확정 상태로 심는다.
+(
+    '31000000-0000-4000-8000-000000000009',
+    '30000000-0000-4000-8000-000000000001',
+    'HOMETOWN',
+    '{"content":"전라남도 목포"}'::jsonb,
+    'ROBOT',
+    '10000000-0000-4000-8000-000000000001',
+    NULL,
+    NULL,
+    'USER_CONFIRMED',
+    '10000000-0000-4000-8000-000000000001',
+    CURRENT_TIMESTAMP - INTERVAL '92 minutes',
+    CURRENT_TIMESTAMP - INTERVAL '91 minutes',
+    CURRENT_TIMESTAMP - INTERVAL '91 minutes'
+),
+(
+    '31000000-0000-4000-8000-000000000010',
+    '30000000-0000-4000-8000-000000000001',
+    'FORMER_OCCUPATION',
+    '{"content":"국민학교 교사로 30년 넘게 일했다."}'::jsonb,
+    'ROBOT',
+    '10000000-0000-4000-8000-000000000001',
+    NULL,
+    NULL,
+    'USER_CONFIRMED',
+    '10000000-0000-4000-8000-000000000001',
+    CURRENT_TIMESTAMP - INTERVAL '90 minutes',
+    CURRENT_TIMESTAMP - INTERVAL '89 minutes',
+    CURRENT_TIMESTAMP - INTERVAL '89 minutes'
+),
+(
+    '31000000-0000-4000-8000-000000000011',
+    '30000000-0000-4000-8000-000000000001',
+    'FAVORITE_FOOD',
+    '{"content":"된장찌개"}'::jsonb,
+    'ROBOT',
+    '10000000-0000-4000-8000-000000000001',
+    NULL,
+    NULL,
+    'USER_CONFIRMED',
+    '10000000-0000-4000-8000-000000000001',
+    CURRENT_TIMESTAMP - INTERVAL '88 minutes',
+    CURRENT_TIMESTAMP - INTERVAL '87 minutes',
+    CURRENT_TIMESTAMP - INTERVAL '87 minutes'
+),
+(
+    '31000000-0000-4000-8000-000000000012',
+    '30000000-0000-4000-8000-000000000001',
+    'FAVORITE_SONG',
+    '{"content":"찔레꽃"}'::jsonb,
+    'ROBOT',
+    '10000000-0000-4000-8000-000000000001',
+    NULL,
+    NULL,
+    'USER_CONFIRMED',
+    '10000000-0000-4000-8000-000000000001',
+    CURRENT_TIMESTAMP - INTERVAL '86 minutes',
+    CURRENT_TIMESTAMP - INTERVAL '85 minutes',
+    CURRENT_TIMESTAMP - INTERVAL '85 minutes'
 );
 
 INSERT INTO scenario (
@@ -651,6 +713,84 @@ INSERT INTO memory (
     4,
     CURRENT_TIMESTAMP - INTERVAL '102 minutes',
     CURRENT_TIMESTAMP - INTERVAL '20 minutes',
+    NULL
+),
+-- S15P11E102-262: 회상 씨앗 네 건. 로봇이 먼저 옛이야기를 꺼낼 재료가 하나도
+-- 없던 문제(이 티켓의 '무엇이 문제인가')를 채운다. source_conversation_id 와
+-- source_summary_id 는 온보딩에서 곧장 왔으므로 NULL — 위 두 건과 달리 대화나
+-- 요약을 거치지 않았다. last_used_at 은 NULL — 아직 한 번도 대화에 쓰이지
+-- 않은 상태를 그대로 재현해야 usage-penalty 회귀(감점 없음)를 눈으로 확인할 수
+-- 있다.
+(
+    '70000000-0000-4000-8000-000000000003',
+    '10000000-0000-4000-8000-000000000001',
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    'LIFE_EVENT',
+    '김순자의 고향은 전라남도 목포다.',
+    'USER_CONFIRMED',
+    'ACTIVE',
+    'PRIVATE',
+    ARRAY['고향', '목포']::varchar(255)[],
+    3,
+    CURRENT_TIMESTAMP - INTERVAL '91 minutes',
+    CURRENT_TIMESTAMP - INTERVAL '91 minutes',
+    NULL
+),
+(
+    '70000000-0000-4000-8000-000000000004',
+    '10000000-0000-4000-8000-000000000001',
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    'LIFE_EVENT',
+    '김순자는 국민학교 교사로 30년 넘게 일했다.',
+    'USER_CONFIRMED',
+    'ACTIVE',
+    'PRIVATE',
+    ARRAY['직업', '교사']::varchar(255)[],
+    3,
+    CURRENT_TIMESTAMP - INTERVAL '89 minutes',
+    CURRENT_TIMESTAMP - INTERVAL '89 minutes',
+    NULL
+),
+(
+    '70000000-0000-4000-8000-000000000005',
+    '10000000-0000-4000-8000-000000000001',
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    'PREFERENCE',
+    '김순자가 좋아하는 음식은 된장찌개다.',
+    'USER_CONFIRMED',
+    'ACTIVE',
+    'PRIVATE',
+    ARRAY['음식', '된장찌개']::varchar(255)[],
+    3,
+    CURRENT_TIMESTAMP - INTERVAL '87 minutes',
+    CURRENT_TIMESTAMP - INTERVAL '87 minutes',
+    NULL
+),
+(
+    '70000000-0000-4000-8000-000000000006',
+    '10000000-0000-4000-8000-000000000001',
+    NULL,
+    NULL,
+    NULL,
+    NULL,
+    'PREFERENCE',
+    '김순자가 좋아하는 노래는 찔레꽃이다.',
+    'USER_CONFIRMED',
+    'ACTIVE',
+    'PRIVATE',
+    ARRAY['노래', '찔레꽃']::varchar(255)[],
+    3,
+    CURRENT_TIMESTAMP - INTERVAL '85 minutes',
+    CURRENT_TIMESTAMP - INTERVAL '85 minutes',
     NULL
 );
 

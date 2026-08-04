@@ -21,6 +21,7 @@ import com.ssafy.bomi.guardian.dto.DashboardResponse.RobotDto;
 import com.ssafy.bomi.guardian.dto.DashboardResponse.ScheduleDto;
 import com.ssafy.bomi.memory.domain.Memory;
 import com.ssafy.bomi.memory.domain.MemoryLifecycleStatus;
+import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
 import com.ssafy.bomi.robot.domain.Robot;
 import com.ssafy.bomi.robot.repository.RobotRepository;
@@ -33,10 +34,12 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -52,6 +55,21 @@ public class DashboardService {
     private static final Set<String> SCHEDULE_TYPES = Set.of("APPOINTMENT", "PERSONAL_SCHEDULE");
     /** 로봇이 올린 보호자 알림의 기록 타입 (S15P11E102-211). */
     private static final String GUARDIAN_ALERT_TYPE = "GUARDIAN_ALERT";
+
+    /**
+     * 보호자 화면에 노출해도 되는 기억 가시성 (S15P11E102-262).
+     *
+     * <p>{@code PRIVATE} 은 일부러 뺐다 — {@link Memory#create(UUID, com.ssafy.bomi.memory.domain.MemoryType, String)}
+     * 의 기본값이 {@code PRIVATE} 이고, 그게 바로 CLAUDE.md §9 가 말하는 T4("이건
+     * 나만 알고 있을래요")를 실제로 만드는 값이다. 이 화면은 가디언 한 명을
+     * 구분하지 않는 P0 단일 대시보드라서(guardianId 없음) PRIMARY 전용 값과
+     * 전체공개 값을 나눌 근거가 없다 — 그래서 "PRIVATE 만 아니면 허용"으로 묶는다.
+     * 아직 이 어르신-보호자 여러 쌍을 구분해야 하는 시점이 되면, 요청자별로
+     * {@link com.ssafy.bomi.context.application.ConversationContextService#resolveVisibility}
+     * 가 하는 것과 같은 분기가 여기도 필요해진다.</p>
+     */
+    private static final Set<MemoryVisibility> GUARDIAN_VISIBLE_MEMORY_VISIBILITIES =
+        EnumSet.of(MemoryVisibility.SHARED_WITH_PRIMARY, MemoryVisibility.SHARED_WITH_GUARDIANS);
 
     /** 확인요청 목록에 노출할 대기 계열 상태. (P0 필드매핑 A-3) */
     private static final List<FactCandidateStatus> PENDING_STATUSES = List.of(
@@ -267,8 +285,12 @@ public class DashboardService {
                             "NORMAL"),
                     s.getGeneratedAt()));
         }
-        for (Memory m : memoryRepository.findTop5BySeniorIdAndLifecycleStatusOrderByFirstObservedAtDesc(
-                seniorId, MemoryLifecycleStatus.ACTIVE)) {
+        // S15P11E102-262: 가시성 필터 없는 findTop5...는 PRIVATE 기억까지 그대로
+        // 돌려준다 — "이건 나만 알고 있을래요"라고 답한 내용이 보호자 화면에 새던
+        // 경로가 이것이었다. 씨앗이 2건뿐이던 지금까지는 우연히 조용했을 뿐이다.
+        for (Memory m : memoryRepository.findVisibleToGuardianBySeniorIdAndLifecycleStatus(
+                seniorId, MemoryLifecycleStatus.ACTIVE, GUARDIAN_VISIBLE_MEMORY_VISIBILITIES,
+                PageRequest.of(0, 5))) {
             merged.add(new Timed(
                     new ActivityDto(
                             m.getId().toString(),
