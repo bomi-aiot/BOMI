@@ -46,6 +46,9 @@ class Runtime:
     senior_id: str
     scheduler: Any = None
     door_subscriber: Any = None
+    # 재생기(재생 상태를 표시)와 대화 루프(재생 끝날 때까지 대기)가 공유하는 에코 가드.
+    # 응답 재생 중에 다음 리슨을 열지 않기 위한 근거(is_playing)를 여기서 읽는다.
+    echo_guard: Any = None
 
     def shutdown(self) -> None:
         """백그라운드 스레드를 정리한다. 실패해도 종료를 막지 않는다.
@@ -85,12 +88,18 @@ def build_runtime(
     settings = settings or get_settings()
     senior_id = _resolve_senior_id(settings)
 
+    # 에코 가드 하나를 만들어 재생기와 대화 루프가 '같은 인스턴스'를 공유하게 한다.
+    # 재생기는 재생 시작/끝을 여기 표시하고, 대화 루프는 is_playing 을 읽어 재생이 끝날
+    # 때까지 리슨을 미룬다(barge-in 없이 에코 겹침 방지).
+    from bomi_ai_chat.audio.echo_guard import EchoGuard
+    echo_guard = EchoGuard()
+
     app = _compile_graph()
-    _wire_player(settings, audio_out)
+    _wire_player(settings, audio_out, echo_guard)
     _wire_backend_clients()
     _restore_runtime_state(app, senior_id)
 
-    runtime = Runtime(app=app, senior_id=senior_id)
+    runtime = Runtime(app=app, senior_id=senior_id, echo_guard=echo_guard)
     if start_background:
         runtime.scheduler = _start_scheduler(senior_id, app)
         runtime.door_subscriber = _start_door_subscriber(senior_id, app, settings)
@@ -122,15 +131,14 @@ def _compile_graph():
     return build_graph()
 
 
-def _wire_player(settings: Settings, audio_out) -> None:
+def _wire_player(settings: Settings, audio_out, echo_guard) -> None:
     """emit 이 쓸 재생기를 붙인다. TTS 와 오디오 출력은 기존 것을 그대로 쓴다.
 
-    에코 가드를 함께 넣는 이유
-        스피커와 마이크가 한 몸통에 있어서 로봇의 목소리가 마이크로 되돌아온다.
-        가드가 없으면 로봇이 자기 말에 자기가 멈추고, 그러면 이후 모든 게이트 버그
-        리포트가 실제로는 에코다 (CLAUDE.md §13).
+    에코 가드를 밖에서 받는 이유
+        재생기는 재생 시작/끝을 이 가드에 표시하고, 대화 루프는 같은 가드의 is_playing
+        을 읽어 재생이 끝날 때까지 리슨을 미룬다. 그러려면 둘이 '같은 인스턴스'를 써야
+        하므로, build_runtime 이 만들어 여기로 넘긴다(예전엔 여기서 새로 만들었다).
     """
-    from bomi_ai_chat.audio.echo_guard import EchoGuard
     from bomi_ai_chat.audio.playback import SentencePlayer
     from bomi_ai_chat.graph import output
     from bomi_ai_chat.tts.client import TTSClient
@@ -144,7 +152,7 @@ def _wire_player(settings: Settings, audio_out) -> None:
     output.set_player(SentencePlayer(
         synthesize=tts.synthesize,
         play=audio_out.play,
-        echo_guard=EchoGuard(),
+        echo_guard=echo_guard,
     ))
 
 
@@ -376,12 +384,47 @@ def _run_graph_conversation(runtime, audio_in, stt, turns: int, max_turns) -> in
         run_user_turn(runtime.app, runtime.senior_id, text, duration_sec=duration)
         turns += 1
 
+        # 응답 재생이 끝날 때까지 기다린다(의도적으로 barge-in 없음). 안 기다리면 재생
+        # 중에 다음 리슨이 열려 마이크가 로봇 자기 목소리를 사용자 발화로 수음한다.
+        _wait_for_playback(runtime.echo_guard)
+
         if conversation_control.is_farewell(text):
             logger.info("conversation ended: farewell detected")
             print("[대화 종료] 마무리 언급 감지. 다시 '보미야'로 부르면 새 대화.")
             break
 
     return turns
+
+
+def _wait_for_playback(echo_guard, poll_sec: float = 0.05, max_wait_sec: float = 30.0) -> None:
+    """로봇 응답 재생이 끝날 때까지(echo_guard.is_playing == False) 기다린다.
+
+    왜 필요한가
+        그래프 응답은 논블로킹으로 재생된다. 웨이크워드 대화에서는 barge-in 을 빼기로
+        했으므로, 재생이 끝난 뒤에 다음 리슨을 연다. 이렇게 안 하면 재생 중에 마이크가
+        열려 로봇 자기 목소리를 사용자 발화로 수음한다(에코 겹침).
+
+    is_playing 은 재생 스레드(SpeechPlayback)가 시작/끝에 갱신한다. run_user_turn 이
+    반환할 때는 이미 표시가 켜져 있으므로(재생 스레드 시작 '전에' 표시함) 경합이 없다.
+    응답이 없던 턴이면 is_playing 이 False 라 즉시 반환한다.
+
+    안전장치
+        재생 스레드가 어떤 이유로 상태를 안 내려도 무한히 막히지 않게 max_wait_sec 상한.
+        echo_guard 가 없으면(재생기 미연결) 즉시 반환한다.
+
+    확장 지점
+        barge-in 이 다시 필요해지면 이 대기를 없애고 EchoGuard 를 '캡처'에 연결하는
+        방식으로 바꾼다(재생 중엔 입력 무시/문턱↑). 지금은 상태 공유만 해두면 그 확장이
+        수월하다.
+    """
+    if echo_guard is None:
+        return
+    import time
+
+    waited = 0.0
+    while echo_guard.is_playing and waited < max_wait_sec:
+        time.sleep(poll_sec)
+        waited += poll_sec
 
 
 def _listen(
