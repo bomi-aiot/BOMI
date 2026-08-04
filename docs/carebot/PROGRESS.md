@@ -48,6 +48,7 @@
 | **296** | **작업 규칙 자동화 커밋** | 완료 | 해당 없음 | 해당 없음 | ai-develop |
 | **297** | **인계 전 문서 정합** | 완료 | 해당 없음 | 해당 없음 | ai-develop |
 | **299** | **테스트 게이트 복구 (222 낙진)** | 완료 | 통과 (`454 passed`) | 해당 없음 | ai-develop |
+| **319** | **테스트 게이트 복구 (298 낙진)** | 완료 | 통과 (`454 passed`) | 해당 없음 | 푸시됨 |
 
 **212 를 "절반 완료"로 적은 이유.** 티켓 제목이 "회귀 세트 **및** 임계치 실측 튜닝"입니다. 회귀 세트는 만들었고, **실측 튜닝은 하지 않았습니다** — 실제 어르신도, 실기 하드웨어도 없이 측정한 숫자는 측정이 아닙니다. 자세한 것은 §2.8.
 
@@ -111,6 +112,19 @@ venv/Scripts/ruff.exe check src tests                           ->  All checks p
 → 재발 방지로 대역에 `AudioSequenceExhausted(BaseException)` 를 넣었습니다.
 `Exception` 이 아니라 `BaseException` 인 것이 핵심입니다 — 파이프라인의 관용이
 무한 반복으로 바뀌기 전에 pytest 가 잡습니다.
+
+**같은 유형이 298 에서 다시 나왔습니다 (319 가 고쳤습니다).** 299 의 재발 방지 장치는
+`pipeline.py` 가 쓰는 대역에만 들어갔습니다. 298 이 `bootstrap.py` 의 `capture()` 호출에
+`onset_timeout_seconds` 인자를 추가했을 때, `tests/test_bootstrap.py` 의
+`ScriptedAudioIn`·`FlakyAudio` 두 대역은 이 변경을 받지 않아 똑같이 매 호출이
+`TypeError` 로 죽고 `test_the_loop_puts_each_utterance_through_the_graph` 가 무한
+대기에 빠졌습니다. 319 에서 두 대역 모두 `onset_timeout_seconds=None` 을 받아
+무시하도록 시그니처만 맞췄습니다 — `BaseException` 재발 방지 장치는 `pipeline.py`
+전용 설계라 이 파일에는 옮기지 않았습니다.
+
+**교훈**: capture() 인터페이스가 또 바뀌면 이 대역들이 또 놓칠 수 있습니다. 인터페이스를
+바꾸는 티켓은 그 인터페이스를 구현하는 **모든** 대역(`grep -rn "def capture(" tests/`)을
+같은 커밋에서 확인해야 합니다.
 
 ### 2.1 실기를 아직 끝까지 돌려보지 못했습니다 (232 로 전제조건 해소, 233 준비단계 통과)
 
