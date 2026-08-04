@@ -124,9 +124,24 @@ venv/Scripts/ruff.exe check src tests                           ->  All checks p
 무시하도록 시그니처만 맞췄습니다 — `BaseException` 재발 방지 장치는 `pipeline.py`
 전용 설계라 이 파일에는 옮기지 않았습니다.
 
-**교훈**: capture() 인터페이스가 또 바뀌면 이 대역들이 또 놓칠 수 있습니다. 인터페이스를
-바꾸는 티켓은 그 인터페이스를 구현하는 **모든** 대역(`grep -rn "def capture(" tests/`)을
-같은 커밋에서 확인해야 합니다.
+**세 번째로 같은 유형이 나왔습니다 (309 가 고쳤습니다).** 이번에는 오디오가 아니라
+대화 적재 쪽이었습니다. 306 이 `record_turn` 의 반환을 단일 문자열에서
+`(conversationId, messageId)` 튜플로 넓혔는데, 212 가 만든
+`tests/test_naturalness_replay.py` 의 `NullConversationClient` 는 여전히 문자열
+하나를 돌려줬습니다. 그래서 `build.py._record_turn` 의 튜플 언패킹이
+`ValueError: too many values to unpack` 으로 죽고, `memory_write` 노드가 터지면서
+**자연스러움과 아무 상관 없는 이유로** 회귀 세트 2건이 빨간불이 됐습니다
+(`test_the_sentence_limit_is_a_policy_dial_not_a_literal`,
+`test_scenario[09b-emotional-turn-keeps-the-prohibitions]`). 대역을 계약에 맞춰
+`("conversation-1", "message-1")` 로 고쳐 `540 passed` 로 돌아왔습니다.
+
+**교훈 (세 번 반복된 것)**: 대역이 실제 인터페이스에서 조용히 벗어나는 것이 이
+저장소에서 가장 자주 재발하는 실패입니다 — 222·298·306 세 번 모두 **프로덕션
+호출부만 바뀌고 테스트 대역이 안 따라갔습니다.** 인터페이스(시그니처든 반환형이든)를
+바꾸는 티켓은 그것을 구현한 **모든** 대역을 같은 커밋에서 확인해야 합니다
+(`grep -rn "def capture(" tests/`, `grep -rn "def record_turn" tests/`). 증상이
+매번 엉뚱한 곳에서 나타나는 것이 이 실패의 특징입니다 — 무한 대기로, 혹은
+"자연스러움 테스트 실패"로.
 
 ### 2.1 실기를 아직 끝까지 돌려보지 못했습니다 (232 로 전제조건 해소, 233 준비단계 통과)
 
