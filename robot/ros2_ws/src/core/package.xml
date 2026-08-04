@@ -23,7 +23,11 @@
   <depend>std_srvs</depend>
   <depend>lifecycle_msgs</depend>
   <depend>nav2_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf2_ros</depend>
 
+  <!-- Pico H 시리얼 통신에 필요한 실행 의존성 -->
+  <exec_depend>python3-serial</exec_depend>
 
   <!-- 로봇 수동 조작에 필요한 실행 의존성 -->
   <exec_depend>twist_mux</exec_depend>
