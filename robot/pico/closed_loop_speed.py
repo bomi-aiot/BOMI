@@ -14,22 +14,30 @@ import uselect
 # 좌우 모터 개체차, 배터리 전압 강하, 바닥 마찰 변화를
 # 트림 상수 없이 흡수한다.
 #
-# 명령
+# 시리얼 형식은 robot/docs/pico-serial-protocol.md가 정한다.
+# 명령과 출력을 바꿀 때는 그 문서를 먼저 고친다.
+#
+# 노드가 쓰는 명령
+#   V 0.3 0.3      좌우 목표 속도 (rev/s). 보낼 때마다 워치독을 다시 감는다
+#   S              즉시 정지
+#   T 0 | T 1      텔레메트리 끄기/켜기
+#   P              프로토콜 버전과 펌웨어 이름 응답
+#
+# 사람이 쓰는 명령
 #   D              시연 시퀀스 자동 실행 (전진·좌우회전·후진·360도)
 #   R 0.3 0.3 10   10초간 주행 후 자동 정지 (튜닝용)
-#   V 0.3 0.3      좌우 목표 속도 (rev/s), 1.5초 워치독
 #   F 0.3          양쪽 같은 속도
-#   S              정지
 #   G 15 80        속도 Kp, Ki 변경
 #   Y 0.01 0.004   방향 유지 Kp, Ki 변경 (0 0 이면 끔)
-#   T              텔레메트리 켜기/끄기
+#   W              엔코더 누적 카운트 1회 출력
+#   C              엔코더 누적 카운트를 0으로
+#   Z              주행 거리와 yaw를 0으로
 #   E              현재 상태 1회 출력
 #   H              도움말
 #
-# 한계
-#   PIO가 상승 에지만 세고 방향을 보지 않는다.
-#   실측 속도는 항상 크기값이며 방향은 명령 부호를 따른다.
-#   Odometry를 붙일 때는 방향 판정 PIO로 교체해야 한다.
+# 출력은 첫 낱말로 종류를 밝힌다. T는 텔레메트리, ACK/ERR/WARN은
+# 명령 응답과 오류이고, #으로 시작하는 줄은 사람이 읽는 글이다.
+# 노드는 #과 빈 줄을 버린다.
 # =========================================================
 
 # 제어 주기
@@ -39,11 +47,21 @@ CONTROL_MS = 20
 # 0.3 rev/s에서 약 29카운트가 들어와 양자화 오차가 3% 수준이 된다.
 VELOCITY_WINDOW = 5
 
-# 텔레메트리 출력 주기
-TELEMETRY_MS = 200
+# 프로토콜 버전과 펌웨어 이름. P 명령이 응답한다.
+# 텔레메트리 필드를 늘리면 버전을 올린다.
+PROTOCOL_VERSION = 1
+FIRMWARE_NAME = "closed_loop_speed"
 
-# V, F 명령은 이 시간 안에 다시 오지 않으면 정지한다
-WATCHDOG_MS = 1500
+# 텔레메트리 출력 주기.
+#
+# 20ms 안에 16낱말 문자열을 만들어 내보낼 수 있는지는 아직
+# 실기에서 재보지 않았다. 못 버티면 40ms(25Hz)로 내린다.
+TELEMETRY_MS = 20
+
+# V, F 명령은 이 시간 안에 다시 오지 않으면 정지한다.
+#
+# 노드가 20ms 주기로 V를 보내므로 프레임 15개 유실까지 견딘다.
+WATCHDOG_MS = 300
 
 # R 명령으로 지정할 수 있는 최대 주행 시간
 MAX_RUN_SECONDS = 20.0
@@ -101,7 +119,7 @@ MAX_FREEZE_TICKS = 10
 DISTANCE_PER_REV_M = 0.1929
 
 # =========================================================
-# IMU (MPU-9250)
+# IMU (MPU-9250, SparkFun SEN-13762)
 #
 # 엔코더는 바퀴 회전만 본다. 바퀴 지름 차이나 슬립은
 # 잡지 못하므로 실제 방향은 자이로로 따로 측정한다.
@@ -433,9 +451,9 @@ def setup_imu():
         imu_write(MPU_GYRO_CONFIG, 0x00)
         time.sleep_ms(50)
 
-        print()
-        print("Keep the robot completely still.")
-        print("Calibrating gyro for {} seconds...".format(
+        print("#")
+        print("# Keep the robot completely still.")
+        print("# Calibrating gyro for {} seconds...".format(
             GYRO_CALIBRATION_SECONDS
         ))
 
@@ -449,7 +467,7 @@ def setup_imu():
         gyro_offset = total / samples
         imu_available = True
 
-        print("Gyro offset: {:.4f} deg/s".format(gyro_offset))
+        print("# Gyro offset: {:.4f} deg/s".format(gyro_offset))
 
     except Exception as error:
         print("WARN IMU init failed, yaw disabled:", error)
@@ -606,6 +624,15 @@ wheel_history = [
 
 wheel_speeds = [0.0, 0.0, 0.0, 0.0]
 
+# 이상치를 걸러낸 좌우 실측 속도. 부호가 있다.
+# 텔레메트리의 l_act, r_act가 이 값이다.
+side_speeds = [0.0, 0.0]
+
+# 지난 텔레메트리 이후 있었던 일을 모아 두는 플래그.
+# print_telemetry가 flags 필드로 소비하면서 각각 지운다.
+fifo_overflow_flag = False
+outlier_flag = False
+
 # 이상치로 버린 횟수. 배선 문제의 심각도를 보는 지표다.
 rejected_counts = [0, 0, 0, 0]
 
@@ -620,6 +647,10 @@ history_filled = 0
 travel_distance_m = 0.0
 yaw_degrees = 0.0
 lateral_offset_m = 0.0
+
+# 자이로 z축 각속도. 텔레메트리의 rate 필드다.
+# IMU를 못 읽는 동안에는 갱신되지 않는다.
+gyro_rate_dps = 0.0
 
 # 방향 유지 상태
 heading_kp = HEADING_KP
@@ -650,6 +681,13 @@ telemetry_on = True
 deadline_ms = time.ticks_ms()
 motors_running = False
 
+# 마감 시각이 워치독인지 R의 지정 시간인지 구분한다.
+# 워치독으로 멈춘 것만 ERR watchdog을 내고 플래그를 세운다.
+deadline_is_watchdog = False
+
+# 워치독으로 멈췄다. 다음 V 명령이 오면 내려간다.
+watchdog_tripped = False
+
 
 def update_wheel_speeds(window_seconds):
     """바퀴 4개의 속도를 갱신하고 좌우 평균을 돌려준다."""
@@ -679,6 +717,10 @@ def update_wheel_speeds(window_seconds):
     left_speed = combine_side(0, 0, 1, left_target)
     right_speed = combine_side(1, 2, 3, right_target)
 
+    # 텔레메트리가 쓸 수 있게 남긴다
+    side_speeds[0] = left_speed
+    side_speeds[1] = right_speed
+
     return left_speed, right_speed
 
 
@@ -696,6 +738,7 @@ def update_odometry(left_speed, right_speed, dt):
     """
     global travel_distance_m, yaw_degrees, lateral_offset_m
     global imu_available, imu_error_streak, imu_error_total
+    global gyro_rate_dps
 
     average_speed = (left_speed + right_speed) / 2
 
@@ -727,6 +770,7 @@ def update_odometry(left_speed, right_speed, dt):
     if abs(rate) < GYRO_DEADBAND:
         rate = 0.0
 
+    gyro_rate_dps = rate
     yaw_degrees += rate * dt
 
     lateral_offset_m += step_distance * math.sin(
@@ -821,32 +865,32 @@ def update_heading(dt):
 
 def print_run_summary():
     """주행이 끝났을 때 거리와 방향 오차를 정리해 보여준다."""
-    print("--- RUN SUMMARY ---")
-    print("distance : {:.3f} m".format(travel_distance_m))
+    print("# --- RUN SUMMARY ---")
+    print("# distance : {:.3f} m".format(travel_distance_m))
 
     if imu_available:
-        print("yaw      : {:+.2f} deg".format(yaw_degrees))
-        print("lateral  : {:+.1f} cm".format(
+        print("# yaw      : {:+.2f} deg".format(yaw_degrees))
+        print("# lateral  : {:+.1f} cm".format(
             lateral_offset_m * 100
         ))
-        print("  (plus is to the right)")
+        print("#   (plus is to the right)")
     else:
-        print("yaw      : IMU disabled")
+        print("# yaw      : IMU disabled")
 
-    print("rejected : {}".format(
+    print("# rejected : {}".format(
         "/".join(str(count) for count in rejected_counts)
     ))
-    print("imu error: {}".format(imu_error_total))
+    print("# imu error: {}".format(imu_error_total))
 
     if heading_kp > 0.0 or heading_ki > 0.0:
-        print("heading  : hold on (kp={} ki={})".format(
+        print("# heading  : hold on (kp={} ki={})".format(
             heading_kp,
             heading_ki
         ))
     else:
-        print("heading  : hold off")
+        print("# heading  : hold off")
 
-    print("-------------------")
+    print("# -------------------")
 
 
 def combine_side(side, front_index, rear_index, target):
@@ -857,6 +901,8 @@ def combine_side(side, front_index, rear_index, target):
     버리고 직전 속도를 유지한다. 느린 쪽으로 대체하면 평균보다
     낮게 잡혀 제어기가 과하게 반응한다.
     """
+    global outlier_flag
+
     front = wheel_speeds[front_index]
     rear = wheel_speeds[rear_index]
 
@@ -889,6 +935,8 @@ def combine_side(side, front_index, rear_index, target):
         last_side_speed[side] = (front + rear) / 2
         return last_side_speed[side]
 
+    outlier_flag = True
+
     if front_bad:
         rejected_counts[front_index] += 1
 
@@ -917,9 +965,14 @@ def combine_side(side, front_index, rear_index, target):
     return value
 
 
-def stop_all(reason):
-    """모터를 끄고 제어기 상태를 지운다."""
+def stop_all(reason, is_watchdog=False):
+    """모터를 끄고 제어기 상태를 지운다.
+
+    워치독으로 걸렸을 때만 ERR watchdog을 낸다. S 명령, R의 지정 시간
+    경과, 시연 진행은 정상 정지이므로 ACK STOP으로 기록한다.
+    """
     global left_target, right_target, motors_running
+    global watchdog_tripped
 
     left_target = 0.0
     right_target = 0.0
@@ -932,11 +985,19 @@ def stop_all(reason):
     was_running = motors_running
     motors_running = False
 
+    # S 명령이나 R의 지정 시간 경과처럼 정상 정지일 때는 이전 워치독
+    # 표시를 지운다. 그대로 두면 재접속 직후 S로 안전 정지했는데도
+    # flags 비트 2가 지난 세션의 워치독을 계속 가리키게 된다.
+    watchdog_tripped = is_watchdog
+
     # 시연 중에는 구간마다 요약이 끼면 화면이 지저분해진다
     if demo_active:
         return
 
-    print("ACK STOP", reason)
+    if is_watchdog:
+        print("ERR watchdog")
+    else:
+        print("ACK STOP", reason)
 
     if was_running:
         print_run_summary()
@@ -954,11 +1015,11 @@ def start_demo():
     demo_index = 0
     demo_started = False
 
-    print()
-    print("=========== DEMO START ===========")
-    print("steps:", len(DEMO_STEPS))
-    print("press S to abort")
-    print("==================================")
+    print("#")
+    print("# =========== DEMO START ===========")
+    print("# steps:", len(DEMO_STEPS))
+    print("# press S to abort")
+    print("# ==================================")
 
 
 def demo_tick():
@@ -977,10 +1038,10 @@ def demo_tick():
         demo_active = False
         stop_all("demo finished")
 
-        print()
-        print("=========== DEMO COMPLETE ===========")
-        print("The robot should be back at the start.")
-        print("=====================================")
+        print("#")
+        print("# =========== DEMO COMPLETE ===========")
+        print("# The robot should be back at the start.")
+        print("# =====================================")
         return
 
     kind, value, label = DEMO_STEPS[demo_index]
@@ -990,7 +1051,7 @@ def demo_tick():
         demo_started = True
         demo_step_start_ms = time.ticks_ms()
 
-        print("[{}/{}] {}".format(
+        print("# [{}/{}] {}".format(
             demo_index + 1,
             len(DEMO_STEPS),
             label
@@ -1053,19 +1114,19 @@ def demo_tick():
         finished = elapsed_ms >= int(value * 1000)
 
     if elapsed_ms > int(DEMO_STEP_TIMEOUT_SECONDS * 1000):
-        print("    WARN step timeout, moving on")
+        print("WARN step timeout, moving on")
         finished = True
 
     if not finished:
         return
 
     if kind == "forward":
-        print("    moved {:.3f} m, yaw {:+.2f} deg".format(
+        print("# moved {:.3f} m, yaw {:+.2f} deg".format(
             travel_distance_m,
             yaw_degrees
         ))
     elif kind == "turn":
-        print("    turned {:+.2f} deg".format(yaw_degrees))
+        print("# turned {:+.2f} deg".format(yaw_degrees))
 
     if kind != "pause":
         stop_all("demo step")
@@ -1075,32 +1136,35 @@ def demo_tick():
 
 
 def print_help():
-    print("Commands:")
-    print("  D           run the demo sequence")
-    print("  R 0.3 0.3 10  drive 10 seconds then stop")
-    print("  V 0.3 0.3   left/right target rev per second")
-    print("  F 0.3       both sides same target")
-    print("  S           stop")
-    print("  G 15 80     set speed Kp and Ki")
-    print("  Y 0.01 0.004  set heading Kp and Ki (0 0 = off)")
-    print("  W           print raw encoder counts")
-    print("  C           clear encoder counts")
-    print("  Z           reset distance and yaw")
-    print("  T           toggle telemetry")
-    print("  E           print state once")
-    print("  H           help")
-    print("  max target  {} rev/s".format(MAX_TARGET_REV_S))
-    print("  max output  {} percent".format(MAX_PERCENT))
+    print("# Commands:")
+    print("#   V 0.3 0.3     left/right target rev per second")
+    print("#   S             stop")
+    print("#   T 0 | T 1     telemetry off/on")
+    print("#   P             protocol version and firmware name")
+    print("#   D             run the demo sequence")
+    print("#   R 0.3 0.3 10  drive 10 seconds then stop")
+    print("#   F 0.3         both sides same target")
+    print("#   G 15 80       set speed Kp and Ki")
+    print("#   Y 0.01 0.004  set heading Kp and Ki (0 0 = off)")
+    print("#   W             print raw encoder counts")
+    print("#   C             clear encoder counts")
+    print("#   Z             reset distance and yaw")
+    print("#   E             print state once")
+    print("#   H             help")
+    print("#   max target    {} rev/s".format(MAX_TARGET_REV_S))
+    print("#   max output    {} percent".format(MAX_PERCENT))
 
 
 def print_state():
+    """사람이 보는 상태 한 줄을 출력한다. T 텔레메트리와는 다른 형식이다."""
     stall = rxstall_flags()
 
     print(
-        "L tgt={:.3f} act={:.3f} pwm={:5.2f} | "
+        "# L tgt={:.3f} act={:.3f} pwm={:5.2f} | "
         "R tgt={:.3f} act={:.3f} pwm={:5.2f} | "
         "lf={:.3f} lr={:.3f} rf={:.3f} rr={:.3f} | "
-        "yaw={:+.2f} cor={:+.3f} d={:.2f} | rej={} stall={}".format(
+        "yaw={:+.2f} rate={:+.2f} cor={:+.3f} d={:.2f} | "
+        "rej={} stall={}".format(
             left_controller.target,
             left_controller.measured,
             left_controller.output,
@@ -1112,10 +1176,74 @@ def print_state():
             wheel_speeds[2],
             wheel_speeds[3],
             yaw_degrees,
+            gyro_rate_dps,
             heading_correction,
             travel_distance_m,
             "/".join(str(count) for count in rejected_counts),
             "".join(str(flag) for flag in stall)
+        )
+    )
+
+
+def build_flags():
+    """텔레메트리 flags 필드를 조립한다.
+
+    fifo_overflow_flag와 outlier_flag는 지난 텔레메트리 이후 있었던 일을
+    모아 둔 것이라, 여기서 읽으면서 지운다. 다음 줄은 그 사이의 새 일만
+    반영한다.
+    """
+    global fifo_overflow_flag, outlier_flag
+
+    value = 0
+
+    if motors_running:
+        value |= 0x01
+
+    if imu_available:
+        value |= 0x02
+
+    if watchdog_tripped:
+        value |= 0x04
+
+    if fifo_overflow_flag:
+        value |= 0x08
+        fifo_overflow_flag = False
+
+    if outlier_flag:
+        value |= 0x10
+        outlier_flag = False
+
+    return value
+
+
+def print_telemetry():
+    """T로 시작하는 16낱말 텔레메트리 한 줄을 출력한다.
+
+    형식은 robot/docs/pico-serial-protocol.md `## 4`가 정한다.
+    """
+    left_signed_target = left_target if left_forward else -left_target
+    right_signed_target = right_target if right_forward else -right_target
+
+    print(
+        "T {} {:.3f} {:.3f} {:.3f} {:.3f} "
+        "{} {} {} {} "
+        "{:.1f} {:.1f} {:.2f} {:.2f} {:.2f} "
+        "0x{:02x}".format(
+            time.ticks_ms(),
+            left_signed_target,
+            side_speeds[0],
+            right_signed_target,
+            side_speeds[1],
+            wheel_counts[0],
+            wheel_counts[1],
+            wheel_counts[2],
+            wheel_counts[3],
+            left_controller.output,
+            right_controller.output,
+            yaw_degrees,
+            gyro_rate_dps,
+            travel_distance_m,
+            build_flags()
         )
     )
 
@@ -1135,11 +1263,16 @@ def parse_target(text):
     return value
 
 
-def set_targets(left_value, right_value, run_seconds):
-    """좌우 목표 속도와 주행 마감 시각을 설정한다."""
+def set_targets(left_value, right_value, run_seconds, is_watchdog=False):
+    """좌우 목표 속도와 주행 마감 시각을 설정한다.
+
+    is_watchdog이 참이면 마감 시각을 통신 워치독으로 취급한다.
+    V, F가 이렇게 부른다. R의 지정 시간과 시연 구간은 아니다.
+    """
     global left_target, right_target
     global left_forward, right_forward
-    global deadline_ms, motors_running
+    global deadline_ms, deadline_is_watchdog, motors_running
+    global watchdog_tripped
     global heading_ready, heading_integral, heading_correction
     global run_start_ms
 
@@ -1167,6 +1300,8 @@ def set_targets(left_value, right_value, run_seconds):
         time.ticks_ms(),
         int(run_seconds * 1000)
     )
+    deadline_is_watchdog = is_watchdog
+    watchdog_tripped = False
 
     print(
         "ACK V {:.3f} {:.3f} for {:.1f}s".format(
@@ -1199,7 +1334,8 @@ def handle_command(command):
             set_targets(
                 parse_target(parts[1]),
                 parse_target(parts[2]),
-                WATCHDOG_MS / 1000.0
+                WATCHDOG_MS / 1000.0,
+                is_watchdog=True
             )
 
         elif cmd == "F":
@@ -1208,7 +1344,9 @@ def handle_command(command):
                 return
 
             value = parse_target(parts[1])
-            set_targets(value, value, WATCHDOG_MS / 1000.0)
+            set_targets(
+                value, value, WATCHDOG_MS / 1000.0, is_watchdog=True
+            )
 
         elif cmd == "R":
             if len(parts) != 4:
@@ -1259,7 +1397,7 @@ def handle_command(command):
             # 손으로 바퀴를 돌려 방향 판정을 확인할 때 쓴다.
             # 앞으로 돌리면 값이 커져야 한다.
             print(
-                "counts LF={} LR={} RF={} RR={}".format(
+                "# counts LF={} LR={} RF={} RR={}".format(
                     wheel_counts[0],
                     wheel_counts[1],
                     wheel_counts[2],
@@ -1284,7 +1422,7 @@ def handle_command(command):
         elif cmd == "S":
             if demo_active:
                 demo_active = False
-                print("DEMO ABORTED")
+                print("# DEMO ABORTED")
 
             stop_all("command")
 
@@ -1309,8 +1447,20 @@ def handle_command(command):
             print("ACK G {} {}".format(KP, KI))
 
         elif cmd == "T":
-            telemetry_on = not telemetry_on
+            if len(parts) != 2 or parts[1] not in ("0", "1"):
+                print("ERR usage: T <0|1>")
+                return
+
+            telemetry_on = parts[1] == "1"
             print("ACK T", "on" if telemetry_on else "off")
+
+        elif cmd == "P":
+            print(
+                "ACK P proto={} fw={}".format(
+                    PROTOCOL_VERSION,
+                    FIRMWARE_NAME
+                )
+            )
 
         elif cmd == "E":
             print_state()
@@ -1346,13 +1496,13 @@ try:
     setup_imu()
     reset_odometry()
 
-    print()
-    print("BOMI closed loop speed controller")
-    print("Control: {} ms, velocity window: {} ms".format(
+    print("#")
+    print("# BOMI closed loop speed controller")
+    print("# Control: {} ms, velocity window: {} ms".format(
         CONTROL_MS,
         CONTROL_MS * VELOCITY_WINDOW
     ))
-    print("Watchdog: {} ms".format(WATCHDOG_MS))
+    print("# Watchdog: {} ms".format(WATCHDOG_MS))
     print_help()
 
     now_ms = time.ticks_ms()
@@ -1372,6 +1522,10 @@ try:
                 state_machines[index],
                 ENCODER_DIRECTION[index]
             )
+
+        if any(rxstall_flags()):
+            fifo_overflow_flag = True
+            clear_rxstall()
 
         # ---------------------------------------------
         # 시리얼 명령
@@ -1442,17 +1596,20 @@ try:
         # ---------------------------------------------
         # 마감 시각이 지나면 정지
         #
-        # V, F는 명령이 계속 오지 않으면 여기서 걸리고
-        # R은 지정한 시간이 끝나면 걸린다.
+        # V, F는 명령이 계속 오지 않으면 여기서 걸리고 워치독으로 취급한다.
+        # R과 시연 구간은 지정한 시간이 끝나면 걸리며 정상 정지다.
         # ---------------------------------------------
         if motors_running:
             if time.ticks_diff(now_ms, deadline_ms) >= 0:
-                stop_all("deadline")
+                if deadline_is_watchdog:
+                    stop_all("watchdog", is_watchdog=True)
+                else:
+                    stop_all("deadline")
 
         # ---------------------------------------------
-        # 텔레메트리
+        # 텔레메트리. 주행 여부와 무관하게 항상 보낸다.
         # ---------------------------------------------
-        if telemetry_on and motors_running:
+        if telemetry_on:
             if time.ticks_diff(
                 now_ms,
                 next_telemetry_ms
@@ -1462,14 +1619,14 @@ try:
                     TELEMETRY_MS
                 )
 
-                print_state()
+                print_telemetry()
 
 except KeyboardInterrupt:
-    print("KeyboardInterrupt")
+    print("# KeyboardInterrupt")
 
 except Exception as error:
     # 예기치 못한 오류로 끝나도 아래 finally에서 모터는 반드시 꺼진다.
-    print("ERROR", error)
+    print("ERR", error)
 
 finally:
     stop_motors()
@@ -1485,4 +1642,4 @@ finally:
     left_pwm.deinit()
     right_pwm.deinit()
 
-    print("Motor output is OFF")
+    print("# Motor output is OFF")

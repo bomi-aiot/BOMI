@@ -39,7 +39,7 @@ Jetson과 Pico가 주고받는 형식은 [`pico-serial-protocol.md`](pico-serial
 
 | 구분 | 장비 | 용도 |
 | --- | --- | --- |
-| 주행 | JGB37-520 12V 110RPM 모터 4개, MDD10A, Pico H, USB 케이블, MPU-6050 | 좌우 모터 제어, 엔코더·자세 측정 |
+| 주행 | JGB37-520 12V 110RPM 모터 4개, MDD10A, Pico H, USB 케이블, MPU-9250 (SparkFun SEN-13762) | 좌우 모터 제어, 엔코더·자세 측정 |
 | 음성 | ReSpeaker XVF3800, 스피커, 유전원 USB 허브 | 음성 입력·방향 추정, TTS와 USB 전력 보완 |
 | 현관 감지 | SNZB-04P, SNZB-03P, Zigbee USB 동글 | 문 상태와 현관 움직임을 Raspberry Pi 5로 전달 |
 | Jetson 전원 | 4S 14.8V 2200mAh LiPo, 5A DC-DC, 5.5×2.5mm 플러그, 5A 퓨즈 3개와 홀더 | Jetson 전원 공급 |
@@ -169,7 +169,7 @@ ROS 2 노드, 명령 변환, 안전 정책, Pico 통신과 하드웨어 드라�
 | 엔코더 방향 부호 | 전진에서 왼쪽이 음수, 오른쪽이 양수. 펌웨어에서 왼쪽을 반전한다 |
 | 엔코더 핀 | C1은 GP12 / GP14 / GP10 / GP6, C2는 GP13 / GP9 / GP11 / GP7 |
 | 모터 핀 | 왼쪽 방향 GP4·PWM GP5, 오른쪽 방향 GP2·PWM GP3, 20kHz |
-| IMU | MPU-6050, I2C 0x68, SDA GP26 / SCL GP27 |
+| IMU | MPU-9250 (SparkFun SEN-13762), I2C 0x68, SDA GP26 / SCL GP27 |
 | 최대 속도 | 0.8 rev/s, 약 0.154 m/s, 약 1.20 rad/s |
 
 1회전 거리는 기하학적 원주(π × 6.7cm = 21.05cm)보다 8.4% 작다. 실제 주행 거리를
