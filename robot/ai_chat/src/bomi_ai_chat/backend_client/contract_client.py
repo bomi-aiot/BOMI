@@ -33,10 +33,12 @@ from typing import Any
 
 import requests
 
+from bomi_ai_chat.backend_client.session import build_backend_session
 from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.http import (
     ExternalServiceError,
     decode_json_object,
+    is_auth_failure,
     request_with_retry,
 )
 
@@ -71,7 +73,7 @@ class _ContractClient:
         self.max_attempts = settings.http_max_attempts
         self.backoff_seconds = settings.http_backoff_seconds
         self.max_backoff_seconds = settings.http_max_backoff_seconds
-        self._session = session or requests
+        self._session = session or build_backend_session(settings)
 
     def _call(self, method: str, path: str, *, service: str, **kwargs) -> dict[str, Any] | None:
         """한 번 호출한다. 204 는 None, 닿지 못하면 BackendUnavailable.
@@ -95,6 +97,17 @@ class _ContractClient:
                 **kwargs,
             )
         except (ExternalServiceError, OSError, ValueError) as error:
+            if is_auth_failure(error):
+                # 호출부(ticks.py, handlers.py)는 BackendUnavailable 을 "조용히
+                # 넘어간다"로 잡는다(logger.info 수준). 그러면 시크릿이 틀렸다는
+                # 사실이 "그냥 온보딩/재질의를 미룬 것"과 구분 없이 지나간다.
+                # 여기서 먼저 명확한 경고를 남겨야 한다(S15P11E102-307).
+                logger.warning(
+                    "AUTH FAILURE: backend rejected the shared secret (status=%s) "
+                    "calling %s; check BACKEND_SHARED_SECRET matches the backend "
+                    "filter.",
+                    error.status_code, service,
+                )
             raise BackendUnavailable(f"{service} unreachable: {error}") from error
 
         # 204 No Content. "지금 물을 것이 없다"는 정상 응답이다.
