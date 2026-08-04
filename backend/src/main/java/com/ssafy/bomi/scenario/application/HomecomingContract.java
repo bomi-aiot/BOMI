@@ -21,6 +21,8 @@ public final class HomecomingContract {
     public static final String TARGET_ENTRANCE = "ENTRANCE";
     /** NAVIGATE target value: the robot's default/home position. */
     public static final String TARGET_DEFAULT = "DEFAULT";
+    /** NAVIGATE target value: 어르신 평소 위치(거실). WELLNESS_CHECK 등에서 사용. */
+    public static final String TARGET_LIVING_ROOM = "LIVING_ROOM";
     /** SPEAK payload: utterance text key. */
     public static final String SPEAK_TEXT_KEY = "text";
 

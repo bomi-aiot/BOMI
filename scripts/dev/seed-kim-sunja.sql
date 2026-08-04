@@ -319,14 +319,20 @@ INSERT INTO scenario (
     robot_id,
     external_event_id,
     scenario_type,
-    final_status
+    final_status,
+    -- V8: created_at/updated_at NOT NULL. 완료 시각을 과거로 두어
+    -- ScenarioStartGuard 쿨다운(완료 후 30분)에 걸리지 않게 한다.
+    created_at,
+    updated_at
 ) VALUES (
     '40000000-0000-4000-8000-000000000001',
     '10000000-0000-4000-8000-000000000001',
     '20000000-0000-4000-8000-000000000001',
     'seed-kim-sunja-manual-001',
     'MANUAL_INTERACTION',
-    'COMPLETED'
+    'COMPLETED',
+    CURRENT_TIMESTAMP - INTERVAL '2 hours',
+    CURRENT_TIMESTAMP - INTERVAL '2 hours'
 );
 
 INSERT INTO conversation (
