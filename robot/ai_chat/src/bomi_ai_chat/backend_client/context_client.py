@@ -26,10 +26,12 @@ from typing import Any
 import requests
 
 from bomi_ai_chat import policy
+from bomi_ai_chat.backend_client.session import build_backend_session
 from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.http import (
     ExternalServiceError,
     decode_json_object,
+    is_auth_failure,
     request_with_retry,
 )
 from bomi_ai_chat.localstore import context_cache
@@ -65,7 +67,7 @@ class BackendContextClient:
         self.max_attempts = settings.http_max_attempts
         self.backoff_seconds = settings.http_backoff_seconds
         self.max_backoff_seconds = settings.http_max_backoff_seconds
-        self._session = session or requests
+        self._session = session or build_backend_session(settings)
 
     def fetch_context(
         self,
@@ -120,7 +122,19 @@ class BackendContextClient:
             # 틀린 프로그래밍 오류까지 "네트워크 실패"로 둔갑해 캐시로 조용히
             # 내려갔다. 버그가 오프라인 동작처럼 보이면 아무도 못 찾는다.
             # 여기서 예외를 올리면 네트워크 한 번 끊긴 것으로 대화가 끝난다.
-            logger.warning("context fetch failed (%s); falling back to cache", error)
+            if is_auth_failure(error):
+                # 401/403 은 네트워크 장애가 아니라 설정 오류(시크릿 불일치/누락)다.
+                # 아래 캐시 폴백과 똑같은 문구로 남으면, 배포 때 시크릿을 안 맞춘
+                # 실수가 "그냥 오프라인이었나 보다"에 묻힌다(S15P11E102-307).
+                logger.warning(
+                    "AUTH FAILURE: backend rejected the shared secret (status=%s) "
+                    "while fetching context for senior %s; falling back to cache — "
+                    "this is a config problem, not a network outage. Check "
+                    "BACKEND_SHARED_SECRET.",
+                    error.status_code, senior_id,
+                )
+            else:
+                logger.warning("context fetch failed (%s); falling back to cache", error)
             cached = context_cache.load(senior_id)
             if cached is None:
                 # 캐시도 없다. 문맥 없이라도 말은 해야 한다.

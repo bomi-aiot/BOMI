@@ -178,6 +178,17 @@ class Settings:
     backend_base_url: str
     backend_timeout_seconds: float
 
+    # 백엔드 서블릿 필터가 요구하는 공유 시크릿 (S15P11E102-307).
+    #
+    # 왜 선택값(optional)인가
+    #   백엔드에서 이 값을 설정하지 않으면 필터가 헤더 검사를 건너뛰고 그대로
+    #   통과시킨다 — 그래야 시크릿을 아직 안 돌린 로컬 개발이 계속 돌아간다. 로봇
+    #   쪽도 같은 이유로 미설정을 허용한다. 다만 실기에서 백엔드에는 시크릿이 걸려
+    #   있는데 로봇에 이 값이 비어 있으면, 헤더 없는 요청이 나가 401 을 맞는다 —
+    #   그 401 은 조용한 캐시 폴백에 묻히지 않고 backend_client/session.py 를 거쳐
+    #   경고 로그로 남는다.
+    backend_shared_secret: str | None
+
     # 이 로봇의 id. 배포된 기기마다 다르므로 policy 가 아니라 여기다.
     #
     # 왜 필요한가
@@ -371,6 +382,7 @@ class Settings:
                 or "http://localhost:8080"
             ),
             backend_timeout_seconds=_positive_float_env("BACKEND_TIMEOUT_SECONDS", 1.5),
+            backend_shared_secret=_optional_env("BACKEND_SHARED_SECRET"),
             robot_id=_optional_env("ROBOT_ID"),
             senior_id=_optional_env("SENIOR_ID"),
             use_graph_runtime=_bool_env("USE_GRAPH_RUNTIME", True),
