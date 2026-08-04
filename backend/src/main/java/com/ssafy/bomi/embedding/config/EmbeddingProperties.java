@@ -1,5 +1,8 @@
 package com.ssafy.bomi.embedding.config;
 
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
@@ -15,6 +18,8 @@ import org.springframework.stereotype.Component;
 @Component
 @ConfigurationProperties(prefix = "bomi.embedding")
 public class EmbeddingProperties {
+
+    private static final Logger log = LoggerFactory.getLogger(EmbeddingProperties.class);
 
     /** Master switch. False means no calls are made at all, whatever else is set. */
     private boolean enabled = false;
@@ -150,5 +155,29 @@ public class EmbeddingProperties {
     /** Whether calls may actually be made. */
     public boolean isUsable() {
         return enabled && !apiKey.isBlank();
+    }
+
+    /**
+     * Flags a passage/query model mix-up at startup (S15P11E102-308).
+     *
+     * <p><b>Why this needs its own check.</b> {@code EmbeddingClient}'s Javadoc already
+     * explains that the two models are trained as a pair and mixing them does not throw — it
+     * just returns slightly worse neighbours forever, with nothing in the system able to tell
+     * anyone it happened. A typo'd env var (copy-pasting {@code UPSTAGE_QUERY_MODEL} into both
+     * slots, say) would otherwise sit there silently degrading search quality until someone
+     * happens to compare the two config values by hand.</p>
+     *
+     * <p>Package-private on purpose: production wiring only needs the {@code @PostConstruct}
+     * to fire, and the test for it calls this method directly rather than booting Spring.</p>
+     */
+    @PostConstruct
+    void validateModelPairing() {
+        if (passageModel.equals(queryModel)) {
+            log.error("bomi.embedding.passage-model and query-model are both '{}'. Upstage "
+                    + "trains these as a pair; using the same model for both does not throw — "
+                    + "it silently makes semantic search worse. Set them to the paired "
+                    + "-passage / -query models (CLAUDE.md §8).",
+                passageModel);
+        }
     }
 }
