@@ -37,7 +37,14 @@ from bomi_ai_chat.backend_client.contract_client import BackendUnavailable
 from bomi_ai_chat.clock import clock
 from bomi_ai_chat.door import occupancy as occupancy_rules
 from bomi_ai_chat.graph import gate
-from bomi_ai_chat.localstore import audio_cache, context_cache, outbox, proposals
+from bomi_ai_chat.localstore import (
+    audio_cache,
+    context_cache,
+    emotion,
+    outbox,
+    proposals,
+)
+from bomi_ai_chat.localstore import consent as consent_store
 from bomi_ai_chat.localstore import runtime as runtime_store
 from bomi_ai_chat.notify import GuardianNotifier, LoggingGuardianNotifier
 from bomi_ai_chat.state import ConvState
@@ -892,6 +899,113 @@ def _configured_robot_id() -> str | None:
     except Exception:  # noqa: BLE001 - 설정 문제로 틱이 죽으면 안 된다
         logger.warning("could not read the robot id from settings", exc_info=True)
         return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# T3 동의 질문  (S15P11E102-253, CLAUDE.md §9)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def consent_tick(senior_id: str) -> int:
+    """누적된 정서 신호가 문턱을 넘겼으면 T3 동의 질문을 '제안'으로 큐에 넣는다.
+
+    무엇을 하는가
+        handlers.handle_emotional 이 더 이상 즉시 큐잉하지 않는다(263 에서 253 으로
+        바뀐 부분). 대신 이 틱이 주기적으로 다음을 전부 확인하고, 모두 통과해야만
+        질문 하나를 큐에 넣는다.
+          1. 기능 자체가 켜져 있는가 (policy.T3_CONSENT_ENABLED, config 킬스위치)
+          2. 이미 대기 중인 동의 질문이 없는가 (policy.T3_CONSENT_ONE_PENDING_ONLY)
+          3. 지금 열려 있는 대화가 봉인되지 않았는가 (emotion.is_conversation_sealed)
+          4. 누적 신호가 문턱을 넘었는가 (policy.T3_CONSENT_SIGNAL_THRESHOLD)
+          5. 지금이 '자연스러운 창'인가 — 침묵 사다리가 0, 대기 중인 안전 확인이
+             없고, occupancy 가 AWAY 가 아니다.
+
+    왜 즉시 큐잉이 아니라 누적 문턱인가
+        정서 발화 한 번에 곧바로 질문을 예약하면 지나치게 민감하다. 하루에
+        스쳐 지나가듯 한 말에도 45분 뒤 "가족분께 전해도 될까요"가 날아오면
+        그 자체가 감시처럼 느껴진다(policy.T3_CONSENT_SIGNAL_THRESHOLD 참고).
+
+    왜 안전 확인·침묵 사다리·occupancy 를 함께 보는가
+        어르신이 증상을 말해 안전 확인을 기다리는 중이거나, 사다리가 이미 올라가
+        있거나, 집에 없는데 이 질문이 끼어들면 안 된다. T3 동의는 급하지 않고
+        (priority "low"), 그런 순간에 끼어들 이유가 전혀 없다.
+
+    누가 호출하는가
+        jobs.scheduler(policy.CONTRACT_TICK_INTERVAL_SEC 마다 — 이 질문도 급하지
+        않으므로 재질의·온보딩과 같은 주기를 쓴다), 그리고 압축 시계 경로의
+        run_all_ticks_once, 그리고 테스트.
+
+    반환값
+        새로 넣은 제안 개수 (0 또는 1).
+
+    주의사항
+        실제로 나갈 문장(seed)을 여기서 확정한다. handle_emotional 은 이 문장을
+        LLM 없이 그대로 말한다(§16) — 다시 쓰면 "무엇을 물었는가"의 기록이
+        불안정해진다.
+    """
+    if not policy.T3_CONSENT_ENABLED:
+        return 0
+
+    from bomi_ai_chat.config import get_settings
+
+    try:
+        if not get_settings().t3_consent_enabled:
+            logger.info("T3 consent is disabled by the T3_CONSENT_ENABLED env kill switch")
+            return 0
+    except Exception:  # noqa: BLE001 - 설정 문제로 틱이 죽으면 안 된다
+        logger.warning("could not read the T3 consent kill switch; assuming enabled",
+                       exc_info=True)
+
+    if policy.T3_CONSENT_ONE_PENDING_ONLY and _has_pending_consent_proposal(senior_id):
+        return 0
+
+    state = runtime_store.load(senior_id)
+    conversation_id = state.get("conversation_id")
+
+    if emotion.is_conversation_sealed(senior_id, conversation_id):
+        return 0
+
+    if emotion.pending_signal_count(senior_id) < policy.T3_CONSENT_SIGNAL_THRESHOLD:
+        return 0
+
+    if int(state.get("silence_level") or 0) != 0:
+        return 0
+    if float(state.get("safety_check_until") or 0.0) > 0.0:
+        return 0
+    if state.get("occupancy") == "AWAY":
+        return 0
+
+    request_id = consent_store.create_request(senior_id, conversation_id)
+    emotion.consume_pending_signals(senior_id)
+
+    now = clock.now()
+    proposals.enqueue(senior_id, {
+        "intent": "emotional",
+        "priority": "low",
+        # seed 는 이 질문의 최종 문장이다 — handle_emotional 이 다시 쓰지 않는다.
+        "seed": "아까 마음이 힘들다고 하셨던 이야기, 가족분께 전해도 괜찮을까요?",
+        "expires_at": now + policy.T3_CONSENT_DELAY_SEC + policy.T3_CONSENT_TTL_SEC,
+        # request_id 를 origin 에 싣는다. graph.handlers._extract_consent_request_id
+        # 가 이 형식("t3_consent:<id>: ...")을 그대로 기대하므로, 둘을 같이 고친다.
+        "origin": f"t3_consent:{request_id}: 어르신이 마음을 이야기하셨고, 그것을 "
+                  "가족과 나눠도 되는지 아직 여쭤보지 않았습니다.",
+        "meta": {
+            "t3_consent": True,
+            "request_id": request_id,
+            "not_before": now + policy.T3_CONSENT_DELAY_SEC,
+        },
+    })
+    logger.info("queued a T3 consent question (request_id=%d) for senior %s (asking in %ds)",
+                request_id, senior_id, policy.T3_CONSENT_DELAY_SEC)
+    return 1
+
+
+def _has_pending_consent_proposal(senior_id: str) -> bool:
+    """이미 대기 중인 동의 질문 제안이 있는가."""
+    return any(
+        (proposal.get("meta") or {}).get("t3_consent")
+        for proposal in proposals.pending(senior_id)
+    )
 
 
 def daily_summary_job(senior_id: str) -> None:

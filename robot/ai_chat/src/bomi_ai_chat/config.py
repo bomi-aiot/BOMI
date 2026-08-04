@@ -218,6 +218,22 @@ class Settings:
     #   쓰지 않고, 그러면 배선한 의미가 없다.
     use_graph_runtime: bool
 
+    # T3 동의 질문 기능의 운영 킬스위치 (S15P11E102-253).
+    #
+    # policy.T3_CONSENT_ENABLED 와 무엇이 다른가
+    #   policy 쪽은 '제품 판단'(코드 상수)이고, 이 값은 '오늘 당장 끄고 싶다'는
+    #   운영 판단이다. 실기에서 이 질문이 이상하게 나간다는 신고가 들어왔을 때,
+    #   코드를 고치고 재배포할 시간이 없어도 이 환경변수 하나로 그날 안에
+    #   끌 수 있어야 한다(CLAUDE.md §26 의 "재현 가능한 방식으로 끌 수 있어야
+    #   한다"는 원칙과 같다). jobs/ticks.consent_tick 이 이 값과 policy 값을
+    #   모두 확인하고, 둘 중 하나라도 꺼지면 질문을 올리지 않는다.
+    #
+    # 기본값이 True 인 이유
+    #   꺼진 채로 배포되면 정서 발화가 아무리 쌓여도 보호자에게 절대 닿지 않고,
+    #   그 사실이 로그 한 줄 없이 조용하다. 명시적으로 끄는 것이 배포 체크리스트에
+    #   남는 편이 안전하다.
+    t3_consent_enabled: bool
+
     # ── MQTT: 현관 이벤트 구독  (CLAUDE.md §11, docs/mqtt/topic-convention.md) ──
     #
     # 왜 URL 한 개로 받는가
@@ -386,6 +402,7 @@ class Settings:
             robot_id=_optional_env("ROBOT_ID"),
             senior_id=_optional_env("SENIOR_ID"),
             use_graph_runtime=_bool_env("USE_GRAPH_RUNTIME", True),
+            t3_consent_enabled=_bool_env("T3_CONSENT_ENABLED", True),
             mqtt_enabled=_bool_env("MQTT_ENABLED", False),
             mqtt_broker_url=_optional_env("MQTT_BROKER_URL", "") or "",
             mqtt_door_topic=(

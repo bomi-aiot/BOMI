@@ -411,10 +411,22 @@ def classify_intent(state: ConvState) -> dict:
           그것을 강제하는 곳은 백엔드(하나만 내려줌)와 contract_tick(한 대화에 한 번만
           제안)이다 (CLAUDE.md §12).
     """
+    text = (state.get("user_input") or "").strip()
+
+    # ★ pending_consent 는 state.get("intent") 검사보다 먼저 본다.
+    #
+    #   T3 동의 질문을 던진 턴 자체가 intent="emotional" 을 남기고, 그 값은
+    #   reducer 가 없는(LastValue) 채널이라 바로 다음 반응형 턴까지 checkpoint
+    #   에 그대로 남아 있을 수 있다(state.py 참고). 그 우연에 기대면, 질문과
+    #   답 사이에 다른 능동 발화가 하나라도 끼면(예: 복약 알림) intent 가
+    #   "schedule" 로 덮여 답 판정이 조용히 새어나간다. 그래서 pending_consent
+    #   가 있으면 남아 있는 intent 값과 무관하게 먼저 확인한다.
+    if _pending_consent_intent(state, text):
+        return {"intent": "emotional"}
+
     if state.get("intent"):
         return {}
 
-    text = (state.get("user_input") or "").strip()
     if not text:
         # 발화가 없는데 인텐트도 없다면 말벗으로 둔다. info 로 두면 있지도 않은
         # 질문에 답하려 든다.
@@ -447,6 +459,13 @@ def _pending_contract_intent(state: ConvState, text: str) -> str | None:
         의문형이 오면 그것은 어르신이 되묻는 것이므로 여전히 가로채지 않는다 —
         아래 검사가 두 단계 모두에 같이 적용된다.
 
+    ★ 정서 표현도 같은 이유로 가로채지 않는다  (S15P11E102-253)
+        온보딩이 어떤 필드를 기다리는 중에 어르신이 "외로워"라고 하면, 그건
+        답이 아니라 마음을 꺼낸 것이다. 여기서 계약으로 보내면 그 발화가
+        `_extract_value` 를 거쳐 필드값 후보가 되려 들고, 정서 핸들러는 이
+        턴을 아예 보지 못한다 — 위로도 못 받고, 신호도 쌓이지 않는다. 의문형과
+        마찬가지로 **먼저 듣고, 계약은 나중에** 다시 잇는다.
+
     반환값
         "onboarding" | "clarification" | None
     """
@@ -459,8 +478,36 @@ def _pending_contract_intent(state: ConvState, text: str) -> str | None:
                     pending.get("kind"))
         return None
 
+    if any(marker in text for marker in _EMOTIONAL_MARKERS):
+        logger.info("the senior spoke emotionally; answering that first and deferring "
+                    "the %s question", pending.get("kind"))
+        return None
+
     kind = pending.get("kind")
     return kind if kind in {"onboarding", "clarification"} else None
+
+
+def _pending_consent_intent(state: ConvState, text: str) -> bool:
+    """이 발화가 '방금 로봇이 던진 T3 동의 질문'에 대한 답인가 (S15P11E102-253).
+
+    _pending_contract_intent 와 같은 원칙이다 — 어르신이 먼저 물은 턴은
+    가로채지 않는다. 로봇이 "가족분께 전해도 될까요"라고 물었는데 어르신이
+    "오늘 며칠이야?"라고 하면 그것은 답이 아니라 새 질문이다. pending_consent
+    는 사라지지 않으므로(_resolve_consent_answer 만 지운다) 다음 턴에 다시
+    이어진다.
+
+    반환값
+        True  -> handle_emotional 로 보내 답을 판정한다.
+        False -> pending_consent 가 없거나, 어르신이 먼저 물었다.
+    """
+    pending = state.get("pending_consent")
+    if not pending:
+        return False
+    if contract_dialogue.looks_like_a_question(text):
+        logger.info("the senior asked something; answering first and deferring "
+                    "the T3 consent question")
+        return False
+    return True
 
 
 # 날씨 질문의 표지. _gather_lookup_documents(아래 §311 절)가 조회 여부를 정하는

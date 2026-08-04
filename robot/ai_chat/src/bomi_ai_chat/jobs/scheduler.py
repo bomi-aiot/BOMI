@@ -114,6 +114,18 @@ def build_scheduler(senior_id: str, app=None):
         coalesce=True,
         max_instances=1,
     )
+    scheduler.add_job(
+        # T3 동의 질문도 급하지 않다 — contract_tick 과 같은 주기를 쓴다
+        # (S15P11E102-253). conversation_id 문제는 없다 — consent_tick 은
+        # runtime_store 에서 '지금' 값을 직접 읽는다(contract_tick 과 달리
+        # 인자로 받지 않는다).
+        _guard(ticks.consent_tick, senior_id),
+        "interval",
+        seconds=policy.CONTRACT_TICK_INTERVAL_SEC,
+        id="consent_tick",
+        coalesce=True,
+        max_instances=1,
+    )
 
     logger.info(
         "scheduler built: silence/door=%ds outbox=%ds",
@@ -181,6 +193,7 @@ def run_all_ticks_once(senior_id: str, app=None) -> None:
     """
     _guard(ticks.schedule_tick, senior_id)()
     _guard(_contract_tick_job, senior_id)()
+    _guard(ticks.consent_tick, senior_id)()
     for tick in (ticks.silence_tick, ticks.door_watch_tick):
         _guard(tick, senior_id, app)()
     _guard(ticks.outbox_flush)()

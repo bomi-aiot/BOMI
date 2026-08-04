@@ -210,6 +210,23 @@ class ConvState(TypedDict, total=False):
     #   묻는다 (CLAUDE.md §17.3 — 아는 걸 다시 묻는 순간 몰입이 깨진다).
     pending_contract: dict | None
 
+    # 로봇이 방금 던진 'T3 동의 질문'과 그 요청의 id (S15P11E102-253).
+    #
+    #   {"request_id": int, "asked_at": float}
+    #
+    # pending_contract 와 같은 이유로 존재한다 — 다음 턴의 "응"/"아니"가 이
+    # 질문에 대한 답인지 판단하는 근거이며, 없으면 그 대답이 그냥 잡담으로
+    # 흘러가고 보호자 알림은 영원히 나가지 않는다(이 티켓이 고치는 바로 그
+    # 실패). request_id 는 localstore.consent 표의 행을 가리키고, 답이 오면
+    # 그 행을 GRANTED/DECLINED 로 확정한다.
+    #
+    # 왜 하나의 dict 로 onboarding/clarification 과 합치지 않는가
+    #   pending_contract 는 "계약을 백엔드가 강제한다"는 전제를 깔고 있고
+    #   (CLAUDE.md §12), 필드 목록·세션 id 같은 계약 전용 모양을 갖는다. T3
+    #   동의는 계약이 아니라 로봇이 스스로 판단해 여쭤보는 것이라 전제가 다르다.
+    #   같은 dict 로 섞으면 "이게 계약인가 아닌가"를 매번 kind 로 되물어야 한다.
+    pending_consent: dict | None
+
     # ── 백엔드에서 온 컨텍스트 (§5, §8) ──
     #
     # mvp-erd.md §9 규칙에 따라 서버에서 조립된다. 프로필, 선호, 오늘 상태,
