@@ -13,6 +13,7 @@ application-secret.yml
 !robot/ros2_ws/src/mapping/config/
 !robot/ros2_ws/src/mapping/config/slam_toolbox.yaml
 !robot/ros2_ws/src/core/config/person_following.yaml
+!robot/ros2_ws/src/core/config/pico_driver.yaml
 !**/bomi_lidar/config/x4_pro.yaml
 !**/bomi_obstacle_detection/config/front_distance.yaml
 *.pem
