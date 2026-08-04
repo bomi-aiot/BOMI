@@ -8,3 +8,5 @@ data/*
 mosquitto/data/*
 mosquitto/log/*
 
+# EC2 MQTT 비밀번호가 포함되는 장치 로컬 Bridge 설정
+mosquitto/config/conf.d/*

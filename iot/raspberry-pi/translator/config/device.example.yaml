@@ -24,17 +24,17 @@ sensors:
     source_id: door_sensor            # 계약 토픽/봉투의 sourceId (불변)
     kind: door                        # door | pir | ambient
     location: ENTRANCE
-    # contact=false(문 열림) -> type=DOOR_OPENED, payload.location=ENTRANCE
+    # contact=false(문 열림) -> DOOR_OPENED, contact=true(문 닫힘) -> DOOR_CLOSED
     #   ※ 백엔드의 sensorId->senior 매핑도 이 source_id(door_sensor)로 맞춰야 함
 
   - friendly_name: pir                # Zigbee2MQTT 이름 (zigbee2mqtt/pir)
     source_id: pir
     kind: pir
     location: ENTRANCE
-    # occupancy=true -> type=PRESENCE_DETECTED
+    # occupancy=true -> type=MOTION_DETECTED
     #   payload.direction=UNKNOWN (문+PIR 1개로는 방향 확정 불가, MVP)
     #   payload.detectionMethod=SENSOR_SEQUENCE
-    #   ※ 백엔드는 현재 DOOR_OPENED 만 트리거로 처리한다.
+    #   ※ PRESENCE_DETECTED는 방향 판정 결과용 예약어라 직접 발행하지 않는다.
 
   # 온습도 센서를 붙일 때 예시 (선택)
   # - friendly_name: living-room-ambient-01
