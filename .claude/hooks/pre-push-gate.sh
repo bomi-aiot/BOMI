@@ -100,6 +100,14 @@ RUFF_OUT="$("$RUFF" check "$AI_DIR/src" "$AI_DIR/tests" 2>&1)" || FAILED="ruff"
 
 # manual/integration 은 하드웨어·외부 API·자격증명이 필요하다. 게이트에서 제외하는 것은
 # 편의가 아니라 정확성이다 — 노트북에 마이크가 없다는 사실이 push 를 막아서는 안 된다.
+#
+# 이 -m 플래그 자체가 지금 거르는 테스트는 0건이다(`tests/` 안에 integration/manual
+# 마커가 붙은 테스트가 아직 없다 — `pytest --collect-only -m "integration or manual"` 로
+# 확인 가능). 실제 격리는 두 가지가 한다: pyproject.toml 의 `norecursedirs = ["manual"]`
+# 이 하드웨어 스모크 스크립트가 있는 tests/manual/ 을 아예 수집에서 뺀다. 그리고
+# tests/conftest.py 의 autouse fixture `block_external_http` 가, integration/manual 로
+# 표시되지 않은 테스트가 실제 HTTP 요청을 보내면 즉시 실패시킨다. -m 플래그는 앞으로
+# 마커가 붙은 pytest 통합 테스트가 생길 때를 위한 관례로 남겨 둔다.
 PYTEST_OUT="$(cd "$AI_DIR" && "$PYTEST" -q -m "not integration and not manual" 2>&1)" \
   || FAILED="${FAILED:+$FAILED + }pytest"
 
