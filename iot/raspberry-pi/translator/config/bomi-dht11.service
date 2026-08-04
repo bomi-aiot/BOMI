@@ -1,0 +1,16 @@
+[Unit]
+Description=Bomi DHT11 ambient MQTT publisher
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/bomi/iot/raspberry-pi/translator
+EnvironmentFile=/opt/bomi/iot/raspberry-pi/translator/config/dht11.env
+ExecStart=/opt/bomi/iot/.venv/bin/python dht11_main.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
