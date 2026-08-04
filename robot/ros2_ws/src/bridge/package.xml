@@ -10,6 +10,19 @@
   <depend>rclpy</depend>
   <depend>std_msgs</depend>
 
+  <!-- Nav2 주행 드라이버가 직접 사용하는 의존성 -->
+  <depend>geometry_msgs</depend>
+  <depend>nav2_msgs</depend>
+  <depend>action_msgs</depend>
+  <depend>ament_index_python</depend>
+
+  <!-- 목적지 좌표 로더(waypoint_route)와 room_waypoints.yaml 재사용 -->
+  <depend>core</depend>
+
+  <!-- ROS 2 launch 실행에 필요한 의존성 -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
   <test_depend>ament_pep257</test_depend>

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Callable
 
 from bridge import contract
 
@@ -32,6 +33,14 @@ class RobotDriver(ABC):
     @abstractmethod
     def cancel(self) -> str:
         """진행 중인 동작을 취소하고 결과 상태(CANCELLED)를 반환한다."""
+
+    def shutdown(self) -> None:
+        """드라이버가 보유한 자원을 정리한다.
+
+        기본 구현은 아무 것도 하지 않는다. Nav2 드라이버처럼 ROS 2 노드나 액션
+        클라이언트를 보유하는 구현이 이 메서드를 재정의해 종료 시 자원을
+        해제한다. 상위 실행 노드가 종료 시 한 번 호출한다.
+        """
 
 
 class MockRobotDriver(RobotDriver):
@@ -64,3 +73,37 @@ class MockRobotDriver(RobotDriver):
             import time
 
             time.sleep(self._delay_seconds)
+
+
+# 드라이버 선택 파라미터(driver_type)가 가질 수 있는 값이다. 잘못된 값이 조용히
+# Mock으로 넘어가지 않도록, 허용값을 여기서 명시적으로 제한한다.
+DRIVER_TYPE_MOCK = "mock"
+DRIVER_TYPE_NAV2 = "nav2"
+
+
+def create_driver(
+    driver_type: str,
+    *,
+    create_mock: Callable[[], RobotDriver],
+    create_nav2: Callable[[], RobotDriver],
+) -> RobotDriver:
+    """driver_type 값에 따라 알맞은 드라이버를 생성한다.
+
+    역할: 실행 환경이 고른 driver_type에 맞춰 Mock 또는 Nav2 드라이버를 만든다.
+        실제 생성은 주입된 팩터리(create_mock/create_nav2)가 담당한다. 덕분에 이
+        함수 자체는 ROS 2에 의존하지 않아 단위 테스트할 수 있고, Nav2 드라이버는
+        nav2가 선택된 경우에만 생성된다.
+    입력값: driver_type - "mock" 또는 "nav2". create_mock/create_nav2 - 각각
+        Mock, Nav2 드라이버를 만들어 돌려주는 인자 없는 함수.
+    반환값: 선택된 RobotDriver 구현.
+    실패: 허용하지 않는 driver_type이면 ValueError를 던진다. 조용히 Mock으로
+        대체하지 않는다.
+    """
+    if driver_type == DRIVER_TYPE_MOCK:
+        return create_mock()
+    if driver_type == DRIVER_TYPE_NAV2:
+        return create_nav2()
+    raise ValueError(
+        f"unknown driver_type '{driver_type}'; "
+        f"use '{DRIVER_TYPE_MOCK}' or '{DRIVER_TYPE_NAV2}'"
+    )
