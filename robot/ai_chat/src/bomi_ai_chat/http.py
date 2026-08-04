@@ -13,6 +13,11 @@ LOGGER = logging.getLogger(__name__)
 RETRYABLE_STATUS_CODES = frozenset({429, 502, 503})
 RETRYABLE_EXCEPTIONS = (requests.Timeout, requests.ConnectionError)
 
+# 백엔드 공유 시크릿 필터(S15P11E102-307)가 헤더 누락/불일치에 응답하는 상태코드.
+# 401 이 재시도 대상(RETRYABLE_STATUS_CODES)에 없는 이유: 같은 요청을 몇 번을
+# 더 보내도 시크릿이 저절로 맞아지지 않는다. 재시도는 낭비고, 필요한 건 경고다.
+AUTH_FAILURE_STATUS_CODES = frozenset({401, 403})
+
 
 class ExternalServiceError(RuntimeError):
     """외부 서비스 실패의 개발자 정보와 사용자 안내를 분리한다."""
@@ -47,6 +52,26 @@ class InvalidResponseError(ExternalServiceError):
                 f"{service} 응답을 확인하지 못했습니다. 잠시 후 다시 시도해주세요."
             ),
         )
+
+
+def is_auth_failure(error: BaseException) -> bool:
+    """예외가 공유 시크릿 인증 실패(401/403)로 인한 것인지 판별한다.
+
+    왜 필요한가
+        네 백엔드 클라이언트는 실패를 서로 다르게 처리한다 — 캐시로 내려가거나,
+        예외를 올리거나, 그냥 그 턴을 포기한다. 그런데 원인이 "네트워크가
+        끊겼다"인지 "시크릿이 틀렸다/없다"인지는 처리 방식과 무관하게 항상
+        구분해서 로그에 남아야 한다. 안 그러면 배포 때 시크릿을 안 맞춰 넣은
+        설정 오류가, 흔한 오프라인 폴백처럼 조용히 지나간다(S15P11E102-307).
+
+    누가 호출하는가
+        backend_client/ 의 네 클라이언트. ExternalServiceError 를 잡은 자리에서
+        이 함수로 한 번 더 나눠, 인증 실패만 별도의 경고 문구를 남긴다.
+    """
+    return (
+        isinstance(error, ExternalServiceError)
+        and error.status_code in AUTH_FAILURE_STATUS_CODES
+    )
 
 
 def _retry_delay(

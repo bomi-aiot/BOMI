@@ -31,10 +31,12 @@ from typing import Any
 
 import requests
 
+from bomi_ai_chat.backend_client.session import build_backend_session
 from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.http import (
     ExternalServiceError,
     decode_json_object,
+    is_auth_failure,
     request_with_retry,
 )
 
@@ -54,7 +56,7 @@ class BackendConversationClient:
         self.timeout_seconds = settings.backend_timeout_seconds
         self.backoff_seconds = settings.http_backoff_seconds
         self.max_backoff_seconds = settings.http_max_backoff_seconds
-        self._session = session or requests
+        self._session = session or build_backend_session(settings)
 
     def record_turn(
         self,
@@ -122,9 +124,22 @@ class BackendConversationClient:
         except (ExternalServiceError, OSError, ValueError) as error:
             # 좁게 잡는다. Exception 을 통째로 잡으면 호출 인자를 틀린 프로그래밍
             # 오류까지 "네트워크 실패"로 둔갑한다.
-            logger.warning(
-                "conversation event not recorded (%s); the turn continues, but the T2 "
-                "utterance count will be short by one", error)
+            if is_auth_failure(error):
+                # 401/403 은 통계 유실이 아니라 설정 오류다. 아래의 "그냥 통계
+                # 한 칸 빠졌다" 문구와 섞이면 배포 때 시크릿을 안 맞춘 실수를
+                # 아무도 알아채지 못한다(S15P11E102-307).
+                logger.warning(
+                    "AUTH FAILURE: backend rejected the shared secret (status=%s) "
+                    "while recording a conversation event; this is a config "
+                    "problem, not a dropped turn. Check BACKEND_SHARED_SECRET.",
+                    error.status_code,
+                )
+            else:
+                logger.warning(
+                    "conversation event not recorded (%s); the turn continues, but "
+                    "the T2 utterance count will be short by one", error)
+            # (conversationId, messageId) 튜플 계약은 S15P11E102-306 이 세웠다.
+            # 여기서 단일 None 을 돌려주면 호출부의 튜플 언패킹이 TypeError 로 죽는다.
             return None, None
 
         return body.get("conversationId"), body.get("messageId")

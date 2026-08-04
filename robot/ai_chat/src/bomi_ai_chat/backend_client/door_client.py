@@ -31,9 +31,10 @@ import logging
 
 import requests
 
+from bomi_ai_chat.backend_client.session import build_backend_session
 from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.contracts.door import DoorEvent
-from bomi_ai_chat.http import ExternalServiceError, request_with_retry
+from bomi_ai_chat.http import ExternalServiceError, is_auth_failure, request_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class BackendDoorClient:
         self.timeout_seconds = settings.backend_timeout_seconds
         self.backoff_seconds = settings.http_backoff_seconds
         self.max_backoff_seconds = settings.http_max_backoff_seconds
-        self._session = session or requests
+        self._session = session or build_backend_session(settings)
 
     def forward_event(self, senior_id: str, event: DoorEvent) -> bool:
         """이벤트 하나를 백엔드에 올린다. 예외를 던지지 않는다.
@@ -97,9 +98,21 @@ class BackendDoorClient:
         except (ExternalServiceError, OSError, ValueError) as error:
             # 좁게 잡는다. Exception 을 통째로 잡으면 호출 인자를 틀린 프로그래밍
             # 오류까지 "네트워크 실패"로 둔갑하고, 버그가 오프라인 동작처럼 보인다.
-            logger.warning(
-                "door event forward failed (%s); the local occupancy update stands, "
-                "but the backend cannot resolve direction for this event", error)
+            if is_auth_failure(error):
+                # 401/403 은 TTL 을 놓쳐 버린 흔한 드롭이 아니라 설정 오류다.
+                # 아래 문구와 섞이면 시크릿을 안 맞춘 실수가 "그냥 늦은 문 이벤트
+                # 하나"로 지나간다(S15P11E102-307).
+                logger.warning(
+                    "AUTH FAILURE: backend rejected the shared secret (status=%s) "
+                    "while forwarding a door event; check BACKEND_SHARED_SECRET — "
+                    "this is not the usual TTL-driven drop.",
+                    error.status_code,
+                )
+            else:
+                logger.warning(
+                    "door event forward failed (%s); the local occupancy update "
+                    "stands, but the backend cannot resolve direction for this "
+                    "event", error)
             return False
 
         return True
