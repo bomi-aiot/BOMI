@@ -96,6 +96,8 @@ bomi:
     # 값은 seed-kim-sunja.sql 기준 김순자 UUID.
     ambient-sensor-to-senior:
       ambient-sensor-01: 10000000-0000-4000-8000-000000000001
+      # 실배포 IoT 온습도 센서가 실제로 보내는 값 (2026-08-04 EC2 로그에서 확인).
+      living-room-ambient-01: 10000000-0000-4000-8000-000000000001
   medication-reminder:
     # 복약 알림 창의 뒤쪽 유예(분): 예정 시각 + 이 값까지는 알릴 가치가 있다고 본다.
     # 창을 넘긴 슬롯은 침묵한다 — 한참 지난 약을 뒤늦게 알리는 것은 혼란이다.
