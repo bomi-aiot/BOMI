@@ -920,10 +920,11 @@ def consent_tick(senior_id: str) -> int:
         바뀐 부분). 대신 이 틱이 주기적으로 다음을 전부 확인하고, 모두 통과해야만
         질문 하나를 큐에 넣는다.
           1. 기능 자체가 켜져 있는가 (policy.T3_CONSENT_ENABLED, config 킬스위치)
-          2. 이미 대기 중인 동의 질문이 없는가 (policy.T3_CONSENT_ONE_PENDING_ONLY)
-          3. 지금 열려 있는 대화가 봉인되지 않았는가 (emotion.is_conversation_sealed)
-          4. 누적 신호가 문턱을 넘었는가 (policy.T3_CONSENT_SIGNAL_THRESHOLD)
-          5. 지금이 '자연스러운 창'인가 — 침묵 사다리가 0, 대기 중인 안전 확인이
+          2. 어르신이 애초에 가족 공유에 동의했는가 (상위 동의, S15P11E102-253)
+          3. 이미 대기 중인 동의 질문이 없는가 (policy.T3_CONSENT_ONE_PENDING_ONLY)
+          4. 지금 열려 있는 대화가 봉인되지 않았는가 (emotion.is_conversation_sealed)
+          5. 누적 신호가 문턱을 넘었는가 (policy.T3_CONSENT_SIGNAL_THRESHOLD)
+          6. 지금이 '자연스러운 창'인가 — 침묵 사다리가 0, 대기 중인 안전 확인이
              없고, occupancy 가 AWAY 가 아니다.
 
     왜 즉시 큐잉이 아니라 누적 문턱인가
@@ -961,6 +962,9 @@ def consent_tick(senior_id: str) -> int:
     except Exception:  # noqa: BLE001 - 설정 문제로 틱이 죽으면 안 된다
         logger.warning("could not read the T3 consent kill switch; assuming enabled",
                        exc_info=True)
+
+    if not _guardian_sharing_consented(senior_id):
+        return 0
 
     if policy.T3_CONSENT_ONE_PENDING_ONLY and _has_pending_consent_proposal(senior_id):
         return 0
@@ -1012,6 +1016,36 @@ def _has_pending_consent_proposal(senior_id: str) -> bool:
         (proposal.get("meta") or {}).get("t3_consent")
         for proposal in proposals.pending(senior_id)
     )
+
+
+def _guardian_sharing_consented(senior_id: str) -> bool:
+    """어르신이 '가족과 나누는 것' 자체에 동의했는가 (S15P11E102-253).
+
+    왜 이 확인이 필요한가
+        T3 동의는 두 겹이다. 위(상위 동의)는 "느낌을 가족과 나눠도 되는 범주인가"
+        이고, 아래(개별 동의)는 "이번 이야기를 전해도 되는가"이다. 상위 동의가
+        없는데 개별 질문을 던지면, 어르신이 이미 "그런 건 묻지 말라"고 설정해 둔
+        것을 로봇이 무시하고 계속 묻는 셈이 된다 — 설정이 있으나 마나가 된다
+        (CLAUDE.md §9 의 두 겹 동의).
+
+    왜 문맥 캐시를 읽는가
+        이 값의 권위는 백엔드 `app_user.guardian_sharing_consent_status` 이고,
+        문맥 조립 응답의 profile 에 실려 온다. 이 틱은 배경 작업이라 백엔드를
+        직접 부르지 않는다(부르면 네트워크가 끊긴 동안 틱이 통째로 멈춘다).
+        마지막으로 성공한 문맥의 로컬 사본을 읽는 것으로 충분하다.
+
+    왜 모르면 '아니오'인가
+        캐시가 없거나(한 번도 문맥을 못 받음), 필드가 없거나(백엔드가 아직 이
+        필드를 안 실어주는 구버전), 값이 False 면 전부 묻지 않는다. 동의 여부를
+        모르는 채로 "가족분께 전해도 될까요"를 던지는 것이, 물어볼 기회를 한 번
+        놓치는 것보다 훨씬 나쁜 실패다 — 서버 쪽 isGranted 와 같은 방향
+        ("명시적 GRANTED 만 통과")이다.
+    """
+    ctx = context_cache.load(senior_id)
+    if not ctx:
+        return False
+    profile = ctx.get("profile") or {}
+    return profile.get("guardianSharingConsentGranted") is True
 
 
 # ─────────────────────────────────────────────────────────────────────────────

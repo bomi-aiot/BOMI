@@ -28,7 +28,7 @@ from bomi_ai_chat import policy
 from bomi_ai_chat.graph import context as context_node
 from bomi_ai_chat.graph import gate, handlers, output, triage
 from bomi_ai_chat.jobs import ticks
-from bomi_ai_chat.localstore import db
+from bomi_ai_chat.localstore import context_cache, db
 from bomi_ai_chat.localstore import proposals as proposal_store
 from bomi_ai_chat.prompts import build_prompt
 
@@ -43,6 +43,17 @@ def isolated_localstore(monkeypatch, tmp_path):
     db.close_all()
     handlers.set_llm(None)
     output.set_player(None)
+
+
+@pytest.fixture(autouse=True)
+def guardian_sharing_granted(isolated_localstore):
+    """상위 동의가 있는 어르신을 기본값으로 둔다 (S15P11E102-253).
+
+    consent_tick 이 상위 동의를 확인하게 되면서, 이 파일의 동의 질문 관련
+    테스트들도 그 전제를 명시해야 한다. 없으면 "동의가 없어서 0건"으로 통과해
+    정작 검증하려던 문턱·게이트 동작이 무력화된다.
+    """
+    context_cache.save(SENIOR, {"profile": {"guardianSharingConsentGranted": True}})
 
 
 class RecordingLLM:
