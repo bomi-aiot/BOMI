@@ -42,6 +42,12 @@ def generate_launch_description() -> LaunchDescription:
     base_frame = LaunchConfiguration("base_frame")
     odom_frame = LaunchConfiguration("odom_frame")
     laser_frame = LaunchConfiguration("laser_frame")
+    laser_x = LaunchConfiguration("laser_x")
+    laser_y = LaunchConfiguration("laser_y")
+    laser_z = LaunchConfiguration("laser_z")
+    laser_roll = LaunchConfiguration("laser_roll")
+    laser_pitch = LaunchConfiguration("laser_pitch")
+    laser_yaw = LaunchConfiguration("laser_yaw")
     rf2o_frequency = LaunchConfiguration("rf2o_frequency")
     lidar_port = LaunchConfiguration("lidar_port")
     include_lidar = LaunchConfiguration("include_lidar")
@@ -55,6 +61,12 @@ def generate_launch_description() -> LaunchDescription:
             "scan_topic": scan_topic,
             "base_frame": base_frame,
             "laser_frame": laser_frame,
+            "laser_x": laser_x,
+            "laser_y": laser_y,
+            "laser_z": laser_z,
+            "laser_roll": laser_roll,
+            "laser_pitch": laser_pitch,
+            "laser_yaw": laser_yaw,
         }.items(),
     )
 
@@ -150,6 +162,30 @@ def generate_launch_description() -> LaunchDescription:
                 "laser_frame",
                 default_value="laser_frame",
                 description="YDLIDAR LaserScan과 정적 TF의 센서 프레임",
+            ),
+            DeclareLaunchArgument(
+                "laser_x", default_value="0.0",
+                description="base_link 기준 LiDAR 전방 위치(m)",
+            ),
+            DeclareLaunchArgument(
+                "laser_y", default_value="0.0",
+                description="base_link 기준 LiDAR 좌측 위치(m)",
+            ),
+            DeclareLaunchArgument(
+                "laser_z", default_value="0.0",
+                description="base_link 기준 LiDAR 높이(m)",
+            ),
+            DeclareLaunchArgument(
+                "laser_roll", default_value="0.0",
+                description="base_link 기준 LiDAR roll(rad)",
+            ),
+            DeclareLaunchArgument(
+                "laser_pitch", default_value="0.0",
+                description="base_link 기준 LiDAR pitch(rad)",
+            ),
+            DeclareLaunchArgument(
+                "laser_yaw", default_value="0.0",
+                description="base_link 기준 LiDAR yaw(rad)",
             ),
             DeclareLaunchArgument(
                 "rf2o_frequency",

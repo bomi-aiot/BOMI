@@ -43,6 +43,7 @@
   <exec_depend>nav2_bringup</exec_depend>
   <exec_depend>nav2_common</exec_depend>
   <exec_depend>mapping</exec_depend>
+  <exec_depend>bomi_lidar</exec_depend>
   <exec_depend>simulation</exec_depend>
 
   <!-- Gazebo 시뮬레이션 및 시각화에 필요한 실행 의존성 -->

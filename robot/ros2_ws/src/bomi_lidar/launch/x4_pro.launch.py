@@ -1,4 +1,4 @@
-"""BOMI의 YDLIDAR X4-PRO 드라이버와 임시 정적 TF를 함께 실행한다."""
+"""BOMI의 YDLIDAR X4-PRO 드라이버와 장착 위치 정적 TF를 실행한다."""
 
 from pathlib import Path
 
@@ -20,8 +20,8 @@ def generate_launch_description() -> LaunchDescription:
         포함하는 LaunchDescription을 반환한다.
 
     주의사항:
-        정적 TF 좌표는 실제 로봇 장착 전 임시값이다.
-        실제 장착 후 LiDAR 위치와 방향을 측정해 수정해야 한다.
+        정적 TF 기본값은 실측 전 임시값이다. 실제 장착 위치와 방향을
+        launch 인자로 전달해야 한다.
     """
 
     # bomi_lidar 패키지의 설치 경로에서 X4-PRO 설정 파일을 찾는다.
@@ -33,6 +33,12 @@ def generate_launch_description() -> LaunchDescription:
     scan_topic = LaunchConfiguration("scan_topic")
     base_frame = LaunchConfiguration("base_frame")
     laser_frame = LaunchConfiguration("laser_frame")
+    laser_x = LaunchConfiguration("laser_x")
+    laser_y = LaunchConfiguration("laser_y")
+    laser_z = LaunchConfiguration("laser_z")
+    laser_roll = LaunchConfiguration("laser_roll")
+    laser_pitch = LaunchConfiguration("laser_pitch")
+    laser_yaw = LaunchConfiguration("laser_yaw")
 
     # YDLIDAR X4-PRO 드라이버 노드이다.
     # YAML 설정을 먼저 적용하고 launch 인자로 전달된 port 값을 덮어쓴다.
@@ -53,8 +59,8 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
-    # 실제 로봇에 장착하기 전이므로 LiDAR와 로봇 중심을 같은 위치로 가정한다.
-    # 실제 장착 후 x, y, z, roll, pitch, yaw 값을 측정해 수정해야 한다.
+    # 기본값은 LiDAR와 로봇 중심을 같은 위치로 가정한다. 실기 지도 생성 시에는
+    # 측정한 x, y, z, roll, pitch, yaw 값을 launch 인자로 전달한다.
     lidar_static_transform = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
@@ -62,17 +68,17 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
         arguments=[
             "--x",
-            "0",
+            laser_x,
             "--y",
-            "0",
+            laser_y,
             "--z",
-            "0",
+            laser_z,
             "--roll",
-            "0",
+            laser_roll,
             "--pitch",
-            "0",
+            laser_pitch,
             "--yaw",
-            "0",
+            laser_yaw,
             "--frame-id",
             base_frame,
             "--child-frame-id",
@@ -102,6 +108,36 @@ def generate_launch_description() -> LaunchDescription:
                 "laser_frame",
                 default_value="laser_frame",
                 description="LaserScan과 정적 TF에서 사용할 LiDAR 프레임",
+            ),
+            DeclareLaunchArgument(
+                "laser_x",
+                default_value="0.0",
+                description="base_link 기준 LiDAR 전방 위치(m), 실측 전 0.0",
+            ),
+            DeclareLaunchArgument(
+                "laser_y",
+                default_value="0.0",
+                description="base_link 기준 LiDAR 좌측 위치(m), 실측 전 0.0",
+            ),
+            DeclareLaunchArgument(
+                "laser_z",
+                default_value="0.0",
+                description="base_link 기준 LiDAR 높이(m), 실측 전 0.0",
+            ),
+            DeclareLaunchArgument(
+                "laser_roll",
+                default_value="0.0",
+                description="base_link 기준 LiDAR roll(rad), 실측 전 0.0",
+            ),
+            DeclareLaunchArgument(
+                "laser_pitch",
+                default_value="0.0",
+                description="base_link 기준 LiDAR pitch(rad), 실측 전 0.0",
+            ),
+            DeclareLaunchArgument(
+                "laser_yaw",
+                default_value="0.0",
+                description="base_link 기준 LiDAR yaw(rad), 실측 전 0.0",
             ),
             lidar_driver,
             lidar_static_transform,

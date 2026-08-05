@@ -40,6 +40,12 @@ def generate_launch_description() -> LaunchDescription:
     base_frame = LaunchConfiguration("base_frame")
     odom_frame = LaunchConfiguration("odom_frame")
     laser_frame = LaunchConfiguration("laser_frame")
+    laser_x = LaunchConfiguration("laser_x")
+    laser_y = LaunchConfiguration("laser_y")
+    laser_z = LaunchConfiguration("laser_z")
+    laser_roll = LaunchConfiguration("laser_roll")
+    laser_pitch = LaunchConfiguration("laser_pitch")
+    laser_yaw = LaunchConfiguration("laser_yaw")
 
     joystick = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(joystick_launch)),
@@ -62,6 +68,12 @@ def generate_launch_description() -> LaunchDescription:
             "scan_topic": scan_topic,
             "base_frame": base_frame,
             "laser_frame": laser_frame,
+            "laser_x": laser_x,
+            "laser_y": laser_y,
+            "laser_z": laser_z,
+            "laser_roll": laser_roll,
+            "laser_pitch": laser_pitch,
+            "laser_yaw": laser_yaw,
         }.items(),
     )
 
@@ -147,6 +159,30 @@ def generate_launch_description() -> LaunchDescription:
                 "laser_frame",
                 default_value="laser_frame",
                 description="LiDAR LaserScan과 정적 TF 프레임",
+            ),
+            DeclareLaunchArgument(
+                "laser_x", default_value="0.0",
+                description="base_link 기준 LiDAR 전방 위치(m)",
+            ),
+            DeclareLaunchArgument(
+                "laser_y", default_value="0.0",
+                description="base_link 기준 LiDAR 좌측 위치(m)",
+            ),
+            DeclareLaunchArgument(
+                "laser_z", default_value="0.0",
+                description="base_link 기준 LiDAR 높이(m)",
+            ),
+            DeclareLaunchArgument(
+                "laser_roll", default_value="0.0",
+                description="base_link 기준 LiDAR roll(rad)",
+            ),
+            DeclareLaunchArgument(
+                "laser_pitch", default_value="0.0",
+                description="base_link 기준 LiDAR pitch(rad)",
+            ),
+            DeclareLaunchArgument(
+                "laser_yaw", default_value="0.0",
+                description="base_link 기준 LiDAR yaw(rad)",
             ),
             joystick,
             pico_driver,
