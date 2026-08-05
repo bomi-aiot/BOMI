@@ -34,7 +34,9 @@ import com.ssafy.bomi.robot.repository.RobotRepository;
 import com.ssafy.bomi.scenario.application.HomecomingOrchestrator;
 import com.ssafy.bomi.scenario.application.MedicationReminderScheduler;
 import com.ssafy.bomi.scenario.application.MqttConversationGateway;
+import com.ssafy.bomi.scenario.application.NavigationResultRouter;
 import com.ssafy.bomi.scenario.application.ScenarioStartGuard;
+import com.ssafy.bomi.scenario.application.WakeWordCallOrchestrator;
 import com.ssafy.bomi.scenario.application.WellnessCheckOrchestrator;
 import com.ssafy.bomi.scenario.config.AiConversationProperties;
 import com.ssafy.bomi.scenario.config.HomecomingProperties;
@@ -45,7 +47,11 @@ import com.ssafy.bomi.scenario.inbound.ConversationEndedHandler;
 import com.ssafy.bomi.scenario.inbound.ConversationStartedHandler;
 import com.ssafy.bomi.scenario.inbound.DoorOpenedHandler;
 import com.ssafy.bomi.scenario.inbound.NavigationResultHandler;
+import com.ssafy.bomi.scenario.inbound.WakeWordDetectedHandler;
 import com.ssafy.bomi.scenario.repository.ScenarioRepository;
+import com.ssafy.bomi.scenario.repository.WakeWordTriggerReceiptRepository;
+import com.ssafy.bomi.user.domain.AppUser;
+import com.ssafy.bomi.user.repository.AppUserRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -73,9 +79,11 @@ class HomecomingE2eTest {
     private static final String DEVICE_ID = "robot-01";
 
     @Autowired ScenarioRepository scenarioRepository;
+    @Autowired WakeWordTriggerReceiptRepository wakeWordTriggerReceiptRepository;
     @Autowired ConversationRepository conversationRepository;
     @Autowired RobotRepository robotRepository;
     @Autowired CareRecordRepository careRecordRepository;
+    @Autowired AppUserRepository appUserRepository;
     @Autowired TestEntityManager em;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -84,6 +92,7 @@ class HomecomingE2eTest {
 
     private RecordingRobotPublisher robotPublisher;
     private RecordingAiPublisher aiPublisher;
+    private List<MqttMessageHandler> handlers;
     private MqttInboundDispatcher dispatcher;
     private MedicationReminderScheduler medicationScheduler;
     private UUID seniorId;
@@ -91,7 +100,8 @@ class HomecomingE2eTest {
 
     @BeforeEach
     void setUp() {
-        seniorId = UUID.randomUUID();
+        seniorId = appUserRepository.saveAndFlush(AppUser.create("SENIOR", "호출 테스트 시니어"))
+            .getId();
         Robot robot = robotRepository.saveAndFlush(Robot.create(seniorId, DEVICE_ID));
         robotId = robot.getId();
 
@@ -102,7 +112,8 @@ class HomecomingE2eTest {
 
         robotPublisher = new RecordingRobotPublisher();
         aiPublisher = new RecordingAiPublisher();
-        ScenarioStartGuard startGuard = new ScenarioStartGuard(scenarioRepository);
+        ScenarioStartGuard startGuard =
+            new ScenarioStartGuard(scenarioRepository, appUserRepository);
         MqttConversationGateway gateway = new MqttConversationGateway(
             scenarioRepository,
             conversationRepository,
@@ -119,6 +130,16 @@ class HomecomingE2eTest {
             homecomingProperties,
             startGuard,
             clock);
+        WakeWordCallOrchestrator wakeWordCallOrchestrator =
+            new WakeWordCallOrchestrator(
+                scenarioRepository,
+                wakeWordTriggerReceiptRepository,
+                robotRepository,
+                robotPublisher,
+                startGuard,
+                clock);
+        NavigationResultRouter navigationResultRouter = new NavigationResultRouter(
+            scenarioRepository, orchestrator, wakeWordCallOrchestrator);
 
         RobotObservationService observationService = new RobotObservationService(
             robotRepository, careRecordRepository, observationProperties);
@@ -134,15 +155,80 @@ class HomecomingE2eTest {
             new MedicationReminderProperties(),
             clock);
 
-        List<MqttMessageHandler> handlers = List.of(
+        handlers = List.of(
             new DoorOpenedHandler(orchestrator),
-            new NavigationResultHandler(orchestrator),
+            new WakeWordDetectedHandler(wakeWordCallOrchestrator),
+            new NavigationResultHandler(navigationResultRouter),
             new ConversationStartedHandler(orchestrator),
             new ConversationEndedHandler(orchestrator),
             new RestStateChangedHandler(observationService),
             new AmbientObservedHandler(observationService, wellnessOrchestrator),
             new NavigationStatusHandler());
         dispatcher = new MqttInboundDispatcher(handlers, new InMemoryProcessedEventStore());
+    }
+
+    @Test
+    void wakeWordCallNavigatesToLivingRoomAndCompletesWithoutConversationOrReturn() {
+        assertThat(mode()).isEqualTo(RobotMode.IDLE);
+
+        dispatcher.dispatch(wakeWordDetected("wake-1"));
+        sync();
+
+        assertThat(robotPublisher.commands).hasSize(1);
+        RobotCommand navigate = robotPublisher.commands.get(0);
+        assertThat(navigate.type()).isEqualTo(RobotCommandType.NAVIGATE);
+        assertThat(navigate.payload()).containsEntry("target", "LIVING_ROOM");
+        UUID scenarioId = navigate.scenarioId();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.NAVIGATING);
+        assertThat(mode()).isEqualTo(RobotMode.SCENARIO_ACTIVE);
+        assertThat(conversationRepository.findAll()).isEmpty();
+        assertThat(aiPublisher.commands).isEmpty();
+
+        dispatcher.dispatch(navigationResult(
+            "wake-nav-1", scenarioId, navigate.commandId(), "SUCCEEDED"));
+        sync();
+
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.COMPLETED);
+        assertThat(mode()).isEqualTo(RobotMode.IDLE);
+        assertThat(robotPublisher.commands).hasSize(1);
+        assertThat(robotPublisher.commands)
+            .noneMatch(command -> "DEFAULT".equals(command.payload().get("target")));
+        assertThat(conversationRepository.findAll()).isEmpty();
+        assertThat(aiPublisher.commands).isEmpty();
+    }
+
+    @Test
+    void duplicateWakeWordEventIsANoOpAfterTheFirstDelivery() {
+        dispatcher.dispatch(wakeWordDetected("wake-duplicate"));
+        sync();
+
+        // Simulate a restarted process whose in-memory event cache is empty.
+        dispatcher = new MqttInboundDispatcher(handlers, new InMemoryProcessedEventStore());
+        dispatcher.dispatch(wakeWordDetected("wake-duplicate"));
+        sync();
+
+        assertThat(scenarioRepository.findAll()).hasSize(1);
+        assertThat(robotPublisher.commands).hasSize(1);
+        assertThat(robotPublisher.commands.get(0).payload())
+            .containsEntry("target", "LIVING_ROOM");
+    }
+
+    @Test
+    void activeHomecomingSuppressesWakeWordMovementCommand() {
+        dispatcher.dispatch(doorOpened("door-active-before-wake"));
+        sync();
+
+        assertThat(robotPublisher.commands).hasSize(1);
+        assertThat(robotPublisher.commands.get(0).payload())
+            .containsEntry("target", "ENTRANCE");
+
+        dispatcher.dispatch(wakeWordDetected("wake-while-active"));
+        sync();
+
+        assertThat(scenarioRepository.findAll()).hasSize(1);
+        assertThat(robotPublisher.commands).hasSize(1);
+        assertThat(robotPublisher.commands)
+            .noneMatch(command -> "LIVING_ROOM".equals(command.payload().get("target")));
     }
 
     @Test
@@ -429,6 +515,15 @@ class HomecomingE2eTest {
     private MqttInboundMessage doorOpened(String eventId) {
         return message(MqttInboundCategory.IOT_EVENT, "DOOR_OPENED", SENSOR_ID, eventId,
             null, null, null, false, null);
+    }
+
+    private MqttInboundMessage wakeWordDetected(String eventId) {
+        ObjectNode body = objectMapper.createObjectNode();
+        ObjectNode payload = body.putObject("payload");
+        payload.put("keyword", "bomi");
+        payload.put("confidence", 0.92);
+        return message(MqttInboundCategory.ROBOT_EVENT, "WAKE_WORD_DETECTED", DEVICE_ID, eventId,
+            null, null, null, false, body);
     }
 
     private MqttInboundMessage navigationResult(

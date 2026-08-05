@@ -23,6 +23,8 @@ import com.ssafy.bomi.scenario.config.MedicationReminderProperties;
 import com.ssafy.bomi.scenario.domain.Scenario;
 import com.ssafy.bomi.scenario.domain.ScenarioType;
 import com.ssafy.bomi.scenario.repository.ScenarioRepository;
+import com.ssafy.bomi.user.domain.AppUser;
+import com.ssafy.bomi.user.repository.AppUserRepository;
 import java.time.Clock;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -45,6 +47,7 @@ class MedicationReminderSchedulerTest {
 
     private final CareRecordRepository careRecordRepository = mock(CareRecordRepository.class);
     private final ScenarioRepository scenarioRepository = mock(ScenarioRepository.class);
+    private final AppUserRepository appUserRepository = mock(AppUserRepository.class);
     private final RobotRepository robotRepository = mock(RobotRepository.class);
     private final RobotCommandPublisher commandPublisher = mock(RobotCommandPublisher.class);
     private final MedicationReminderProperties properties = new MedicationReminderProperties();
@@ -59,7 +62,10 @@ class MedicationReminderSchedulerTest {
             ZonedDateTime.of(java.time.LocalDateTime.parse(isoLocalDateTime), KST).toInstant(), KST);
         MedicationReminderScheduler scheduler = new MedicationReminderScheduler(
             careRecordRepository, scenarioRepository, robotRepository, commandPublisher,
-            new ScenarioStartGuard(scenarioRepository), properties, fixed);
+            new ScenarioStartGuard(scenarioRepository, appUserRepository), properties, fixed);
+
+        when(appUserRepository.findByIdForUpdate(any()))
+            .thenReturn(Optional.of(mock(AppUser.class)));
 
         when(scenarioRepository.save(any(Scenario.class))).thenAnswer(invocation -> {
             Scenario s = invocation.getArgument(0);

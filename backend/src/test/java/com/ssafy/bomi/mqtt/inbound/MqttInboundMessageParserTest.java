@@ -141,6 +141,117 @@ class MqttInboundMessageParserTest {
     }
 
     @Test
+    void parsesWakeWordDetectedWithValidEnvelope() {
+        MqttInboundMessage withConfidence = parser.parse(
+            "bomi/v1/robot/robot-01/events",
+            wakeWordEvent(null, "\"keyword\": \"보미야\", \"confidence\": 0.92"),
+            1,
+            false);
+
+        assertThat(withConfidence.category()).isEqualTo(MqttInboundCategory.ROBOT_EVENT);
+        assertThat(withConfidence.type()).isEqualTo("WAKE_WORD_DETECTED");
+        assertThat(withConfidence.sourceId()).isEqualTo("robot-01");
+        assertThat(withConfidence.payload().path("keyword").asText()).isEqualTo("보미야");
+        assertThat(withConfidence.scenarioId()).isNull();
+        assertThat(withConfidence.conversationId()).isNull();
+        assertThat(withConfidence.commandId()).isNull();
+
+        assertThat(parser.parse(
+            "bomi/v1/robot/robot-01/events",
+            wakeWordEvent(null, "\"keyword\": \"보미야\""),
+            1,
+            false).type()).isEqualTo("WAKE_WORD_DETECTED");
+    }
+
+    @Test
+    void validatesWakeWordKeyword() {
+        for (String invalidPayload : new String[] {
+            "",
+            "\"keyword\": \"   \"",
+            "\"keyword\": \"123456789012345678901\""
+        }) {
+            assertThatThrownBy(() -> parser.parse(
+                "bomi/v1/robot/robot-01/events",
+                wakeWordEvent(null, invalidPayload),
+                1,
+                false))
+                .isInstanceOf(MqttContractViolationException.class)
+                .hasMessageContaining("keyword");
+        }
+    }
+
+    @Test
+    void validatesOptionalWakeWordConfidence() {
+        for (String validConfidence : new String[] {"0", "1"}) {
+            assertThat(parser.parse(
+                "bomi/v1/robot/robot-01/events",
+                wakeWordEvent(null,
+                    "\"keyword\": \"보미야\", \"confidence\": " + validConfidence),
+                1,
+                false).type()).isEqualTo("WAKE_WORD_DETECTED");
+        }
+
+        for (String invalidConfidence : new String[] {"\"0.9\"", "-0.01", "1.01", "null"}) {
+            assertThatThrownBy(() -> parser.parse(
+                "bomi/v1/robot/robot-01/events",
+                wakeWordEvent(null,
+                    "\"keyword\": \"보미야\", \"confidence\": " + invalidConfidence),
+                1,
+                false))
+                .isInstanceOf(MqttContractViolationException.class)
+                .hasMessageContaining("confidence");
+        }
+    }
+
+    @Test
+    void rejectsCorrelationIdsOnWakeWordTrigger() {
+        for (String correlation : new String[] {
+            "\"scenarioId\": \"" + UUID.randomUUID() + "\"",
+            "\"conversationId\": \"" + UUID.randomUUID() + "\"",
+            "\"commandId\": \"cmd-wake-01\""
+        }) {
+            assertThatThrownBy(() -> parser.parse(
+                "bomi/v1/robot/robot-01/events",
+                wakeWordEvent(correlation, "\"keyword\": \"보미야\""),
+                1,
+                false))
+                .isInstanceOf(MqttContractViolationException.class)
+                .hasMessageContaining("must not include correlation field");
+        }
+    }
+
+    @Test
+    void rejectsWakeWordFieldsOutsideTheFinalAsyncApiSchema() {
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-01/events",
+            wakeWordEvent("\"rawAudio\": \"forbidden\"", "\"keyword\": \"보미야\""),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("unsupported field 'rawAudio'");
+
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-01/events",
+            wakeWordEvent(null,
+                "\"keyword\": \"보미야\", \"fullStt\": \"보미야 오늘 뭐 해\""),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("unsupported field 'fullStt'");
+    }
+
+    @Test
+    void rejectsWakeWordWhenTopicRobotDoesNotMatchEnvelopeRobot() {
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-02/events",
+            wakeWordEvent(null, "\"keyword\": \"bomi\""),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("does not match");
+    }
+
+    @Test
     void rejectsInvalidResultAndConversationReasonRules() {
         String invalidResult = """
             {
@@ -227,5 +338,43 @@ class MqttInboundMessageParserTest {
                 "bomi/v1/iot/door-sensor-01/events", payload, 1, false).type())
                 .isEqualTo(type);
         }
+    }
+
+    @Test
+    void rejectsNavigationReasonOutsideTheAsyncApiEnum() {
+        String invalidResult = """
+            {
+              "eventId": "evt-nav-reason-invalid",
+              "commandId": "cmd-nav-01",
+              "scenarioId": "%s",
+              "robotId": "robot-01",
+              "type": "NAVIGATION_RESULT",
+              "occurredAt": "2026-08-05T10:00:01+09:00",
+              "payload": {
+                "outcome": "FAILED",
+                "resultCode": "NOT_ARRIVED",
+                "reasonCode": "FREE_FORM_FAILURE"
+              }
+            }
+            """.formatted(UUID.randomUUID());
+
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-01/results", invalidResult, 1, false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("Unsupported NAVIGATION_RESULT reasonCode");
+    }
+
+    private static String wakeWordEvent(String extraTopLevelField, String payloadFields) {
+        String extra = extraTopLevelField == null ? "" : extraTopLevelField + ",";
+        return """
+            {
+              "eventId": "evt-wake-01",
+              "type": "WAKE_WORD_DETECTED",
+              "occurredAt": "2026-08-05T10:30:00+09:00",
+              "robotId": "robot-01",
+              %s
+              "payload": {%s}
+            }
+            """.formatted(extra, payloadFields);
     }
 }

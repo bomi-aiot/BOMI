@@ -2,7 +2,7 @@
 robotId,Robot ↔ Backend,대상 로봇 식별,robot.id,저장,토픽과 payload UUID 일치
 scenarioId,Backend ↔ Robot/AI,시나리오 상관관계,scenario.id,저장,UUID 표준 문자열
 시작 eventId,IoT → Backend,시나리오 시작 사건,scenario.external_event_id,저장,같은 사건 재전송은 같은 값
-기타 eventId·commandId·sequence,Robot/IoT ↔ Backend,통신 멱등·순서 키,매핑 없음,미저장,현재 수신 원장·Outbox 없음
+기타 eventId·commandId·sequence,Robot/IoT ↔ Backend,통신 멱등·순서 키,매핑 없음,미저장,호출 전용 상관 필드는 별도 행처럼 저장하며 그 외 수신 원장·Outbox는 없음
 sessionId,App/Robot ↔ Backend,온보딩 진행,onboarding_session.id,저장,양 채널이 같은 세션 재개
 questionSetVersion,Backend → App/Robot,질문 계약 버전,onboarding_session.question_set_version,저장,onboarding-question-set-v1.json
 questionCode,App/Robot → Backend,질문 식별,onboarding_answer.question_code,저장,양 채널 동일 코드
@@ -14,3 +14,7 @@ sourceMessageId,Robot/Backend,근거 발화,onboarding_answer/fact_candidate/car
 확인 전 추출 사실,App/AI → Backend,재질의·확인 대상,fact_candidate.proposed_value,임시 저장,confirmed_value만 최종 반영
 temperatureC,Robot/IoT → Backend,최신 실내 온도,robot.ambient_temperature_c,최신값 저장,과거 관측 역덮어쓰기 금지
 humidityPercent,Robot/IoT → Backend,최신 실내 습도,robot.ambient_humidity_percent,최신값 저장,온도·관측시각과 함께 갱신
+WAKE_WORD_DETECTED.eventId,AI → Backend,호출 최초 이벤트 멱등 키,"wake_word_trigger_receipt.event_id, scenario.external_event_id",저장,호출 전용 receipt PK와 수락 시나리오에 같은 값을 저장
+WAKE_WORD_DETECTED.occurredAt/keyword/confidence,AI → Backend,호출 확정 최소 문맥,wake_word_trigger_receipt 및 scenario.trigger_context,저장,원본 음성·전체 STT는 저장하지 않음
+NAVIGATE.commandId/target,Backend → Robot,현재 이동 결과 상관관계,scenario.active_navigation_command_id/active_navigation_target,조건부 저장,최종 결과 반영 뒤 함께 null
+NAVIGATION_RESULT.resultCode/reasonCode,Robot → Backend,호출 이동 종료 코드,scenario.completion_result_code/completion_reason_code,조건부 저장,상관 검증을 통과한 최종 결과만 반영

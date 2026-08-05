@@ -5,10 +5,9 @@ package com.ssafy.bomi.scenario.domain;
  *
  * <p>Values follow the {@code SCENARIO_ENUM} code dictionary of the MVP ERD.</p>
  *
- * <p><b>Scope note (this sprint):</b> only the {@link #HOMECOMING} flow has a
- * defined transition path in {@link ScenarioStatus}. {@link #FALL_RESPONSE} and
- * {@link #MANUAL_INTERACTION} are reserved values only — their flows are added on
- * top of the shared transition map in a follow-up sprint.</p>
+ * <p>Conversation-driven scenarios share the homecoming transition path. The
+ * wake-word call is deliberately separate because AI has already started the
+ * dialogue and Backend owns only the movement to the senior.</p>
  */
 public enum ScenarioType {
     /** 귀가 환영 — fully implemented this sprint. */
@@ -26,6 +25,8 @@ public enum ScenarioType {
      * "같은 슬롯 하루 1회"의 멱등 장부로 삼는다.
      */
     MEDICATION_REMINDER,
+    /** "보미야" 호출 — AI 대화와 무관하게 거실 도착까지만 관리한다. */
+    WAKE_WORD_CALL,
     /** 낙상 대응 — value reserved; flow not implemented yet. */
     FALL_RESPONSE,
     /** 수동 상호작용 — value reserved; flow not implemented yet. */

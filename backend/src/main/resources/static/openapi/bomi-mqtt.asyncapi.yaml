@@ -799,6 +799,7 @@ components:
     # ---------- 공통 식별자 ----------
     EventId:
       type: string
+      minLength: 1
       maxLength: 64
       description: |
         논리 이벤트 식별자. 같은 사건을 재전송할 때 같은 값을 유지합니다.
@@ -807,6 +808,7 @@ components:
 
     CommandId:
       type: string
+      minLength: 1
       maxLength: 64
       description: 명령 멱등 키. 명령과 상태·결과를 연결합니다.
 
@@ -823,7 +825,8 @@ components:
     RobotId:
       type: string
       minLength: 1
-      maxLength: 128
+      maxLength: 64
+      pattern: '^[A-Za-z0-9._-]{1,64}$'
       description: Robot deviceId 이며 토픽의 {robotId} 와 같아야 합니다.
 
     OccurredAt:
@@ -1187,6 +1190,7 @@ components:
               type: string
               minLength: 1
               maxLength: 20
+              pattern: '.*\S.*'
               description: 감지를 확정한 호출어. 원본 STT 문장은 포함하지 않습니다.
             confidence:
               type: number

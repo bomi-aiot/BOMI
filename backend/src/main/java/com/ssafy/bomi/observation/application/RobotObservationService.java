@@ -51,7 +51,7 @@ public class RobotObservationService {
     /** Robot reported a rest-state change: record it and toggle REST_GUARD. */
     @Transactional
     public void recordRestState(String robotDeviceId, JsonNode body) {
-        Robot robot = robotRepository.findByDeviceId(robotDeviceId).orElse(null);
+        Robot robot = robotRepository.findByDeviceIdForUpdate(robotDeviceId).orElse(null);
         if (robot == null) {
             log.warn("Rest state for unknown robot; ignoring: deviceId={}", robotDeviceId);
             return;
@@ -119,7 +119,8 @@ public class RobotObservationService {
 
     /** RESTING → REST_GUARD; AWAKE clears REST_GUARD back to IDLE (other modes untouched). */
     private void applyRestMode(Robot robot, String restState) {
-        if (ObservationContract.REST_STATE_RESTING.equals(restState)) {
+        if (ObservationContract.REST_STATE_RESTING.equals(restState)
+            && robot.getCurrentMode() != RobotMode.SAFE_STOP) {
             robot.changeMode(RobotMode.REST_GUARD);
         } else if (ObservationContract.REST_STATE_AWAKE.equals(restState)
             && robot.getCurrentMode() == RobotMode.REST_GUARD) {

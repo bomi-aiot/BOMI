@@ -49,7 +49,7 @@ class RobotObservationServiceTest {
     @Test
     void restingRecordsObservationAndEntersRestGuard() {
         Robot robot = Robot.create(seniorId, deviceId);
-        when(robotRepository.findByDeviceId(deviceId)).thenReturn(Optional.of(robot));
+        when(robotRepository.findByDeviceIdForUpdate(deviceId)).thenReturn(Optional.of(robot));
 
         service.recordRestState(deviceId, restBody("RESTING"));
 
@@ -65,7 +65,7 @@ class RobotObservationServiceTest {
     void awakeClearsRestGuardBackToIdle() {
         Robot robot = Robot.create(seniorId, deviceId);
         robot.changeMode(RobotMode.REST_GUARD);
-        when(robotRepository.findByDeviceId(deviceId)).thenReturn(Optional.of(robot));
+        when(robotRepository.findByDeviceIdForUpdate(deviceId)).thenReturn(Optional.of(robot));
 
         service.recordRestState(deviceId, restBody("AWAKE"));
 
@@ -74,11 +74,23 @@ class RobotObservationServiceTest {
 
     @Test
     void unknownRobotIsIgnored() {
-        when(robotRepository.findByDeviceId("ghost")).thenReturn(Optional.empty());
+        when(robotRepository.findByDeviceIdForUpdate("ghost")).thenReturn(Optional.empty());
 
         service.recordRestState("ghost", restBody("RESTING")); // must not throw
 
         verifyNoInteractions(careRecordRepository);
+    }
+
+    @Test
+    void restStateNeverOverwritesSafeStop() {
+        Robot robot = Robot.create(seniorId, deviceId);
+        robot.changeMode(RobotMode.SAFE_STOP);
+        when(robotRepository.findByDeviceIdForUpdate(deviceId)).thenReturn(Optional.of(robot));
+
+        service.recordRestState(deviceId, restBody("RESTING"));
+        service.recordRestState(deviceId, restBody("AWAKE"));
+
+        assertThat(robot.getCurrentMode()).isEqualTo(RobotMode.SAFE_STOP);
     }
 
     @Test

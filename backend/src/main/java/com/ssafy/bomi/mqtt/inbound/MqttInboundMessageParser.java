@@ -17,6 +17,9 @@ import org.springframework.stereotype.Component;
 public class MqttInboundMessageParser {
 
     private static final int MAX_OPAQUE_ID_LENGTH = 64;
+    private static final Set<String> NAVIGATION_REASON_CODES = Set.of(
+        "COMMAND_EXPIRED", "UNKNOWN_TARGET", "PATH_BLOCKED", "LOCALIZATION_LOST",
+        "EXECUTION_TIMEOUT", "SAFETY_STOP", "INTERNAL_ERROR");
     // PRESENCE_DETECTED: 초기 계약의 방향-판정 이벤트. IoT는 이제 DOOR_OPENED +
     // MOTION_DETECTED(현관 PIR)로 직접 보낸다 (S15P11E102-226). 아직 이 타입을 보내는
     // 배포가 남아있을 수 있어 당장 제거하지 않고 허용 목록에 남겨둔다 — 지워도 되는지는
@@ -26,7 +29,8 @@ public class MqttInboundMessageParser {
         Set.of("DOOR_OPENED", "MOTION_DETECTED", "DOOR_CLOSED", "PRESENCE_DETECTED",
             "AMBIENT_ENVIRONMENT_OBSERVED"),
         MqttInboundCategory.ROBOT_EVENT,
-        Set.of("ONBOARDING_ANSWER_CAPTURED", "CONVERSATION_STARTED", "CONVERSATION_ENDED"),
+        Set.of("ONBOARDING_ANSWER_CAPTURED", "WAKE_WORD_DETECTED",
+            "CONVERSATION_STARTED", "CONVERSATION_ENDED"),
         MqttInboundCategory.ROBOT_STATUS,
         Set.of("REST_STATE_CHANGED", "NAVIGATION_STATUS"),
         MqttInboundCategory.ROBOT_RESULT,
@@ -90,6 +94,7 @@ public class MqttInboundMessageParser {
     private static Correlation validateTypeSpecific(JsonNode body, String type) {
         return switch (type) {
             case "NAVIGATION_RESULT" -> validateNavigationResult(body);
+            case "WAKE_WORD_DETECTED" -> validateWakeWordDetected(body);
             case "CONVERSATION_STARTED" -> validateConversationStarted(body);
             case "CONVERSATION_ENDED" -> validateConversationEnded(body);
             default -> new Correlation(
@@ -98,6 +103,51 @@ public class MqttInboundMessageParser {
                 optionalText(body, "commandId", MAX_OPAQUE_ID_LENGTH),
                 false);
         };
+    }
+
+    private static Correlation validateWakeWordDetected(JsonNode body) {
+        for (String field : new String[] {"scenarioId", "conversationId", "commandId"}) {
+            if (body.has(field)) {
+                throw new MqttContractViolationException(
+                    "WAKE_WORD_DETECTED must not include correlation field '" + field + "'");
+            }
+        }
+        rejectUnexpectedFields(body,
+            Set.of("eventId", "robotId", "type", "occurredAt", "payload"),
+            "WAKE_WORD_DETECTED envelope");
+
+        JsonNode payload = body.get("payload");
+        rejectUnexpectedFields(payload, Set.of("keyword", "confidence"),
+            "WAKE_WORD_DETECTED payload");
+        requiredText(payload, "keyword", 20);
+
+        if (payload.has("confidence")) {
+            JsonNode confidence = payload.get("confidence");
+            if (!confidence.isNumber()) {
+                throw new MqttContractViolationException(
+                    "MQTT payload field 'confidence' must be a number between 0 and 1");
+            }
+            double value = confidence.doubleValue();
+            if (!Double.isFinite(value) || value < 0 || value > 1) {
+                throw new MqttContractViolationException(
+                    "MQTT payload field 'confidence' must be between 0 and 1");
+            }
+        }
+
+        return new Correlation(null, null, null, false);
+    }
+
+    private static void rejectUnexpectedFields(
+        JsonNode object,
+        Set<String> allowed,
+        String location
+    ) {
+        object.fieldNames().forEachRemaining(field -> {
+            if (!allowed.contains(field)) {
+                throw new MqttContractViolationException(
+                    location + " contains unsupported field '" + field + "'");
+            }
+        });
     }
 
     private static Correlation validateNavigationResult(JsonNode body) {
@@ -131,6 +181,10 @@ public class MqttInboundMessageParser {
                 "Unsupported NAVIGATION_RESULT resultCode '" + resultCode + "'");
         }
         String reasonCode = requiredNullableReason(payload);
+        if (reasonCode != null && !NAVIGATION_REASON_CODES.contains(reasonCode)) {
+            throw new MqttContractViolationException(
+                "Unsupported NAVIGATION_RESULT reasonCode '" + reasonCode + "'");
+        }
         if ("SUCCEEDED".equals(outcome)) {
             if (!"ARRIVED".equals(resultCode) || reasonCode != null) {
                 throw new MqttContractViolationException(
@@ -185,6 +239,10 @@ public class MqttInboundMessageParser {
         if (!reason.isTextual() || reason.textValue().isBlank()) {
             throw new MqttContractViolationException(
                 "MQTT payload field 'reasonCode' must be null or a non-blank string");
+        }
+        if (reason.textValue().length() > 100) {
+            throw new MqttContractViolationException(
+                "MQTT payload field 'reasonCode' exceeds 100 characters");
         }
         return reason.textValue();
     }
