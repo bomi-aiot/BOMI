@@ -2,6 +2,12 @@
 
 작성일: 2026-08-06 · 전제: [current-state-audit.md](current-state-audit.md), [implementation-plan.md](implementation-plan.md)
 
+> **구현 반영 (2026-08-06):** §2 의 `context_candidates` 와 §3(ContextCandidate·수명 규칙·
+> 선택 우선순위)은 구현되어 CLAUDE.md §30 으로 승격됐다 — 이제 §30 이 권위다. §4 세션
+> FSM 도 구현됐다(`conversation_control.SessionState`). `session_state` 스냅샷 필드와
+> `pending_tool_action` 은 계획대로 **도입하지 않았다**(쓰는 곳이 생길 때 추가 — 미사용
+> 필드 금지 원칙). 감사 §0 해소 현황 참고.
+
 설계 원칙: **새 서비스·새 프레임워크·새 테이블을 만들지 않는다.** 요청서의 책임 목록을 기존 모듈에 사상(mapping)하고, 없는 것만 기존 자리에 추가한다. 기존 그래프 구조(§6)·게이트(§7)·기억 경계(§8)·ERD 어휘(§4)는 그대로 유지된다.
 
 ---
@@ -38,7 +44,8 @@ session_state: str            # IDLE/LISTENING/PROCESSING/RESPONDING/ENDING — 
                               # 권위는 bootstrap 루프. 그래프는 기록만 한다.
 context_candidates: list[ContextCandidate]   # 아래 §3. 유일한 신규 "문맥" 저장소.
 retrieval_status: RetrievalStatus            # 기능 가용성과 이번 요청의 실제 검색·폴백을 분리.
-                                              # AI 구현됨(26e9635), BE 요청별 필드 확장 대기.
+                                              # 계약 고정(666ae0d + BE 0436b71 머지). 구버전
+                                              # 응답에는 필드가 없을 수 있고 그때는 '모름' 유지.
 pending_tool_action: dict | None             # 행동형 도구 확인 대기. 현재 도구는 읽기 전용이라
                                              # Phase 6 전까지 항상 None.
 ```

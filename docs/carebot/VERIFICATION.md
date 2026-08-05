@@ -95,6 +95,24 @@ cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py tests/test_
 확인됩니다. **상위 동의(`guardian_sharing_consent_status`)가 없는 어르신에게는
 아무리 말해도 질문이 안 나가야 정상입니다** — 이걸 결함으로 오해하지 마십시오.
 
+### 자연스러운 대화 — 세션·문맥·기억 프라이버시 (WIP 자연대화, 2026-08-06)
+
+```bash
+cd robot/ai_chat && python -m pytest tests/test_conversation_session.py tests/test_context_slots.py tests/test_memory_privacy.py -q
+```
+
+`43 passed` 여야 합니다 (18+16+9, 2026-08-06 실측). 파일별로 이것이 깨지면:
+
+| 파일 | 무엇이 깨진 것인가 |
+|---|---|
+| `test_conversation_session.py` | 웨이크워드 게이트(시나리오 A), 세션 중 웨이크워드 생략(B), "이제 됐어" 종료 후 재대기(L), 무응답 종료, **정상 종료된 재생을 끼어들기로 오분류하는 결함(B1)의 재발**, 잘린 발화 나머지의 재경쟁(B2) |
+| `test_context_slots.py` | "제주도 가"→"날씨 어때?" 지역 이어짐(D), "그런데" 화제 전환의 문맥 해제(E), "대전 말고 대구" 정정(H), 만료·감쇠 수명 규칙 (CLAUDE.md §30) |
+| `test_memory_privacy.py` | 잡담 중 "우리끼리" 봉인, "기억하지 마"의 대기 행 삭제(K), 프로필 성향·만성 부위 프롬프트 반영, 주소 폴백(C 준비) |
+
+**실기에서 확인할 것:** "보미야" 한 번으로 여러 질문이 이어지는지, "이제 됐어" 후
+일반 발화에 무반응인지, "제주도 가" 다음 "날씨 어때?"가 제주 날씨인지. 전부
+**실기 미실시** 상태입니다.
+
 ### 자연스러움 10개 항목 (212)
 
 ```bash
