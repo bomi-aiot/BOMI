@@ -351,3 +351,45 @@ def build_extraction_prompt(fields: list[str], utterance: str) -> str:
     """
     listed = "\n".join(f"- {field}" for field in fields) or "- (없음)"
     return load_template("contract_extract.md").format(fields=listed, utterance=utterance)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 사실 추출 프롬프트  (S15P11E102-255, CLAUDE.md §8)
+#
+# 위의 build_extraction_prompt(계약 주도형, 정해진 필드만 채운다)와 사촌 관계다.
+# 금지 규칙("말하지 않은 것을 채우지 않는다", "복약 용량을 계산하지 않는다")을
+# contract_extract.md 에서 그대로 물려받는다 — 같은 위험이 같은 형태로 온다.
+#
+# 다른 점: 여기는 정해진 필드가 없다. "무엇이 기억할 만한가"를 모델이 고른다.
+# 그래서 factType 을 좁은 목록으로 제한하고, 한 번에 최대 2건으로 상한을 둔다
+# (policy.EXTRACTION_MAX_FACTS_PER_UTTERANCE) — 상한 자체는 프롬프트 문구에
+# 있고, jobs/ticks.extraction_flush 가 다시 한 번 파이썬으로 자른다(모델이
+# 상한을 어겨도 조용히 넘어가지 않는다).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def build_memory_extraction_prompt(
+    preceding_robot_utterance: str,
+    utterance: str,
+) -> str:
+    """어르신의 발화에서 기억할 만한 사실을 뽑는 프롬프트.
+
+    누가 호출하는가
+        jobs.ticks.extraction_flush. 턴 경로가 아니라 턴 밖 백그라운드 틱에서만
+        불린다(CLAUDE.md §16) — 그래서 이 함수는 반응형 턴의 생성 호출 예산에
+        포함되지 않는다.
+
+    인자
+        preceding_robot_utterance: 이 발화 '직전에' 로봇이 한 말. 없으면 빈
+            문자열 — 그러면 프롬프트에 빈 절이 남지만, 그 자체가 "직전 맥락
+            없음"을 모델에게 정직하게 알리는 값이라 굳이 숨기지 않는다.
+        utterance: 어르신이 실제로 한 말. localstore.extraction 에 큐잉될 때
+            이미 6자 이상으로 걸러졌다(policy.EXTRACTION_MIN_UTTERANCE_LENGTH).
+
+    반환값
+        LLM 에 그대로 넘길 문자열. 순수 함수다.
+    """
+    return load_template("memory_extract.md").format(
+        preceding_robot_utterance=preceding_robot_utterance or "(없음)",
+        utterance=utterance,
+    )

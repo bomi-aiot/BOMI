@@ -39,6 +39,7 @@ import sqlite3
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
 
+from bomi_ai_chat import policy
 from bomi_ai_chat.graph import context, handlers, ingress, output, triage
 from bomi_ai_chat.graph.gate import proactive_gate, route_gate
 from bomi_ai_chat.localstore.db import runtime_db_path
@@ -87,7 +88,8 @@ def memory_write(state: ConvState) -> dict:
     from bomi_ai_chat.clock import clock
     from bomi_ai_chat.localstore import runtime as runtime_store
 
-    # TODO(jobs): 사실 추출을 큐에 넣고, 일간 지표를 버퍼링한다.
+    # TODO(jobs): 일간 지표를 버퍼링한다. 사실 추출 큐잉은 아래
+    # _enqueue_extraction 으로 구현됐다 (S15P11E102-255).
     now = clock.now()
     conversation_id, senior_message_id = _record_turn(state, now)
 
@@ -119,7 +121,110 @@ def memory_write(state: ConvState) -> dict:
         out["last_message_id"] = senior_message_id
 
     _record_phrasing(state)
+    _enqueue_extraction(state, conversation_id, senior_message_id)
     return out
+
+
+def _enqueue_extraction(
+    state: ConvState, conversation_id: str | None, senior_message_id: str | None,
+) -> None:
+    """이번 턴의 어르신 발화를 사실 추출 큐에 쌓는다 (S15P11E102-255).
+
+    무엇을 하는가
+        LLM 은 절대 여기서 부르지 않는다. 조건을 전부 통과한 반응형 턴만
+        localstore.extraction 에 한 행을 남긴다 — 실제로 사실을 뽑고 백엔드에
+        올리는 일은 jobs.ticks.extraction_flush 가 턴 밖에서 한다. 그래야
+        "요즘 손자가 자주 놀러 와요" 턴에서도 생성 호출은 여전히 1회다
+        (CLAUDE.md §16).
+
+    스킵하는 여섯 가지
+        1. 킬스위치(policy.EXTRACTION_ENABLED / config 의 EXTRACTION_ENABLED
+           환경변수)가 꺼졌다. 하나라도 꺼지면 큐잉하지 않는다
+           (T3_CONSENT_ENABLED 와 같은 구도, policy.py 참고).
+        2. 능동/명령 턴이다(trigger_type != "user_utterance"). 어르신이 실제로
+           한 말이 없는데 뽑을 것도 없다.
+        3. T1 이다. 응급 발화는 잡담의 재료가 아니라 즉시 대응의 대상이고,
+           그 내용을 '기억'으로 저장하는 것은 이 큐의 목적이 아니다.
+        4. 계약 주도형 대화(onboarding/clarification) 진행 중이다. 그 흐름은
+           이미 자신의 fact_candidate 경로를 갖고 있다(CLAUDE.md §12) — 여기서
+           또 뽑으면 같은 사실이 두 경로에서 중복 후보가 된다.
+        5. 발화가 policy.EXTRACTION_MIN_UTTERANCE_LENGTH 자 미만이다. "네",
+           "아니요" 류에서 뽑을 사실은 없다.
+        6. 이 대화가 봉인됐다(localstore.emotion.is_conversation_sealed). "우리
+           끼리 얘기"라고 말한 대화에서 사실을 뽑아 서버로 보내면, 그 발화가
+           아니어도 T4 약속("로봇만 안다")이 대화 전체에서 깨진다.
+
+    ★ 일곱 번째: 서버가 이 발화의 메시지 id 를 못 돌려줬으면 큐잉하지 않는다.
+        백엔드의 FactCandidate.fromConversationMessage 는 sourceMessageId 를
+        requireNonNull 로 강제한다(255 티켓 본문). id 없이 큐잉하면 그 행은
+        영원히 제출에 실패하는데, extraction_job 표에는 시도 횟수 컬럼이 없어
+        outbox 처럼 GAVE_UP 으로 포기하지도 못한다 — 매 flush 마다 조용히
+        같은 실패가 반복된다. 애초에 넣지 않는 편이 안전하다. 발화량 지표가
+        유실돼도 되는 것과 같은 이유로, 이 손실은 생명에 지장이 없다
+        (_record_turn 의 (None, None) 경로 참고).
+
+    주의사항
+        예외를 여기서 삼킨다. _record_phrasing 과 같은 이유 — 추출 큐잉이
+        실패했다고 이미 확정되어 나간 발화를 취소하거나 턴을 실패시키면,
+        통계성 기능 하나가 대화 전체를 망가뜨리는 것이다.
+    """
+    if not policy.EXTRACTION_ENABLED:
+        return
+    try:
+        from bomi_ai_chat.config import get_settings
+
+        if not get_settings().extraction_enabled:
+            return
+    except Exception:  # noqa: BLE001 - 설정 문제로 턴이 죽으면 안 된다
+        logger.warning(
+            "could not read the extraction kill switch; assuming enabled",
+            exc_info=True,
+        )
+
+    if state.get("trigger_type") != "user_utterance":
+        return
+    if state.get("safety_level") == "T1":
+        return
+    if state.get("intent") in ("onboarding", "clarification"):
+        return
+
+    senior_id = state.get("senior_id")
+    text = (state.get("user_input") or "").strip()
+    if not senior_id or not text or not senior_message_id:
+        return
+    if len(text) < policy.EXTRACTION_MIN_UTTERANCE_LENGTH:
+        return
+
+    try:
+        from bomi_ai_chat.localstore import emotion, extraction
+
+        if emotion.is_conversation_sealed(senior_id, conversation_id):
+            return
+
+        extraction.enqueue(
+            senior_id,
+            conversation_id=conversation_id,
+            source_message_id=senior_message_id,
+            content=text,
+            preceding_robot_utterance=_preceding_robot_utterance(state),
+        )
+    except Exception:  # noqa: BLE001 - 추출 큐잉 실패가 턴을 죽이면 안 된다
+        logger.warning("failed to enqueue an extraction job", exc_info=True)
+
+
+def _preceding_robot_utterance(state: ConvState) -> str:
+    """이번 어르신 발화 '직전에' 로봇이 한 말. 없으면 빈 문자열.
+
+    왜 ctx["recentMessages"] 에서 읽는가
+        context_read 가 이번 턴 초입에 백엔드에서 받아온 값이라, 이번 턴에
+        새로 만든 응답을 아직 포함하지 않는다 — '직전'이라는 이름이 맞는
+        유일한 자리다. state["final_utterance"]는 이 시점(memory_write)에는
+        이미 이번 턴의 응답으로 덮여 있어 쓸 수 없다.
+    """
+    messages = (state.get("ctx") or {}).get("recentMessages") or []
+    if messages and messages[-1].get("role") == "ROBOT":
+        return str(messages[-1].get("content") or "")
+    return ""
 
 
 def _record_phrasing(state: ConvState) -> None:
@@ -388,9 +493,19 @@ def build_graph(checkpoint_path: str | None = None):
         g.add_edge(f"handle_{name}", "response_shaper")
 
     # 로봇이 말하는 모든 것은 정제기를 통과한다. 예외 없다.
-    g.add_edge("response_shaper", "memory_write")
-    g.add_edge("memory_write", "emit")
-    g.add_edge("emit", END)
+    #
+    # 왜 emit 이 memory_write 보다 먼저인가  (S15P11E102-255)
+    #   memory_write 는 conversation_client.record_turn 을 '블로킹' HTTP 로
+    #   부른다(최대 몇 초, backend_timeout_seconds). emit 은 반대로 스피커에
+    #   문장을 넘기고 즉시 반환한다(output.py 참고). 순서가 뒤집혀 있으면
+    #   T1 확인 응답조차 재생을 시작하기 전에 그 블로킹 호출을 기다리게 되고,
+    #   그건 안전 응답이 통계성 기록 뒤에 줄을 서는 것과 같다. emit 을 먼저
+    #   두면 어르신은 응답을 즉시 듣고, 대화 적재와 사실 추출 큐잉은 그 뒤에
+    #   그래프 실행이 끝나기 전까지 마저 처리된다(그래프 실행 자체는 여전히
+    #   emit 의 재생 완료를 기다리지 않는다 — output.py의 논블로킹 설명 참고).
+    g.add_edge("response_shaper", "emit")
+    g.add_edge("emit", "memory_write")
+    g.add_edge("memory_write", END)
 
     # checkpointer = LangGraph 가 thread_id(= 어르신 id) 별로 state 를 저장하는 장치.
     # 이것이 있어서 silence_level 과 last_spoke_at 이 턴과 재부팅을 넘어 살아남는다.
