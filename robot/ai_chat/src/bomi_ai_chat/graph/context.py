@@ -402,6 +402,21 @@ def _lookup_medical_documents(text: str) -> list[dict]:
         logger.warning("medical lookup failed", exc_info=True)
         return [_lookup_unavailable_document("의료(병원·약국·의약품)")]
 
+    # ★ 조회기가 되묻는 문구를 돌려준 경우를 '자료'로 넘기지 않는다.
+    #
+    # medical_flow 는 의료 Gemini 가 functionCall 없이 답하면(= 무엇을 찾아야
+    # 할지 못 정하면) FALLBACK_MESSAGE 를 돌려준다. 그것을 그대로 "의료 조회
+    # 결과"라는 제목으로 감싸면, 일반 LLM 은 '조회해 온 사실'로 읽는다.
+    # 233 실기 점검에서 실제로 "죄송해요, 잘 이해하지 못했어요..." 가 참고 자료로
+    # 프롬프트에 들어갔다. 자료가 없는 것과 자료가 '모르겠다'인 것은 다르며,
+    # 후자를 사실처럼 넘기면 답변이 그 문구에 끌려간다.
+    from bomi_ai_chat.llm.medical_flow import FALLBACK_MESSAGE
+
+    if not answer or answer.strip() == FALLBACK_MESSAGE:
+        logger.info("medical lookup could not resolve the question; "
+                    "passing no reference material instead of the fallback text")
+        return []
+
     return [{"title": "의료 조회 결과", "content": answer}]
 
 

@@ -484,3 +484,80 @@ def test_the_unreviewed_marker_list_is_announced_once(frozen_clock, caplog):
         turn("잘 잤어")
 
     assert caplog.text.count("has not been human-reviewed") == 1
+
+
+# ── 중복 알림 억제  (233 실기 점검에서 터진 구멍) ────────────────────────────
+
+
+def test_the_same_alert_is_not_sent_twice_in_a_row(frozen_clock, guardian):
+    """★ 같은 사유의 T1 이 연달아 나면 두 번째부터는 보호자에게 보내지 않는다.
+
+    왜 이 테스트가 있는가
+        233 실기 점검에서 로봇의 응급 응답이 마이크로 되돌아와(에코) 그 문장 안의
+        응급 표현이 다시 감지되는 자기증식 루프가 생겼다. 3분 만에 동일한 T1 이
+        15회 배달됐다. 에코는 따로 고쳤지만, 어떤 이유로든 같은 판정이 반복되면
+        보호자 화면이 도배되는 구멍은 그것과 별개다 (CLAUDE.md §9 알림 피로).
+    """
+    frozen_clock(start=MORNING_UTC)
+    state = {
+        "senior_id": SENIOR,
+        "escalation": {"reason": "emergency"},
+        "occupancy": "HOME",
+    }
+
+    triage.escalation(state)
+    triage.escalation(state)
+    triage.escalation(state)
+
+    assert len(alerts(guardian, reason="emergency")) == 1
+
+
+def test_the_senior_still_gets_an_answer_while_the_alert_is_suppressed(
+    frozen_clock, guardian
+):
+    """★ 억제되는 것은 보호자 알림뿐이다. 어르신에게는 매번 대답한다.
+
+    두 번째로 "가슴이 아파"라고 하신 분에게 로봇이 침묵하면 그건 다른 종류의
+    실패다. 보호자는 이미 알고 있지만 어르신은 여전히 대답을 기다린다.
+    """
+    frozen_clock(start=MORNING_UTC)
+    state = {"senior_id": SENIOR, "escalation": {"reason": "emergency"}}
+
+    first = triage.escalation(state)["response"]
+    second = triage.escalation(state)["response"]
+
+    assert first and second
+    assert len(alerts(guardian, reason="emergency")) == 1
+
+
+def test_a_different_reason_is_never_suppressed(frozen_clock, guardian):
+    """★ 사유가 다르면 중복이 아니라 '악화'다. 무조건 보낸다.
+
+    emergency 직후의 self_harm_override 를 억제하면, 억제 로직이 가장 위험한
+    신호를 삼키게 된다.
+    """
+    frozen_clock(start=MORNING_UTC)
+
+    triage.escalation({"senior_id": SENIOR, "escalation": {"reason": "emergency"}})
+    triage.escalation(
+        {"senior_id": SENIOR, "escalation": {"reason": "self_harm_override"}}
+    )
+
+    assert len(alerts(guardian, reason="emergency")) == 1
+    assert len(alerts(guardian, reason="self_harm_override")) == 1
+
+
+def test_the_alert_is_sent_again_once_the_window_passes(frozen_clock, guardian):
+    """★ 억제는 영구가 아니다. 창이 지나면 다시 보낸다.
+
+    첫 알림을 보호자가 놓쳤을 수 있고, 그 상태가 이어지고 있다면 두 번째 기회가
+    있어야 한다. 억제가 영구라면 그것은 알림을 삼키는 것이다.
+    """
+    sim = frozen_clock(start=MORNING_UTC)
+    state = {"senior_id": SENIOR, "escalation": {"reason": "emergency"}}
+
+    triage.escalation(state)
+    sim.advance(policy.T1_DUPLICATE_SUPPRESSION_SEC + 1)
+    triage.escalation(state)
+
+    assert len(alerts(guardian, reason="emergency")) == 2

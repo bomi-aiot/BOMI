@@ -236,6 +236,11 @@ def _run_graph_runtime(settings: Settings, audio_in, audio_out, *, once: bool) -
         settings, audio_out=audio_out, start_background=not once)
     logger.info("conversation runtime ready (senior=%s)", runtime.senior_id)
 
+    # 의도 판정 모델을 미리 올린다. 이게 없으면 '첫' 의료·날씨 질문이 들어온
+    # 순간에 로딩이 시작돼, 어르신이 36초를 기다린다(233 실기 실측).
+    # 레거시 경로에는 있었는데 그래프 경로에만 빠져 있었다.
+    bootstrap.warm_up_intent_router()
+
     # 웨이크워드('보미야')를 그래프 경로에도 붙인다 -> 웨이크워드 + 기억이 함께 동작.
     # --once(한 턴 점검)에서는 상시 청취가 무의미하므로 붙이지 않는다(레거시 --once 와 동일).
     wake = None if once else _build_wakeword(settings)

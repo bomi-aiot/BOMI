@@ -1,12 +1,38 @@
 """외부 환경과 격리된 pytest 공통 fixture."""
 
+import re
 from collections.abc import Callable
+from functools import lru_cache
+from pathlib import Path
 
 import pytest
 import requests
 
+from bomi_ai_chat import config as config_module
 from bomi_ai_chat.clock import Clock, SimClock, install_clock
 from bomi_ai_chat.config import Settings, clear_settings_cache
+
+# Settings 가 읽는 변수 중 테스트 하네스가 '일부러' 세팅하는 것들.
+# settings_factory 가 이것들까지 지우면 테스트가 개발자의 실제 저장소·env 파일을
+# 건드리기 시작한다 (localstore fixture 의 주석 참고).
+_HARNESS_OWNED_ENV = frozenset({"LOCALSTORE_DIR", "AI_CHAT_ENV_FILE"})
+
+# config.py 소스에서 "..._env(\"NAME\"" 패턴을 찾는다. 여러 줄에 걸쳐 있어도
+# 잡도록 \s* 를 둔다.
+_ENV_NAME_PATTERN = re.compile(r'_env\(\s*"([A-Z][A-Z0-9_]*)"')
+
+
+@lru_cache(maxsize=1)
+def _settings_env_names() -> frozenset[str]:
+    """config.py 가 실제로 읽는 환경변수 이름을 소스에서 뽑는다.
+
+    왜 손으로 적어 두지 않는가
+        목록을 여기 박아 두면 config.py 에 변수가 추가될 때 조용히 뒤처진다.
+        그러면 이 파일은 '환경을 격리한다'고 주장하면서 새 변수만 셸에서 새어
+        들어오는, 가장 나쁜 형태가 된다. 소스에서 뽑으면 드리프트가 없다.
+    """
+    source = Path(config_module.__file__).read_text(encoding="utf-8")
+    return frozenset(_ENV_NAME_PATTERN.findall(source))
 
 SETTING_VARIABLES = (
     "AI_CHAT_ENV_FILE",
@@ -155,9 +181,28 @@ def frozen_clock():
 
 @pytest.fixture
 def settings_factory(monkeypatch) -> Callable[..., Settings]:
-    """필요한 환경변수만 주입한 Settings를 만드는 공통 factory."""
+    """필요한 환경변수만 주입한 Settings를 만드는 공통 factory.
+
+    ★ 왜 주입하지 않은 변수를 먼저 지우는가  (233 실기 점검에서 드러났다)
+        Settings 의 모든 읽기는 config._optional_env -> os.getenv 한 곳을 지난다.
+        그래서 셸에 값이 export 되어 있으면, 이 factory 가 주입하지 않은 것까지
+        Settings 가 주워 읽는다.
+
+        실제 사고: `set -a; . .env; set +a` 로 .env 를 셸에 올린 터미널에서 pytest 를
+        돌리자 test_it_refuses_to_start_without_a_senior_id 가 실패했다.
+        "SENIOR_ID 가 없을 때 기동을 거부하는가"를 확인하려는 테스트인데, 셸에 그
+        값이 있어서 '없는 상황'을 아예 재현하지 못한 것이다.
+
+        테스트 결과가 그것을 돌리는 사람의 셸 상태에 좌우되면 게이트로 쓸 수 없다
+        (CLAUDE.md §26).
+    """
 
     def build(**values: str) -> Settings:
+        # 주입하지 않은 것은 지운다. 단, 하네스가 일부러 세팅한 것은 남긴다 —
+        # LOCALSTORE_DIR 을 지우면 테스트가 개발자의 실제 var/localstore 에
+        # 쓰기 시작한다(위 localstore fixture 의 주석 참고).
+        for name in _settings_env_names() - _HARNESS_OWNED_ENV - set(values):
+            monkeypatch.delenv(name, raising=False)
         for name, value in values.items():
             monkeypatch.setenv(name, value)
         return Settings.from_env(load_env_file=False)
