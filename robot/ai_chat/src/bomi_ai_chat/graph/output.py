@@ -35,6 +35,7 @@ import re
 
 from bomi_ai_chat import policy
 from bomi_ai_chat.state import ConvState
+from bomi_ai_chat.turn_timer import current_stage
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +291,8 @@ def emit(state: ConvState) -> dict:
     # 핸들을 여기 보관하는 것이 barge-in 복구의 전제다. note_interaction 이
     # 이 핸들에게 "어디까지 말했나"를 묻는다 — state 가 아니라. state 는 그래프
     # 실행 시점의 스냅샷이라 재생이 진행된 만큼 이미 낡아 있다.
-    TTS_HANDLES[senior_id] = player.speak_async(sentences)
+    with current_stage("tts_dispatch"):
+        TTS_HANDLES[senior_id] = player.speak_async(sentences)
 
     # 이번 발화가 무엇이었는지 남긴다. 잘렸을 때 나머지를 원래 우선순위로 되돌리려면
     # 우선순위와 origin 을 알아야 하는데, 재생 핸들은 그것을 모른다.

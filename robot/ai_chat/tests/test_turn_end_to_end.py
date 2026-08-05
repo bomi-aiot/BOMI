@@ -22,6 +22,7 @@ from bomi_ai_chat.graph import context as context_node
 from bomi_ai_chat.graph.build import build_graph
 from bomi_ai_chat.graph.turn import run_user_turn
 from bomi_ai_chat.localstore import db
+from bomi_ai_chat.turn_timer import TurnTimer
 
 SENIOR = "senior-1"
 
@@ -206,11 +207,14 @@ def test_information_turn_requests_documents_and_preserves_retrieval_evidence(wi
             "fallbackReason": "embedding_disabled",
             "hitCount": 0,
             "latencyMs": 7,
+            "embeddingLatencyMs": 3,
+            "vectorSearchLatencyMs": 4,
         },
     })
     context_node.set_client(client)
 
-    state = run_user_turn(app, SENIOR, "복지제도 알려줘")
+    timer = TurnTimer()
+    state = run_user_turn(app, SENIOR, "복지제도 알려줘", timer=timer)
 
     assert state["intent"] == "info"
     assert client.received_documents == [True]
@@ -225,8 +229,13 @@ def test_information_turn_requests_documents_and_preserves_retrieval_evidence(wi
         "fallback_reason": "embedding_disabled",
         "hit_count": 0,
         "latency_ms": 7,
+        "embedding_latency_ms": 3,
+        "vector_search_latency_ms": 4,
         "notes": ["semantic search unavailable"],
     }
+    assert {"context", "embedding", "vector_search", "llm", "tts_dispatch"} <= timer.stages.keys()
+    assert timer.stages["embedding"] == pytest.approx(0.003)
+    assert timer.stages["vector_search"] == pytest.approx(0.004)
     prompt = llm.prompts[0]
     assert "노인맞춤돌봄서비스" in prompt
     assert "출처=보건복지부" in prompt
@@ -565,8 +574,7 @@ def test_medical_question_renders_reference_material_through_the_graph(
 ):
     """(완료 조건) 의료 질문의 프롬프트에도 '참고 자료' 섹션이 실제로 렌더된다.
 
-    실제 llm/router.py 는 SentenceTransformer 를 로딩하므로(§16), 이 테스트는
-    context_node._is_medical 을 직접 대역으로 바꿔 무거운 모델 로딩을 피한다.
+    이 테스트의 관심사는 조회 문서 전달이므로, 의도 규칙 자체는 대역으로 분리한다.
     """
     app, _client, llm, _player = wired
 

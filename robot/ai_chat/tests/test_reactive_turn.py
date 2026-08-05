@@ -18,7 +18,7 @@ from bomi_ai_chat.backend_client import BackendContextClient
 from bomi_ai_chat.graph import context as context_node
 from bomi_ai_chat.graph import handlers, output
 from bomi_ai_chat.localstore import context_cache, db
-from bomi_ai_chat.turn_timer import TurnTimer
+from bomi_ai_chat.turn_timer import TurnTimer, active_timer, current_stage
 
 SENIOR = "senior-1"
 
@@ -369,3 +369,16 @@ def test_turn_timer_records_stage_even_when_it_raises():
         raise RuntimeError("boom")
 
     assert timer.stages["graph"] == pytest.approx(3.0)
+
+
+def test_active_turn_collects_nested_stage_without_double_counting():
+    ticks = iter([0.0, 0.0, 0.2])
+    timer = TurnTimer(monotonic=lambda: next(ticks))
+
+    with timer.activate():
+        assert active_timer() is timer
+        with current_stage("llm"), current_stage("llm"):
+            pass
+
+    assert active_timer() is None
+    assert timer.stages["llm"] == pytest.approx(0.2)

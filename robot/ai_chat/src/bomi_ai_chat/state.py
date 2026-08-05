@@ -142,6 +142,8 @@ class RetrievalStatus(TypedDict, total=False):
     fallback_reason: str
     hit_count: int
     latency_ms: int
+    embedding_latency_ms: int
+    vector_search_latency_ms: int
     documents_requested: bool
     document_hit_count: int
     notes: list[str]
@@ -300,7 +302,7 @@ class ConvState(TypedDict, total=False):
     # 의료(병원·약국·의약품) 라우터 판정 결과 캐시 (S15P11E102-311).
     #
     # context_read 가 날씨·의료 조회 여부를 정하려면 classify_intent 가 돌기 전에
-    # 같은 판정이 미리 필요하다. 그때 라우터(local SentenceTransformer 추론)를
+    # 같은 판정이 미리 필요하다. 그때 값싼 공용 규칙을
     # 부른 결과를 여기 남겨서, classify_intent 가 다시 그 라우터를 부르지 않게
     # 한다. context_read 는 이 턴에 판정했으면 매번 명시적으로 True/False 를
     # 쓰고, 판정하지 않은 턴에는 None 을 써서 지난 턴의 값이 새는 것을 막는다

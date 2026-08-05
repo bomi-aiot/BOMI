@@ -55,6 +55,7 @@ from bomi_ai_chat.clock import clock
 from bomi_ai_chat.graph import context_slots, contract_dialogue
 from bomi_ai_chat.llm.medical_flow import handle_medical_query
 from bomi_ai_chat.state import ConvState
+from bomi_ai_chat.turn_timer import active_timer, current_stage
 from bomi_ai_chat.weather.client import WeatherClient, describe_forecast, extract_city
 
 logger = logging.getLogger(__name__)
@@ -160,13 +161,14 @@ def context_read(state: ConvState) -> dict:
     want_documents = state.get("intent") == "info" and degradation.documents_allowed()
     top_k = state.get("memory_top_k") or degradation.memory_top_k()
 
-    result = _client().fetch_context(
-        senior_id,
-        query=state.get("user_input", ""),
-        conversation_id=state.get("conversation_id"),
-        top_k=top_k,
-        documents=want_documents,
-    )
+    with current_stage("context"):
+        result = _client().fetch_context(
+            senior_id,
+            query=state.get("user_input", ""),
+            conversation_id=state.get("conversation_id"),
+            top_k=top_k,
+            documents=want_documents,
+        )
 
     ctx = result.ctx
     backend_document_hit_count = len(ctx.get("documents") or [])
@@ -183,6 +185,15 @@ def context_read(state: ConvState) -> dict:
         documents_requested=want_documents,
         document_hit_count=backend_document_hit_count,
     )
+    timer = active_timer()
+    if timer is not None:
+        for stage, field in (
+            ("embedding", "embedding_latency_ms"),
+            ("vector_search", "vector_search_latency_ms"),
+        ):
+            latency_ms = retrieval_status.get(field)
+            if isinstance(latency_ms, int) and not isinstance(latency_ms, bool):
+                timer.record_reported_stage(stage, latency_ms / 1000)
 
     # 참고 자료가 실제로 채워졌는지 눈으로 확인할 방법이 없었다 — emit() 로그는
     # intent/response 만 찍고, "핸들러가 뭘 참고했는지"는 안 보였다. is_medical_query
@@ -202,6 +213,7 @@ def context_read(state: ConvState) -> dict:
     logger.info(
         "retrieval source=%s semantic_available=%s semantic_requested=%s "
         "semantic_used=%s fallback=%s hits=%s latency_ms=%s "
+        "embedding_latency_ms=%s vector_search_latency_ms=%s "
         "documents_requested=%s document_hits=%s",
         retrieval_status.get("source"),
         retrieval_status.get("semantic_available"),
@@ -210,6 +222,8 @@ def context_read(state: ConvState) -> dict:
         retrieval_status.get("fallback_reason"),
         retrieval_status.get("hit_count"),
         retrieval_status.get("latency_ms"),
+        retrieval_status.get("embedding_latency_ms"),
+        retrieval_status.get("vector_search_latency_ms"),
         retrieval_status.get("documents_requested"),
         retrieval_status.get("document_hit_count"),
     )
@@ -257,6 +271,8 @@ def _normalize_retrieval_status(
     _copy_typed(status, "fallback_reason", retrieval, "fallbackReason", str)
     _copy_typed(status, "hit_count", retrieval, "hitCount", int)
     _copy_typed(status, "latency_ms", retrieval, "latencyMs", int)
+    _copy_typed(status, "embedding_latency_ms", retrieval, "embeddingLatencyMs", int)
+    _copy_typed(status, "vector_search_latency_ms", retrieval, "vectorSearchLatencyMs", int)
 
     notes = availability.get("notes")
     if isinstance(notes, list):
@@ -320,14 +336,11 @@ def _lookup_recent_phrasings(state: ConvState, senior_id: str) -> list[str]:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-# 라우터(SentenceTransformer 추론)를 부르기 '전'에 거치는 값싼 1차 필터.
+# 의료 조회 후보만 판정기로 넘기는 1차 필터.
 #
 # 왜 필요한가
-#   라우터는 네트워크는 안 쓰지만(로컬 추론) 모델이 첫 호출에서 로딩된다
-#   (llm/router.py 최상단 `SentenceTransformer(...)`). "안녕하세요", "심심해"
-#   같은 흔한 잡담까지 매번 라우터로 보내면 평범한 대화 테스트마저 무거운 모델
-#   로딩에 얽매인다. 그래서 의료 '시설·의약품 검색' 과 조금이라도 관련 있어
-#   보이는 발화만 넘긴다.
+#   일반 잡담에서 의료 판정을 할 이유가 없고, 조회 대상을 찾을 표지도 없다.
+#   값싼 후보 필터를 먼저 두면 규칙 집합의 범위와 오탐 원인을 함께 좁힐 수 있다.
 #
 # 왜 "병원"/"약국"만으로 부족한가
 #   router.py 의 MEDICAL_EXAMPLES 에는 상비약 브랜드명("게보린", "정로환")과
@@ -730,15 +743,14 @@ def _classify(text: str, *, medical_hint: bool | None = None) -> str:
         갈린다.
 
     router.py 에 대한 정정
-        llm/router.py 의 판정은 '로컬' SentenceTransformer 추론이다. 외부 API 왕복이
-        아니므로 네트워크 예산을 쓰지는 않는다. 다만 모델을 메모리에 상주시키고
-        CPU 시간을 쓰므로, 값싼 문자열 검사로 갈리는 것을 굳이 넘기지 않는다.
+        2026-08-06 실측 후 SentenceTransformer를 제거했다. 현재 판정은 의료 주제와
+        조회 의도가 함께 있는지 보는 결정 규칙이며 외부 호출이나 모델 상주 비용이 없다.
 
     인자
         medical_hint: context_read 가 조회 여부를 정하려고 이미 라우터를 불렀다면
             그 결과(S15P11E102-311). None 이 아니면 라우터를 다시 부르지 않고
-            그대로 쓴다 — 값싼 마커 검사와 달리 라우터는 모델 추론이라, 같은 턴에
-            두 번 부를 이유가 없다.
+            그대로 쓴다. 계산은 싸지만 같은 판정을 두 곳에서 반복하지 않는 편이
+            호출 흐름과 테스트를 더 명확하게 만든다.
 
     주의사항
         정서 표지를 정보 표지보다 먼저 본다. "외로운데 오늘 며칠이야"는 날짜를
@@ -766,7 +778,7 @@ def _classify(text: str, *, medical_hint: bool | None = None) -> str:
     if any(marker in lowered for marker in _INFO_MARKERS):
         return "info"
 
-    # 의료·위치 질문은 기존 임베딩 라우터가 이미 잘 판정한다. 재구현하지 않는다.
+    # 의료·위치 질문은 공용 결정 규칙이 판정한다. 여기서 다시 구현하지 않는다.
     # medical_hint 가 None 이 아니면 context_read 가 이미 판정을 마친 것이므로
     # 표현 형태(물음표 등)와 무관하게 그대로 쓰고 라우터를 다시 부르지 않는다.
     # 아직 판정되지 않았을 때만(힌트가 None) 물음표로 끝나는 애매한 발화에서
@@ -787,12 +799,12 @@ def _classify(text: str, *, medical_hint: bool | None = None) -> str:
 
 
 def _is_medical(text: str) -> bool:
-    """의료 질의 판정을 기존 라우터에 위임한다. 실패해도 턴을 죽이지 않는다."""
+    """의료 질의 판정을 공용 결정 규칙에 위임한다. 실패해도 턴을 죽이지 않는다."""
     try:
         from bomi_ai_chat.llm import router
 
         return router.is_medical_query(text)
-    except Exception:  # noqa: BLE001 - 모델 로딩 실패가 대화를 끊으면 안 된다
+    except Exception:  # noqa: BLE001 - 판정 결함이 대화를 끊으면 안 된다
         logger.debug("medical router unavailable; falling back to companion", exc_info=True)
         return False
 
