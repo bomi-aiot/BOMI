@@ -54,7 +54,7 @@ from bomi_ai_chat.backend_client import BackendContextClient
 from bomi_ai_chat.graph import contract_dialogue
 from bomi_ai_chat.llm.medical_flow import handle_medical_query
 from bomi_ai_chat.state import ConvState
-from bomi_ai_chat.weather.client import WeatherClient, extract_city
+from bomi_ai_chat.weather.client import WeatherClient, describe_forecast, extract_city
 
 logger = logging.getLogger(__name__)
 
@@ -381,8 +381,9 @@ def _lookup_weather_documents(text: str) -> list[dict]:
         logger.warning("weather lookup failed for city=%s", city, exc_info=True)
         return [_lookup_unavailable_document(f"{city} 날씨")]
 
-    summary = ", ".join(f"{label} {value}" for label, value in forecast.items())
-    return [{"title": f"{city} 날씨", "content": summary}]
+    # 원시 코드값("하늘상태 3")을 그대로 실으면 모델이 코드를 소리 내어 읽는다.
+    # 변환은 두 경로(레거시·그래프)가 같은 함수를 쓴다 (S15P11E102-333).
+    return [{"title": f"{city} 날씨", "content": describe_forecast(forecast)}]
 
 
 def _lookup_medical_documents(text: str) -> list[dict]:

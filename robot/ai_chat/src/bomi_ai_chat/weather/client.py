@@ -29,6 +29,66 @@ CITY_GRID = {
 }
 
 
+# 기상청 코드 → 사람이 듣는 말. (S15P11E102-333)
+#
+# 왜 여기 있는가
+#   코드값의 뜻은 이 API 의 계약이므로, 그것을 아는 곳은 이 클라이언트 하나여야
+#   한다. 예전에는 llm/client.py 가 자기 변환표를 따로 들고 있었고, 그래프 경로
+#   (graph/context.py)는 변환 없이 원시 코드를 그대로 참고 자료에 실어서
+#   "하늘상태 3" 이 모델 프롬프트에 들어갔다 — 두 경로의 말이 갈라지는 전형이다.
+_SKY_SPOKEN = {"1": "하늘은 맑습니다", "3": "구름이 많습니다", "4": "하늘이 흐립니다"}
+_PTY_SPOKEN = {
+    "1": "지금 비가 옵니다",
+    "2": "지금 비나 눈이 옵니다",
+    "3": "지금 눈이 옵니다",
+    "4": "지금 소나기가 옵니다",
+}
+
+
+def describe_forecast(forecast: dict) -> str:
+    """조회 결과를 사람이 들을 수 있는 서술형 문장으로 바꾼다. (S15P11E102-333)
+
+    무엇을 하는가
+        {"기온": "21", "하늘상태": "1", "강수형태": "0", "강수확률": "10"} 를
+        "기온은 21도입니다. 하늘은 맑습니다. 비 올 확률은 10%입니다." 로 바꾼다.
+
+    왜 존재하는가
+        233 실기에서 로봇이 "기온: 25도, 하늘상태: 구름 많음" 식의 라벨-값
+        나열을 소리 내어 읽었다. 라벨-값 모양은 모델에게 그대로 읽으라고
+        유도하는 모양이고, 숫자 코드("하늘상태 1")는 모델이 뜻을 몰라 최악에는
+        "1등급입니다" 같은 없는 개념을 지어낸다. 서술형으로 미리 바꿔 주면
+        모델은 그 위에서 행동 중심의 답("우산 챙기세요")을 만들기만 하면 된다.
+
+    누가 호출하는가
+        graph/context.py 의 날씨 참고 자료, llm/client.py 의 레거시 프롬프트.
+        두 경로가 반드시 이 한 함수를 쓴다 — 한쪽만 고치면 말투가 갈라진다.
+
+    주의사항
+        - 모르는 코드값은 말하지 않는다. 예외도 던지지 않는다. 기상청이 낯선
+          값을 돌려줘도 그 항목만 조용히 빠진다.
+        - 지금 비가 오면 하늘 상태와 강수확률은 굳이 말하지 않는다. "비가 오고
+          강수확률 80%" 는 사람이 하지 않는 말이다.
+    """
+    sentences: list[str] = []
+
+    temperature = str(forecast.get("기온") or "").strip()
+    if temperature:
+        sentences.append(f"기온은 {temperature}도입니다")
+
+    spoken_precip = _PTY_SPOKEN.get(str(forecast.get("강수형태") or "").strip())
+    if spoken_precip:
+        sentences.append(spoken_precip)
+    else:
+        spoken_sky = _SKY_SPOKEN.get(str(forecast.get("하늘상태") or "").strip())
+        if spoken_sky:
+            sentences.append(spoken_sky)
+        rain_chance = str(forecast.get("강수확률") or "").strip()
+        if rain_chance and rain_chance != "0":
+            sentences.append(f"비 올 확률은 {rain_chance}%입니다")
+
+    return ". ".join(sentences) + ("." if sentences else "")
+
+
 def extract_city(text: str) -> str | None:
     """문장 안에서 CITY_GRID 가 지원하는 도시명을 찾는다.
 
