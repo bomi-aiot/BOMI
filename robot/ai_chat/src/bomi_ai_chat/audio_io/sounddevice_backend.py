@@ -266,6 +266,22 @@ class SoundDeviceAudioOutput(AudioOutput):
         # 입력 캡처가 _resolve_input_device 로 하는 것과 대칭이다.
         device = _resolve_output_device(self.device)
 
+        # 일부 출력 장치(예: USB 스피커의 raw ALSA hw 노드)는 자신이 고정한
+        # 샘플레이트에서만 열리고, TTS가 돌려준 WAV의 실제 레이트로는 열리지
+        # 않는다 — plughw 같은 변환 계층을 거치지 않기 때문이다(233 실기 점검에서
+        # "Invalid sample rate [PaErrorCode -9997]" 로 확인됨. 입력 캡처가 이미
+        # _resample_int16 로 같은 문제를 풀고 있어 그 헬퍼를 그대로 재사용한다).
+        # 모노(channels == 1)일 때만 다룬다 — TTS 출력은 항상 모노이고,
+        # _resample_int16 자체가 1차원 배열만 받는다.
+        if channels == 1:
+            try:
+                target_sample_rate = int(sd.query_devices(device)["default_samplerate"])
+            except Exception:
+                target_sample_rate = sample_rate
+            if target_sample_rate > 0 and target_sample_rate != sample_rate:
+                data = _resample_int16(data, sample_rate, target_sample_rate)
+                sample_rate = target_sample_rate
+
         try:
             sd.play(data, samplerate=sample_rate, device=device)
             sd.wait()
