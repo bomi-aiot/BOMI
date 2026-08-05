@@ -310,6 +310,11 @@ class DoorEventServiceTest {
         service.accept(seniorId, Signal.MOTION, now, null);
         service.accept(seniorId, Signal.DOOR_OPENED, now.plusSeconds(2), null);
 
+        // 점유 스냅샷은 안전 모드의 동시 변경을 덮지 않도록 JPQL bulk update로
+        // 갱신한다. bulk update는 이 테스트 트랜잭션의 1차 캐시에 남은 Robot을
+        // 자동 갱신하지 않으므로, 실제 다음 요청과 같은 새 영속성 문맥에서 확인한다.
+        robotRepository.flush();
+        entityManager.clear();
         assertThat(robot().getOccupancyStatus()).isEqualTo(OccupancyStatus.AWAY);
         assertThat(occupancyEventRepository.findAll())
             .singleElement()
