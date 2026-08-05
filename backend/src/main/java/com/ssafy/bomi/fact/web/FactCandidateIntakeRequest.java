@@ -17,10 +17,10 @@ import java.util.UUID;
  * 반응했다. 이 요청은 그 통로의 입구다 — 로봇이 발화 하나에서 뽑아낸 사실 후보를 그대로
  * {@code fact_candidate} 행 하나로 옮긴다.</p>
  *
- * <p>여기서는 위험도 분류(건강·복약 어휘 거부, PROFILE/CARE_RELATIONSHIP 거절)나 동의
- * 확인을 하지 않는다 — 그것은 이 티켓의 다른 절반이 다루는 몫이고, 이 요청/서비스는 오직
- * "대화가 이 어르신 것이 맞는지" 검증한 뒤 후보를 CAPTURED 상태로 큐에 쌓는 것까지만
- * 책임진다.</p>
+ * <p>여기서 받은 값 그대로 서버가 위험도를 다시 판정한다({@code riskLevel} 필드는
+ * 참고값일 뿐 신뢰하지 않는다) — targetDomain·factType 조합이 안전하면 곧장 실체화,
+ * 아니면 확인 대기로 저장한다. 자세한 판정 기준은
+ * {@code ConversationFactIntakeService}/{@code FactRiskPolicy} 를 본다.</p>
  *
  * @param seniorId 이 사실이 속한 어르신. conversationId 가 실제로 이 사람 것인지 서비스가
  *     검증한다 — 다른 사람의 대화 id 를 실수로 보내면 그 사람의 발화가 이 어르신의 기억으로
