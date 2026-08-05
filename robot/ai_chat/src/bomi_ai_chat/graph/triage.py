@@ -457,16 +457,62 @@ def escalation(state: ConvState) -> dict:
     #
     # 실제 전송은 jobs.ticks.outbox_flush 가 한다. 여기서 직접 보내지 않는 이유는
     # 전송 지연이 어르신에게 돌아갈 응답을 붙잡아서는 안 되기 때문이다.
-    try:
-        outbox.enqueue("T1", payload)
-    except Exception:  # noqa: BLE001 - 큐 쓰기 실패가 응답까지 막으면 안 된다
-        # 여기까지 오면 로컬 저장소가 망가진 것이다. 어르신에게는 여전히 대답하되,
-        # 이 실패는 조용히 지나가서는 안 된다.
-        logger.exception("FAILED to queue a T1 guardian alert (reason=%s); "
-                         "the guardian may never be notified", reason)
+    # 같은 사유의 알림이 방금 나갔으면 큐에 넣지 않는다.
+    #
+    # ★ 억제되는 것은 '보호자 알림'뿐이고, 아래의 어르신 응답은 그대로 나간다.
+    #   두 번째로 "가슴이 아파"라고 하신 분에게 로봇이 침묵하면 그건 다른 종류의
+    #   실패다. 보호자는 이미 알고 있고, 어르신은 여전히 대답을 기다린다.
+    #
+    #   사유가 다르면 억제하지 않는다 — emergency 뒤의 self_harm_override 는
+    #   중복이 아니라 악화다 (policy.T1_DUPLICATE_SUPPRESSION_SEC 의 주석 참고).
+    senior_id = state.get("senior_id")
+    suppressed = False
+    if senior_id:
+        try:
+            stored = runtime_store.load(senior_id)
+            elapsed = clock.now() - (stored.get("last_escalation_at") or 0.0)
+            same_reason = stored.get("last_escalation_reason") == reason
+            suppressed = (
+                same_reason and elapsed < policy.T1_DUPLICATE_SUPPRESSION_SEC
+            )
+        except Exception:  # noqa: BLE001 - 억제 판정 실패가 알림을 막으면 안 된다
+            # 읽지 못했으면 '중복이 아니다'로 본다. 안전 기기에서 모르는 쪽의
+            # 기본값은 '보낸다'여야 한다.
+            logger.exception("could not read the last escalation; sending anyway")
+            suppressed = False
 
-    logger.warning("T1 escalation queued: reason=%s occupancy=%s",
-                   reason, state.get("occupancy"))
+    if suppressed:
+        # 조용히 버리지 않는다. 억제도 하나의 판단이므로 근거가 로그에 남아야
+        # 사후에 "왜 알림이 한 번만 갔나"를 답할 수 있다 (CLAUDE.md §26).
+        logger.warning(
+            "T1 alert suppressed as a duplicate: reason=%s within %.0fs; "
+            "the senior still gets a response",
+            reason, policy.T1_DUPLICATE_SUPPRESSION_SEC,
+        )
+    else:
+        try:
+            outbox.enqueue("T1", payload)
+        except Exception:  # noqa: BLE001 - 큐 쓰기 실패가 응답까지 막으면 안 된다
+            # 여기까지 오면 로컬 저장소가 망가진 것이다. 어르신에게는 여전히
+            # 대답하되, 이 실패는 조용히 지나가서는 안 된다.
+            logger.exception("FAILED to queue a T1 guardian alert (reason=%s); "
+                             "the guardian may never be notified", reason)
+
+        logger.warning("T1 escalation queued: reason=%s occupancy=%s",
+                       reason, state.get("occupancy"))
+
+        # 큐에 넣은 뒤에 기록한다. 넣지 못했는데 '보냈다'고 적으면 다음 진짜
+        # 알림까지 억제된다 — 억제 로직이 알림을 삼키는 최악의 형태다.
+        if senior_id:
+            try:
+                runtime_store.save(
+                    senior_id,
+                    last_escalation_at=clock.now(),
+                    last_escalation_reason=reason,
+                )
+            except Exception:  # noqa: BLE001 - 기록 실패가 응답을 막으면 안 된다
+                logger.exception("could not record the escalation timestamp; "
+                                 "duplicates may not be suppressed")
 
     return {"response": _RESPONSES.get(reason, _RESPONSES["emergency"])}
 

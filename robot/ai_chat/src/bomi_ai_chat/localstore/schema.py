@@ -79,6 +79,11 @@ _RUNTIME_STATE_ADDED_COLUMNS = (
     #   틱이 마감을 보려면 그래프 밖에서 읽을 수 있어야 하고, 재부팅을 넘어야 한다 —
     #   증상을 말한 직후에 로봇이 재시작했다고 그 확인이 사라지면 안 된다.
     ("safety_check_until", "REAL NOT NULL DEFAULT 0"),
+    # 마지막으로 보호자 알림을 큐에 넣은 시각과 그 사유. 같은 사유의 알림이
+    # 짧은 시간에 반복되는 것을 막는 데 쓴다(graph/triage.py 의 escalation).
+    # 0 은 '아직 한 번도 없음'이다.
+    ("last_escalation_at", "REAL NOT NULL DEFAULT 0"),
+    ("last_escalation_reason", "TEXT"),
     # 지금 열려 있는 대화의 id. NULL 허용 — "아직 모른다"가 아니라 "열린 대화가
     # 없다"는 뜻이라 0 같은 자리표시자 대신 진짜 NULL 이 맞다 (S15P11E102-306).
     ("conversation_id", "TEXT"),
