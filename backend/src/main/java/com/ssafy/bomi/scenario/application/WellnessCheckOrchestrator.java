@@ -112,6 +112,9 @@ public class WellnessCheckOrchestrator {
 
         Scenario scenario = Scenario.create(seniorId, robot.getId(), ScenarioType.WELLNESS_CHECK, sensorId);
         scenario.beginMovingToEntrance(); // "시나리오 목적지로 이동 중"의 범용 의미 (ScenarioType 참고)
+        String navigationCommandId = UUID.randomUUID().toString();
+        scenario.expectNavigationResult(
+            navigationCommandId, HomecomingContract.TARGET_LIVING_ROOM);
         scenarioRepository.save(scenario);
 
         robot.changeMode(RobotModePolicy.forScenario(scenario.getFinalStatus()));
@@ -119,9 +122,9 @@ public class WellnessCheckOrchestrator {
 
         // 이동과 발화를 함께 내보낸다 — 홈커밍과 같은 이유 (S15P11E102-226):
         // 느리거나 실패한 이동이 안부 문구를 삼키면 안 된다.
-        publish(scenario.getId(), robot, RobotCommandType.NAVIGATE,
+        publish(navigationCommandId, scenario.getId(), robot, RobotCommandType.NAVIGATE,
             Map.of(HomecomingContract.NAV_TARGET_KEY, HomecomingContract.TARGET_LIVING_ROOM));
-        publish(scenario.getId(), robot, RobotCommandType.SPEAK,
+        publish(UUID.randomUUID().toString(), scenario.getId(), robot, RobotCommandType.SPEAK,
             Map.of(HomecomingContract.SPEAK_TEXT_KEY, DEFAULT_PROMPT));
 
         log.info("Wellness check started: scenarioId={}, seniorId={}, temp={}, humidity={}",
@@ -137,13 +140,19 @@ public class WellnessCheckOrchestrator {
         return tooHot || tooHumid;
     }
 
-    private void publish(UUID scenarioId, Robot robot, RobotCommandType type, Map<String, Object> payload) {
+    private void publish(
+        String commandId,
+        UUID scenarioId,
+        Robot robot,
+        RobotCommandType type,
+        Map<String, Object> payload
+    ) {
         if (robot.getDeviceId() == null) {
             throw new IllegalStateException("Robot has no deviceId; cannot address command: " + robot.getId());
         }
         OffsetDateTime now = OffsetDateTime.now();
         commandPublisher.publish(new RobotCommand(
-            UUID.randomUUID().toString(), scenarioId, robot.getDeviceId(),
+            commandId, scenarioId, robot.getDeviceId(),
             type, now, now.plus(COMMAND_TTL), payload));
     }
 }

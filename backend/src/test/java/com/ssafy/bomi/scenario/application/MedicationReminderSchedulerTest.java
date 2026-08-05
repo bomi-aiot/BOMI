@@ -114,6 +114,8 @@ class MedicationReminderSchedulerTest {
         RobotCommand navigate = commandCaptor.getAllValues().get(0);
         assertThat(navigate.type()).isEqualTo(RobotCommandType.NAVIGATE);
         assertThat(navigate.payload()).containsEntry("target", "LIVING_ROOM");
+        assertThat(scenarioCaptor.getValue().getActiveNavigationCommandId())
+            .isEqualTo(navigate.commandId());
         RobotCommand speak = commandCaptor.getAllValues().get(1);
         assertThat(speak.type()).isEqualTo(RobotCommandType.SPEAK);
         assertThat((String) speak.payload().get("text")).contains("혈압약");

@@ -89,6 +89,8 @@ class WellnessCheckOrchestratorTest {
         RobotCommand navigate = commandCaptor.getAllValues().get(0);
         assertThat(navigate.type()).isEqualTo(RobotCommandType.NAVIGATE);
         assertThat(navigate.payload()).containsEntry("target", "LIVING_ROOM");
+        assertThat(scenarioCaptor.getValue().getActiveNavigationCommandId())
+            .isEqualTo(navigate.commandId());
         assertThat(commandCaptor.getAllValues().get(1).type()).isEqualTo(RobotCommandType.SPEAK);
     }
 

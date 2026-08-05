@@ -17,13 +17,14 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 @Component
 @ConditionalOnProperty(prefix = "bomi.mqtt", name = "enabled", havingValue = "true")
-public class SpringIntegrationRobotCommandPublisher implements RobotCommandPublisher {
+public class SpringIntegrationAiConversationCommandPublisher
+    implements AiConversationCommandPublisher {
 
     private final MessageChannel outboundChannel;
     private final ObjectMapper objectMapper;
     private final BomiMqttProperties properties;
 
-    public SpringIntegrationRobotCommandPublisher(
+    public SpringIntegrationAiConversationCommandPublisher(
         @Qualifier(MqttChannels.OUTBOUND) MessageChannel outboundChannel,
         ObjectMapper objectMapper,
         BomiMqttProperties properties
@@ -34,15 +35,13 @@ public class SpringIntegrationRobotCommandPublisher implements RobotCommandPubli
     }
 
     @Override
-    public void publish(RobotCommand command) {
+    public void publish(AiConversationCommand command) {
         if (command == null) {
             throw new IllegalArgumentException("command must not be null");
         }
-
-        String topic = MqttTopics.robotCommands(command.robotId());
         Message<String> message = MessageBuilder
             .withPayload(toJson(command))
-            .setHeader(MqttHeaders.TOPIC, topic)
+            .setHeader(MqttHeaders.TOPIC, MqttTopics.aiCommands(command.robotId()))
             .setHeader(MqttHeaders.QOS, properties.getQos())
             .setHeader(MqttHeaders.RETAINED, false)
             .build();
@@ -69,18 +68,16 @@ public class SpringIntegrationRobotCommandPublisher implements RobotCommandPubli
             message, properties.getCompletionTimeout().toMillis());
         if (!accepted) {
             throw new IllegalStateException(
-                "MQTT outbound channel did not accept commandId=" + commandId);
+                "MQTT outbound channel did not accept AI commandId=" + commandId);
         }
     }
 
-    private String toJson(RobotCommand command) {
+    private String toJson(AiConversationCommand command) {
         try {
             return objectMapper.writeValueAsString(command);
         } catch (JsonProcessingException ex) {
             throw new IllegalArgumentException(
-                "Robot command could not be serialized: commandId=" + command.commandId(),
-                ex
-            );
+                "AI command could not be serialized: commandId=" + command.commandId(), ex);
         }
     }
 }

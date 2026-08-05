@@ -8,6 +8,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import lombok.AccessLevel;
@@ -25,7 +26,13 @@ import lombok.NoArgsConstructor;
  * {@link UUID} logical references.</p>
  */
 @Entity
-@Table(name = "conversation")
+@Table(
+    name = "conversation",
+    uniqueConstraints = {
+        @UniqueConstraint(name = "uq_conversation_scenario", columnNames = "scenario_id"),
+        @UniqueConstraint(name = "uq_conversation_start_command", columnNames = "start_command_id")
+    }
+)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Conversation {
@@ -41,6 +48,10 @@ public class Conversation {
     @Column(name = "scenario_id")
     private UUID scenarioId;
 
+    /** START_CONVERSATION command correlated by CONVERSATION_STARTED. */
+    @Column(name = "start_command_id", length = 64)
+    private String startCommandId;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "status", nullable = false, length = 30)
     private ConversationStatus status = ConversationStatus.OPEN;
@@ -48,8 +59,19 @@ public class Conversation {
     @Column(name = "started_at")
     private OffsetDateTime startedAt;
 
+    /** Time at which AI confirmed it was ready, separate from the request time. */
+    @Column(name = "ai_started_at")
+    private OffsetDateTime aiStartedAt;
+
     @Column(name = "ended_at")
     private OffsetDateTime endedAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "end_outcome", length = 30)
+    private ConversationOutcome endOutcome;
+
+    @Column(name = "reason_code", length = 100)
+    private String reasonCode;
 
     @Column(name = "raw_messages_expires_at")
     private OffsetDateTime rawMessagesExpiresAt;
@@ -57,55 +79,219 @@ public class Conversation {
     /**
      * 이 대화가 "우리끼리 얘기" 류 표현으로 봉인됐는가 (S15P11E102-254, V12).
      *
-     * <p>로봇(ai_chat) 이 로컬에서 판정하고, {@code POST .../end} 로 대화를 닫을 때
-     * 함께 실어 보낸다(S15P11E102-253 {@code emotion.is_conversation_sealed}). 봉인된
-     * 대화는 요약 생성 대상에서 제외한다 — 원문을 외부 생성형 LLM(Gemini) 에 보내는
-     * 것 자체가 "우리끼리 얘기"라는 약속을 깨기 때문이다(CLAUDE.md §9 T4).</p>
+     * <p>로봇(ai_chat)이 로컬에서 판정하고,
+     * {@code POST .../end}로 대화를 닫을 때 함께 전달한다.
+     * 봉인된 대화는 요약 생성 대상에서 제외한다.</p>
      *
-     * <p>기본값 false. 로봇 쪽 봉인 판정 로직이 아직 이 값을 채워 보내는 경로를
-     * 갖추지 않았다면(별도 AI 라인 작업), 모든 대화가 봉인되지 않은 것으로 취급된다 —
-     * 안전한 방향의 기본값은 아니지만(과다 요약 쪽으로 실패), 로봇이 실제로 이 필드를
-     * 채워 보내기 전까지는 백엔드 혼자서 봉인 여부를 알 방법이 없다.</p>
+     * <p>기본값은 false이다. 봉인은 한 번 적용되면 되돌리지 않는다.</p>
      */
     @Column(name = "sealed", nullable = false)
     private boolean sealed = false;
 
-    private Conversation(UUID seniorId, UUID scenarioId) {
+    private Conversation(
+        UUID seniorId,
+        UUID scenarioId,
+        OffsetDateTime requestedAt
+    ) {
         this.seniorId = requireNonNull(seniorId, "seniorId");
         this.scenarioId = scenarioId;
-        this.startedAt = OffsetDateTime.now();
+        this.startedAt = requireNonNull(requestedAt, "requestedAt");
     }
 
     public static Conversation open(UUID seniorId) {
-        return new Conversation(seniorId, null);
+        OffsetDateTime now = OffsetDateTime.now();
+
+        Conversation conversation = new Conversation(
+            seniorId,
+            null,
+            now
+        );
+
+        conversation.aiStartedAt = now;
+        return conversation;
     }
 
-    public static Conversation openForScenario(UUID seniorId, UUID scenarioId) {
-        return new Conversation(seniorId, scenarioId);
+    public static Conversation openForScenario(
+        UUID seniorId,
+        UUID scenarioId
+    ) {
+        OffsetDateTime now = OffsetDateTime.now();
+
+        Conversation conversation = new Conversation(
+            seniorId,
+            scenarioId,
+            now
+        );
+
+        conversation.aiStartedAt = now;
+        return conversation;
+    }
+
+    /** Creates a pending AI conversation before the MQTT command is published. */
+    public static Conversation requestForScenario(
+        UUID seniorId,
+        UUID scenarioId,
+        String startCommandId,
+        OffsetDateTime requestedAt
+    ) {
+        Conversation conversation = new Conversation(
+            seniorId,
+            requireNonNull(scenarioId, "scenarioId"),
+            requestedAt
+        );
+
+        conversation.startCommandId = requireText(
+            startCommandId,
+            "startCommandId",
+            64
+        );
+
+        return conversation;
+    }
+
+    /** Marks the AI acknowledgement; returns false for a duplicate acknowledgement. */
+    public boolean markAiStarted(OffsetDateTime occurredAt) {
+        requireNonNull(occurredAt, "occurredAt");
+
+        if (status != ConversationStatus.OPEN) {
+            return false;
+        }
+
+        if (aiStartedAt != null) {
+            return false;
+        }
+
+        this.aiStartedAt = occurredAt;
+        return true;
     }
 
     /** Marks the conversation ended with a terminal status (COMPLETED/FAILED/CANCELLED). */
     public void end(ConversationStatus terminalStatus) {
         if (terminalStatus == null || terminalStatus == ConversationStatus.OPEN) {
-            throw new IllegalArgumentException("terminalStatus must be a terminal status");
+            throw new IllegalArgumentException(
+                "terminalStatus must be a terminal status"
+            );
         }
-        this.status = terminalStatus;
-        this.endedAt = OffsetDateTime.now();
+
+        ConversationOutcome outcome = switch (terminalStatus) {
+            case COMPLETED -> ConversationOutcome.COMPLETED;
+            case FAILED -> ConversationOutcome.FAILED;
+            case CANCELLED -> ConversationOutcome.CANCELLED;
+            case OPEN -> throw new IllegalArgumentException(
+                "terminalStatus must be terminal"
+            );
+        };
+
+        end(
+            outcome,
+            outcome == ConversationOutcome.FAILED
+                ? "UNSPECIFIED_FAILURE"
+                : null,
+            OffsetDateTime.now()
+        );
+    }
+
+    /** Applies the exact AI/backend outcome; returns false when already terminal. */
+    public boolean end(
+        ConversationOutcome outcome,
+        String reasonCode,
+        OffsetDateTime occurredAt
+    ) {
+        requireNonNull(outcome, "outcome");
+        requireNonNull(occurredAt, "occurredAt");
+
+        String normalizedReason = normalizeReason(reasonCode);
+
+        if (
+            outcome == ConversationOutcome.FAILED
+                && normalizedReason == null
+        ) {
+            throw new IllegalArgumentException(
+                "reasonCode is required for FAILED conversation"
+            );
+        }
+
+        if (status != ConversationStatus.OPEN) {
+            return false;
+        }
+
+        this.status = switch (outcome) {
+            case COMPLETED, NO_RESPONSE -> ConversationStatus.COMPLETED;
+            case CANCELLED -> ConversationStatus.CANCELLED;
+            case FAILED -> ConversationStatus.FAILED;
+        };
+
+        this.endOutcome = outcome;
+        this.reasonCode = normalizedReason;
+        this.endedAt = occurredAt;
+
+        return true;
     }
 
     public void scheduleRawExpiry(OffsetDateTime expiresAt) {
         this.rawMessagesExpiresAt = expiresAt;
     }
 
-    /** 이 대화를 봉인한다. 되돌릴 수 없다 — 봉인은 한 방향의 약속이다. */
+    public boolean isOpen() {
+        return status == ConversationStatus.OPEN;
+    }
+
+    public boolean hasAiStarted() {
+        return aiStartedAt != null;
+    }
+
+    /** 이 대화를 봉인한다. 되돌릴 수 없다. */
     public void markSealed() {
         this.sealed = true;
     }
 
     private static <T> T requireNonNull(T value, String field) {
         if (value == null) {
-            throw new IllegalArgumentException(field + " must not be null");
+            throw new IllegalArgumentException(
+                field + " must not be null"
+            );
         }
+
         return value;
+    }
+
+    private static String requireText(
+        String value,
+        String field,
+        int maxLength
+    ) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(
+                field + " must not be blank"
+            );
+        }
+
+        if (value.length() > maxLength) {
+            throw new IllegalArgumentException(
+                field + " must not exceed " + maxLength + " characters"
+            );
+        }
+
+        return value;
+    }
+
+    private static String normalizeReason(String value) {
+        if (value == null) {
+            return null;
+        }
+
+        String normalized = value.trim();
+
+        if (normalized.isEmpty()) {
+            return null;
+        }
+
+        if (normalized.length() > 100) {
+            throw new IllegalArgumentException(
+                "reasonCode must not exceed 100 characters"
+            );
+        }
+
+        return normalized;
     }
 }

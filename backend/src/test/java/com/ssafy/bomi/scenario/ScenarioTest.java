@@ -58,6 +58,18 @@ class ScenarioTest {
     }
 
     @Test
+    void allowsReturnWhenAiFailsBeforeConversationStarted() {
+        Scenario scenario = newHomecoming();
+        scenario.beginMovingToEntrance();
+        scenario.checkInteraction();
+
+        scenario.decideReturn();
+        scenario.returnToDefault();
+
+        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
+    }
+
+    @Test
     void rejectsTransitionFromTerminalState() {
         Scenario scenario = newHomecoming();
         scenario.cancel();
