@@ -226,6 +226,8 @@ deploying to a real senior.
 
 게이트에 `not_before` 연기 확인을 추가했습니다. **이 확인이 없으면 지연은 장식입니다** — 큐에 넣은 제안은 다음 틱에 바로 후보가 되기 때문입니다. 폐기가 아니라 연기인 것이 중요합니다(아직 이른 것을 폐기하면 영영 사라집니다).
 
+**253 에서 갱신됨.** 여기서 말하는 "45분 뒤 제안 큐에 넣습니다"는 더 이상 정확하지 않습니다 — 253 이후로는 정서 발화 한 번이 아니라 누적 신호가 문턱을 넘겼을 때만 큐잉하고, 어르신의 "응"/"아니" 답도 실제로 판정합니다. §6의 253 절 참고.
+
 미검증: 실기. "외로워"는 시연에서 누구든 가장 먼저 시도할 발화이므로 233 에서 우선 확인 대상입니다.
 
 ### 2.4 의미 검색은 만들어졌으나 아직 꺼져 있습니다 (218)
@@ -831,6 +833,42 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 
 **미검증**: 실기(Jetson, 실제 스케줄러 틱이 사흘에 걸쳐 같은 알림을 몇 번 내는지). 자동 테스트는 압축 시계와 대역 LLM 으로 확인했습니다.
 
+### 253 — 정서 동의 지연 완성 (T3 답변 판정·누적 문턱·봉인) ✅ (실기 미실시)
+
+| 완료 조건 | 결과 |
+|---|---|
+| "외로워" 류 발화에 로봇이 항상 응답한다 (263 유지, 회귀 없음) | ✅ (`test_emotional_handler.py`, 21 passed) |
+| LLM 실패·프롬프트 템플릿 부재 모두 핸들러 밖으로 예외가 안 새고 정서 전용 폴백이 나간다 | ✅ (`test_a_generation_failure_uses_the_emotional_fallback_not_the_generic_one`, `test_a_missing_prompt_template_still_answers_on_the_emotional_path`) |
+| 고백한 그 턴에서는 동의 질문이 나오지 않는다 | ✅ (263 부터 유지, `test_the_consent_question_is_not_asked_in_the_same_turn`) |
+| 한 번의 정서 발화로는 동의 요청이 안 생기고, 누적 문턱을 넘겼을 때만 정확히 한 건 생긴다 | ✅ (`test_a_single_emotional_utterance_does_not_queue_a_consent_question`, `test_the_consent_question_is_queued_once_the_threshold_is_crossed`) |
+| "우리끼리 얘기"가 섞인 턴은 봉인되고, 그 대화로는 동의 요청이 안 만들어진다 | ✅ (`test_t3_consent.py` §2, `emotion.is_conversation_sealed`) |
+| 침묵 사다리 진행 중·안전 확인 대기·occupancy AWAY 면 동의 질문을 안 올린다 | ✅ (`test_the_tick_does_not_ask_while_the_silence_ladder_is_running` 등 3건) |
+| "아니"에는 보호자 알림이 0건, DECLINED 로 확정되며 다시 안 묻는다 | ✅ (`test_declined_answer_sends_nothing_and_does_not_reask`) |
+| "응"에는 보호자 알림이 정확히 1건, payload 에 발화 원문이 없다 | ✅ (`test_granted_answer_enqueues_exactly_one_t3_with_no_raw_text`, `test_the_outbox_payload_never_contains_the_utterance`) |
+| 동의 질문 턴·답 판정 턴 모두 생성 호출 0회 | ✅ (`test_asking_the_question_speaks_the_seed_without_calling_the_llm`, `test_granted_answer_...` 의 `_llm().calls == 0`) |
+| 새 틱(`consent_tick`)이 실기 스케줄러와 압축 시계 경로 양쪽에 등록돼 있다 | ✅ (`test_consent_tick_is_registered_in_the_scheduler`, `test_consent_tick_runs_inside_run_all_ticks_once`) |
+| 재시작해도 누적 신호와 대기 중인 요청이 이어진다 | ✅ (`test_signals_and_a_pending_request_survive_a_restart`, `db.close_all()` 로 재부팅 흉내) |
+| (BE 라인 별도 작업) 상위 동의 없는 어르신에게는 질문 자체를 안 만든다 | ⏸️ 범위 밖 — `ConversationContextResponse.SeniorProfile` 에 `guardianSharingConsent` 가 없어 로봇이 상위 동의 여부를 볼 수 없다. BE 티켓 필요 |
+| 로봇 테스트 전체·lint 통과 | ✅ (579 passed, ruff 0 오류) |
+
+**무엇이 바뀌었는가.** 263 은 정서 발화 한 번마다 즉시 동의 질문을 45분 뒤로 예약했습니다. 253 은 그 즉시-큐잉을 걷어내고, `localstore/emotion.py`(신규)에 발화 원문 없이 신호만 누적하다가 `jobs/ticks.consent_tick`(신규)이 주기적으로 문턱(`policy.T3_CONSENT_SIGNAL_THRESHOLD`, 기본 3)을 넘겼는지·자연스러운 창인지(사다리 0, 안전 확인 없음, occupancy != AWAY)·봉인 여부를 확인해서 질문을 큐에 넣습니다.
+
+**두 번째 결함: 질문을 던지고도 답을 못 알아들었다.** 45분 뒤 동의 질문이 나가도 "응"/"아니"가 그냥 평범한 대화로 흘러갔습니다 — 보호자 알림이 영원히 0건이었던 이유입니다. `ConvState.pending_consent`(신규, `pending_contract` 와 같은 패턴)로 "방금 로봇이 던진 동의 질문의 request_id"를 다음 턴까지 들고 다니고, `handlers._resolve_consent_answer` 가 `contract_dialogue.read_affirmation` 으로 규칙 판정합니다. `localstore/consent.py`(신규)의 `consent_request` 표가 PENDING/GRANTED/DECLINED 생애주기를 갖습니다.
+
+**설계 판단 — 왜 질문·답변 턴 모두 LLM 을 안 쓰는가.** 263 코드는 동의 질문도 `_generate()`(LLM)로 다시 썼습니다. 253 은 온보딩 계약 문장과 같은 원칙을 적용해, 이긴 제안의 `seed`(= `consent_tick` 이 확정한 문장)를 그대로 말합니다 — 나중에 "정말 무엇을 물었는가"가 매번 달라지면 안 되기 때문입니다.
+
+**설계 판단 — `pending_consent` 를 `classify_intent` 어디서 확인하는가.** `state.get("intent")` 가 이미 채워져 있으면 곧바로 반환하는 기존 첫 줄보다 **먼저** 확인합니다. `intent` 는 reducer 가 없는 채널이라 질문을 던진 능동 턴의 `intent="emotional"` 이 checkpoint 에 남을 수 있고, 그 우연에 기대면 질문과 답 사이에 다른 능동 발화(예: 복약 알림)가 끼는 순간 라우팅이 조용히 어긋납니다.
+
+**남은 결함도 고쳤다: `_generate` 의 `build_prompt` 호출이 try 밖에 있었다.** 템플릿 파일이 없으면 `FileNotFoundError` 가 핸들러를 그대로 뚫고 나가던 것을, 생성 호출과 같은 try 안으로 옮겼습니다. 정서 턴 전용 폴백(`_EMOTIONAL_FALLBACK`)도 신설했습니다 — 일반 폴백("다시 한 번 말씀해 주시겠어요?")은 방금 마음을 꺼낸 사람에게 최악의 문장이기 때문입니다.
+
+**세 번째 결함: 온보딩 대기 중 정서 표현이 필드값 후보로 삼켜졌다.** `_pending_contract_intent` 는 의문형일 때만 양보했고, "외로워"는 의문형이 아니라서 여전히 온보딩 필드값 추출 대상으로 넘어갔습니다. 정서 표지가 있으면 같은 이유로 양보하도록 예외를 추가했습니다.
+
+**킬스위치 둘.** `policy.T3_CONSENT_ENABLED`(코드 상수, 기본 켜짐)와 `config.py` 의 `T3_CONSENT_ENABLED` 환경변수(운영 비상구)를 `consent_tick` 이 모두 확인합니다. 둘 중 하나만 꺼져도 질문을 올리지 않습니다 — 실기에서 이상 신고가 들어와도 재배포 없이 그날 안에 끌 수 있어야 하기 때문입니다.
+
+**범위 밖으로 명시.** 완료 조건의 마지막 항목(상위 동의 없는 어르신에게 질문 자체를 안 만드는 것)은 백엔드가 `guardianSharingConsent` 를 대화 문맥에 실어줘야 로봇이 판단할 수 있습니다. AI 워크트리에서 `backend/` 를 건드리지 않는다는 CLAUDE.md §25 원칙에 따라 별도 BE 티켓으로 남겼습니다.
+
+미검증: 실기(Jetson) 전체. `emotion.is_conversation_sealed`·`consent_tick` 의 자연스러운 창 판정은 자동 테스트로만 확인했고, 실제 발화 리듬에서 문턱(3회)이 적절한지는 실사용 데이터로 튜닝해야 합니다.
+
 ---
 
 ## 7. 갱신 이력
@@ -850,6 +888,7 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 | 307(AI) 푸시 후 | 307 로봇 쪽 추가. 네 클라이언트가 공유 세션 하나(`backend_client/session.py`)에서 인증 헤더를 얹도록 배선. 401/403 을 캐시 폴백·조용한 실패와 구분되는 "AUTH FAILURE" 경고로 표시. 백엔드 서블릿 필터(be-develop, 307)는 별도 워크트리라 실통합은 UNVERIFIED |
 | 311 푸시 후 | **날씨·의료 조회를 그래프에 연결.** `context_read` 가 조회를 맡고 `ctx["documents"]` 로 "참고 자료"를 채워, `handle_info` 는 그대로 얇게 남김(§16 생성 호출 1회, §23 핸들러 직접 I/O 금지 유지). 반응형 턴은 `classify_intent` 전이라 의료 힌트 표지로 좁힌 사전 판정을 도입, 라우터 판정을 `state["is_medical_query"]` 로 캐시해 두 번 안 부르게 함. 도시 추출을 `weather/client.py` 로 옮겨 legacy·그래프 경로가 공유. 테스트 도중 **선행 버그**(`test_bootstrap.py` 의 오디오 대역이 `onset_timeout_seconds` 를 안 받아 전체 스위트가 무한 대기)를 발견 — 범위 밖이라 별도 세션이 S15P11E102-319 로 분리 처리 |
 | 256 푸시 후 | **표현 다양성 배선.** 있던 자리(프롬프트 빌더, `state.recent_phrasings`, `RECENT_PHRASING_LOOKBACK`)를 채우는 코드가 없어 조용히 꺼져 있던 것을 배선했다. `graph/phrasing.phrasing_key`(순수 함수), `localstore/phrasings.py`(기록/조회/정리), `spoken_phrasing` 표를 신설했다. `memory_write`가 기록, `context_read`가 조회하며 `trigger_type` 가드로 반응형 턴에 새지 않게 했다. 침묵 프로브·T3 동의 질문은 `policy.RECENT_PHRASING_EXCLUDED_ORIGIN_PREFIXES` 로 제외. `test_naturalness_replay.py`의 우회 헬퍼(`_run_with_phrasings`)를 걷어내고 시나리오 08 이 실제 게이트 경로를 타도록 다시 썼다. |
+| 253 푸시 후 | **정서 동의 지연 완성.** 263 의 즉시-큐잉을 걷어내고 누적 문턱(`localstore/emotion.py`, `jobs/ticks.consent_tick`)으로 바꿨다. `ConvState.pending_consent` + `localstore/consent.py` 로 "응"/"아니" 답을 규칙 판정하고 GRANTED 만 outbox 로 보낸다. "우리끼리 얘기" 봉인, 두 개의 킬스위치, `_generate` 의 `build_prompt` try 누락 수정, 온보딩 대기 중 정서 표현이 필드값으로 삼켜지던 결함도 함께 고쳤다. 상위 동의 확인은 BE 별도 티켓으로 남김 |
 | 309 푸시 후 | **검증 문서 4종 + CLAUDE.md §20 정합.** `VERIFICATION.md` §3 에서 이미 머지된 263·226·218·227·232 를 참조하던 항목을 걷어냈다(263/232/226/227 은 표에서 삭제, 218 은 "완료됐지만 기본값이 꺼짐"으로 정정). §0 에 백엔드 명령이 `be-develop` 전용이라는 전제를 추가하고 각 백엔드 절에 표시를 붙였다. 존재하지 않던 테스트 이름(`test_sim_clock_compresses_a_day_into_ten_seconds`)을 실제 이름으로 고쳤다. `V1~V5` 하드코딩을 `FlywayMigrationValidationTest` 자기참조로 바꿨다. `READING-ORDER.md` 에 `mvp-erd.md` 가 `be-develop` 전용이라는 것, `bootstrap.py` 와 232 이후 신규 모듈들을 추가했다. `CLAUDE.md` §20 의 "아직 없음" 구분선을 지우고 실제 트리로 승격했다. 저장소 루트의 일회성 인계 문서를 지우고 6곳의 참조를 `docs/carebot/PROGRESS.md §2.2` 로 옮겼다(스프린트 경위·선행조건 순서·자해 목록 검토 요구사항의 유래는 §8 로 보존). |
 
 ---

@@ -27,6 +27,7 @@ import pytest
 from bomi_ai_chat import policy
 from bomi_ai_chat.graph import context as context_node
 from bomi_ai_chat.graph import gate, handlers, output, triage
+from bomi_ai_chat.jobs import ticks
 from bomi_ai_chat.localstore import db
 from bomi_ai_chat.localstore import proposals as proposal_store
 from bomi_ai_chat.prompts import build_prompt
@@ -108,6 +109,42 @@ def test_a_generation_failure_still_answers():
     assert result["response"]
 
 
+def test_a_generation_failure_uses_the_emotional_fallback_not_the_generic_one():
+    """★ (253 완료 조건) 마음을 꺼낸 사람에게 "다시 말씀해 주시겠어요?"는 최악이다.
+
+    핸들러가 공통 폴백을 그대로 쓰면 정서 턴도 서비스 오류처럼 들린다.
+    """
+    class BrokenLLM:
+        def generate(self, text, weather_data=None):
+            raise RuntimeError("gemini down")
+
+    handlers.set_llm(BrokenLLM())
+
+    result = handlers.handle_emotional(emotional_state("외로워"))
+
+    assert result["response"] == handlers._EMOTIONAL_FALLBACK  # noqa: SLF001
+
+
+def test_a_missing_prompt_template_still_answers_on_the_emotional_path(monkeypatch):
+    """★★ (253 잔여 결함) build_prompt 호출이 try 밖에 있으면 이 테스트가 죽는다.
+
+    263 코드는 build_prompt() 호출이 생성 호출을 감싸는 try 바깥에 있었다.
+    템플릿 파일이 없으면 FileNotFoundError 가 핸들러를 그대로 뚫고 나가서,
+    예외가 안 잡히면 결국 로봇이 침묵한 것과 같은 결과가 된다.
+    """
+    from bomi_ai_chat.prompts import builder
+
+    def explode(name):
+        raise FileNotFoundError(f"missing template: {name}")
+
+    monkeypatch.setattr(builder, "load_template", explode)
+    handlers.set_llm(RecordingLLM())
+
+    result = handlers.handle_emotional(emotional_state("외로워"))
+
+    assert result["response"] == handlers._EMOTIONAL_FALLBACK  # noqa: SLF001
+
+
 # ── 2. 정서 + 정보가 섞인 발화 ──────────────────────────────────────────────
 
 
@@ -168,12 +205,30 @@ def test_the_consent_question_is_not_asked_in_the_same_turn(frozen_clock):
     assert "지금 꺼내지 않습니다" in llm.last_prompt
 
 
-def test_the_consent_question_is_queued_for_later(frozen_clock):
-    """지금 묻지 않는 것과 아예 안 묻는 것은 다르다. 큐에는 들어간다."""
+def test_a_single_emotional_utterance_does_not_queue_a_consent_question(frozen_clock):
+    """★★★ (253 완료 조건) 한 번의 정서 발화로는 동의 요청이 생기지 않는다.
+
+    263 은 첫 마디에 곧바로 큐잉했다. 하루에 스쳐 지나가듯 한 말에도 45분 뒤
+    "가족분께 전해도 될까요"가 날아오면 그 자체가 감시처럼 느껴진다 — 그래서
+    253 은 누적 문턱을 넘겨야만 묻는다(policy.T3_CONSENT_SIGNAL_THRESHOLD).
+    """
     frozen_clock(start=1_700_000_000.0)
     handlers.set_llm(RecordingLLM())
 
     handlers.handle_emotional(emotional_state("외로워"))
+    ticks.consent_tick(SENIOR)
+
+    assert proposal_store.pending(SENIOR) == []
+
+
+def test_the_consent_question_is_queued_once_the_threshold_is_crossed(frozen_clock):
+    """누적 신호가 문턱을 넘기면 정확히 한 건, 지금 묻지는 않는다(큐에만 들어간다)."""
+    frozen_clock(start=1_700_000_000.0)
+    handlers.set_llm(RecordingLLM())
+
+    for _ in range(policy.T3_CONSENT_SIGNAL_THRESHOLD):
+        handlers.handle_emotional(emotional_state("외로워"))
+    ticks.consent_tick(SENIOR)
 
     queued = proposal_store.pending(SENIOR)
     assert len(queued) == 1
@@ -187,8 +242,9 @@ def test_only_one_consent_question_is_pending_at_a_time(frozen_clock):
     frozen_clock(start=1_700_000_000.0)
     handlers.set_llm(RecordingLLM())
 
-    for _ in range(4):
+    for _ in range(policy.T3_CONSENT_SIGNAL_THRESHOLD * 3):
         handlers.handle_emotional(emotional_state("외로워"))
+        ticks.consent_tick(SENIOR)
 
     assert len(proposal_store.pending(SENIOR)) == 1
 
@@ -223,6 +279,13 @@ def test_no_senior_id_means_nothing_is_queued():
 # ── 5. 지연이 실제로 지켜진다 ───────────────────────────────────────────────
 
 
+def _queue_a_consent_question() -> None:
+    """테스트용 헬퍼: 문턱을 넘겨 동의 질문 하나를 큐에 넣는다."""
+    for _ in range(policy.T3_CONSENT_SIGNAL_THRESHOLD):
+        handlers.handle_emotional(emotional_state("외로워"))
+    ticks.consent_tick(SENIOR)
+
+
 def test_the_gate_defers_a_proposal_that_is_not_due_yet(frozen_clock):
     """★★ 이 확인이 없으면 T3_CONSENT_DELAY_SEC 는 장식이다.
 
@@ -231,7 +294,7 @@ def test_the_gate_defers_a_proposal_that_is_not_due_yet(frozen_clock):
     """
     sim = frozen_clock(start=1_700_000_000.0)
     handlers.set_llm(RecordingLLM())
-    handlers.handle_emotional(emotional_state("외로워"))
+    _queue_a_consent_question()
 
     proposal = proposal_store.pending(SENIOR)[0]
 
@@ -245,7 +308,7 @@ def test_deferring_is_not_discarding(frozen_clock):
     """★ 아직 이른 제안을 폐기하면 영영 사라진다 — 정확히 반대 방향의 실수다."""
     sim = frozen_clock(start=1_700_000_000.0)
     handlers.set_llm(RecordingLLM())
-    handlers.handle_emotional(emotional_state("외로워"))
+    _queue_a_consent_question()
 
     proposal = proposal_store.pending(SENIOR)[0]
     # 아직 이르지만, 만료된 것은 아니다.
