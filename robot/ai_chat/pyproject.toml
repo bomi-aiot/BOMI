@@ -8,7 +8,6 @@ dependencies = [
     "python-dotenv",
     "sounddevice",
     "numpy",
-    "sentence-transformers>=2.2.0",
     "noisereduce",
     "psycopg2-binary",
     "sshtunnel",
@@ -37,6 +36,10 @@ dev = [
     "pytest",
     "ruff",
     "mypy",
+]
+router-eval = [
+    # 운영에서는 제거했다. 과거 SentenceTransformer 라우터와 비교할 때만 설치한다.
+    "sentence-transformers>=2.2.0",
 ]
 # 현관 이벤트 MQTT 구독(door/mqtt.py). 선택 의존인 이유는 브로커가 없는 개발
 # 노트북에서도 대화 런타임 전체가 돌아야 하기 때문이다. door/mqtt.py 가 함수

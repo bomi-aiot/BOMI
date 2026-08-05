@@ -10,6 +10,13 @@ contract and the backend enforces it. For the *conversation runtime* (when to sp
 safety timing, graph structure), this file wins. Long-form Korean rationale for the runtime lives in
 `docs/design/care-bot-design.md`.
 
+For the **natural-conversation work stream (2026-08)**, `docs/natural-conversation/` is the plan of
+record: `current-state-audit.md` (what actually exists, file:line evidence — including where this
+file's own descriptions had gone stale), `implementation-plan.md` (P0–P3 priorities, Phase 1–7), and
+`target-architecture.md` (context slots, session FSM, responsibility mapping). When this file and
+the audit disagree about *current* runtime behaviour, the audit is newer — fix whichever is wrong in
+the same commit that resolves the difference.
+
 ---
 
 ## 1. What we are building
@@ -236,14 +243,15 @@ nodes**: we decide *whether* and *how* before we decide *what*.
  | self-harm        |       |   | outbox -> notify_guardian |
  +--------+---------+       |   +---------------------------+
           v                 |
- +------------------+       |
- | context_read     | <-----+   backend: assembled context
- | (backend call)   |           + local cache fallback
+ +------------------+
+ | classify_intent  | <-----+   local rules/router; existing intent is kept
  +--------+---------+
           v
  +------------------+
- | classify_intent  |   (skipped when the proposal already knows)
+ | context_read     |           backend: assembled context
+ | (backend call)   |           + local cache fallback
  +--------+---------+
+          v
    +------+--------+----------+-----------+----------+--------------+
    v      v        v          v           v          v              v
  info companion schedule  emotional   greeting  onboarding   clarification
@@ -269,8 +277,8 @@ nodes**: we decide *whether* and *how* before we decide *what*.
 | `proactive_gate` | Four gates, priority arbitration, or silence. |
 | `safety_triage` | Emergency / self-harm classification. On T1 it skips the intent router entirely. |
 | `escalation` | Writes to the outbound queue, then `notify_guardian`. Returns a calm utterance for the senior. |
-| `context_read` | Calls the backend for assembled context; falls back to the local cache when offline. |
-| `classify_intent` | Local, cheap, **no extra LLM round trip** (§16). |
+| `classify_intent` | Local, cheap, **no extra LLM round trip** (§16). Runs before context retrieval so an `info` turn can request the document corpus. Existing proactive/backend intents are kept. |
+| `context_read` | Calls the backend for assembled context; falls back to the local cache when offline. Normalizes capability (`availability`) separately from what this request actually used (`retrieval`). |
 | `handle_*` | Produce `response` text. They decide *what* to say, never *whether*. |
 | `response_shaper` | Enforces §14 and splits into sentences. Every path goes through it. |
 | `memory_write` | Records the turn, queues fact extraction, stamps `last_spoke_at`. |
@@ -406,6 +414,26 @@ model and the job are off unless switched on.
 - Nearby clinics/pharmacies → geo query / Places API
 - Weather → API call
 - Welfare programs, FAQs → vector RAG
+
+### Retrieval result contract — capability is not execution
+
+The backend response must keep two different facts separate:
+
+- `availability.semanticSearch` / `documentCorpus`: can this process use the capability now?
+- `retrieval.semanticRequested` / `semanticUsed` / `fallbackReason` / `hitCount` /
+  `latencyMs`: what happened for this request?
+
+An embedding timeout can leave the service generally configured while this one request falls back
+to keyword ranking. Reporting only `semanticSearch=true` would be a false success. The robot
+normalizes both parts into `state.retrieval_status`, logs identifiers/counts without document
+content, and adds a standard prompt warning when search was unavailable or fell back. Missing
+fields mean **unknown**, not false, during rolling deployment.
+
+For document RAG, classify the turn before `context_read`; otherwise a reactive information
+question has no intent yet and sends `includeDocuments=false`. Each returned chunk keeps its
+`source`, `version`, `chunkId`, `citation`, and optional `url` through to the prompt. A corpus that
+is unavailable and an available corpus with zero hits are different outcomes and must produce
+different warnings.
 
 ### Write path — the safety rule
 
@@ -756,6 +784,17 @@ cancellable handle. Playback outlives the graph run, so `speaking` / `spoken_pre
 (the playback thread and the checkpointed state). **This is the most sync-bug-prone spot in the
 system.** Settle the boundary before building on it.
 
+**Deployed state (2026-08-06):** the live graph path is intentionally **half-duplex** — after each
+turn `bootstrap._wait_for_playback()` polls until playback ends and the mic stays closed (commit
+`035f71e`, 2026-08-04). The barge-in machinery above (cancel, back-channel test, remainder
+extraction) exists and is unit-tested, but is not reachable in this mode; `interrupted_remainder`
+is written and never consumed; EchoGuard is wired into playback but **not into capture**. The
+"sync-bug-prone spot" warning proved out anyway: `speaking` is set on emit and never cleared on
+normal playback end, so from the second turn on every utterance classifies as a barge-in. Fix plan
+and evidence: `docs/natural-conversation/current-state-audit.md` §3-B1~B3, Phase 1 of the
+implementation plan. Re-enabling true barge-in still requires §13.1 (echo on the capture side)
+first.
+
 ---
 
 ## 14. Speaking rules (TTS constraints)
@@ -993,6 +1032,7 @@ S15P11E102/
 │   ├── database/                   <- ERD, question set, Flyway guide (be-develop only —
 │   │                                   mvp-erd.md does not exist on this line, §24)
 │   ├── architecture/, scenario/, mqtt/, api/, hardware/
+│   ├── natural-conversation/       <- 2026-08 work stream: audit -> plan -> target architecture
 │   └── design/care-bot-design.md   <- long-form runtime rationale (Korean)
 │
 ├── backend/                        <- Spring Boot, Flyway, the ERD, guardian API. On this
@@ -1199,6 +1239,11 @@ Each step exists because the next is untestable otherwise. Do not reorder withou
 The classic failure mode is building proactivity and safety while the basic reactive loop is still
 broken. Resist it.
 
+> **Status (2026-08-06):** steps 0–7 are all built and wired (232) — logic green (`655 passed`),
+> hardware largely unverified (233 본검사 미실시). This list is now history, not a to-do. Ongoing
+> conversation work follows the phases in `docs/natural-conversation/implementation-plan.md`
+> (Phase 1: session-layer bug fixes + the first session-lifecycle tests).
+
 ---
 
 ## 22a. Progress reporting (mandatory)
@@ -1281,6 +1326,8 @@ and writing it that way is what lets someone else trust the parts that *are* fin
 | Battery runtime under continuous operation | Measure; it constrains tick frequency (§18). |
 | Cognitive-stimulation content (quizzes, games) | Not designed yet. |
 | Reference document corpus for welfare-program RAG | Source and chunking not decided (§8). |
+| Weather default region — the profile contract has no address | "오늘 날씨 어때" cannot resolve a city; the robot re-asks (and field test 233 saw the LLM invent temperatures instead). Needs a BE contract change to `SeniorProfile` before the robot can default to the senior's home region. See `docs/natural-conversation/implementation-plan.md` P1-A5. |
+| Travel-time lookup (route API) | "거기까지 얼마나 걸려?" has no tool at all — adopting a route/duration API is a new-service decision (§28: propose first). P1-A8. |
 
 ---
 
@@ -1422,3 +1469,28 @@ Ticket bodies are Korean, and this is where encoding bugs keep landing.
 - **Report with evidence, not adjectives.** Claim | command | real output. See §26.
 - Comments and docstrings in code stay Korean (§21). Chat responses follow the user's
   language; identifiers and log messages stay English.
+
+## 30. Conversation-context selection priority
+
+This section is the runtime rule for resolving a reference such as "거기" into a tool argument.
+It does **not** authorize general coreference or an extra LLM classification call. Keep only context
+that a concrete consumer such as weather or clinic lookup actually uses.
+
+Priority, highest first:
+
+1. Explicit value in the current utterance (`USER_EXPLICIT`). What the senior just said always wins.
+2. A live `SESSION` candidate: not expired and above `CONTEXT_MIN_CONFIDENCE`. Equal-confidence
+   candidates prefer the most recent.
+3. A structured `SCHEDULED_EVENT` candidate from `careRecords` — future work; do not infer it from
+   free text before the backend contract is fixed.
+4. Current physical location — unsupported because there is no authoritative signal. Do not treat
+   the last door event or a guessed GPS position as one.
+5. A `STANDING` profile default such as the home address, only when the backend actually supplied
+   it. Missing profile data is not permission to invent a city.
+6. No candidate: ask a short clarification question or skip the lookup.
+
+Lifecycle is as important as ranking. `context_slots.update` removes expired/low-confidence values,
+replaces an older value on an explicit correction, decays unrelated topics, and clears `SESSION`
+values at a conversation boundary. A reference expression refreshes the candidate it actually
+uses. Every new context type needs an expiry/scope rule and a real downstream reader in the same
+change; a LastValue field with no expiry is a cross-turn leak, not memory.

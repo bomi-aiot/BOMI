@@ -106,6 +106,84 @@ def test_documents_only_for_info_intent(ctx):
     assert "참고 자료" not in companion
 
 
+def test_document_source_version_chunk_and_citation_reach_the_prompt(ctx):
+    """문서 코퍼스 근거 식별자는 본문과 함께 최종 프롬프트까지 보존된다."""
+    ctx["documents"] = [{
+        "title": "기초연금 안내",
+        "content": "신청은 주소지 주민센터에서 할 수 있습니다.",
+        "source": "보건복지부",
+        "version": "2026-07",
+        "chunkId": "basic-pension#apply",
+        "citation": "사업안내 31쪽",
+        "url": "https://example.test/basic-pension",
+    }]
+
+    prompt = build_prompt(ctx, "info", "기초연금 어디서 신청해")
+
+    assert "출처=보건복지부" in prompt
+    assert "버전=2026-07" in prompt
+    assert "청크=basic-pension#apply" in prompt
+    assert "인용=사업안내 31쪽" in prompt
+    assert "URL=https://example.test/basic-pension" in prompt
+
+
+def test_unavailable_semantic_and_document_search_add_honest_warnings(ctx):
+    """검색 불가를 '관련 결과 없음'으로 오해하지 않게 프롬프트에 구분한다."""
+    prompt = build_prompt(
+        ctx,
+        "info",
+        "복지제도 알려줘",
+        retrieval_status={
+            "semantic_available": False,
+            "documents_requested": True,
+            "document_corpus_available": False,
+            "document_hit_count": 0,
+        },
+    )
+
+    assert "의미 기반 기억 검색을 사용할 수 없습니다" in prompt
+    assert "관련 기억이 없다고 단정하지 않습니다" in prompt
+    assert "참고 문서 코퍼스를 확인할 수 없습니다" in prompt
+
+
+def test_empty_document_result_is_distinct_from_unavailable_corpus(ctx):
+    """코퍼스 조회 성공·0건과 코퍼스 장애는 서로 다른 안전 문구를 쓴다."""
+    prompt = build_prompt(
+        {**ctx, "documents": []},
+        "info",
+        "복지제도 알려줘",
+        retrieval_status={
+            "documents_requested": True,
+            "document_corpus_available": True,
+            "document_used": True,
+            "document_hit_count": 0,
+        },
+    )
+
+    assert "관련 문서를 찾지 못했습니다" in prompt
+    assert "코퍼스를 확인할 수 없습니다" not in prompt
+
+
+def test_request_level_document_failure_is_distinct_from_zero_hits(ctx):
+    """코퍼스가 살아 있어도 이번 검색 실패면 0-hit 성공으로 말하지 않는다."""
+    prompt = build_prompt(
+        {**ctx, "documents": []},
+        "info",
+        "복지제도 알려줘",
+        retrieval_status={
+            "documents_requested": True,
+            "document_corpus_available": True,
+            "document_used": False,
+            "document_fallback_reason": "document_search_failed",
+            "document_hit_count": 0,
+        },
+    )
+
+    assert "참고 문서 검색을 완료하지 못했습니다" in prompt
+    assert "document_search_failed" in prompt
+    assert "관련 문서를 찾지 못했습니다" not in prompt
+
+
 def test_medical_stance_appears_only_when_the_turn_looked_up_medical_facts(ctx):
     """(회귀) 참고 자료가 있는데도 안 쓰던 사고 — 의료 조회 턴에만 지시를 붙인다.
 

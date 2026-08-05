@@ -16,6 +16,7 @@ from bomi_ai_chat.http import (
     decode_json_object,
     request_with_retry,
 )
+from bomi_ai_chat.turn_timer import current_stage
 
 EMOJI_PATTERN = re.compile(
     "["
@@ -124,6 +125,10 @@ class LLMClient:
         )
 
     def generate(self, text: str, weather_data: dict | None = None) -> str:
+        with current_stage("llm"):
+            return self._generate(text, weather_data)
+
+    def _generate(self, text: str, weather_data: dict | None = None) -> str:
         full_system_prompt = SYSTEM_PROMPT + "\n\n" + current_time_info()
 
         user_content = text

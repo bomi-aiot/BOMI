@@ -77,6 +77,22 @@ def _format_profile(ctx: dict[str, Any]) -> str:
         value = profile.get(key)
         if value:
             lines.append(f"- {label}: {_join(value)}")
+
+    # 대화 성향(conversationPreferences)과 오래 아픈 부위(chronicPainArea).
+    #
+    # 백엔드는 처음부터 이 필드들을 내려주고 있었는데 로봇이 읽지 않았다
+    # (docs/natural-conversation/current-state-audit.md C1). 성향은 말투를
+    # 고르는 재료이고, 만성 통증 부위는 "무릎이 또 아파" 같은 말을 응급이
+    # 아니라 일상으로 알아듣는 재료다 — 트리아지의 CHRONIC_PAIN_PARTS 와
+    # 별개로, 대화 자체도 이를 알고 있어야 §17.2(이어짐)가 산다.
+    prefs = profile.get("conversationPreferences")
+    if prefs:
+        if isinstance(prefs, dict):
+            prefs = ", ".join(f"{k} {v}" for k, v in sorted(prefs.items()))
+        lines.append(f"- 대화 성향: {_join(prefs)}")
+    chronic = profile.get("chronicPainArea")
+    if chronic:
+        lines.append(f"- 오래 아픈 부위: {_join(chronic)} (새 증상과 구분해서 듣기)")
     return "\n".join(lines)
 
 
@@ -164,8 +180,65 @@ def _format_documents(ctx: dict[str, Any]) -> str:
     documents = ctx.get("documents") or []
     lines = []
     for document in documents:
-        lines.append(f"- {document.get('title', '')}: {document.get('content', '')}")
+        # 문서 본문만 넘기면 답변이 맞아도 어느 자료의 어느 버전을 썼는지 알 수
+        # 없다. 백엔드 코퍼스가 제공하는 근거 식별자는 그대로 프롬프트까지 보존한다.
+        metadata = []
+        for key, label in (
+            ("source", "출처"),
+            ("version", "버전"),
+            ("chunkId", "청크"),
+            ("citation", "인용"),
+            ("url", "URL"),
+        ):
+            value = document.get(key)
+            if value not in (None, ""):
+                metadata.append(f"{label}={_join(value)}")
+        suffix = f" [{' | '.join(metadata)}]" if metadata else ""
+        lines.append(
+            f"- {document.get('title', '')}: {document.get('content', '')}{suffix}")
     return "\n".join(lines)
+
+
+def _format_retrieval_warning(retrieval_status: dict[str, Any] | None) -> str:
+    """검색 저하를 모델이 과거 사실이나 문서 근거로 단정하지 않게 바꾼다."""
+    status = retrieval_status or {}
+    warnings = []
+
+    if status.get("semantic_available") is False:
+        warnings.append(
+            "의미 기반 기억 검색을 사용할 수 없습니다. 현재 제공된 기억만 근거로 "
+            "말하고, 관련 기억이 없다고 단정하지 않습니다."
+        )
+    elif status.get("semantic_requested") is True and status.get("semantic_used") is False:
+        reason = status.get("fallback_reason")
+        detail = f"(사유: {reason})" if reason else ""
+        warnings.append(
+            "이번 요청은 의미 검색 대신 제한된 폴백 결과를 사용했습니다"
+            f"{detail}. 과거 사실을 확신해서 말하지 않습니다."
+        )
+
+    if status.get("documents_requested") is True:
+        if status.get("document_corpus_available") is False:
+            warnings.append(
+                "참고 문서 코퍼스를 확인할 수 없습니다. 복지·FAQ 내용을 지어내지 말고 "
+                "확인이 필요하다고 말합니다."
+            )
+        elif status.get("document_used") is False:
+            reason = status.get("document_fallback_reason")
+            detail = f"(사유: {reason})" if reason else ""
+            warnings.append(
+                "이번 요청에서 참고 문서 검색을 완료하지 못했습니다"
+                f"{detail}. 복지·FAQ 내용을 지어내지 않습니다."
+            )
+        elif (
+            status.get("document_corpus_available") is True
+            and status.get("document_hit_count") == 0
+        ):
+            warnings.append(
+                "참고 문서 코퍼스는 조회했지만 관련 문서를 찾지 못했습니다. 검색하지 "
+                "않은 것처럼 아는 내용으로 채우지 않습니다."
+            )
+    return "\n".join(f"- {warning}" for warning in warnings)
 
 
 def _format_recent_messages(ctx: dict[str, Any]) -> str:
@@ -204,6 +277,7 @@ def build_prompt(
     speech_origin: str = "",
     recent_phrasings: list[str] | None = None,
     is_medical: bool = False,
+    retrieval_status: dict[str, Any] | None = None,
 ) -> str:
     """이번 턴의 프롬프트를 만든다. 순수 함수다.
 
@@ -224,6 +298,7 @@ def build_prompt(
         is_medical: context_read 가 이번 턴에 병원·약국·의약품을 조회했는가
             (state["is_medical_query"], S15P11E102-311). True 면 medical_stance.md
             를 덧붙인다.
+        retrieval_status: 백엔드 검색 기능 가용성과 이번 요청의 실제 검색·폴백 결과.
 
     반환값
         LLM 에 그대로 넘길 문자열.
@@ -282,6 +357,7 @@ def build_prompt(
 
     blocks.append(_section("최근 대화", _format_recent_messages(ctx)))
     blocks.append(_section("표현 반복 피하기", _format_recent_phrasings(recent_phrasings)))
+    blocks.append(_section("검색 상태 주의", _format_retrieval_warning(retrieval_status)))
 
     if ctx_is_cached:
         # 캐시는 낡았을 수 있다. 낡은 복약 정보를 단정적으로 말하는 것은 품질 문제가

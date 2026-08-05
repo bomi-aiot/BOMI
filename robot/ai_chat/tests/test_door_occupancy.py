@@ -761,15 +761,21 @@ def test_door_event_is_a_terminal_path(tmp_path):
 
 
 def test_backend_command_skips_the_gate(tmp_path):
-    """★ 이미 판정한 쪽에서 온 명령을 다시 판정하지 않는다.
+    """★ 이미 판정한 쪽에서 온 명령은 게이트를 건너뛰고 인텐트를 유지한다.
 
     게이트를 거치게 하면 백엔드가 보낸 인사가 로봇의 쿨다운에 조용히 삼켜지고,
-    백엔드는 자기가 보낸 인사가 나갔다고 기록한다.
+    백엔드는 자기가 보낸 인사가 나갔다고 기록한다. classify_intent 는 문서 요청
+    순서 때문에 공통 경로에 있지만 이미 붙은 intent 를 바꾸지 않는다.
     """
     from bomi_ai_chat.graph.build import build_graph
 
     graph = build_graph(str(tmp_path / "checkpoint.sqlite")).get_graph()
     targets = {edge.target for edge in graph.edges if edge.source == "backend_command"}
 
-    assert targets == {"context_read"}
+    assert targets == {"classify_intent"}
+    assert not any(
+        edge.target == "proactive_gate"
+        for edge in graph.edges
+        if edge.source == "backend_command"
+    )
     assert "proactive_gate" not in targets

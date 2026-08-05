@@ -93,6 +93,65 @@ class SpeechProposal(TypedDict, total=False):
     meta: dict
 
 
+class ContextCandidate(TypedDict, total=False):
+    """현재 대화의 '중심 문맥' 후보 하나 — 값과 근거를 함께 담는다.
+
+    왜 값만 저장하지 않는가
+        "현재 지역 = 제주" 라고만 저장하면 두 가지 질문에 답할 수 없다.
+        ① 언제까지 제주인가? (여행 이야기가 끝나고도 분리수거 질문을 제주로
+        해석하면 안 된다 — 시나리오 E) ② 왜 제주인가? (틀렸을 때 고치려면
+        근거가 남아 있어야 한다). 그래서 신뢰도·출처·만료를 함께 든다.
+
+    수명 규칙은 graph/context_slots.py 가 소유한다. 이 스키마는 모양만 정한다.
+
+    필드
+        type:          LOCATION 등. 조회 파라미터로 실제 쓰이는 종류만 존재한다.
+        value:         "제주" 같은 실제 값.
+        source:        USER_EXPLICIT / PROFILE_DEFAULT — "왜 이 값인가"의 답.
+        related_topic: 이 문맥이 붙어 있는 화제(있으면). 감쇠 판정의 참고.
+        confidence:    0~1. 어르신이 직접 말했으면 1.0, 턴이 지날수록 감쇠.
+        scope:         SESSION(세션 종료·화제 전환에 소멸) / STANDING(프로필 기본값).
+        created_at / expires_at / last_used_at: 전부 clock 기준 epoch 초.
+    """
+
+    type: str
+    value: str
+    source: str
+    related_topic: str
+    confidence: float
+    scope: str
+    created_at: float
+    expires_at: float
+    last_used_at: float
+
+
+class RetrievalStatus(TypedDict, total=False):
+    """백엔드 검색이 이번 요청에서 실제로 무엇을 했는지 나타내는 상태.
+
+    availability 는 "할 수 있는가"이고 semantic_used 는 "이번 요청에서 했는가"다.
+    둘을 한 값으로 합치면 임베딩 API 실패로 키워드 폴백한 턴도 의미 검색 성공처럼
+    보인다. 구버전 백엔드나 캐시가 요청별 필드를 보내지 않으면 모르는 키를 비워
+    둔다. 모르는 것을 False 로 쓰지 않는 것이 이 상태의 핵심이다.
+    """
+
+    source: Literal["backend", "cache", "empty"]
+    semantic_available: bool
+    document_corpus_available: bool
+    semantic_requested: bool
+    semantic_used: bool
+    fallback_reason: str
+    hit_count: int
+    latency_ms: int
+    embedding_latency_ms: int
+    vector_search_latency_ms: int
+    documents_requested: bool
+    document_used: bool
+    document_fallback_reason: str
+    document_hit_count: int
+    document_latency_ms: int
+    notes: list[str]
+
+
 class ConvState(TypedDict, total=False):
     # ── 신원 ──
     #
@@ -236,13 +295,17 @@ class ConvState(TypedDict, total=False):
     # 백엔드에 닿지 못해 로컬 읽기 캐시에서 가져왔을 때 True.
     # 이 경우 핸들러는 사실에 대해 단정적으로 말하지 않아야 한다.
     ctx_is_cached: bool
+    # 기능 가용성과 이번 요청에서 실제 검색했는지를 분리한 상태. 백엔드 응답의
+    # availability/retrieval 을 context_read 가 정규화한다. 로봇은 벡터 검색을
+    # 직접 하지 않지만, 폴백 사실을 모른 채 자신 있게 말해서도 안 된다.
+    retrieval_status: RetrievalStatus
     # 이번 턴에 요청할 기억 개수. 비어 있으면 policy.MEMORY_TOP_K 를 쓴다.
     # 성능 저하 모드가 이 값을 낮춰 넣는다(policy.DEGRADATION_ORDER 첫 단계).
     memory_top_k: int
     # 의료(병원·약국·의약품) 라우터 판정 결과 캐시 (S15P11E102-311).
     #
     # context_read 가 날씨·의료 조회 여부를 정하려면 classify_intent 가 돌기 전에
-    # 같은 판정이 미리 필요하다. 그때 라우터(local SentenceTransformer 추론)를
+    # 같은 판정이 미리 필요하다. 그때 값싼 공용 규칙을
     # 부른 결과를 여기 남겨서, classify_intent 가 다시 그 라우터를 부르지 않게
     # 한다. context_read 는 이 턴에 판정했으면 매번 명시적으로 True/False 를
     # 쓰고, 판정하지 않은 턴에는 None 을 써서 지난 턴의 값이 새는 것을 막는다
@@ -316,6 +379,18 @@ class ConvState(TypedDict, total=False):
     # {"someone_speaking": bool, "ambient_sound": bool}
     audio_ctx: dict
 
+    # ── 현재 대화 문맥 (자연스러운 대화 Phase 2) ──
+    #
+    # "이번 주말에 제주도 가" 다음의 "날씨 어때?"가 제주를 잃지 않게 하는 유일한
+    # 저장소다. 값이 아니라 근거(출처·신뢰도·만료)를 함께 담는다 — ContextCandidate
+    # 참고. 수명 관리(만료·감쇠·정정·세션 리셋)는 note_interaction 이 매 반응형
+    # 턴에 graph/context_slots.update 로 수행한다.
+    #
+    # reducer 가 없는 채널이므로 conversation_id 와 같은 규칙을 지킨다: 바꾸고
+    # 싶은 턴에만 반환한다. 여기서의 상태 누수는 "지난주 제주가 오늘 분리수거를
+    # 삼키는" 사고가 된다 — 만료와 감쇠가 그 방어선이다.
+    context_candidates: list[ContextCandidate]
+
 
 def initial_state(senior_id: str) -> ConvState:
     """콜드 스타트용 기본값.
@@ -352,4 +427,6 @@ def initial_state(senior_id: str) -> ConvState:
         "audio_ctx": {},
         "ctx": {},
         "ctx_is_cached": False,
+        "retrieval_status": {"source": "empty", "documents_requested": False},
+        "context_candidates": [],
     }

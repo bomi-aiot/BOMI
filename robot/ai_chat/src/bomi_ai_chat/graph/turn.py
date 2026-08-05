@@ -99,7 +99,7 @@ def run_user_turn(
         inputs["conversation_id"] = conversation_id
 
     try:
-        with timer.stage("graph"):
+        with timer.activate(), timer.stage("graph"):
             state = app.invoke(inputs, thread)
     except Exception:  # noqa: BLE001 - 한 턴의 실패가 루프를 죽이면 안 된다
         logger.exception("turn failed for senior=%s", senior_id)

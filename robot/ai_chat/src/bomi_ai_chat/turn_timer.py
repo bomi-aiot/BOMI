@@ -26,11 +26,14 @@ import logging
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 
 from bomi_ai_chat import policy
 
 logger = logging.getLogger(__name__)
+_ACTIVE_TIMER = ContextVar("bomi_active_turn_timer", default=None)
+_ACTIVE_STAGES = ContextVar("bomi_active_turn_stages", default=())
 
 
 @dataclass
@@ -69,6 +72,21 @@ class TurnTimer:
         finally:
             self.stages[name] = self.stages.get(name, 0.0) + (self.monotonic() - started)
 
+    @contextmanager
+    def activate(self):
+        """현재 실행 문맥의 그래프 노드와 외부 클라이언트에 이 타이머를 연결한다."""
+        token = _ACTIVE_TIMER.set(self)
+        try:
+            yield self
+        finally:
+            _ACTIVE_TIMER.reset(token)
+
+    def record_reported_stage(self, name: str, seconds: float) -> None:
+        """백엔드처럼 하위 시스템이 보고한 중첩 구간을 단계 내역에 추가한다."""
+        if seconds < 0:
+            return
+        self.stages[name] = self.stages.get(name, 0.0) + seconds
+
     @property
     def elapsed(self) -> float:
         """턴 시작부터 지금까지의 실제 경과 시간(초).
@@ -103,3 +121,27 @@ class TurnTimer:
                 "turn latency %.3fs (senior=%s intent=%s) | %s",
                 total, senior_id, intent, breakdown)
         return total
+
+
+def active_timer() -> TurnTimer | None:
+    """현재 턴의 타이머. 그래프 밖이나 비동기 재생 스레드에서는 ``None``이다."""
+    return _ACTIVE_TIMER.get()
+
+
+@contextmanager
+def current_stage(name: str):
+    """활성 턴이 있을 때만 단계를 재고, 단독 호출에서는 그대로 실행한다."""
+    timer = active_timer()
+    if timer is None:
+        yield
+        return
+    stages = _ACTIVE_STAGES.get()
+    if name in stages:
+        yield
+        return
+    token = _ACTIVE_STAGES.set((*stages, name))
+    try:
+        with timer.stage(name):
+            yield
+    finally:
+        _ACTIVE_STAGES.reset(token)

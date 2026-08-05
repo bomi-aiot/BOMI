@@ -4,6 +4,7 @@ import pytest
 
 from bomi_ai_chat.http import InvalidResponseError
 from bomi_ai_chat.tts.client import TTSClient
+from bomi_ai_chat.turn_timer import TurnTimer
 from tests.http_fakes import StubResponse, StubSession
 
 WAV_BYTES = b"RIFF\x04\x00\x00\x00WAVEdata"
@@ -53,3 +54,17 @@ def test_tts_rejects_empty_text_before_request(settings_factory):
         client.synthesize(" ")
 
     assert session.calls == []
+
+
+def test_tts_call_is_timed_and_logged_in_the_active_turn(settings_factory, caplog):
+    client = TTSClient(
+        tts_settings(settings_factory),
+        session=StubSession(StubResponse(content=WAV_BYTES)),
+    )
+    timer = TurnTimer()
+
+    with caplog.at_level("INFO"), timer.activate():
+        client.synthesize("안녕하세요")
+
+    assert timer.stages["tts"] >= 0
+    assert any("tts latency" in record.message for record in caplog.records)

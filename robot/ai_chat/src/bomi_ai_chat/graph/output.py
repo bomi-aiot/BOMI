@@ -35,6 +35,7 @@ import re
 
 from bomi_ai_chat import policy
 from bomi_ai_chat.state import ConvState
+from bomi_ai_chat.turn_timer import current_stage
 
 logger = logging.getLogger(__name__)
 
@@ -242,9 +243,13 @@ def emit(state: ConvState) -> dict:
         {"speaking": True, "spoken_prefix": ""}
 
     주의사항
-        - 문장을 '하나씩' 투입하고 완료될 때마다 spoken_prefix 를 갱신한다. 전체
-          텍스트를 한 덩어리로 TTS 에 넘기면 barge-in 이 어디서 끊었는지 알 수 없고,
-          나머지를 정확히 재큐할 수 없다.
+        - 문장을 '하나씩' 투입한다. 전체 텍스트를 한 덩어리로 TTS 에 넘기면 barge-in
+          이 어디서 끊었는지 알 수 없고, 나머지를 정확히 재큐할 수 없다.
+        - state 의 spoken_prefix 는 여기서 "" 로 초기화만 한다. 진행 상황(몇 문장까지
+          말했나)의 권위는 재생 핸들(SpeechPlayback.spoken_prefix)이다 — 재생 스레드는
+          checkpoint 를 쓸 수 없으므로 state 쪽 값을 문장마다 갱신하는 것은 애초에
+          불가능하고, 재큐가 필요할 때는 ingress._yield_playback 이 핸들에게 직접
+          묻는다 (CLAUDE.md §13).
         - 재생 시작 후 policy.ECHO_GUARD_SEC 동안 VAD 를 무시한다. 그러지 않으면 로봇이
           자기 목소리를 듣고 문장 중간에 멈춘다. 능동 발화를 테스트하기 '전에' 이걸
           해결해야 한다. 안 그러면 모든 게이트 버그 리포트가 실제로는 echo 다
@@ -286,7 +291,8 @@ def emit(state: ConvState) -> dict:
     # 핸들을 여기 보관하는 것이 barge-in 복구의 전제다. note_interaction 이
     # 이 핸들에게 "어디까지 말했나"를 묻는다 — state 가 아니라. state 는 그래프
     # 실행 시점의 스냅샷이라 재생이 진행된 만큼 이미 낡아 있다.
-    TTS_HANDLES[senior_id] = player.speak_async(sentences)
+    with current_stage("tts_dispatch"):
+        TTS_HANDLES[senior_id] = player.speak_async(sentences)
 
     # 이번 발화가 무엇이었는지 남긴다. 잘렸을 때 나머지를 원래 우선순위로 되돌리려면
     # 우선순위와 origin 을 알아야 하는데, 재생 핸들은 그것을 모른다.

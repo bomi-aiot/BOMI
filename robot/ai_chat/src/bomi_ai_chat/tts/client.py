@@ -1,5 +1,6 @@
 """Typecast API를 이용한 TTS(Text-to-Speech) 클라이언트."""
 
+import logging
 import time
 from collections.abc import Callable
 from typing import Any
@@ -11,6 +12,9 @@ from bomi_ai_chat.http import (
     InvalidResponseError,
     request_with_retry,
 )
+from bomi_ai_chat.turn_timer import current_stage
+
+logger = logging.getLogger(__name__)
 
 
 class TTSClient:
@@ -35,6 +39,18 @@ class TTSClient:
         self.base_url = "https://api.typecast.ai/v1/text-to-speech"
 
     def synthesize(self, text: str) -> bytes:
+        started_at = time.monotonic()
+        try:
+            with current_stage("tts"):
+                return self._synthesize(text)
+        finally:
+            logger.info(
+                "tts latency %.3fs chars=%d",
+                time.monotonic() - started_at,
+                len(text) if isinstance(text, str) else 0,
+            )
+
+    def _synthesize(self, text: str) -> bytes:
         """텍스트를 받아서 음성 오디오 바이트를 반환한다."""
         if not isinstance(text, str) or not text.strip():
             raise ValueError("TTS 입력 텍스트는 비어 있지 않은 문자열이어야 합니다.")
