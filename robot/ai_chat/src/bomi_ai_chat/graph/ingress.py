@@ -213,10 +213,30 @@ def note_interaction(state: ConvState) -> dict:
 
     if _is_backchannel(text, duration):
         # 계속 말한다. 여기서 턴이 끝나므로 재생에는 손대지 않는다.
+        # 재생이 사실은 이미 끝났더라도 맞장구는 응답이 필요 없는 턴이므로
+        # 여기서 끝내는 것이 여전히 옳다.
         out["is_backchannel"] = True
         return out
 
-    # 양보 우선(yield-first): 어르신의 발화가 우리 발화보다 가치 있다 (CLAUDE.md §13).
+    # state 가 '말하는 중'이라고 해도 재생 스레드에게 확인한다.
+    #
+    # ★ 이게 없으면 두 번째 턴부터 모든 발화가 '끼어들기'로 처리된다
+    #   emit 은 재생을 시작하며 speaking=True 를 쓰지만, 재생이 '정상 종료'될 때
+    #   False 로 되돌리는 노드가 없다 — 재생 스레드는 checkpoint 를 쓸 수 없고,
+    #   다음 그래프 실행은 재생이 언제 끝났는지 모른다. 그래서 반이중 대기로 재생을
+    #   다 듣고 말한 다음 발화조차 state 상으로는 '로봇이 말하는 중의 끼어들기'가
+    #   된다. 실피해는 취소할 것이 없어 작지만, 로그와 의도가 왜곡되고 barge-in
+    #   통계를 믿을 수 없게 된다 (docs/natural-conversation/current-state-audit.md B1).
+    #   진행 상황의 권위는 재생 핸들이므로(§13), 핸들이 없거나 이미 끝났으면 여기서
+    #   상태를 바로잡고 '끼어들기가 아니라' 평범한 턴으로 진행한다.
+    senior_id = state.get("senior_id") or ""
+    handle = output.TTS_HANDLES.get(senior_id)
+    if handle is None or handle.is_done:
+        output.clear_speech_state(senior_id)
+        out["speaking"] = False
+        out["spoken_prefix"] = ""
+        return out
+
     # 양보 우선(yield-first): 어르신의 발화가 우리 발화보다 가치 있다 (CLAUDE.md §13).
     out["speaking"] = False
     out["interrupted_remainder"] = _yield_playback(state)

@@ -62,7 +62,7 @@ cd backend && ./gradlew test
 
 | 결과 | 판정 |
 |---|---|
-| 로봇 `633 passed` + `All checks passed` | ✅ |
+| 로봇 `655 passed` + `All checks passed` (2026-08-06 실측, 341 반영) | ✅ |
 | **[be-develop]** 백엔드 `BUILD SUCCESSFUL` | ✅ |
 | 하나라도 실패 | ❌ — 아래에서 어느 영역인지 좁힌다 |
 
@@ -76,7 +76,7 @@ cd backend && ./gradlew test
 cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py tests/test_t3_consent.py -q
 ```
 
-`19 passed` (`test_emotional_handler.py`) 여야 합니다. 특히 다음이 이 티켓의 핵심입니다.
+`23 passed` (`test_emotional_handler.py`, 2026-08-06 실측) 여야 합니다. 특히 다음이 이 티켓의 핵심입니다.
 
 | 테스트 | 무엇이 깨지면 잡히는가 |
 |---|---|
@@ -101,7 +101,7 @@ cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py tests/test_
 cd robot/ai_chat && python -m pytest tests/test_naturalness_replay.py tests/test_degradation.py -q
 ```
 
-`45 passed` 여야 합니다.
+`54 passed` 여야 합니다 (2026-08-06 실측 — 341 이 자연스러움 회귀에 케이스를 추가했습니다).
 
 시나리오는 [`tests/scenarios/naturalness_v1.json`](../../robot/ai_chat/tests/scenarios/naturalness_v1.json) 에 있습니다. **파이썬을 몰라도 케이스를 추가할 수 있습니다** — `turns` 에 어르신 발화를 넣고 `expect` 에 확인할 것을 적으면 됩니다. 파일 안에 쓸 수 있는 키 목록이 있습니다.
 

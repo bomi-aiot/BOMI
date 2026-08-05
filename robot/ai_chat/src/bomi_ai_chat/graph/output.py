@@ -242,9 +242,13 @@ def emit(state: ConvState) -> dict:
         {"speaking": True, "spoken_prefix": ""}
 
     주의사항
-        - 문장을 '하나씩' 투입하고 완료될 때마다 spoken_prefix 를 갱신한다. 전체
-          텍스트를 한 덩어리로 TTS 에 넘기면 barge-in 이 어디서 끊었는지 알 수 없고,
-          나머지를 정확히 재큐할 수 없다.
+        - 문장을 '하나씩' 투입한다. 전체 텍스트를 한 덩어리로 TTS 에 넘기면 barge-in
+          이 어디서 끊었는지 알 수 없고, 나머지를 정확히 재큐할 수 없다.
+        - state 의 spoken_prefix 는 여기서 "" 로 초기화만 한다. 진행 상황(몇 문장까지
+          말했나)의 권위는 재생 핸들(SpeechPlayback.spoken_prefix)이다 — 재생 스레드는
+          checkpoint 를 쓸 수 없으므로 state 쪽 값을 문장마다 갱신하는 것은 애초에
+          불가능하고, 재큐가 필요할 때는 ingress._yield_playback 이 핸들에게 직접
+          묻는다 (CLAUDE.md §13).
         - 재생 시작 후 policy.ECHO_GUARD_SEC 동안 VAD 를 무시한다. 그러지 않으면 로봇이
           자기 목소리를 듣고 문장 중간에 멈춘다. 능동 발화를 테스트하기 '전에' 이걸
           해결해야 한다. 안 그러면 모든 게이트 버그 리포트가 실제로는 echo 다

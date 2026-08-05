@@ -60,7 +60,10 @@ class FakeHandle:
     """재생 핸들 대역.
 
     205 에서 핸들이 barge-in 복구의 권위가 되면서 계약이 생겼다.
-    cancel() 로 멈출 수 있고, remaining_sentences() 로 못 한 말을 알려줘야 한다.
+    cancel() 로 멈출 수 있고, remaining_sentences() 로 못 한 말을 알려줘야 하며,
+    is_done 으로 재생이 끝났는지 답해야 한다(감사 결함 B1 수정이 이 값을 본다).
+    이 대역은 '즉시 전부 말한 것'으로 치므로 is_done 도 항상 True 다 — 그래서
+    다음 턴의 note_interaction 이 실기와 똑같이 '평범한 턴'으로 진행한다.
     """
 
     def __init__(self, sentences):
@@ -73,6 +76,11 @@ class FakeHandle:
     def remaining_sentences(self):
         # 이 대역은 즉시 전부 말한 것으로 친다.
         return []
+
+    @property
+    def is_done(self) -> bool:
+        # 즉시 전부 말했으므로 항상 끝난 상태다.
+        return True
 
 
 class FakePlayer:

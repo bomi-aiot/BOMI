@@ -304,13 +304,18 @@ def run_conversation_loop(
         출력이 정제기를 통과한다. 기억(context_read/memory_write)도 run_user_turn 안이다.
 
     웨이크워드 (wake 가 주어지면)
-        매 발화가 아니라 '대화 단위'로 동작한다: "보미야"를 기다렸다가, "저를
-        부르셨나요?"로 먼저 응답하고, 그 대화 안에서는 재호출 없이 여러 발화를 이어
-        처리한다. 15초 무응답 또는 마무리 언급이면 대화를 끝내고 다시 "보미야"를
-        기다린다. wake 가 None 이면 예전처럼 매 발화를 그냥 처리한다(팀원 기본 동작).
+        매 발화가 아니라 '대화 단위'로 동작한다: "보미야"를 기다렸다가, 호출 응답
+        (conversation_control.WAKE_ACK_MESSAGE, 현재 "네, 말씀하세요.")으로 먼저
+        응답하고, 그 대화 안에서는 재호출 없이 여러 발화를 이어 처리한다. 15초
+        무응답 또는 마무리 언급이면 대화를 끝내고 다시 "보미야"를 기다린다.
+        wake 가 None 이면 예전처럼 매 발화를 그냥 처리한다(팀원 기본 동작).
+
+        세션의 상태는 conversation_control.SessionState 로 명시화되어 있다 —
+        IDLE(웨이크 대기) → LISTENING → PROCESSING → RESPONDING → (반복) → ENDING.
+        전이표가 곧 세션 정책이고, 이 루프는 그 표를 구동만 한다.
 
     호출 응답은 왜 audio_out 으로 직접 재생하나
-        그래프의 응답 출력(emit)은 barge-in 위해 논블로킹이다. "저를 부르셨나요?"를
+        그래프의 응답 출력(emit)은 barge-in 위해 논블로킹이다. 호출 응답을
         그걸로 내보내면 인사와 녹음이 겹친다. 그래서 audio_out.play 로 '블로킹' 재생해
         인사가 끝난 뒤에 듣기 시작한다.
 
@@ -342,9 +347,12 @@ def run_conversation_loop(
     while max_turns is None or turns < max_turns:
         try:
             if wake is not None:
-                # "보미야" 대기. 대기 중 Ctrl+C = 프로그램 종료(아래 except 로 나감).
+                # "보미야" 대기 = SessionState.IDLE. 이 블로킹 호출이 곧 웨이크워드
+                # 게이트다 — 리턴하기 전에는 capture/STT/그래프 어디에도 닿지 않는다
+                # (시나리오 A: 웨이크워드 이전 발화 무반응).
+                # 대기 중 Ctrl+C = 프로그램 종료(아래 except 로 나감).
                 wake.wait_for_wake()
-                _speak_ack(tts, audio_out)          # "저를 부르셨나요?" (블로킹)
+                _speak_ack(tts, audio_out)          # 호출 응답 1회 (블로킹)
                 turns = _run_graph_conversation(runtime, audio_in, stt, turns, max_turns)
             else:
                 # 웨이크워드 없음(팀원 기본): 매 발화를 그냥 처리한다.
@@ -411,10 +419,10 @@ def warm_up_intent_router() -> None:
 
 
 def _speak_ack(tts, audio_out) -> None:
-    """호출 응답("저를 부르셨나요?")을 블로킹으로 재생한다(없으면 조용히 넘어감).
+    """호출 응답(WAKE_ACK_MESSAGE, 현재 "네, 말씀하세요.")을 블로킹으로 재생한다.
 
     실패해도 대화를 막지 않는다 — 인사는 곁가지다. 재생이 블로킹이므로 이 함수가
-    끝난 뒤에 녹음이 시작된다.
+    끝난 뒤에 녹음이 시작된다. tts 나 audio_out 이 없으면 조용히 넘어간다.
     """
     if tts is None or audio_out is None:
         return
@@ -426,13 +434,40 @@ def _speak_ack(tts, audio_out) -> None:
         logger.exception("failed to speak wake ack")
 
 
+def _advance(session, event: str):
+    """세션 상태를 한 칸 전진시킨다. 부기 실수로 로봇이 죽지 않게 감싼다.
+
+    next_state 는 정의되지 않은 전이에서 ValueError 를 던진다 — 테스트에서는 그게
+    옳다(웨이크워드 게이트가 뚫린 것을 조용히 넘기면 안 된다). 하지만 라이브 루프
+    에서는 상태 '기록'의 실수가 상태 '기계'(실제 루프)를 멈추면 안 되므로, 여기서
+    잡아 경고만 남기고 현재 상태를 유지한다.
+    """
+    from bomi_ai_chat import conversation_control
+
+    try:
+        return conversation_control.next_state(session, event)
+    except ValueError:
+        logger.warning("session bookkeeping out of step", exc_info=True)
+        return session
+
+
 def _run_graph_conversation(runtime, audio_in, stt, turns: int, max_turns) -> int:
     """'보미야'로 시작된 하나의 대화를 여러 발화로 이어간다(그래프 경로).
 
+    세션 상태
+        conversation_control.SessionState 의 전이표를 그대로 구동한다. 진입 시점은
+        웨이크워드가 이미 감지된 뒤이므로 LISTENING 에서 시작하고, 종료 사유가
+        확정되면 ENDING 을 거쳐 IDLE 로 닫는다(바깥 루프가 다시 웨이크워드를
+        기다린다). 상태는 여기 지역 변수다 — 세션은 재부팅을 넘어 이어지지 않는
+        것이 맞고(다시 부르는 것이 자연스럽다), checkpoint 에 남길 이유가 없다.
+
     종료 (세 가지)
         1) 무응답: 단일 15초 리슨(_listen 의 onset 타임아웃)으로 발화 시작을 기다린다.
-           없으면 로봇은 아무 말도 하지 않고 조용히 대화를 끝낸다.
-        2) 마무리 언급: is_farewell 이면 그 발화를 그래프로 처리(응답)한 뒤 끝낸다.
+           없으면 로봇은 아무 말도 하지 않고 조용히 대화를 끝낸다(§14 — 침묵이 자연).
+        2) 마무리 언급: is_farewell 이면 그 발화를 그래프로 처리한 뒤 끝낸다.
+           종료 인사를 따로 만들지 않는다 — 마무리 발화에 대한 그래프의 응답
+           ("네, 편히 쉬세요" 류)이 곧 종료 응답이고, 그 재생이 끝난 뒤에 세션을
+           닫으므로 잘리지 않는다(시나리오 L).
         3) Ctrl+C: 대화만 끝내고 바깥 루프가 다시 "보미야"를 기다린다(프로그램 종료 아님).
 
     각 발화는 run_user_turn 으로 그래프에 태운다 -> context_read(기억 조회) +
@@ -441,7 +476,10 @@ def _run_graph_conversation(runtime, audio_in, stt, turns: int, max_turns) -> in
     from bomi_ai_chat import conversation_control, policy
     from bomi_ai_chat.graph.turn import run_user_turn
 
+    session = conversation_control.SessionState.LISTENING
+    logger.info("SESSION_STARTED senior=%s", runtime.senior_id)
     print("[대화 시작] 말씀하세요. ('보미야' 다시 부를 필요 없음)")
+    end_reason = "max_turns"
     while max_turns is None or turns < max_turns:
         try:
             text, duration, no_speech = _listen(
@@ -449,10 +487,14 @@ def _run_graph_conversation(runtime, audio_in, stt, turns: int, max_turns) -> in
                 onset_timeout_seconds=policy.CONVERSATION_IDLE_TIMEOUT_SEC,
             )
         except KeyboardInterrupt:
+            session = _advance(session, "interrupted")
+            end_reason = "interrupted"
             print("[대화 종료] 다시 '보미야'로 부르면 새 대화를 시작합니다.")
             break
 
         if no_speech:
+            session = _advance(session, "no_speech")
+            end_reason = "no_speech"
             logger.info(
                 "conversation ended: no speech within %ss",
                 policy.CONVERSATION_IDLE_TIMEOUT_SEC,
@@ -462,20 +504,30 @@ def _run_graph_conversation(runtime, audio_in, stt, turns: int, max_turns) -> in
 
         if not text:
             # 발화는 있었으나 못 알아들었다. 되묻지 않고 다음 리슨으로 넘어간다.
+            session = _advance(session, "stt_empty")
             continue
 
+        session = _advance(session, "speech_captured")
         run_user_turn(runtime.app, runtime.senior_id, text, duration_sec=duration)
+        session = _advance(session, "turn_done")
         turns += 1
 
         # 응답 재생이 끝날 때까지 기다린다(의도적으로 barge-in 없음). 안 기다리면 재생
         # 중에 다음 리슨이 열려 마이크가 로봇 자기 목소리를 사용자 발화로 수음한다.
         _wait_for_playback(runtime.echo_guard)
+        session = _advance(session, "playback_done")
 
         if conversation_control.is_farewell(text):
+            session = _advance(session, "farewell")
+            end_reason = "farewell"
             logger.info("conversation ended: farewell detected")
             print("[대화 종료] 마무리 언급 감지. 다시 '보미야'로 부르면 새 대화.")
             break
 
+    if session is conversation_control.SessionState.ENDING:
+        session = _advance(session, "session_closed")
+    logger.info("SESSION_ENDED senior=%s reason=%s turns=%d",
+                runtime.senior_id, end_reason, turns)
     return turns
 
 

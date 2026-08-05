@@ -10,6 +10,13 @@ contract and the backend enforces it. For the *conversation runtime* (when to sp
 safety timing, graph structure), this file wins. Long-form Korean rationale for the runtime lives in
 `docs/design/care-bot-design.md`.
 
+For the **natural-conversation work stream (2026-08)**, `docs/natural-conversation/` is the plan of
+record: `current-state-audit.md` (what actually exists, file:line evidence — including where this
+file's own descriptions had gone stale), `implementation-plan.md` (P0–P3 priorities, Phase 1–7), and
+`target-architecture.md` (context slots, session FSM, responsibility mapping). When this file and
+the audit disagree about *current* runtime behaviour, the audit is newer — fix whichever is wrong in
+the same commit that resolves the difference.
+
 ---
 
 ## 1. What we are building
@@ -756,6 +763,17 @@ cancellable handle. Playback outlives the graph run, so `speaking` / `spoken_pre
 (the playback thread and the checkpointed state). **This is the most sync-bug-prone spot in the
 system.** Settle the boundary before building on it.
 
+**Deployed state (2026-08-06):** the live graph path is intentionally **half-duplex** — after each
+turn `bootstrap._wait_for_playback()` polls until playback ends and the mic stays closed (commit
+`035f71e`, 2026-08-04). The barge-in machinery above (cancel, back-channel test, remainder
+extraction) exists and is unit-tested, but is not reachable in this mode; `interrupted_remainder`
+is written and never consumed; EchoGuard is wired into playback but **not into capture**. The
+"sync-bug-prone spot" warning proved out anyway: `speaking` is set on emit and never cleared on
+normal playback end, so from the second turn on every utterance classifies as a barge-in. Fix plan
+and evidence: `docs/natural-conversation/current-state-audit.md` §3-B1~B3, Phase 1 of the
+implementation plan. Re-enabling true barge-in still requires §13.1 (echo on the capture side)
+first.
+
 ---
 
 ## 14. Speaking rules (TTS constraints)
@@ -993,6 +1011,7 @@ S15P11E102/
 │   ├── database/                   <- ERD, question set, Flyway guide (be-develop only —
 │   │                                   mvp-erd.md does not exist on this line, §24)
 │   ├── architecture/, scenario/, mqtt/, api/, hardware/
+│   ├── natural-conversation/       <- 2026-08 work stream: audit -> plan -> target architecture
 │   └── design/care-bot-design.md   <- long-form runtime rationale (Korean)
 │
 ├── backend/                        <- Spring Boot, Flyway, the ERD, guardian API. On this
@@ -1199,6 +1218,11 @@ Each step exists because the next is untestable otherwise. Do not reorder withou
 The classic failure mode is building proactivity and safety while the basic reactive loop is still
 broken. Resist it.
 
+> **Status (2026-08-06):** steps 0–7 are all built and wired (232) — logic green (`655 passed`),
+> hardware largely unverified (233 본검사 미실시). This list is now history, not a to-do. Ongoing
+> conversation work follows the phases in `docs/natural-conversation/implementation-plan.md`
+> (Phase 1: session-layer bug fixes + the first session-lifecycle tests).
+
 ---
 
 ## 22a. Progress reporting (mandatory)
@@ -1281,6 +1305,8 @@ and writing it that way is what lets someone else trust the parts that *are* fin
 | Battery runtime under continuous operation | Measure; it constrains tick frequency (§18). |
 | Cognitive-stimulation content (quizzes, games) | Not designed yet. |
 | Reference document corpus for welfare-program RAG | Source and chunking not decided (§8). |
+| Weather default region — the profile contract has no address | "오늘 날씨 어때" cannot resolve a city; the robot re-asks (and field test 233 saw the LLM invent temperatures instead). Needs a BE contract change to `SeniorProfile` before the robot can default to the senior's home region. See `docs/natural-conversation/implementation-plan.md` P1-A5. |
+| Travel-time lookup (route API) | "거기까지 얼마나 걸려?" has no tool at all — adopting a route/duration API is a new-service decision (§28: propose first). P1-A8. |
 
 ---
 

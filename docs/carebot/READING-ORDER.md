@@ -18,6 +18,7 @@
 | 3 | `.../graph/build.py` | 노드 배선. 로직 없음. 그림(§6)과 대조하며 읽는다 |
 | 4 | `.../policy.py` | 로봇의 '성격'. 숫자만 읽어도 행동을 예측할 수 있다 |
 | 5 | `docs/carebot/PROGRESS.md` | 지금 무엇이 되고 무엇이 안 되는지 |
+| 6 | `docs/natural-conversation/current-state-audit.md` | **2026-08 이후 작업의 출발점.** 무엇이 이미 있고(세션·게이트) 무엇이 없는지(문맥 슬롯·참조 해소·기억 삭제), 파일:라인 근거로. 이어서 같은 폴더의 implementation-plan(Phase 1~7)과 target-architecture |
 
 **2번이 핵심입니다.** 노드들은 서로를 import 하지 않고 오직 `ConvState` 의 키 이름에만 합의합니다. 그래서 이 파일을 읽으면 노드 간 계약을 전부 본 셈이 됩니다.
 
