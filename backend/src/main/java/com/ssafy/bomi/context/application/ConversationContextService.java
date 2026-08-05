@@ -32,6 +32,7 @@ import com.ssafy.bomi.user.domain.ConsentStatus;
 import com.ssafy.bomi.user.repository.AppUserRepository;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.Period;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -91,11 +92,27 @@ public class ConversationContextService {
      * <p>Observations are excluded on purpose. They are the raw material of the daily
      * metrics, not something to read back to the senior mid-conversation.</p>
      */
+    // S15P11E102-259: 이 서비스만 "CONDITION"·"SCHEDULE" 이라는 존재하지 않는 이름표를
+    // 썼다. 실제 care_record.record_type 코드 사전 값은 HEALTH_CONDITION·PERSONAL_SCHEDULE
+    // 이고, 같은 저장소의 CareRecordQueryService·DashboardService·GreetingDecider 는 이미
+    // 올바른 값을 쓴다. record_type 이 raw String 이라 컴파일러가 오타를 막지 못했고, 결과가
+    // 항상 0건이라 오류도 나지 않아 아무도 눈치채지 못했다.
     private static final Set<String> HEALTH_RECORD_TYPES =
-        Set.of("MEDICATION", "MEDICATION_SCHEDULE", "ALLERGY", "CONDITION");
+        Set.of("MEDICATION", "MEDICATION_SCHEDULE", "ALLERGY", "HEALTH_CONDITION");
 
     private static final Set<String> SCHEDULE_RECORD_TYPES =
-        Set.of("APPOINTMENT", "SCHEDULE");
+        Set.of("APPOINTMENT", "PERSONAL_SCHEDULE");
+
+    /**
+     * 프로필의 {@code conditions} 를 채우는 데만 쓰는 질환 기록 유형.
+     *
+     * <p>{@link #HEALTH_RECORD_TYPES} 와 값은 같지만 목적이 다르다. 저 목록은 "질문에
+     * 관련된 돌봄 기록을 몇 개만 골라 보여준다"(재정렬·limit)이고, 이 목록은 "질환은
+     * 매 턴 빠짐없이 프롬프트에 실리는 고정 사실이다"(CLAUDE.md §8 의 push 규칙: 정확
+     * 조회, 벡터 검색 금지). 같은 상수를 재사용하면 나중에 한쪽만 바뀔 때 다른 쪽이
+     * 조용히 깨진다.</p>
+     */
+    private static final Set<String> CONDITION_RECORD_TYPES = Set.of("HEALTH_CONDITION");
 
     private final AppUserRepository appUserRepository;
     private final CareRelationshipRepository careRelationshipRepository;
@@ -189,8 +206,63 @@ public class ConversationContextService {
             senior.getQuietHoursStart().toString(),
             senior.getQuietHoursEnd().toString(),
             preferences,
-            extractAvoidTopics(preferences)
+            extractAvoidTopics(preferences),
+            computeAge(senior),
+            loadConditions(senior)
         );
+    }
+
+    /**
+     * 생년월일로 나이를 계산한다. 저장하지 않는 이유는 나이가 저장하는 순간 매일 조금씩
+     * 틀려지는 값이기 때문이다(생일이 지날 때마다 갱신 배치가 필요해진다). 생년월일이
+     * 비어 있으면(V9 이전 어르신, 아직 온보딩에서 답하지 않은 경우) null 을 돌려주고,
+     * 호출부(프롬프트 조립)는 그 줄만 건너뛴다 — CLAUDE.md §8.
+     */
+    private Integer computeAge(AppUser senior) {
+        if (senior.getBirthDate() == null) {
+            return null;
+        }
+        LocalDate today = LocalDate.now(resolveZone(senior));
+        return Period.between(senior.getBirthDate(), today).getYears();
+    }
+
+    /**
+     * 동의된 질환 기록을 프로필에 실을 문자열 목록으로 바꾼다.
+     *
+     * <p>질환은 §8 이 말하는 "정확 조회, 절대 벡터 아님" 대상이다. 무릎 통증과 당뇨를
+     * 임베딩으로 구분하려다 엉뚱한 답을 하는 것보다, 그냥 매번 전부 실어 주는 편이
+     * 안전하다. 그래서 selectCareRecords 처럼 질의어 관련성으로 줄이지 않는다.</p>
+     *
+     * <p>건강정보 동의가 없으면 애초에 이 값을 읽으면 안 된다 — care_record 로 가는
+     * 다른 읽기 경로와 동일한 동의 게이트다.</p>
+     */
+    private List<String> loadConditions(AppUser senior) {
+        if (!isGranted(senior.getHealthDataConsentStatus())) {
+            return List.of();
+        }
+        List<CareRecord> records = careRecordRepository.findBySeniorIdAndStatusAndRecordTypeIn(
+            senior.getId(), CareRecordStatus.ACTIVE, CONDITION_RECORD_TYPES);
+        return records.stream()
+            .map(this::conditionLabel)
+            .filter(label -> label != null && !label.isBlank())
+            .toList();
+    }
+
+    /**
+     * 질환 기록 한 건에서 사람이 읽을 이름을 꺼낸다.
+     *
+     * <p>{@code details} 는 jsonb 라 형태가 정해져 있지 않다. 이 컬럼을 쓰는 다른 코드가
+     * 아직 없어 확정된 관례가 없으므로, care_record.details 예시(예: medicationName)와
+     * 같은 패턴으로 {@code conditionName} 키를 쓰기로 정한다. 값이 없으면 조용히
+     * 건너뛴다 — 어설픈 문자열을 만들어 읽어주는 것보다 그 항목만 빠지는 편이 낫다.</p>
+     */
+    private String conditionLabel(CareRecord record) {
+        Map<String, Object> details = record.getDetails();
+        if (details == null) {
+            return null;
+        }
+        Object name = details.get("conditionName");
+        return name == null ? null : name.toString();
     }
 
     /**

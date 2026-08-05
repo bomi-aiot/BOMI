@@ -9,6 +9,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
@@ -97,6 +98,16 @@ public class AppUser {
     @Column(name = "home_longitude", precision = 9, scale = 6)
     private BigDecimal homeLongitude;
 
+    /**
+     * 생년월일. 나이는 여기서 그때그때 계산하고 따로 저장하지 않는다(S15P11E102-259).
+     *
+     * <p>Nullable: V9 이전에 만들어진 어르신이나 아직 온보딩에서 답하지 않은 경우가
+     * 있다. 그때는 대화 문맥의 나이 줄만 조용히 빠진다 — 실패가 아니라 정직한
+     * "모른다"다(CLAUDE.md §8).</p>
+     */
+    @Column(name = "birth_date")
+    private LocalDate birthDate;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "personalization_consent_status", nullable = false, length = 30)
     private ConsentStatus personalizationConsentStatus = ConsentStatus.NOT_REQUESTED;
@@ -182,6 +193,11 @@ public class AppUser {
         }
         this.quietHoursStart = start;
         this.quietHoursEnd = end;
+    }
+
+    /** Sets the birth date onboarding collected. Null is not accepted; use to clear. */
+    public void changeBirthDate(LocalDate birthDate) {
+        this.birthDate = requireNonNull(birthDate, "birthDate");
     }
 
     /** Sets or clears the home coordinates used for nearby clinic and pharmacy lookup. */

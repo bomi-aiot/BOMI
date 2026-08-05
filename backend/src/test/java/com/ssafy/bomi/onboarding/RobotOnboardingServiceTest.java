@@ -341,6 +341,26 @@ class RobotOnboardingServiceTest {
             .isEqualTo(ConsentStatus.NOT_REQUESTED);
     }
 
+    // ── S15P11E102-259: 생년월일 온보딩 ──────────────────────────────────────
+
+    @Test
+    void aConfirmedBirthDateReachesAppUserImmediately() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+
+        AnswerResult result = onboardingService.submitAnswer(session.getId(), "BIRTH_DATE",
+            Map.of("birthDate", "1950-05-12"), true, null, null);
+
+        // PREFERRED_NAME 과 같은 모양의 질문이다: 민감하지 않고 확인을 요구하지
+        // 않으므로, 확정 즉시(그 자체가 '확인'이다) app_user 에 반영된다.
+        assertThat(result.outcome()).isEqualTo(Outcome.ACCEPTED);
+        assertThat(result.materialized()).isTrue();
+        assertThat(reloadSenior().getBirthDate()).isEqualTo(java.time.LocalDate.of(1950, 5, 12));
+        FactCandidate candidate = candidateRepository.findById(result.factCandidateId())
+            .orElseThrow();
+        assertThat(candidate.getStatus()).isEqualTo(FactCandidateStatus.MATERIALIZED);
+    }
+
     @Test
     void anUnknownQuestionCodeIsRejected() {
         OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);

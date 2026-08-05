@@ -160,6 +160,68 @@ class ConversationContextServiceTest {
         assertThat(context.careRecords().get(0).recordType()).isEqualTo("MEDICATION");
     }
 
+    // ── S15P11E102-259: 이름표 오타 회귀 테스트 ─────────────────────────────
+
+    /**
+     * ConversationContextService 만 record_type 을 "CONDITION"·"SCHEDULE" 이라는
+     * 존재하지 않는 값으로 찾고 있었다. 실제 값은 HEALTH_CONDITION·PERSONAL_SCHEDULE
+     * 이고, 결과가 항상 0건이라 오류도 없이 조용히 빠졌다. 이 테스트가 그 경로를
+     * 처음으로 태운다.
+     */
+    @Test
+    void healthConditionAndPersonalScheduleRecordsReachTheContext() {
+        careRecordRepository.save(CareRecord.create(
+            senior.getId(), "HEALTH_CONDITION", Map.of("conditionName", "당뇨")));
+        careRecordRepository.save(CareRecord.create(
+            senior.getId(), "PERSONAL_SCHEDULE", Map.of("where", "미용실")));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.careRecords())
+            .extracting(ConversationContextResponse.CareRecordItem::recordType)
+            .containsExactlyInAnyOrder("HEALTH_CONDITION", "PERSONAL_SCHEDULE");
+    }
+
+    // ── S15P11E102-259: 나이·질환 ────────────────────────────────────────────
+
+    @Test
+    void profileCarriesAgeComputedFromBirthDateAndConfirmedConditions() {
+        senior.changeBirthDate(LocalDate.now().minusYears(78));
+        appUserRepository.save(senior);
+        careRecordRepository.save(CareRecord.create(
+            senior.getId(), "HEALTH_CONDITION", Map.of("conditionName", "고혈압")));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().age()).isEqualTo(78);
+        assertThat(context.profile().conditions()).containsExactly("고혈압");
+    }
+
+    /** 생년월일이 비어 있으면 나이 줄만 빠지고 오류가 나지 않는다 (완료 조건). */
+    @Test
+    void missingBirthDateYieldsNullAgeWithoutError() {
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().age()).isNull();
+    }
+
+    /** 질환도 다른 돌봄 기록과 같은 건강정보 동의 게이트를 따른다. */
+    @Test
+    void conditionsAreHiddenWithoutHealthDataConsent() {
+        careRecordRepository.save(CareRecord.create(
+            senior.getId(), "HEALTH_CONDITION", Map.of("conditionName", "당뇨")));
+        senior.changeHealthDataConsent(ConsentStatus.DENIED);
+        appUserRepository.save(senior);
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().conditions()).isEmpty();
+    }
+
     /**
      * The current conversation's summary must not also appear in the relevant list.
      *

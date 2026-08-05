@@ -2,6 +2,8 @@ package com.ssafy.bomi.onboarding.application;
 
 import com.ssafy.bomi.user.domain.AppUser;
 import com.ssafy.bomi.user.domain.ConsentStatus;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
@@ -75,6 +77,10 @@ public class OnboardingMaterializer {
                 senior.changePreferredName(text(confirmedValue, "preferredName"));
                 yield true;
             }
+            case "birth_date" -> {
+                senior.changeBirthDate(birthDateOf(confirmedValue));
+                yield true;
+            }
             // 계약에 app_user 필드가 추가됐는데 여기 분기를 안 만든 경우다. 조용히 넘어가면
             // "동의했는데 반영이 안 되는" 상태가 되므로 요란하게 실패한다.
             default -> throw new IllegalStateException(
@@ -99,6 +105,23 @@ public class OnboardingMaterializer {
                 "consentStatus must be GRANTED or DENIED, got " + raw);
         };
         return status;
+    }
+
+    /**
+     * 확정된 생년월일 문자열(ISO-8601, "YYYY-MM-DD")을 {@link LocalDate} 로 바꾼다.
+     *
+     * <p>스키마 검증(answerSchema.birthDate.format = date)이 형식을 이미 걸러내는 것이
+     * 원칙이지만, 여기서도 다시 파싱을 검증한다 — ASR 을 거친 값이 스키마를 통과했다고
+     * 항상 파싱 가능하다고 믿으면, 잘못된 값이 조용히 예외로 죽는 대신 엉뚱한 나이로
+     * 계산돼 버릴 수 있다.</p>
+     */
+    private LocalDate birthDateOf(Map<String, Object> confirmedValue) {
+        String raw = text(confirmedValue, "birthDate");
+        try {
+            return LocalDate.parse(raw);
+        } catch (DateTimeParseException exception) {
+            throw new IllegalArgumentException("birthDate must be ISO-8601 (YYYY-MM-DD), got " + raw);
+        }
     }
 
     private String text(Map<String, Object> value, String field) {
