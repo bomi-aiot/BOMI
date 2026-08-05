@@ -25,6 +25,8 @@ import com.ssafy.bomi.memory.domain.MemoryType;
 import com.ssafy.bomi.memory.domain.MemoryVerificationStatus;
 import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
+import com.ssafy.bomi.person.domain.KnownPerson;
+import com.ssafy.bomi.person.repository.KnownPersonRepository;
 import com.ssafy.bomi.relationship.domain.CareRelationship;
 import com.ssafy.bomi.relationship.domain.RelationshipPriority;
 import com.ssafy.bomi.relationship.repository.CareRelationshipRepository;
@@ -82,6 +84,7 @@ class ConversationContextServiceTest {
     @Autowired private MemoryRepository memoryRepository;
     @Autowired private CareRecordRepository careRecordRepository;
     @Autowired private DailyActivityMetricRepository metricRepository;
+    @Autowired private KnownPersonRepository knownPersonRepository;
 
     private AppUser senior;
 
@@ -220,6 +223,74 @@ class ConversationContextServiceTest {
             senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
 
         assertThat(context.profile().conditions()).isEmpty();
+    }
+
+    // ── S15P11E102-260: known_person 이 회피 대상의 새 출처 ──────────────────
+
+    /**
+     * known_person 에 사망(is_deceased=TRUE)인 사람이 있으면 그 사람이 회피 대상이
+     * 되고, 완료 조건대로 문구는 사실(死)이 아니라 금지문이어야 한다.
+     */
+    @Test
+    void deceasedKnownPersonProducesAProhibitionNotAFact() {
+        knownPersonRepository.save(KnownPerson.register(
+            senior.getId(), null, "박정호", "배우자", true, "1년 전 지병으로 별세", null, null));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().avoidTopics()).hasSize(1);
+        String phrase = context.profile().avoidTopics().get(0);
+        assertThat(phrase).contains("박정호");
+        // 회피 문구는 정보가 아니라 금지문이다 — 사망 사실이나 보호자 메모가
+        // 그대로 새어 나오면 안 된다 (CLAUDE.md §8).
+        assertThat(phrase).doesNotContain("별세").doesNotContain("사망").doesNotContain("지병");
+    }
+
+    /**
+     * is_deceased 가 NULL(모름)인 사람도 TRUE 와 똑같이 먼저 언급되지 않아야 한다 —
+     * 이 티켓의 완료 조건이 명시적으로 요구하는 안전한 기본값이다.
+     */
+    @Test
+    void unknownSurvivalStatusIsTreatedAsAnAvoidTargetToo() {
+        knownPersonRepository.save(KnownPerson.register(
+            senior.getId(), null, "이영희", "친구", null, null, null, null));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().avoidTopics()).hasSize(1);
+        assertThat(context.profile().avoidTopics().get(0)).contains("이영희");
+    }
+
+    /** 생존이 확인된(is_deceased=FALSE) 사람은 회피 대상이 아니다. */
+    @Test
+    void confirmedLivingKnownPersonIsNotAnAvoidTarget() {
+        knownPersonRepository.save(KnownPerson.register(
+            senior.getId(), null, "김민수", "아들", false, null, false, "주 1회"));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().avoidTopics()).isEmpty();
+    }
+
+    /**
+     * known_person 이 하나라도 있으면 그 목록이 우선한다 — jsonb 경로는 known_person
+     * 이 <em>전혀</em> 없을 때만 쓰는 호환 폴백이다(완료 조건).
+     */
+    @Test
+    void knownPersonListTakesPriorityOverTheLegacyJsonbList() {
+        // setUpSenior() 가 이미 conversation_preferences.avoid_topics = ["남편 사망"] 을
+        // 심어 두었다. known_person 이 생기면 이 jsonb 값은 더 이상 쓰이지 않는다.
+        knownPersonRepository.save(KnownPerson.register(
+            senior.getId(), null, "박정호", "배우자", true, null, null, null));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().avoidTopics()).doesNotContain("남편 사망");
+        assertThat(context.profile().avoidTopics().get(0)).contains("박정호");
     }
 
     /**

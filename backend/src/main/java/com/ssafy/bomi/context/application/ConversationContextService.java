@@ -23,6 +23,8 @@ import com.ssafy.bomi.conversation.repository.ConversationSummaryRepository;
 import com.ssafy.bomi.memory.domain.Memory;
 import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
+import com.ssafy.bomi.person.domain.KnownPerson;
+import com.ssafy.bomi.person.repository.KnownPersonRepository;
 import com.ssafy.bomi.relationship.domain.CareRelationship;
 import com.ssafy.bomi.relationship.domain.RelationshipPriority;
 import com.ssafy.bomi.relationship.domain.RelationshipStatus;
@@ -80,9 +82,11 @@ public class ConversationContextService {
     /**
      * Key in {@code app_user.conversation_preferences} holding topics to avoid.
      *
-     * <p>Read deterministically and passed to the prompt as a prohibition. Probabilistic
-     * recall is unacceptable here: surfacing a deceased spouse as if alive is one of the
-     * worst failures this product can produce (CLAUDE.md §8, §17.5).</p>
+     * <p><strong>Legacy, compat-only (S15P11E102-260).</strong> The authoritative source
+     * is now the {@code known_person} table: structured name + survival status, so the
+     * gate can be enforced deterministically instead of matching free-form strings. This
+     * key is read only when a senior has no {@code known_person} rows yet, so an old
+     * profile does not silently lose whatever avoid-list it already had.</p>
      */
     private static final String AVOID_TOPICS_KEY = "avoid_topics";
 
@@ -121,6 +125,7 @@ public class ConversationContextService {
     private final ConversationSummaryRepository conversationSummaryRepository;
     private final MemoryRepository memoryRepository;
     private final CareRecordRepository careRecordRepository;
+    private final KnownPersonRepository knownPersonRepository;
     private final MemorySemanticSearch semanticSearch;
     private final DocumentCorpusSearch documentSearch;
     private final ContextAssemblyProperties properties;
@@ -133,6 +138,7 @@ public class ConversationContextService {
         ConversationSummaryRepository conversationSummaryRepository,
         MemoryRepository memoryRepository,
         CareRecordRepository careRecordRepository,
+        KnownPersonRepository knownPersonRepository,
         MemorySemanticSearch semanticSearch,
         DocumentCorpusSearch documentSearch,
         ContextAssemblyProperties properties
@@ -144,6 +150,7 @@ public class ConversationContextService {
         this.conversationSummaryRepository = conversationSummaryRepository;
         this.memoryRepository = memoryRepository;
         this.careRecordRepository = careRecordRepository;
+        this.knownPersonRepository = knownPersonRepository;
         this.semanticSearch = semanticSearch;
         this.documentSearch = documentSearch;
         this.properties = properties;
@@ -206,7 +213,7 @@ public class ConversationContextService {
             senior.getQuietHoursStart().toString(),
             senior.getQuietHoursEnd().toString(),
             preferences,
-            extractAvoidTopics(preferences),
+            extractAvoidTopics(senior.getId(), preferences),
             computeAge(senior),
             loadConditions(senior)
         );
@@ -266,14 +273,54 @@ public class ConversationContextService {
     }
 
     /**
-     * Pulls the avoid-list out of the preferences JSON.
+     * Builds the avoid-list, {@code known_person} first, the legacy jsonb key as a
+     * compat-only fallback (S15P11E102-260).
+     *
+     * <p>Order matters here, not just presence. {@code known_person} rows are
+     * structured (name + survival status), so this is the only source that can be
+     * enforced deterministically per CLAUDE.md §8 — the old jsonb list was free-form
+     * strings with no writer anywhere in the codebase, which is exactly why the avoid
+     * list never actually worked. The jsonb key is consulted only when a senior has
+     * no {@code known_person} rows at all, so a profile onboarded before this ticket
+     * does not silently lose whatever it already had.</p>
+     */
+    private List<String> extractAvoidTopics(UUID seniorId, Map<String, Object> preferences) {
+        List<KnownPerson> registered = knownPersonRepository.findBySeniorId(seniorId);
+        // known_person 이 하나라도 있으면 그 표가 이 어르신의 명부에 대한 권위다 —
+        // 필터 결과가 우연히 비었다고(등록된 사람이 전부 생존 확인됨) jsonb 로
+        // 되돌아가면 이미 지운 옛 회피 문구가 되살아난다. 표가 통째로 비어 있을
+        // 때만("known_person 자체가 아직 없다") 호환 폴백을 쓴다.
+        if (!registered.isEmpty()) {
+            return registered.stream()
+                .filter(KnownPerson::isAvoidTarget)
+                .map(ConversationContextService::avoidPhrase)
+                .toList();
+        }
+        return extractLegacyAvoidTopics(preferences);
+    }
+
+    /**
+     * Turns one avoided person into a <strong>prohibition</strong>, never information.
+     *
+     * <p>"배우자가 작년에 돌아가셨습니다" tells the model a fact it will happily bring
+     * up. "이 사람 이야기는 로봇이 먼저 꺼내지 않습니다" tells it what not to do and
+     * nothing else — {@link KnownPerson#getDeceasedNote()} is deliberately never read
+     * here, for the same reason (CLAUDE.md §8, §17.5).</p>
+     */
+    private static String avoidPhrase(KnownPerson person) {
+        return person.getDisplayName() + " 이야기는 로봇이 먼저 꺼내지 않습니다.";
+    }
+
+    /**
+     * Pulls the avoid-list out of the preferences JSON. Compat-only fallback; see
+     * {@link #extractAvoidTopics(UUID, Map)}.
      *
      * <p>Defensive about shape because this value is written by two channels (app and
      * robot onboarding) and a malformed entry must not take the endpoint down. Failing
      * closed here means returning an empty list, and that is the dangerous direction —
      * so a surprise shape is logged loudly rather than swallowed.</p>
      */
-    private List<String> extractAvoidTopics(Map<String, Object> preferences) {
+    private List<String> extractLegacyAvoidTopics(Map<String, Object> preferences) {
         Object raw = preferences.get(AVOID_TOPICS_KEY);
         if (raw == null) {
             return List.of();

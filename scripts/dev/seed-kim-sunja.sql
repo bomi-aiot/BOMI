@@ -3,9 +3,15 @@
 -- 대상: backend/src/main/resources/db/migration/V1__init.sql로 생성된 빈 bomi DB
 -- 주의:
 --   * Flyway migration이 아니다.
---   * 대상 12개 테이블 중 하나라도 비어 있지 않으면 아무 데이터도 넣지 않는다.
+--   * 대상 13개 테이블(V10의 known_person 포함) 중 하나라도 비어 있지 않으면
+--     아무 데이터도 넣지 않는다.
 --   * 삭제/초기화/UPSERT를 수행하지 않는다.
 --   * 모든 시각은 한 트랜잭션의 CURRENT_TIMESTAMP를 기준으로 계산한다.
+--
+-- S15P11E102-260: known_person 에 사망 가족 1명·생존 가족 1명을 추가했다. 완료
+-- 조건이 "프롬프트의 '말하지 않을 주제' 섹션이 실제로 렌더링되는 것을 눈으로
+-- 확인한다"를 요구하는데, 그 섹션은 known_person 이 최소 한 건 있어야만 채워지고
+-- 지금까지는 이 데이터를 만드는 코드가 저장소 어디에도 없었다.
 
 BEGIN;
 
@@ -23,9 +29,10 @@ BEGIN
        OR EXISTS (SELECT 1 FROM fact_candidate LIMIT 1)
        OR EXISTS (SELECT 1 FROM memory LIMIT 1)
        OR EXISTS (SELECT 1 FROM care_record LIMIT 1)
+       OR EXISTS (SELECT 1 FROM known_person LIMIT 1)
     THEN
         RAISE EXCEPTION
-            '김순자 seed 중단: 대상 12개 테이블 중 비어 있지 않은 테이블이 있습니다.';
+            '김순자 seed 중단: 대상 13개 테이블 중 비어 있지 않은 테이블이 있습니다.';
     END IF;
 END
 $$;
@@ -693,6 +700,58 @@ INSERT INTO care_record (
     '{"frequency":"DAILY","times":["08:30","12:30","18:30"]}'::jsonb
 );
 
+-- S15P11E102-260: known_person — 사망 가족 1명 + 생존 가족 1명.
+--
+-- 사망: 남편 박정호. is_deceased = TRUE 이므로 문맥 조립 API 는 이 사람을 회피
+-- 대상으로 판정하고, avoidTopics 에는 deceased_note 의 "1년 전 지병으로 별세"가
+-- 아니라 금지문("박정호 이야기는 로봇이 먼저 꺼내지 않습니다")만 실린다
+-- (ConversationContextService.avoidPhrase 참고, CLAUDE.md §8).
+--
+-- 생존: 아들 김민수. is_deceased = FALSE 이므로 회피 대상이 아니다 — 이 사람은
+-- 오히려 "민수는 잘 있대요?" 같은 자연스러운 이어짐에 쓰일 수 있는 쪽이다.
+INSERT INTO known_person (
+    id,
+    senior_id,
+    guardian_user_id,
+    display_name,
+    relationship,
+    is_deceased,
+    deceased_note,
+    lives_with,
+    contact_frequency,
+    last_mentioned_at,
+    created_at,
+    updated_at
+) VALUES
+(
+    '90000000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000002',
+    '박정호',
+    '배우자',
+    TRUE,
+    '1년 전 지병으로 별세',
+    NULL,
+    NULL,
+    NULL,
+    CURRENT_TIMESTAMP - INTERVAL '30 days',
+    CURRENT_TIMESTAMP - INTERVAL '30 days'
+),
+(
+    '90000000-0000-4000-8000-000000000002',
+    '10000000-0000-4000-8000-000000000001',
+    '10000000-0000-4000-8000-000000000002',
+    '김민수',
+    '아들',
+    FALSE,
+    NULL,
+    FALSE,
+    '주 1회',
+    NULL,
+    CURRENT_TIMESTAMP - INTERVAL '30 days',
+    CURRENT_TIMESTAMP - INTERVAL '30 days'
+);
+
 COMMIT;
 
 -- 실행 후 요약 확인
@@ -708,4 +767,5 @@ UNION ALL SELECT 'conversation_summary', COUNT(*) FROM conversation_summary
 UNION ALL SELECT 'fact_candidate', COUNT(*) FROM fact_candidate
 UNION ALL SELECT 'memory', COUNT(*) FROM memory
 UNION ALL SELECT 'care_record', COUNT(*) FROM care_record
+UNION ALL SELECT 'known_person', COUNT(*) FROM known_person
 ORDER BY table_name;

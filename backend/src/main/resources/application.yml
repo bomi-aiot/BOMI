@@ -44,6 +44,7 @@ springdoc:
         - /api/v1/care-records/**
         - /api/v1/confirmation-requests/**
         - /api/v1/elders/**
+        - /api/v1/known-persons/**
     - group: bomi-backend
       display-name: "[BE-All] 백엔드 전체 API"
       packages-to-scan: com.ssafy.bomi
