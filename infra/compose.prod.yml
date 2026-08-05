@@ -264,11 +264,13 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ${CERTBOT_CONF_DIR:?CERTBOT_CONF_DIR is required}:/etc/letsencrypt:ro
       - ${CERTBOT_WEBROOT_DIR:?CERTBOT_WEBROOT_DIR is required}:/var/www/certbot:ro
-      # 가디언웹 채널 단기 접근 제어용 htpasswd (S15P11E102-310). bomi.conf 의
-      # auth_basic_user_file 이 이 경로를 읽는다. 파일 내용(해시된 자격 증명)은
-      # 저장소에 커밋하지 않는다 — POSTGRES_PASSWORD 와 달리 이 값은 아예 git 에
-      # 들어오지 않고, 운영 호스트에서 직접 생성한다(생성 절차는 infra/README.md).
-      - ${NGINX_GUARDIAN_HTPASSWD_FILE:?NGINX_GUARDIAN_HTPASSWD_FILE is required}:/etc/nginx/guardian.htpasswd:ro
+      # 가디언웹 채널 단기 접근 제어용 htpasswd 마운트 (S15P11E102-310) — 2026-08-05
+      # 임시 보류. bomi.conf 의 auth_basic 이 주석 처리되어 지금은 이 파일을 읽지
+      # 않는다. htpasswd 파일이 운영 호스트에 아직 없는 상태에서 릴리즈를 진행해야
+      # 했고, `:?` 필수 선언을 살려 두면 파일이 생기기 전까지 배포 자체가 막혀
+      # 개발 단계의 병목이 된다. 되살리려면 이 줄의 주석을 걷고 bomi.conf 의
+      # auth_basic 두 줄도 함께 되살린다 — 절차는 infra/README.md 참고.
+      # - ${NGINX_GUARDIAN_HTPASSWD_FILE:?NGINX_GUARDIAN_HTPASSWD_FILE is required}:/etc/nginx/guardian.htpasswd:ro
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--spider", "http://localhost/nginx-health"]
       interval: 10s
