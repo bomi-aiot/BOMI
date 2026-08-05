@@ -1076,6 +1076,7 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 
 | 시점 | 내용 |
 |---|---|
+| 349 푸시 후 (2026-08-06) | **웨이크워드 감지 MQTT 발행.** be-develop 에 머지된 보미야 호출 시나리오(335)의 `WakeWordDetectedHandler` 가 로봇의 `WAKE_WORD_DETECTED` 이벤트를 기다리는데 로봇은 발행 코드가 0건이었다 — "만들어 놓고 아무도 안 부르는" 유형(226과 동형). `robot_events.py` 신설: 토픽 `bomi/v1/robot/{robotId}/events`, 봉투 `type/eventId/occurredAt/payload{keyword,confidence}` (계약의 권위는 be-develop 파서). `run_conversation_loop` 가 `wait_for_wake()` 직후 1회 발행하고, 발행 실패·브로커 부재·MQTT 꺼짐은 전부 대화를 막지 않는다(시나리오는 부가, 대화가 본체). 신규 테스트 8건. **실브로커·BE 오케스트레이터까지의 실통합은 UNVERIFIED — 실기 확인 항목** |
 | 205 푸시 후 | 최초 작성. 200~205 반영 |
 | 206 푸시 후 | 206 추가. §2.3 에서 `handle_schedule` 구현으로 "약 먹었어"가 정상 처리됨을 반영. 복약 알림 미투입 공백 신규 기록 |
 | 207 푸시 후 | 207 추가. 206 스케줄러 시그니처 결함 수정 기록. 루틴 베이스라인 부재·캐시 오디오 미렌더링 공백 신규 기록 |
