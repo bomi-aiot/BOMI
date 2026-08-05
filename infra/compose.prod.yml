@@ -155,6 +155,17 @@ services:
       EMBEDDING_SYNC_ENABLED: ${EMBEDDING_SYNC_ENABLED:-false}
       # 한 실행에 과금되는 호출 수의 상한. 잔액이 작으므로 재배포 없이 줄일 수 있어야 한다.
       EMBEDDING_SYNC_BATCH_SIZE: ${EMBEDDING_SYNC_BATCH_SIZE:-30}
+      # 대화 요약 생성형 LLM — Gemini, GMS 경유 (S15P11E102-254). 백엔드의 두 번째(현재
+      # 마지막) 과금 외부 API. UPSTAGE_API_KEY 가 겪은 것과 똑같은 실패 모양이다 —
+      # 키만 넘기고 LLM_ENABLED 를 빠뜨리면 application.yml 기본값(false)이 조용히 이겨
+      # 대화 요약이 영원히 생성되지 않는다. 두 줄을 항상 같이 넘긴다.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LLM_ENABLED: ${LLM_ENABLED:-false}
+      # 한 번의 요약 스윕이 부를 수 있는 호출 수 상한. 지출 상한이지 튜닝 값이 아니다.
+      LLM_MAX_CALLS_PER_RUN: ${LLM_MAX_CALLS_PER_RUN:-20}
+      # 대화 경계 유휴시간(S15P11E102-254). SCENARIO_ACTIVE_TIMEOUT 과 같은 이유로
+      # 넘긴다 — 현장에서 재배포 없이 조정 가능해야 한다.
+      CONVERSATION_IDLE_TIMEOUT: ${CONVERSATION_IDLE_TIMEOUT:-30m}
       # 로봇 채널 인증 공유 비밀키 (S15P11E102-307). 비어 있으면 필터가 전부
       # 통과시킨다 — 실제 값을 정하는 것은 별도 배포 결정이고 이 티켓의 범위 밖이다.
       # 여기 넘기지 않으면 production.env 에 값을 적어도 컨테이너에 도달하지

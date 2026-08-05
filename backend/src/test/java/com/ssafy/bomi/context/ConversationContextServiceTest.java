@@ -25,6 +25,8 @@ import com.ssafy.bomi.memory.domain.MemoryType;
 import com.ssafy.bomi.memory.domain.MemoryVerificationStatus;
 import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
+import com.ssafy.bomi.person.domain.KnownPerson;
+import com.ssafy.bomi.person.repository.KnownPersonRepository;
 import com.ssafy.bomi.relationship.domain.CareRelationship;
 import com.ssafy.bomi.relationship.domain.RelationshipPriority;
 import com.ssafy.bomi.relationship.repository.CareRelationshipRepository;
@@ -36,6 +38,7 @@ import java.io.IOException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -82,6 +85,7 @@ class ConversationContextServiceTest {
     @Autowired private MemoryRepository memoryRepository;
     @Autowired private CareRecordRepository careRecordRepository;
     @Autowired private DailyActivityMetricRepository metricRepository;
+    @Autowired private KnownPersonRepository knownPersonRepository;
 
     private AppUser senior;
 
@@ -158,6 +162,168 @@ class ConversationContextServiceTest {
         // 6. 동의된 돌봄 기록
         assertThat(context.careRecords()).hasSize(1);
         assertThat(context.careRecords().get(0).recordType()).isEqualTo("MEDICATION");
+    }
+
+    // ── S15P11E102-259: 이름표 오타 회귀 테스트 ─────────────────────────────
+
+    /**
+     * ConversationContextService 만 record_type 을 "CONDITION"·"SCHEDULE" 이라는
+     * 존재하지 않는 값으로 찾고 있었다. 실제 값은 HEALTH_CONDITION·PERSONAL_SCHEDULE
+     * 이고, 결과가 항상 0건이라 오류도 없이 조용히 빠졌다. 이 테스트가 그 경로를
+     * 처음으로 태운다.
+     */
+    @Test
+    void healthConditionAndPersonalScheduleRecordsReachTheContext() {
+        careRecordRepository.save(CareRecord.create(
+            senior.getId(), "HEALTH_CONDITION", Map.of("conditionName", "당뇨")));
+        careRecordRepository.save(CareRecord.create(
+            senior.getId(), "PERSONAL_SCHEDULE", Map.of("where", "미용실")));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.careRecords())
+            .extracting(ConversationContextResponse.CareRecordItem::recordType)
+            .containsExactlyInAnyOrder("HEALTH_CONDITION", "PERSONAL_SCHEDULE");
+    }
+
+    // ── S15P11E102-259: 나이·질환 ────────────────────────────────────────────
+
+    @Test
+    void profileCarriesAgeComputedFromBirthDateAndConfirmedConditions() {
+        senior.changeBirthDate(LocalDate.now().minusYears(78));
+        appUserRepository.save(senior);
+        careRecordRepository.save(CareRecord.create(
+            senior.getId(), "HEALTH_CONDITION", Map.of("conditionName", "고혈압")));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().age()).isEqualTo(78);
+        assertThat(context.profile().conditions()).containsExactly("고혈압");
+    }
+
+    /** 생년월일이 비어 있으면 나이 줄만 빠지고 오류가 나지 않는다 (완료 조건). */
+    @Test
+    void missingBirthDateYieldsNullAgeWithoutError() {
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().age()).isNull();
+    }
+
+    /** 질환도 다른 돌봄 기록과 같은 건강정보 동의 게이트를 따른다. */
+    @Test
+    void conditionsAreHiddenWithoutHealthDataConsent() {
+        careRecordRepository.save(CareRecord.create(
+            senior.getId(), "HEALTH_CONDITION", Map.of("conditionName", "당뇨")));
+        senior.changeHealthDataConsent(ConsentStatus.DENIED);
+        appUserRepository.save(senior);
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().conditions()).isEmpty();
+    }
+
+    // ── S15P11E102-261: 개인차가 있어야 하는 값 세 가지 ──────────────────────
+
+    /** 세 값이 모두 채워지면 문맥의 프로필에 실려야 한다(완료 조건). */
+    @Test
+    void profileCarriesWakeSleepTimeChronicPainAreaAndPreferredHospital() {
+        senior.changeWakeTime(java.time.LocalTime.of(6, 30));
+        senior.changeSleepTime(java.time.LocalTime.of(22, 30));
+        senior.changeChronicPainArea("왼쪽 무릎");
+        senior.changePreferredHospital("행복내과의원");
+        appUserRepository.save(senior);
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().wakeTime()).isEqualTo("06:30");
+        assertThat(context.profile().sleepTime()).isEqualTo("22:30");
+        assertThat(context.profile().chronicPainArea()).isEqualTo("왼쪽 무릎");
+        assertThat(context.profile().preferredHospital()).isEqualTo("행복내과의원");
+    }
+
+    /** 세 값이 전부 비어 있는 어르신도 지금과 동일하게(오류 없이) 동작한다(완료 조건). */
+    @Test
+    void missingWakeSleepTimeChronicPainAreaAndPreferredHospitalYieldNullWithoutError() {
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().wakeTime()).isNull();
+        assertThat(context.profile().sleepTime()).isNull();
+        assertThat(context.profile().chronicPainArea()).isNull();
+        assertThat(context.profile().preferredHospital()).isNull();
+    }
+
+    // ── S15P11E102-260: known_person 이 회피 대상의 새 출처 ──────────────────
+
+    /**
+     * known_person 에 사망(is_deceased=TRUE)인 사람이 있으면 그 사람이 회피 대상이
+     * 되고, 완료 조건대로 문구는 사실(死)이 아니라 금지문이어야 한다.
+     */
+    @Test
+    void deceasedKnownPersonProducesAProhibitionNotAFact() {
+        knownPersonRepository.save(KnownPerson.register(
+            senior.getId(), null, "박정호", "배우자", true, "1년 전 지병으로 별세", null, null));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().avoidTopics()).hasSize(1);
+        String phrase = context.profile().avoidTopics().get(0);
+        assertThat(phrase).contains("박정호");
+        // 회피 문구는 정보가 아니라 금지문이다 — 사망 사실이나 보호자 메모가
+        // 그대로 새어 나오면 안 된다 (CLAUDE.md §8).
+        assertThat(phrase).doesNotContain("별세").doesNotContain("사망").doesNotContain("지병");
+    }
+
+    /**
+     * is_deceased 가 NULL(모름)인 사람도 TRUE 와 똑같이 먼저 언급되지 않아야 한다 —
+     * 이 티켓의 완료 조건이 명시적으로 요구하는 안전한 기본값이다.
+     */
+    @Test
+    void unknownSurvivalStatusIsTreatedAsAnAvoidTargetToo() {
+        knownPersonRepository.save(KnownPerson.register(
+            senior.getId(), null, "이영희", "친구", null, null, null, null));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().avoidTopics()).hasSize(1);
+        assertThat(context.profile().avoidTopics().get(0)).contains("이영희");
+    }
+
+    /** 생존이 확인된(is_deceased=FALSE) 사람은 회피 대상이 아니다. */
+    @Test
+    void confirmedLivingKnownPersonIsNotAnAvoidTarget() {
+        knownPersonRepository.save(KnownPerson.register(
+            senior.getId(), null, "김민수", "아들", false, null, false, "주 1회"));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().avoidTopics()).isEmpty();
+    }
+
+    /**
+     * known_person 이 하나라도 있으면 그 목록이 우선한다 — jsonb 경로는 known_person
+     * 이 <em>전혀</em> 없을 때만 쓰는 호환 폴백이다(완료 조건).
+     */
+    @Test
+    void knownPersonListTakesPriorityOverTheLegacyJsonbList() {
+        // setUpSenior() 가 이미 conversation_preferences.avoid_topics = ["남편 사망"] 을
+        // 심어 두었다. known_person 이 생기면 이 jsonb 값은 더 이상 쓰이지 않는다.
+        knownPersonRepository.save(KnownPerson.register(
+            senior.getId(), null, "박정호", "배우자", true, null, null, null));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().avoidTopics()).doesNotContain("남편 사망");
+        assertThat(context.profile().avoidTopics().get(0)).contains("박정호");
     }
 
     /**
@@ -315,6 +481,46 @@ class ConversationContextServiceTest {
     }
 
     /**
+     * A guardian must never receive raw utterances or summary text, even though the
+     * senior's own conversation has both (S15P11E102-254, CLAUDE.md §9 T4).
+     *
+     * <p>Unlike memories, {@code conversation_message} and {@code conversation_summary}
+     * carry no per-row visibility column — "PRIVATE unless shared" does not apply here.
+     * The only safe default is "a guardian request sees no raw content at all", so this
+     * pins {@code forGuardian} in {@code ConversationContextService.assemble} rather than
+     * relying on the memory visibility filter to somehow also cover these two fields.</p>
+     */
+    @Test
+    void guardianRequestNeverSeesRawMessagesOrSummaries() {
+        Conversation conversation = conversationRepository.save(Conversation.open(senior.getId()));
+        messageRepository.save(ConversationMessage.reactive(
+            conversation.getId(), 1, MessageRole.SENIOR, "무릎이 아파", OffsetDateTime.now()));
+        summaryRepository.save(ConversationSummary.forConversation(
+            senior.getId(), conversation.getId(),
+            OffsetDateTime.now().minusHours(1), OffsetDateTime.now(), "지금 대화 요약", 1));
+
+        UUID guardianId = appUserRepository.save(AppUser.create("GUARDIAN", "딸")).getId();
+        careRelationshipRepository.save(CareRelationship.create(
+            senior.getId(), guardianId, RelationshipPriority.SECONDARY));
+
+        ConversationContextResponse robotView = contextService.assemble(
+            senior.getId(),
+            new ConversationContextRequest("", conversation.getId(), null, null, false, null));
+        ConversationContextResponse guardianView = contextService.assemble(
+            senior.getId(),
+            new ConversationContextRequest("", conversation.getId(), null, null, false, guardianId));
+
+        // 로봇이 어르신과 말할 때는 그대로 실린다 — 대조군.
+        assertThat(robotView.recentMessages()).isNotEmpty();
+        assertThat(robotView.conversationSummary()).isEqualTo("지금 대화 요약");
+
+        // 보호자 요청은 원문·요약 어느 쪽도 받지 않는다.
+        assertThat(guardianView.recentMessages()).isEmpty();
+        assertThat(guardianView.conversationSummary()).isNull();
+        assertThat(guardianView.relevantSummaries()).isEmpty();
+    }
+
+    /**
      * A guardian with no active relationship is refused, not quietly given nothing.
      *
      * <p>An empty result would read as "nothing was shared", which hides a permission
@@ -409,6 +615,75 @@ class ConversationContextServiceTest {
         // '아무것도 기억하지 못하는' 상태가 된다.
         assertThat(context.memories()).extracting(ConversationContextResponse.MemoryItem::id)
             .contains(unrelated.getId());
+    }
+
+    // ── S15P11E102-262: 최근에 쓴 기억은 감점된다 (같은 회상 반복 방지) ─────────
+
+    /**
+     * 완료 조건: "최근에 사용된 기억이 감점되어, 같은 기억이 연속으로 뽑히지
+     * 않는 것을 테스트로 확인합니다".
+     *
+     * <p>두 기억을 관련성·중요도가 완전히 동일하게 심는다. 어느 쪽이 먼저 뽑히든,
+     * assemble 이 그 기억의 last_used_at 을 갱신하므로 다음 호출에서는 반드시
+     * 나머지 하나가 뽑혀야 한다 — 고친 방향(최근 사용 = 감점)이 실제로 반영됐다는
+     * 증거다. 고치기 전 코드(최근 사용 = 가점)였다면 같은 기억이 계속 뽑혔을
+     * 것이다.</p>
+     */
+    @Test
+    void recentlyUsedMemoriesAreDeprioritizedNextRound() {
+        // memoryTopKMin 이 3 이라(§7 clampMemoryTopK) 4건을 심어 topK=3 으로 요청한다 —
+        // 그래야 '이번엔 뽑히지 않은 한 건'이 반드시 생겨서, 감점 효과를 관찰할 수 있다.
+        List<Memory> memories = new ArrayList<>();
+        for (int index = 0; index < 4; index++) {
+            memories.add(saveMemory("기억 " + index, List.of("무릎"), (short) 3));
+        }
+
+        ConversationContextResponse round1 = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("무릎", null, 3, null, false, null));
+        List<UUID> round1Ids = round1.memories().stream()
+            .map(ConversationContextResponse.MemoryItem::id).toList();
+        assertThat(round1Ids).hasSize(3);
+
+        UUID leftOutOfRound1 = memories.stream().map(Memory::getId)
+            .filter(id -> !round1Ids.contains(id)).findFirst().orElseThrow();
+
+        ConversationContextResponse round2 = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("무릎", null, 3, null, false, null));
+        List<UUID> round2Ids = round2.memories().stream()
+            .map(ConversationContextResponse.MemoryItem::id).toList();
+
+        // 1라운드에서 뽑혔던 세 기억은 이제 감점됐고, 아직 한 번도 안 쓰인 네 번째
+        // 기억은 감점이 없다 — 그래서 2라운드에는 반드시 들어와야 한다. 고치기 전
+        // 코드(최근 사용 = 가점)였다면 1라운드의 세 기억이 그대로 다시 뽑혔을 것이다.
+        assertThat(round2Ids).contains(leftOutOfRound1);
+    }
+
+    /**
+     * markUsed 호출이 실제로 last_used_at 을 채우는지 리포지토리 레벨에서 직접
+     * 확인한다. 서비스 테스트만으로는 "선택이 바뀌었다"까지만 보이고, "그 이유가
+     * 정말 last_used_at 갱신 때문인가"는 이 테스트가 답한다.
+     */
+    @Test
+    void assembleStampsLastUsedAtOnSelectedMemories() {
+        Memory memory = saveMemory("기억", List.of("무릎"), (short) 3);
+        assertThat(memory.getLastUsedAt()).isNull();
+
+        assembleWithTopK(1);
+
+        Memory reloaded = memoryRepository.findById(memory.getId()).orElseThrow();
+        assertThat(reloaded.getLastUsedAt()).isNotNull();
+    }
+
+    /** 한 번도 쓰인 적 없는 기억은 감점되지 않는다 — 회상 씨앗이 영원히 묻히면 안 된다. */
+    @Test
+    void neverUsedMemoryIsNotPenalized() {
+        Memory neverUsed = saveMemory("아직 안 꺼낸 기억", List.of("무릎"), (short) 3);
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("무릎", null, 3, null, false, null));
+
+        assertThat(context.memories()).extracting(ConversationContextResponse.MemoryItem::id)
+            .contains(neverUsed.getId());
     }
 
     // ── 진행 중 대화가 없는 첫 턴 ────────────────────────────────────────────

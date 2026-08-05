@@ -31,7 +31,8 @@ import lombok.NoArgsConstructor;
     uniqueConstraints = {
         @UniqueConstraint(name = "uq_conversation_scenario", columnNames = "scenario_id"),
         @UniqueConstraint(name = "uq_conversation_start_command", columnNames = "start_command_id")
-    })
+    }
+)
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Conversation {
@@ -75,7 +76,23 @@ public class Conversation {
     @Column(name = "raw_messages_expires_at")
     private OffsetDateTime rawMessagesExpiresAt;
 
-    private Conversation(UUID seniorId, UUID scenarioId, OffsetDateTime requestedAt) {
+    /**
+     * 이 대화가 "우리끼리 얘기" 류 표현으로 봉인됐는가 (S15P11E102-254, V12).
+     *
+     * <p>로봇(ai_chat)이 로컬에서 판정하고,
+     * {@code POST .../end}로 대화를 닫을 때 함께 전달한다.
+     * 봉인된 대화는 요약 생성 대상에서 제외한다.</p>
+     *
+     * <p>기본값은 false이다. 봉인은 한 번 적용되면 되돌리지 않는다.</p>
+     */
+    @Column(name = "sealed", nullable = false)
+    private boolean sealed = false;
+
+    private Conversation(
+        UUID seniorId,
+        UUID scenarioId,
+        OffsetDateTime requestedAt
+    ) {
         this.seniorId = requireNonNull(seniorId, "seniorId");
         this.scenarioId = scenarioId;
         this.startedAt = requireNonNull(requestedAt, "requestedAt");
@@ -83,14 +100,29 @@ public class Conversation {
 
     public static Conversation open(UUID seniorId) {
         OffsetDateTime now = OffsetDateTime.now();
-        Conversation conversation = new Conversation(seniorId, null, now);
+
+        Conversation conversation = new Conversation(
+            seniorId,
+            null,
+            now
+        );
+
         conversation.aiStartedAt = now;
         return conversation;
     }
 
-    public static Conversation openForScenario(UUID seniorId, UUID scenarioId) {
+    public static Conversation openForScenario(
+        UUID seniorId,
+        UUID scenarioId
+    ) {
         OffsetDateTime now = OffsetDateTime.now();
-        Conversation conversation = new Conversation(seniorId, scenarioId, now);
+
+        Conversation conversation = new Conversation(
+            seniorId,
+            scenarioId,
+            now
+        );
+
         conversation.aiStartedAt = now;
         return conversation;
     }
@@ -102,21 +134,33 @@ public class Conversation {
         String startCommandId,
         OffsetDateTime requestedAt
     ) {
-        Conversation conversation = new Conversation(seniorId, requireNonNull(scenarioId, "scenarioId"),
-            requestedAt);
-        conversation.startCommandId = requireText(startCommandId, "startCommandId", 64);
+        Conversation conversation = new Conversation(
+            seniorId,
+            requireNonNull(scenarioId, "scenarioId"),
+            requestedAt
+        );
+
+        conversation.startCommandId = requireText(
+            startCommandId,
+            "startCommandId",
+            64
+        );
+
         return conversation;
     }
 
     /** Marks the AI acknowledgement; returns false for a duplicate acknowledgement. */
     public boolean markAiStarted(OffsetDateTime occurredAt) {
         requireNonNull(occurredAt, "occurredAt");
+
         if (status != ConversationStatus.OPEN) {
             return false;
         }
+
         if (aiStartedAt != null) {
             return false;
         }
+
         this.aiStartedAt = occurredAt;
         return true;
     }
@@ -124,16 +168,27 @@ public class Conversation {
     /** Marks the conversation ended with a terminal status (COMPLETED/FAILED/CANCELLED). */
     public void end(ConversationStatus terminalStatus) {
         if (terminalStatus == null || terminalStatus == ConversationStatus.OPEN) {
-            throw new IllegalArgumentException("terminalStatus must be a terminal status");
+            throw new IllegalArgumentException(
+                "terminalStatus must be a terminal status"
+            );
         }
+
         ConversationOutcome outcome = switch (terminalStatus) {
             case COMPLETED -> ConversationOutcome.COMPLETED;
             case FAILED -> ConversationOutcome.FAILED;
             case CANCELLED -> ConversationOutcome.CANCELLED;
-            case OPEN -> throw new IllegalArgumentException("terminalStatus must be terminal");
+            case OPEN -> throw new IllegalArgumentException(
+                "terminalStatus must be terminal"
+            );
         };
-        end(outcome, outcome == ConversationOutcome.FAILED ? "UNSPECIFIED_FAILURE" : null,
-            OffsetDateTime.now());
+
+        end(
+            outcome,
+            outcome == ConversationOutcome.FAILED
+                ? "UNSPECIFIED_FAILURE"
+                : null,
+            OffsetDateTime.now()
+        );
     }
 
     /** Applies the exact AI/backend outcome; returns false when already terminal. */
@@ -144,21 +199,32 @@ public class Conversation {
     ) {
         requireNonNull(outcome, "outcome");
         requireNonNull(occurredAt, "occurredAt");
+
         String normalizedReason = normalizeReason(reasonCode);
-        if (outcome == ConversationOutcome.FAILED && normalizedReason == null) {
-            throw new IllegalArgumentException("reasonCode is required for FAILED conversation");
+
+        if (
+            outcome == ConversationOutcome.FAILED
+                && normalizedReason == null
+        ) {
+            throw new IllegalArgumentException(
+                "reasonCode is required for FAILED conversation"
+            );
         }
+
         if (status != ConversationStatus.OPEN) {
             return false;
         }
+
         this.status = switch (outcome) {
             case COMPLETED, NO_RESPONSE -> ConversationStatus.COMPLETED;
             case CANCELLED -> ConversationStatus.CANCELLED;
             case FAILED -> ConversationStatus.FAILED;
         };
+
         this.endOutcome = outcome;
         this.reasonCode = normalizedReason;
         this.endedAt = occurredAt;
+
         return true;
     }
 
@@ -174,20 +240,38 @@ public class Conversation {
         return aiStartedAt != null;
     }
 
+    /** 이 대화를 봉인한다. 되돌릴 수 없다. */
+    public void markSealed() {
+        this.sealed = true;
+    }
+
     private static <T> T requireNonNull(T value, String field) {
         if (value == null) {
-            throw new IllegalArgumentException(field + " must not be null");
+            throw new IllegalArgumentException(
+                field + " must not be null"
+            );
         }
+
         return value;
     }
 
-    private static String requireText(String value, String field, int maxLength) {
+    private static String requireText(
+        String value,
+        String field,
+        int maxLength
+    ) {
         if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(field + " must not be blank");
+            throw new IllegalArgumentException(
+                field + " must not be blank"
+            );
         }
+
         if (value.length() > maxLength) {
-            throw new IllegalArgumentException(field + " must not exceed " + maxLength + " characters");
+            throw new IllegalArgumentException(
+                field + " must not exceed " + maxLength + " characters"
+            );
         }
+
         return value;
     }
 
@@ -195,13 +279,19 @@ public class Conversation {
         if (value == null) {
             return null;
         }
+
         String normalized = value.trim();
+
         if (normalized.isEmpty()) {
             return null;
         }
+
         if (normalized.length() > 100) {
-            throw new IllegalArgumentException("reasonCode must not exceed 100 characters");
+            throw new IllegalArgumentException(
+                "reasonCode must not exceed 100 characters"
+            );
         }
+
         return normalized;
     }
 }

@@ -23,6 +23,8 @@ import com.ssafy.bomi.conversation.repository.ConversationSummaryRepository;
 import com.ssafy.bomi.memory.domain.Memory;
 import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
+import com.ssafy.bomi.person.domain.KnownPerson;
+import com.ssafy.bomi.person.repository.KnownPersonRepository;
 import com.ssafy.bomi.relationship.domain.CareRelationship;
 import com.ssafy.bomi.relationship.domain.RelationshipPriority;
 import com.ssafy.bomi.relationship.domain.RelationshipStatus;
@@ -32,6 +34,7 @@ import com.ssafy.bomi.user.domain.ConsentStatus;
 import com.ssafy.bomi.user.repository.AppUserRepository;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.Period;
 import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -79,9 +82,11 @@ public class ConversationContextService {
     /**
      * Key in {@code app_user.conversation_preferences} holding topics to avoid.
      *
-     * <p>Read deterministically and passed to the prompt as a prohibition. Probabilistic
-     * recall is unacceptable here: surfacing a deceased spouse as if alive is one of the
-     * worst failures this product can produce (CLAUDE.md §8, §17.5).</p>
+     * <p><strong>Legacy, compat-only (S15P11E102-260).</strong> The authoritative source
+     * is now the {@code known_person} table: structured name + survival status, so the
+     * gate can be enforced deterministically instead of matching free-form strings. This
+     * key is read only when a senior has no {@code known_person} rows yet, so an old
+     * profile does not silently lose whatever avoid-list it already had.</p>
      */
     private static final String AVOID_TOPICS_KEY = "avoid_topics";
 
@@ -91,11 +96,27 @@ public class ConversationContextService {
      * <p>Observations are excluded on purpose. They are the raw material of the daily
      * metrics, not something to read back to the senior mid-conversation.</p>
      */
+    // S15P11E102-259: 이 서비스만 "CONDITION"·"SCHEDULE" 이라는 존재하지 않는 이름표를
+    // 썼다. 실제 care_record.record_type 코드 사전 값은 HEALTH_CONDITION·PERSONAL_SCHEDULE
+    // 이고, 같은 저장소의 CareRecordQueryService·DashboardService·GreetingDecider 는 이미
+    // 올바른 값을 쓴다. record_type 이 raw String 이라 컴파일러가 오타를 막지 못했고, 결과가
+    // 항상 0건이라 오류도 나지 않아 아무도 눈치채지 못했다.
     private static final Set<String> HEALTH_RECORD_TYPES =
-        Set.of("MEDICATION", "MEDICATION_SCHEDULE", "ALLERGY", "CONDITION");
+        Set.of("MEDICATION", "MEDICATION_SCHEDULE", "ALLERGY", "HEALTH_CONDITION");
 
     private static final Set<String> SCHEDULE_RECORD_TYPES =
-        Set.of("APPOINTMENT", "SCHEDULE");
+        Set.of("APPOINTMENT", "PERSONAL_SCHEDULE");
+
+    /**
+     * 프로필의 {@code conditions} 를 채우는 데만 쓰는 질환 기록 유형.
+     *
+     * <p>{@link #HEALTH_RECORD_TYPES} 와 값은 같지만 목적이 다르다. 저 목록은 "질문에
+     * 관련된 돌봄 기록을 몇 개만 골라 보여준다"(재정렬·limit)이고, 이 목록은 "질환은
+     * 매 턴 빠짐없이 프롬프트에 실리는 고정 사실이다"(CLAUDE.md §8 의 push 규칙: 정확
+     * 조회, 벡터 검색 금지). 같은 상수를 재사용하면 나중에 한쪽만 바뀔 때 다른 쪽이
+     * 조용히 깨진다.</p>
+     */
+    private static final Set<String> CONDITION_RECORD_TYPES = Set.of("HEALTH_CONDITION");
 
     private final AppUserRepository appUserRepository;
     private final CareRelationshipRepository careRelationshipRepository;
@@ -104,6 +125,7 @@ public class ConversationContextService {
     private final ConversationSummaryRepository conversationSummaryRepository;
     private final MemoryRepository memoryRepository;
     private final CareRecordRepository careRecordRepository;
+    private final KnownPersonRepository knownPersonRepository;
     private final MemorySemanticSearch semanticSearch;
     private final DocumentCorpusSearch documentSearch;
     private final ContextAssemblyProperties properties;
@@ -116,6 +138,7 @@ public class ConversationContextService {
         ConversationSummaryRepository conversationSummaryRepository,
         MemoryRepository memoryRepository,
         CareRecordRepository careRecordRepository,
+        KnownPersonRepository knownPersonRepository,
         MemorySemanticSearch semanticSearch,
         DocumentCorpusSearch documentSearch,
         ContextAssemblyProperties properties
@@ -127,6 +150,7 @@ public class ConversationContextService {
         this.conversationSummaryRepository = conversationSummaryRepository;
         this.memoryRepository = memoryRepository;
         this.careRecordRepository = careRecordRepository;
+        this.knownPersonRepository = knownPersonRepository;
         this.semanticSearch = semanticSearch;
         this.documentSearch = documentSearch;
         this.properties = properties;
@@ -135,10 +159,15 @@ public class ConversationContextService {
     /**
      * Builds the six-part context for one senior and one turn.
      *
+     * <p>Not {@code readOnly} (S15P11E102-262). Selecting memories now also stamps
+     * {@code last_used_at} on the chosen rows via a bulk update — real PostgreSQL rejects
+     * a write inside a connection marked read-only, so a read-only annotation here would
+     * make every assembly call fail the moment usage tracking runs, not just look wasteful.</p>
+     *
      * @throws IllegalArgumentException if the senior does not exist, or if a guardian was
      *     named but has no active relationship with that senior
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public ConversationContextResponse assemble(UUID seniorId, ConversationContextRequest request) {
         AppUser senior = appUserRepository.findById(seniorId)
             .orElseThrow(() -> new IllegalArgumentException("senior not found: " + seniorId));
@@ -160,13 +189,32 @@ public class ConversationContextService {
         List<MemoryItem> memories = selectMemories(seniorId, query, queryTerms, allowedVisibilities,
             clampMemoryTopK(request.memoryTopK()), notes);
 
+        // 원문 노출 차단 (S15P11E102-254, CLAUDE.md §9 T4).
+        //
+        // 보호자가 요청자면(requesterGuardianId != null) 최근 raw 발화와 대화 요약
+        // 원문을 아예 비워서 돌려준다. memories 는 위에서 이미 가시성(visibility)으로
+        // 걸렀지만, raw 메시지와 conversation_summary 는 그런 필터가 없다 —
+        // "PRIVATE 이 아니면 보여준다"가 아니라 "보호자에게는 애초에 원문이 없다"가
+        // 맞는 기본값이다. 로봇이 어르신과 말할 때(guardianId == null)는 그대로
+        // 전부 실린다.
+        boolean forGuardian = request.requesterGuardianId() != null;
+        List<RawMessage> recentMessages = forGuardian
+            ? List.of()
+            : loadRecentMessages(request.conversationId(),
+                clampRecentMessages(request.recentMessageLimit()));
+        String conversationSummary = forGuardian
+            ? null
+            : loadConversationSummary(request.conversationId());
+        List<SummaryItem> relevantSummaries = forGuardian
+            ? List.of()
+            : selectRelevantSummaries(seniorId, request.conversationId(), queryTerms);
+
         return new ConversationContextResponse(
             buildProfile(senior),
             loadTodayState(senior),
-            loadRecentMessages(request.conversationId(),
-                clampRecentMessages(request.recentMessageLimit())),
-            loadConversationSummary(request.conversationId()),
-            selectRelevantSummaries(seniorId, request.conversationId(), queryTerms),
+            recentMessages,
+            conversationSummary,
+            relevantSummaries,
             memories,
             selectCareRecords(senior, queryTerms),
             loadDocuments(request, query, notes),
@@ -189,19 +237,118 @@ public class ConversationContextService {
             senior.getQuietHoursStart().toString(),
             senior.getQuietHoursEnd().toString(),
             preferences,
-            extractAvoidTopics(preferences)
+            extractAvoidTopics(senior.getId(), preferences),
+            computeAge(senior),
+            loadConditions(senior),
+            senior.getWakeTime() == null ? null : senior.getWakeTime().toString(),
+            senior.getSleepTime() == null ? null : senior.getSleepTime().toString(),
+            senior.getChronicPainArea(),
+            senior.getPreferredHospital()
         );
     }
 
     /**
-     * Pulls the avoid-list out of the preferences JSON.
+     * 생년월일로 나이를 계산한다. 저장하지 않는 이유는 나이가 저장하는 순간 매일 조금씩
+     * 틀려지는 값이기 때문이다(생일이 지날 때마다 갱신 배치가 필요해진다). 생년월일이
+     * 비어 있으면(V9 이전 어르신, 아직 온보딩에서 답하지 않은 경우) null 을 돌려주고,
+     * 호출부(프롬프트 조립)는 그 줄만 건너뛴다 — CLAUDE.md §8.
+     */
+    private Integer computeAge(AppUser senior) {
+        if (senior.getBirthDate() == null) {
+            return null;
+        }
+        LocalDate today = LocalDate.now(resolveZone(senior));
+        return Period.between(senior.getBirthDate(), today).getYears();
+    }
+
+    /**
+     * 동의된 질환 기록을 프로필에 실을 문자열 목록으로 바꾼다.
+     *
+     * <p>질환은 §8 이 말하는 "정확 조회, 절대 벡터 아님" 대상이다. 무릎 통증과 당뇨를
+     * 임베딩으로 구분하려다 엉뚱한 답을 하는 것보다, 그냥 매번 전부 실어 주는 편이
+     * 안전하다. 그래서 selectCareRecords 처럼 질의어 관련성으로 줄이지 않는다.</p>
+     *
+     * <p>건강정보 동의가 없으면 애초에 이 값을 읽으면 안 된다 — care_record 로 가는
+     * 다른 읽기 경로와 동일한 동의 게이트다.</p>
+     */
+    private List<String> loadConditions(AppUser senior) {
+        if (!isGranted(senior.getHealthDataConsentStatus())) {
+            return List.of();
+        }
+        List<CareRecord> records = careRecordRepository.findBySeniorIdAndStatusAndRecordTypeIn(
+            senior.getId(), CareRecordStatus.ACTIVE, CONDITION_RECORD_TYPES);
+        return records.stream()
+            .map(this::conditionLabel)
+            .filter(label -> label != null && !label.isBlank())
+            .toList();
+    }
+
+    /**
+     * 질환 기록 한 건에서 사람이 읽을 이름을 꺼낸다.
+     *
+     * <p>{@code details} 는 jsonb 라 형태가 정해져 있지 않다. 이 컬럼을 쓰는 다른 코드가
+     * 아직 없어 확정된 관례가 없으므로, care_record.details 예시(예: medicationName)와
+     * 같은 패턴으로 {@code conditionName} 키를 쓰기로 정한다. 값이 없으면 조용히
+     * 건너뛴다 — 어설픈 문자열을 만들어 읽어주는 것보다 그 항목만 빠지는 편이 낫다.</p>
+     */
+    private String conditionLabel(CareRecord record) {
+        Map<String, Object> details = record.getDetails();
+        if (details == null) {
+            return null;
+        }
+        Object name = details.get("conditionName");
+        return name == null ? null : name.toString();
+    }
+
+    /**
+     * Builds the avoid-list, {@code known_person} first, the legacy jsonb key as a
+     * compat-only fallback (S15P11E102-260).
+     *
+     * <p>Order matters here, not just presence. {@code known_person} rows are
+     * structured (name + survival status), so this is the only source that can be
+     * enforced deterministically per CLAUDE.md §8 — the old jsonb list was free-form
+     * strings with no writer anywhere in the codebase, which is exactly why the avoid
+     * list never actually worked. The jsonb key is consulted only when a senior has
+     * no {@code known_person} rows at all, so a profile onboarded before this ticket
+     * does not silently lose whatever it already had.</p>
+     */
+    private List<String> extractAvoidTopics(UUID seniorId, Map<String, Object> preferences) {
+        List<KnownPerson> registered = knownPersonRepository.findBySeniorId(seniorId);
+        // known_person 이 하나라도 있으면 그 표가 이 어르신의 명부에 대한 권위다 —
+        // 필터 결과가 우연히 비었다고(등록된 사람이 전부 생존 확인됨) jsonb 로
+        // 되돌아가면 이미 지운 옛 회피 문구가 되살아난다. 표가 통째로 비어 있을
+        // 때만("known_person 자체가 아직 없다") 호환 폴백을 쓴다.
+        if (!registered.isEmpty()) {
+            return registered.stream()
+                .filter(KnownPerson::isAvoidTarget)
+                .map(ConversationContextService::avoidPhrase)
+                .toList();
+        }
+        return extractLegacyAvoidTopics(preferences);
+    }
+
+    /**
+     * Turns one avoided person into a <strong>prohibition</strong>, never information.
+     *
+     * <p>"배우자가 작년에 돌아가셨습니다" tells the model a fact it will happily bring
+     * up. "이 사람 이야기는 로봇이 먼저 꺼내지 않습니다" tells it what not to do and
+     * nothing else — {@link KnownPerson#getDeceasedNote()} is deliberately never read
+     * here, for the same reason (CLAUDE.md §8, §17.5).</p>
+     */
+    private static String avoidPhrase(KnownPerson person) {
+        return person.getDisplayName() + " 이야기는 로봇이 먼저 꺼내지 않습니다.";
+    }
+
+    /**
+     * Pulls the avoid-list out of the preferences JSON. Compat-only fallback; see
+     * {@link #extractAvoidTopics(UUID, Map)}.
      *
      * <p>Defensive about shape because this value is written by two channels (app and
      * robot onboarding) and a malformed entry must not take the endpoint down. Failing
      * closed here means returning an empty list, and that is the dangerous direction —
      * so a surprise shape is logged loudly rather than swallowed.</p>
      */
-    private List<String> extractAvoidTopics(Map<String, Object> preferences) {
+    private List<String> extractLegacyAvoidTopics(Map<String, Object> preferences) {
         Object raw = preferences.get(AVOID_TOPICS_KEY);
         if (raw == null) {
             return List.of();
@@ -352,10 +499,18 @@ public class ConversationContextService {
         Map<UUID, Double> similarities = loadSimilarities(seniorId, query, topK);
 
         OffsetDateTime now = OffsetDateTime.now();
-        return retrievable.stream()
+        List<ScoredMemory> selected = retrievable.stream()
             .map(memory -> new ScoredMemory(memory, score(memory, queryTerms, similarities, now)))
             .sorted(Comparator.comparingDouble(ScoredMemory::score).reversed())
             .limit(topK)
+            .toList();
+
+        // S15P11E102-262: 이번 턴에 실제로 골라 보낸 기억만 '방금 썼다'로 남긴다.
+        // score() 계산은 이 갱신 이전 상태(직전 last_used_at)를 이미 다 읽었으므로,
+        // 여기서 갱신해도 이번 선택 결과에는 영향이 없다 — 다음 턴부터 반영된다.
+        markMemoriesUsed(selected, now);
+
+        return selected.stream()
             .map(scored -> new MemoryItem(
                 scored.memory().getId(),
                 scored.memory().getMemoryType().name(),
@@ -368,6 +523,26 @@ public class ConversationContextService {
     }
 
     private record ScoredMemory(Memory memory, double score) {}
+
+    /**
+     * Stamps {@code last_used_at} on every memory this turn actually surfaced.
+     *
+     * <p>왜 존재하는가 — {@link Memory#markUsed()} 는 온보딩(258) 이전부터 있었지만
+     * 호출자가 하나도 없었다. 호출자가 없으면 "최근에 쓴 기억은 감점" 규칙이 있어도
+     * 무엇이 최근에 쓰였는지 알 방법이 없어 규칙 자체가 죽은 코드였다. 회상 씨앗처럼
+     * 기억이 몇 개 안 되는 초기 상태일수록 반복 방지가 실제로 작동해야 한다
+     * (CLAUDE.md §17.8).</p>
+     *
+     * <p>벌크 UPDATE 하나로 처리한다 — 엔티티를 하나씩 로드해 저장하면 topK 개수만큼
+     * SELECT 가 늘어나는데, 이 갱신은 컬럼 하나 말고는 아무것도 바꾸지 않는다.</p>
+     */
+    private void markMemoriesUsed(List<ScoredMemory> selected, OffsetDateTime now) {
+        if (selected.isEmpty()) {
+            return;
+        }
+        List<UUID> ids = selected.stream().map(scored -> scored.memory().getId()).toList();
+        memoryRepository.markUsed(ids, now);
+    }
 
     /** Similarity scores by memory id, or empty when semantic search cannot run. */
     private Map<UUID, Double> loadSimilarities(UUID seniorId, String query, int topK) {
@@ -391,7 +566,7 @@ public class ConversationContextService {
     }
 
     /**
-     * similarity × importance × recency.
+     * similarity × importance × recency × usage penalty.
      *
      * <p>Multiplied rather than added so a memory has to be at least somewhat good on
      * every axis. Adding would let a very old but very important memory dominate every
@@ -413,7 +588,7 @@ public class ConversationContextService {
         short importance = memory.getImportance() == null ? (short) 3 : memory.getImportance();
         double importanceWeight = importance / 5.0;
 
-        return relevance * importanceWeight * recencyWeight(memory, now);
+        return relevance * importanceWeight * recencyWeight(memory, now) * usagePenaltyWeight(memory, now);
     }
 
     private double keywordRelevance(Set<String> queryTerms, Memory memory) {
@@ -430,14 +605,18 @@ public class ConversationContextService {
     }
 
     /**
-     * Exponential decay on the most recent confirmation or use.
+     * Exponential decay on how long ago this fact was last known to be true.
      *
-     * <p>Uses {@code lastConfirmedAt} or {@code lastUsedAt} rather than creation time:
-     * what matters is when we last knew this to be true, not when it was first written.</p>
+     * <p>Uses {@code lastConfirmedAt} or {@code firstObservedAt} — deliberately <b>not</b>
+     * {@code lastUsedAt} (S15P11E102-262). What matters here is when we last knew this to
+     * be true, not when we last said it out loud; "used recently" is a completely
+     * different signal, handled by {@link #usagePenaltyWeight}. Mixing the two into one
+     * {@code latest()} used to make a just-spoken memory look like the freshest fact in
+     * the store and get selected again immediately — the opposite of "recently used is
+     * penalized" that CLAUDE.md §17.8 requires.</p>
      */
     private double recencyWeight(Memory memory, OffsetDateTime now) {
-        OffsetDateTime reference = latest(
-            memory.getLastConfirmedAt(), memory.getLastUsedAt(), memory.getFirstObservedAt());
+        OffsetDateTime reference = latest(memory.getLastConfirmedAt(), memory.getFirstObservedAt());
         if (reference == null) {
             // 시각 정보가 아예 없으면 최근성으로 벌점을 주지 않는다. 벌점을 주면
             // 온보딩으로 들어온 오래된 사실이 전부 밀려난다.
@@ -445,6 +624,32 @@ public class ConversationContextService {
         }
         long days = Math.max(0, ChronoUnit.DAYS.between(reference, now));
         return Math.pow(0.5, (double) days / properties.getRecencyHalfLifeDays());
+    }
+
+    /**
+     * Temporarily discounts a memory that was surfaced very recently.
+     *
+     * <p>왜 recencyWeight 와 분리된 함수인가 — recencyWeight 는 "이 사실이 여전히
+     * 맞다고 마지막으로 확인한 게 언제인가"(정보의 신선도)를 답하고, 이 함수는 "이
+     * 기억을 마지막으로 대화에 실제로 꺼낸 게 언제인가"(반복 방지)를 답한다. 이
+     * 둘을 하나의 값으로 합치면(예전 코드처럼 {@code latest()} 안에
+     * {@code lastUsedAt} 을 같이 넣으면) 방금 쓴 기억이 가장 최근 시각을 갖게 되어
+     * 오히려 다음 턴에 <em>더</em> 잘 뽑힌다 — 262 티켓이 고치는 결함이 정확히
+     * 이것이다.</p>
+     *
+     * <p>한 번도 쓰인 적 없는 기억은 감점하지 않는다({@code lastUsedAt == null} →
+     * 1.0). 벌점을 주면 아직 한 번도 꺼내지 않은 회상 씨앗이 영원히 선택되지
+     * 않는다.</p>
+     */
+    private double usagePenaltyWeight(Memory memory, OffsetDateTime now) {
+        OffsetDateTime lastUsedAt = memory.getLastUsedAt();
+        if (lastUsedAt == null) {
+            return 1.0;
+        }
+        long days = Math.max(0, ChronoUnit.DAYS.between(lastUsedAt, now));
+        double recovered = 1.0 - Math.pow(0.5, (double) days / properties.getUsagePenaltyHalfLifeDays());
+        double floor = properties.getUsagePenaltyFloor();
+        return floor + (1.0 - floor) * recovered;
     }
 
     private OffsetDateTime latest(OffsetDateTime... candidates) {

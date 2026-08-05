@@ -49,6 +49,22 @@ public record ConversationContextResponse(
      *     up a deceased spouse. Enforced deterministically, never by similarity.
      * @param quietHoursStart local time, to be read with {@code timeZone}. The window
      *     normally crosses midnight, so start may be later than end.
+     * @param age computed from {@code app_user.birth_date} at assembly time, not stored
+     *     (S15P11E102-259). {@code null} when the senior has no birth date on file —
+     *     the prompt builder drops the line rather than failing (CLAUDE.md §8).
+     * @param conditions confirmed {@code HEALTH_CONDITION} care records, exact lookup
+     *     only (never vector search, CLAUDE.md §8). Empty when health-data consent is
+     *     not granted, same gate as the other health-consented fields.
+     * @param wakeTime local time, or {@code null} when unknown. Not the same thing as
+     *     {@code quietHoursStart} — this is when the senior is normally awake, for the
+     *     silence-ladder routine baseline (CLAUDE.md §10); that filter itself is not
+     *     built yet (S15P11E102-261), only the value is carried here.
+     * @param sleepTime local time, or {@code null} when unknown. See {@code wakeTime}.
+     * @param chronicPainArea free-text, senior-reported. {@code null} when unset.
+     *     <strong>Never used for emergency triage</strong> — a new complaint must not be
+     *     shrugged off as "chronic" (CLAUDE.md §10).
+     * @param preferredHospital the clinic or pharmacy the senior actually goes to,
+     *     free-text. {@code null} when unset. Distinct from a nearby-clinic search.
      */
     public record SeniorProfile(
         UUID seniorId,
@@ -58,7 +74,13 @@ public record ConversationContextResponse(
         String quietHoursStart,
         String quietHoursEnd,
         Map<String, Object> conversationPreferences,
-        List<String> avoidTopics
+        List<String> avoidTopics,
+        Integer age,
+        List<String> conditions,
+        String wakeTime,
+        String sleepTime,
+        String chronicPainArea,
+        String preferredHospital
     ) {}
 
     /**
