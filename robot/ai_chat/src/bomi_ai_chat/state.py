@@ -130,7 +130,7 @@ class RetrievalStatus(TypedDict, total=False):
 
     availability 는 "할 수 있는가"이고 semantic_used 는 "이번 요청에서 했는가"다.
     둘을 한 값으로 합치면 임베딩 API 실패로 키워드 폴백한 턴도 의미 검색 성공처럼
-    보인다. 백엔드가 아직 새 요청별 필드를 보내지 않는 동안에는 모르는 키를 비워
+    보인다. 구버전 백엔드나 캐시가 요청별 필드를 보내지 않으면 모르는 키를 비워
     둔다. 모르는 것을 False 로 쓰지 않는 것이 이 상태의 핵심이다.
     """
 
@@ -145,7 +145,10 @@ class RetrievalStatus(TypedDict, total=False):
     embedding_latency_ms: int
     vector_search_latency_ms: int
     documents_requested: bool
+    document_used: bool
+    document_fallback_reason: str
     document_hit_count: int
+    document_latency_ms: int
     notes: list[str]
 
 

@@ -155,12 +155,33 @@ def test_empty_document_result_is_distinct_from_unavailable_corpus(ctx):
         retrieval_status={
             "documents_requested": True,
             "document_corpus_available": True,
+            "document_used": True,
             "document_hit_count": 0,
         },
     )
 
     assert "관련 문서를 찾지 못했습니다" in prompt
     assert "코퍼스를 확인할 수 없습니다" not in prompt
+
+
+def test_request_level_document_failure_is_distinct_from_zero_hits(ctx):
+    """코퍼스가 살아 있어도 이번 검색 실패면 0-hit 성공으로 말하지 않는다."""
+    prompt = build_prompt(
+        {**ctx, "documents": []},
+        "info",
+        "복지제도 알려줘",
+        retrieval_status={
+            "documents_requested": True,
+            "document_corpus_available": True,
+            "document_used": False,
+            "document_fallback_reason": "document_search_failed",
+            "document_hit_count": 0,
+        },
+    )
+
+    assert "참고 문서 검색을 완료하지 못했습니다" in prompt
+    assert "document_search_failed" in prompt
+    assert "관련 문서를 찾지 못했습니다" not in prompt
 
 
 def test_medical_stance_appears_only_when_the_turn_looked_up_medical_facts(ctx):

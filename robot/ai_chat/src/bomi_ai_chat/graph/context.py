@@ -214,7 +214,8 @@ def context_read(state: ConvState) -> dict:
         "retrieval source=%s semantic_available=%s semantic_requested=%s "
         "semantic_used=%s fallback=%s hits=%s latency_ms=%s "
         "embedding_latency_ms=%s vector_search_latency_ms=%s "
-        "documents_requested=%s document_hits=%s",
+        "documents_requested=%s document_used=%s document_fallback=%s "
+        "document_hits=%s document_latency_ms=%s",
         retrieval_status.get("source"),
         retrieval_status.get("semantic_available"),
         retrieval_status.get("semantic_requested"),
@@ -225,7 +226,10 @@ def context_read(state: ConvState) -> dict:
         retrieval_status.get("embedding_latency_ms"),
         retrieval_status.get("vector_search_latency_ms"),
         retrieval_status.get("documents_requested"),
+        retrieval_status.get("document_used"),
+        retrieval_status.get("document_fallback_reason"),
         retrieval_status.get("document_hit_count"),
+        retrieval_status.get("document_latency_ms"),
     )
 
     return {
@@ -243,11 +247,10 @@ def context_read(state: ConvState) -> dict:
 def _normalize_retrieval_status(
     ctx: dict, *, is_cached: bool, documents_requested: bool, document_hit_count: int,
 ) -> dict:
-    """현재·차기 백엔드 응답을 로봇의 한 가지 검색 상태로 정규화한다.
+    """백엔드 응답을 로봇의 한 가지 검색 상태로 정규화한다.
 
-    현재 백엔드는 availability(기능 가용성)만 보낸다. 차기 계약은 retrieval 또는
-    availability 안에 요청별 semanticRequested/semanticUsed 등을 추가할 수 있다.
-    전환 기간에 어느 한쪽만 배포돼도 로봇이 깨지지 않도록 두 위치를 모두 읽는다.
+    현재 계약은 availability와 요청별 retrieval을 분리한다. 구버전 백엔드·오래된
+    캐시와 함께 동작할 수 있도록 retrievalStatus와 availability 위치도 읽는다.
     값이 없는 것은 '모름'이므로 키 자체를 만들지 않는다.
     """
     availability = ctx.get("availability")
@@ -273,6 +276,11 @@ def _normalize_retrieval_status(
     _copy_typed(status, "latency_ms", retrieval, "latencyMs", int)
     _copy_typed(status, "embedding_latency_ms", retrieval, "embeddingLatencyMs", int)
     _copy_typed(status, "vector_search_latency_ms", retrieval, "vectorSearchLatencyMs", int)
+    _copy_typed(status, "document_used", retrieval, "documentUsed", bool)
+    _copy_typed(
+        status, "document_fallback_reason", retrieval, "documentFallbackReason", str
+    )
+    _copy_typed(status, "document_latency_ms", retrieval, "documentLatencyMs", int)
 
     notes = availability.get("notes")
     if isinstance(notes, list):

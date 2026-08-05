@@ -223,6 +223,13 @@ def _format_retrieval_warning(retrieval_status: dict[str, Any] | None) -> str:
                 "참고 문서 코퍼스를 확인할 수 없습니다. 복지·FAQ 내용을 지어내지 말고 "
                 "확인이 필요하다고 말합니다."
             )
+        elif status.get("document_used") is False:
+            reason = status.get("document_fallback_reason")
+            detail = f"(사유: {reason})" if reason else ""
+            warnings.append(
+                "이번 요청에서 참고 문서 검색을 완료하지 못했습니다"
+                f"{detail}. 복지·FAQ 내용을 지어내지 않습니다."
+            )
         elif (
             status.get("document_corpus_available") is True
             and status.get("document_hit_count") == 0

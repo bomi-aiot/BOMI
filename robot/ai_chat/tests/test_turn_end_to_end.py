@@ -16,7 +16,7 @@
 import pytest
 
 from bomi_ai_chat import policy
-from bomi_ai_chat.backend_client import ContextResult
+from bomi_ai_chat.backend_client import BackendContextClient, ContextResult
 from bomi_ai_chat.graph import build, handlers, output
 from bomi_ai_chat.graph import context as context_node
 from bomi_ai_chat.graph.build import build_graph
@@ -45,6 +45,30 @@ class FakeContextClient:
         self.received_conversation_ids.append(kwargs.get("conversation_id"))
         self.received_documents.append(bool(kwargs.get("documents")))
         return ContextResult(ctx=self.ctx, is_cached=self.is_cached)
+
+
+class BackendPayloadResponse:
+    """실제 Spring 문맥 API와 같은 JSON object 응답 대역."""
+
+    status_code = 200
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class RecordingBackendSession:
+    """실 HTTP 클라이언트가 만든 method·URL·JSON body를 보존한다."""
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = []
+
+    def request(self, method, url, **kwargs):
+        self.calls.append({"method": method, "url": url, **kwargs})
+        return BackendPayloadResponse(self.payload)
 
 
 class FakeLLM:
@@ -184,17 +208,20 @@ def test_prompt_receives_context_from_backend(wired):
     assert "순자님" in llm.prompts[0]
 
 
-def test_information_turn_requests_documents_and_preserves_retrieval_evidence(wired):
-    """정보 분류→문서 요청→근거·검색 상태→프롬프트가 한 턴에서 이어진다."""
+def test_information_turn_requests_documents_and_preserves_retrieval_evidence(
+    wired, settings_factory,
+):
+    """정보 분류→실 HTTP client 계약→근거·검색 상태→프롬프트를 잇는다."""
     app, _client, llm, _player = wired
-    client = FakeContextClient({
+    payload = {
         "documents": [{
             "title": "노인맞춤돌봄서비스",
-            "content": "만 65세 이상 신청할 수 있습니다.",
-            "source": "보건복지부",
-            "version": "2026-07",
-            "chunkId": "welfare-001#eligibility",
-            "citation": "사업안내 12쪽",
+            "content": "65세 이상이면서 돌봄이 필요한 사람 등을 대상으로 합니다.",
+            "source": "복지로",
+            "version": "2026년 기준, 2026-06-05 반영",
+            "chunkId": "bokjiro-senior-care-overview-2026",
+            "citation": "복지로 복지서비스 상세 > 노인맞춤돌봄서비스",
+            "url": "https://www.bokjiro.go.kr/welfare-info",
         }],
         "availability": {
             "semanticSearch": False,
@@ -209,15 +236,29 @@ def test_information_turn_requests_documents_and_preserves_retrieval_evidence(wi
             "latencyMs": 7,
             "embeddingLatencyMs": 3,
             "vectorSearchLatencyMs": 4,
+            "documentRequested": True,
+            "documentUsed": True,
+            "documentFallbackReason": None,
+            "documentHitCount": 1,
+            "documentLatencyMs": 2,
         },
-    })
+    }
+    session = RecordingBackendSession(payload)
+    settings = settings_factory(BACKEND_BASE_URL="http://backend.test")
+    client = BackendContextClient(settings=settings, session=session)
     context_node.set_client(client)
 
     timer = TurnTimer()
     state = run_user_turn(app, SENIOR, "복지제도 알려줘", timer=timer)
 
     assert state["intent"] == "info"
-    assert client.received_documents == [True]
+    assert len(session.calls) == 1
+    assert session.calls[0]["method"] == "POST"
+    assert session.calls[0]["url"].endswith(
+        f"/api/v1/seniors/{SENIOR}/conversation-context"
+    )
+    assert session.calls[0]["json"]["query"] == "복지제도 알려줘"
+    assert session.calls[0]["json"]["includeDocuments"] is True
     assert state["retrieval_status"] == {
         "source": "backend",
         "documents_requested": True,
@@ -231,6 +272,8 @@ def test_information_turn_requests_documents_and_preserves_retrieval_evidence(wi
         "latency_ms": 7,
         "embedding_latency_ms": 3,
         "vector_search_latency_ms": 4,
+        "document_used": True,
+        "document_latency_ms": 2,
         "notes": ["semantic search unavailable"],
     }
     assert {"context", "embedding", "vector_search", "llm", "tts_dispatch"} <= timer.stages.keys()
@@ -238,10 +281,11 @@ def test_information_turn_requests_documents_and_preserves_retrieval_evidence(wi
     assert timer.stages["vector_search"] == pytest.approx(0.004)
     prompt = llm.prompts[0]
     assert "노인맞춤돌봄서비스" in prompt
-    assert "출처=보건복지부" in prompt
-    assert "버전=2026-07" in prompt
-    assert "청크=welfare-001#eligibility" in prompt
-    assert "인용=사업안내 12쪽" in prompt
+    assert "출처=복지로" in prompt
+    assert "버전=2026년 기준, 2026-06-05 반영" in prompt
+    assert "청크=bokjiro-senior-care-overview-2026" in prompt
+    assert "인용=복지로 복지서비스 상세 > 노인맞춤돌봄서비스" in prompt
+    assert "URL=https://www.bokjiro.go.kr/welfare-info" in prompt
     assert "의미 기반 기억 검색을 사용할 수 없습니다" in prompt
 
 
