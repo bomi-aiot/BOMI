@@ -6,7 +6,6 @@ import com.ssafy.bomi.occupancy.domain.OccupancyDirection;
 import com.ssafy.bomi.occupancy.domain.OccupancyEvent;
 import com.ssafy.bomi.occupancy.repository.OccupancyEventRepository;
 import com.ssafy.bomi.robot.domain.OccupancyStatus;
-import com.ssafy.bomi.robot.domain.Robot;
 import com.ssafy.bomi.robot.repository.RobotRepository;
 import com.ssafy.bomi.scenario.application.HomecomingOrchestrator;
 import java.time.Duration;
@@ -103,12 +102,13 @@ public class DoorEventService {
             ? OccupancyStatus.HOME
             : OccupancyStatus.AWAY;
 
-        applyOccupancy(seniorId, status, occurredAt);
-        occupancyEventRepository.save(OccupancyEvent.passage(
-            seniorId, robotId(seniorId), direction, status, occurredAt, reportedAt));
-
         String greeting = greeting(seniorId, direction, awaySince, occurredAt).orElse(null);
+        // Homecoming takes the senior mutex before it locks Robot. Dispatch first so the
+        // snapshot UPDATE below follows the same senior -> robot lock order as scenarios.
         dispatch(seniorId, greeting);
+        UUID robotId = applyOccupancy(seniorId, status, occurredAt);
+        occupancyEventRepository.save(OccupancyEvent.passage(
+            seniorId, robotId, direction, status, occurredAt, reportedAt));
         return new DoorEventOutcome(direction, status, greeting);
     }
 
@@ -174,9 +174,9 @@ public class DoorEventService {
 
         lastPassage.remove(seniorId);
         resolver.forget(seniorId);
-        applyOccupancy(seniorId, OccupancyStatus.UNKNOWN, occurredAt);
+        UUID robotId = applyOccupancy(seniorId, OccupancyStatus.UNKNOWN, occurredAt);
         occupancyEventRepository.save(OccupancyEvent.passage(
-            seniorId, robotId(seniorId), direction, OccupancyStatus.UNKNOWN,
+            seniorId, robotId, direction, OccupancyStatus.UNKNOWN,
             occurredAt, reportedAt));
 
         // 인사하지 않는다. 배달일 가능성이 크고, 아무 데도 안 가신 분께 "다녀오세요"는
@@ -210,16 +210,15 @@ public class DoorEventService {
             : null;
     }
 
-    private void applyOccupancy(UUID seniorId, OccupancyStatus status, OffsetDateTime at) {
-        robotRepository.findBySeniorId(seniorId).ifPresentOrElse(robot -> {
-            robot.applyOccupancy(status, at);
-            robotRepository.save(robot);
-        }, () -> log.warn("no robot for senior {}; occupancy {} recorded as an event only",
-            seniorId, status));
-    }
-
-    private UUID robotId(UUID seniorId) {
-        return robotRepository.findBySeniorId(seniorId).map(Robot::getId).orElse(null);
+    private UUID applyOccupancy(UUID seniorId, OccupancyStatus status, OffsetDateTime at) {
+        UUID robotId = robotRepository.findIdBySeniorId(seniorId).orElse(null);
+        if (robotId == null) {
+            log.warn("no robot for senior {}; occupancy {} recorded as an event only",
+                seniorId, status);
+        } else {
+            robotRepository.updateOccupancySnapshotById(robotId, status, at);
+        }
+        return robotId;
     }
 
     /**

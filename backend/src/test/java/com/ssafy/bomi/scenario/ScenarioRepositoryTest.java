@@ -159,10 +159,24 @@ class ScenarioRepositoryTest {
             .setParameter(1, completed.getId())
             .setParameter(2, oneHourAgo)
             .executeUpdate();
+
+        // WALK has its own acknowledgement/max-duration watchdog. Even a WALK older than
+        // the generic 20-minute cutoff must not be returned by this query.
+        Scenario walk = Scenario.create(
+            UUID.randomUUID(), UUID.randomUUID(), ScenarioType.WALK, "walk-start-01");
+        walk.beginFollowStart("walk-follow-start-01", oneHourAgo);
+        scenarioRepository.saveAndFlush(walk);
+        em.getEntityManager()
+            .createNativeQuery("update scenario set updated_at = ?2 where id = ?1")
+            .setParameter(1, walk.getId())
+            .setParameter(2, oneHourAgo)
+            .executeUpdate();
         em.clear();
 
         List<Scenario> stale = scenarioRepository.findByFinalStatusInAndUpdatedAtBefore(
-            ScenarioStatus.activeStatuses(), OffsetDateTime.now().minusMinutes(20));
+            ScenarioType.WALK,
+            ScenarioStatus.activeStatuses(),
+            OffsetDateTime.now().minusMinutes(20));
 
         assertThat(stale).extracting(Scenario::getId).containsExactly(stuck.getId());
     }

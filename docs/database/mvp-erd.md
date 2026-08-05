@@ -1,10 +1,10 @@
 # BOMI MVP 데이터 모델
 
-> PostgreSQL (pgvector 미사용) + 외부 벡터 스토어 Qdrant / 물리 테이블 13개
+> PostgreSQL (pgvector 미사용) + 외부 벡터 스토어 Qdrant / 물리 테이블 17개·컬럼 253개
 >
-> 범위: 앱·로봇 온보딩, Raw 대화, 대화 요약, 장기 기억, 민감정보 확인·PRIMARY 협의
+> 범위: 앱·로봇 온보딩, Raw 대화, 대화 요약, 장기 기억, 재실·일간 활동·주변 인물, 호출·산책, 민감정보 확인·PRIMARY 협의
 >
-> 제외: JPA, Flyway, DDL, API 구현, ERD Cloud 기록, Outbox·감사·이벤트 원장
+> 제외: ERD Cloud 기록, durable Outbox·감사·범용 이벤트 원장
 
 ## 1. 데이터 경계
 
@@ -15,12 +15,16 @@
 | 미확정 사실 | `fact_candidate` | 재질의·확인·협의 중인 사실 하나 | `confirmed_value` 확정 전 최종 반영 금지 |
 | 장기 기억 | `memory` | 대화 없이 이해되는 개인화 사실 하나 | 장기 재사용, 확인·수명·공개 범위 적용 |
 | 돌봄 사실 | `care_record` | 확정된 건강·복약·일정·관찰·알림 한 건 | 변경 시 새 행과 `parent_record_id` |
+| 재실 이벤트 | `occupancy_event` | 문 통과·발화·하트비트 유실로 확정한 재실 변경 한 번 | 원인·방향·결과를 이벤트로 보존 |
+| 일간 활동 집계 | `daily_activity_metric` | 어르신의 현지 날짜 하루 집계 | `(senior_id, metric_date)`당 하나, NULL은 0과 다름 |
+| 주변 인물 | `known_person` | 어르신 주변 인물 한 명 | 이름·관계·생존 여부를 구조화해 대화 회피 정책에 사용 |
+| 제어 요청 영수증 | `wake_word_trigger_receipt`, `walk_request_receipt` | 호출·산책 요청 하나의 최초 처리 결정 | QoS 1·HTTP 재시도와 Backend 재시작 뒤에도 최초 결정을 재생 |
 
-최종 서비스 조회 원본은 `app_user`, `care_relationship`, `memory`, `care_record`다. Raw, 요약, 후보, 온보딩 답변은 근거·처리 데이터다.
+개인화·관계·돌봄 영역의 최종 조회 원본은 `app_user`, `care_relationship`, `memory`, `care_record`다. 재실·일간 활동·회피 인물은 각각 `occupancy_event`, `daily_activity_metric`, `known_person`을 원본으로 조회한다. Raw, 요약, 후보, 온보딩 답변은 근거·처리 데이터다.
 
 ## 2. 최종 테이블
 
-`app_user`, `care_relationship`, `robot`, `onboarding_session`, `onboarding_answer`, `scenario`, `conversation`, `conversation_message`, `conversation_summary`, `fact_candidate`, `memory`, `care_record`, `wake_word_trigger_receipt`.
+`app_user`, `care_relationship`, `robot`, `onboarding_session`, `onboarding_answer`, `scenario`, `conversation`, `conversation_message`, `conversation_summary`, `fact_candidate`, `memory`, `care_record`, `occupancy_event`, `daily_activity_metric`, `known_person`, `wake_word_trigger_receipt`, `walk_request_receipt`.
 
 이번 단계에서는 `memory_evidence`, `memory_retrieval_log`, `care_coordination_event`, `onboarding_question`, `outbox_message`, `audit_log`를 만들지 않는다. 최근 Raw·일간 Raw·최근 요약 전용 테이블도 만들지 않는다.
 
@@ -44,6 +48,15 @@ erDiagram
         VARCHAR status
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
+        TIME quiet_hours_start
+        TIME quiet_hours_end
+        NUMERIC home_latitude
+        NUMERIC home_longitude
+        DATE birth_date
+        TIME wake_time
+        TIME sleep_time
+        TEXT chronic_pain_area
+        TEXT preferred_hospital
     }
     CARE_RELATIONSHIP {
         UUID id PK
@@ -59,11 +72,15 @@ erDiagram
     ROBOT {
         UUID id PK
         UUID senior_id FK
+        VARCHAR device_id
         VARCHAR current_mode
         NUMERIC ambient_temperature_c
         NUMERIC ambient_humidity_percent
         TIMESTAMPTZ ambient_observed_at
         BOOLEAN is_active
+        VARCHAR occupancy_status
+        TIMESTAMPTZ occupancy_observed_at
+        TIMESTAMPTZ door_node_heartbeat_at
     }
     ONBOARDING_SESSION {
         UUID id PK
@@ -105,6 +122,16 @@ erDiagram
         JSONB trigger_context
         VARCHAR completion_result_code
         VARCHAR completion_reason_code
+        VARCHAR follow_start_command_id
+        VARCHAR follow_stop_command_id
+        TIMESTAMPTZ follow_start_requested_at
+        TIMESTAMPTZ following_started_at
+        TIMESTAMPTZ follow_stop_requested_at
+        VARCHAR last_follow_result_event_id
+        VARCHAR last_follow_command_id
+        VARCHAR last_follow_result_code
+        VARCHAR last_follow_reason_code
+        TIMESTAMPTZ last_follow_result_at
         TIMESTAMPTZ created_at
         TIMESTAMPTZ updated_at
     }
@@ -116,6 +143,11 @@ erDiagram
         TIMESTAMPTZ started_at
         TIMESTAMPTZ ended_at
         TIMESTAMPTZ raw_messages_expires_at
+        BOOLEAN sealed
+        VARCHAR start_command_id
+        TIMESTAMPTZ ai_started_at
+        VARCHAR end_outcome
+        VARCHAR reason_code
     }
     CONVERSATION_MESSAGE {
         UUID id PK
@@ -125,6 +157,9 @@ erDiagram
         TEXT content
         TIMESTAMPTZ occurred_at
         TIMESTAMPTZ created_at
+        VARCHAR trigger_type
+        VARCHAR priority
+        BOOLEAN orientation_question
     }
     CONVERSATION_SUMMARY {
         UUID id PK
@@ -154,7 +189,7 @@ erDiagram
         UUID target_entity_id
         JSONB proposed_value
         JSONB confirmed_value
-        TEXT_ARRAY missing_fields
+        VARCHAR_ARRAY missing_fields
         VARCHAR risk_level
         VARCHAR status
         VARCHAR clarification_reason
@@ -194,7 +229,7 @@ erDiagram
         VARCHAR embedding_model
         UUID source_summary_id FK
         UUID source_candidate_id FK
-        TEXT_ARRAY keywords
+        VARCHAR_ARRAY keywords
         SMALLINT importance
         TIMESTAMPTZ first_observed_at
         TIMESTAMPTZ last_confirmed_at
@@ -214,6 +249,51 @@ erDiagram
         JSONB details
         JSONB recurrence
         UUID source_candidate_id FK
+        VARCHAR notification_tier
+        TIMESTAMPTZ occurred_at
+    }
+    OCCUPANCY_EVENT {
+        UUID id PK
+        UUID senior_id FK
+        UUID robot_id FK
+        VARCHAR direction
+        VARCHAR source
+        VARCHAR resulting_occupancy
+        TIMESTAMPTZ occurred_at
+        TIMESTAMPTZ reported_at
+        TIMESTAMPTZ created_at
+    }
+    DAILY_ACTIVITY_METRIC {
+        UUID id PK
+        UUID senior_id FK
+        DATE metric_date
+        SMALLINT medication_taken_count
+        SMALLINT medication_scheduled_count
+        SMALLINT meal_count
+        SMALLINT water_intake_count
+        INTEGER sleep_minutes
+        SMALLINT mood_score
+        INTEGER senior_utterance_count
+        INTEGER robot_utterance_count
+        SMALLINT outing_count
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
+        SMALLINT orientation_question_repeat_count
+        TIMESTAMPTZ summary_sent_at
+    }
+    KNOWN_PERSON {
+        UUID id PK
+        UUID senior_id FK
+        UUID guardian_user_id FK
+        VARCHAR display_name
+        VARCHAR relationship
+        BOOLEAN is_deceased
+        VARCHAR deceased_note
+        BOOLEAN lives_with
+        VARCHAR contact_frequency
+        TIMESTAMPTZ last_mentioned_at
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
     }
     WAKE_WORD_TRIGGER_RECEIPT {
         VARCHAR event_id PK
@@ -223,6 +303,20 @@ erDiagram
         DOUBLE confidence
         VARCHAR disposition
         UUID scenario_id
+        TIMESTAMPTZ created_at
+    }
+    WALK_REQUEST_RECEIPT {
+        UUID id PK
+        VARCHAR ingress
+        VARCHAR request_id
+        VARCHAR robot_device_id
+        VARCHAR action
+        VARCHAR source
+        UUID conversation_id
+        TIMESTAMPTZ occurred_at
+        VARCHAR disposition
+        UUID scenario_id
+        VARCHAR scenario_status
         TIMESTAMPTZ created_at
     }
 
@@ -247,12 +341,26 @@ erDiagram
     FACT_CANDIDATE o|--o| MEMORY : materializes
     APP_USER ||--o{ CARE_RECORD : owns
     FACT_CANDIDATE o|--o| CARE_RECORD : materializes
+    APP_USER ||--o{ OCCUPANCY_EVENT : owns
+    ROBOT o|--o{ OCCUPANCY_EVENT : reports
+    APP_USER ||--o{ DAILY_ACTIVITY_METRIC : owns
+    APP_USER ||--o{ KNOWN_PERSON : describes
+    APP_USER o|--o{ KNOWN_PERSON : guardian_link
     SCENARIO o|--o| WAKE_WORD_TRIGGER_RECEIPT : accepted_trigger
+    SCENARIO o|--o{ WALK_REQUEST_RECEIPT : walk_request
 ```
 
-Mermaid의 `TEXT_ARRAY`는 PostgreSQL `TEXT[]`, `DOUBLE`은 `double precision` 표현이다. `fact_candidate.target_entity_id`, `materialized_target_id`와 `wake_word_trigger_receipt.scenario_id`는 서비스가 검증하는 논리 참조이며 물리 FK가 아니다.
+Mermaid의 `VARCHAR_ARRAY`는 PostgreSQL `varchar(255)[]`, `DOUBLE`은 `double precision` 표현이다. V1~V16에는 물리 FK가 없다. 따라서 도표의 `FK` 표시와 관계선은 raw UUID 컬럼의 논리 참조를 읽기 위한 표기이며, 참조 무결성·삭제 전파를 DB가 강제한다는 뜻이 아니다. `fact_candidate.target_entity_id`, `materialized_target_id`, `wake_word_trigger_receipt.scenario_id`, `walk_request_receipt.scenario_id`도 서비스가 검증하는 논리 참조다.
 
 `WAKE_WORD_CALL`의 `scenario.external_event_id`는 반드시 실제 MQTT `eventId`여야 한다. 이 타입에만 적용되는 CHECK와 부분 UNIQUE 인덱스로 null 및 중복을 막되, 다른 시나리오 타입의 `external_event_id` 전체를 전역 UNIQUE로 만들지는 않는다. 시나리오 시작은 `app_user` 시니어 행을 공용 잠금으로 사용하고, DB의 시니어별 활성 시나리오 부분 UNIQUE 인덱스를 최종 방어선으로 둔다.
+
+`WALK`의 `scenario.external_event_id`는 실제 최초 START의 MQTT `eventId` 또는 Guardian REST `requestId`다. `trigger_context`에는 요청 출처를 재구성할 최소 문맥인 `ingress`(`MQTT`/`GUARDIAN_REST`), `source`(`VOICE`/`APP`), `occurredAt`, 선택 `conversationId`만 보존한다. `conversationId`는 Voice MQTT가 실제로 보낸 경우에만 있으며, Backend가 새 대화를 만들거나 산책 완료 조건으로 쓰지 않는다. 원본 음성·전체 STT·영상·tracking 데이터는 넣지 않는다.
+
+START와 STOP은 같은 `scenario.id`를 유지하지만 `follow_start_command_id`와 `follow_stop_command_id`는 서로 달라야 한다. START 명령 ID는 `FOLLOW_RESULT(STOPPED)`가 Robot 자체 종료를 알릴 때도 쓰이므로 `STARTED` 이후 지우지 않는다. 정상 수신 경로에서는 상관 검증을 통과한 FOLLOW 결과의 event·command·result·reason·occurredAt만 `last_follow_*`에 구조화해 보존한다.
+
+ACK 대기 또는 최대 산책 시간이 끝나 Backend watchdog이 종료하는 경우는 Robot 결과가 아닌 **Backend synthetic timeout**이다. Backend는 기존 STOP commandId를 재사용하거나 없으면 새로 만들어 `FOLLOW_STOP`을 best-effort 발행한 뒤, `last_follow_result_event_id="timeout-{scenarioId}"`, `last_follow_command_id=<stopCommandId>`, `last_follow_result_code="UNCHANGED"`, `last_follow_reason_code="EXECUTION_TIMEOUT"`, `last_follow_result_at=<Backend 판정 시각>`을 남기고 `TIMED_OUT`/`SAFE_STOP`으로 종료한다. `timeout-{scenarioId}`는 MQTT로 수신한 Robot `eventId`가 아니며, `UNCHANGED`도 Robot이 STOP 성공을 확인했다는 증거가 아니다.
+
+`walk_request_receipt`는 `(ingress, request_id)`를 UNIQUE로 둔다. 따라서 동일 ingress의 HTTP/MQTT 재전송은 최초 수락·거절을 재생하지만, 우연히 같은 불투명 문자열을 사용한 `MQTT`와 `GUARDIAN_REST` 요청은 서로 충돌하지 않는다. Voice와 App이 서로 다른 ID로 동시에 START하는 경우에는 receipt만으로 직렬화됐다고 주장하지 않는다. 모든 시나리오가 공유하는 `app_user` 시니어 행 잠금과 시니어별 활성 Scenario 부분 UNIQUE 인덱스가 Scenario와 `FOLLOW_START` 하나만 허용한다.
 
 ## 4. 대화·요약·기억
 
@@ -282,7 +390,7 @@ AND 요청자에게 visibility 허용
 
 의미 유사도, `importance` 1~5, 최근 확인·사용 시각으로 재정렬하고 상위 3~10개만 문맥에 쓴다. 변경은 새 기억과 `superseded_by_id`로 표현한다. `source_candidate_id` 유일성으로 중복 반영을 막는다.
 
-Raw 삭제 전에는 필요한 요약 생성, 활성 후보 해소, 확정 사실의 최종 반영, 보존기간 만료를 모두 확인한다. `onboarding_answer.source_message_id`, `fact_candidate.source_message_id`, `care_record.source_message_id`는 `conversation_message.id` 물리 FK이며 `ON DELETE SET NULL`이다.
+Raw 삭제 전에는 필요한 요약 생성, 활성 후보 해소, 확정 사실의 최종 반영, 보존기간 만료를 모두 확인한다. `onboarding_answer.source_message_id`, `fact_candidate.source_message_id`, `care_record.source_message_id`는 `conversation_message.id`의 논리 참조다. V1~V16에는 물리 FK와 `ON DELETE SET NULL`이 없으므로, Raw 삭제 시 근거 ID를 비우는 보존 규칙은 서비스·배치에서 보장해야 한다.
 
 ## 5. 앱·로봇 공용 온보딩
 
@@ -356,9 +464,17 @@ NULL은 두 가지를 뜻합니다 — "모른다", 그리고 "시점이 없다"
 
 V7 이전에는 시각이 `details` 안에 네 가지 규약으로 흩어져 있었습니다(`scheduledAt`, `startsAt`, `ts`, `metricDate`). 스키마가 어느 것도 강제하지 않았기 때문에, 같은 뜻의 두 규약이 조용히 어긋나 있던 곳이 실제로 있었습니다. 파생 규칙은 `CareRecordTime` 한 곳에 있고 V7의 `COALESCE`와 같은 순서입니다 — 한쪽만 바꾸면 배포 날짜에 이음매가 생깁니다.
 
+### 재실 이벤트와 일간 활동 (`occupancy_event` V3, `daily_activity_metric` V4·V6)
+
+`occupancy_event`는 재실 변경 한 번을 추가형 이력으로 보존한다. `direction`은 `IN`/`OUT` 또는 NULL, `source`는 `DOOR_SENSOR`/`SPEECH`/`HEARTBEAT_TIMEOUT`, `resulting_occupancy`는 `HOME`/`AWAY`/`UNKNOWN`이다. PK는 `id`, 명시 인덱스는 `(senior_id, occurred_at)`의 `idx_occupancy_event_senior_occurred`다. `senior_id`와 선택 `robot_id`는 논리 참조이고, V1~V16에 FK·UNIQUE·CHECK·DB default는 없다. 코드 enum은 문자열로 저장하지만 DB CHECK로 사전을 강제하지는 않는다.
+
+`daily_activity_metric`은 `(senior_id, metric_date)` 하루의 복약·식사·물·수면·기분·대화·외출·지남력 반복 횟수와 요약 발송 시각을 집계한다. PK는 `id`, `uq_daily_activity_metric_day(senior_id, metric_date)`로 하루 한 행을 보장하며 별도 명시 인덱스는 없다. 지표 컬럼의 NULL은 0이 아니라 “측정하지 못함”이다. enum·물리 FK·CHECK·DB default는 없다.
+
 ### 회피 대상 (`known_person`, V10 / S15P11E102-260)
 
 `known_person`은 어르신 주변 인물(가족·지인) 한 명을 구조화해 담는 표입니다. 예전에는 `app_user.conversation_preferences`의 `avoid_topics`라는 자유 문자열 목록 하나가 회피 대상을 표현하는 유일한 방법이었는데, 이 목록을 채우는 코드가 저장소 어디에도 없어 한 번도 작동한 적이 없었습니다. 이름·관계·생존 여부를 컬럼으로 분리하면 로봇은 살아 있는 사람 이야기는 자연스럽게 잇고, 돌아가신 분은 결정론적으로 피할 수 있습니다.
+
+PK는 `id`, 명시 인덱스는 `idx_known_person_senior(senior_id)`다. `senior_id`와 선택 `guardian_user_id`는 논리 참조이며 물리 FK·UNIQUE·CHECK·DB default는 없다. `relationship`과 `contact_frequency`는 enum이 아닌 자유 문자열이다.
 
 `is_deceased`는 세 값을 구분합니다.
 
@@ -387,9 +503,16 @@ V7 이전에는 시각이 `details` 안에 네 가지 규약으로 흩어져 있
 
 | 대상 | 허용 값 |
 | --- | --- |
-| `scenario.scenario_type` | `HOMECOMING`, `WELLNESS_CHECK`, `MEDICATION_REMINDER`, `WAKE_WORD_CALL`, `FALL_RESPONSE`, `MANUAL_INTERACTION` |
-| `scenario.final_status` | `RECEIVED`, `NAVIGATING`, `MOVING_TO_ENTRANCE`, `CHECKING_INTERACTION`, `CONVERSING`, `RETURN_DECISION`, `RETURNING_TO_DEFAULT`, `COMPLETED`, `FAILED`, `CANCELLED`, `TIMED_OUT` |
+| `scenario.scenario_type` | `HOMECOMING`, `WELLNESS_CHECK`, `MEDICATION_REMINDER`, `WAKE_WORD_CALL`, `WALK`, `FALL_RESPONSE`, `MANUAL_INTERACTION` |
+| `scenario.final_status` | `RECEIVED`, `NAVIGATING`, `STARTING_FOLLOW`, `FOLLOWING`, `STOPPING_FOLLOW`, `MOVING_TO_ENTRANCE`, `CHECKING_INTERACTION`, `CONVERSING`, `RETURN_DECISION`, `RETURNING_TO_DEFAULT`, `COMPLETED`, `FAILED`, `CANCELLED`, `TIMED_OUT` |
+| `robot.occupancy_status`, `occupancy_event.resulting_occupancy` | `HOME`, `AWAY`, `UNKNOWN` |
+| `occupancy_event.direction` | `IN`, `OUT` (문 통과가 아닌 이벤트는 NULL) |
+| `occupancy_event.source` | `DOOR_SENSOR`, `SPEECH`, `HEARTBEAT_TIMEOUT` |
 | `wake_word_trigger_receipt.disposition` | `RECEIVED`, `ACCEPTED`, `REJECTED_UNKNOWN_ROBOT`, `REJECTED_INACTIVE_ROBOT`, `REJECTED_UNASSIGNED_ROBOT`, `REJECTED_SAFE_STOP`, `REJECTED_ACTIVE_SCENARIO`, `REJECTED_BUSY_MODE` |
+| `walk_request_receipt.ingress` | `MQTT`, `GUARDIAN_REST` |
+| `walk_request_receipt.action` | `START`, `STOP` |
+| `walk_request_receipt.source` | `VOICE`, `APP` |
+| `walk_request_receipt.disposition` | `RECEIVED`, `ACCEPTED`, `NO_OP_ALREADY_STOPPING`, `REJECTED_NO_ACTIVE_WALK`, `REJECTED_UNKNOWN_ROBOT`, `REJECTED_INACTIVE_ROBOT`, `REJECTED_UNASSIGNED_ROBOT`, `REJECTED_SAFE_STOP`, `REJECTED_REST_GUARD`, `REJECTED_ACTIVE_SCENARIO`, `REJECTED_BUSY_MODE`, `REJECTED_REQUEST_ID_REUSED`, `REJECTED_MQTT_UNAVAILABLE` |
 | `conversation.status` | `OPEN`, `COMPLETED`, `FAILED`, `CANCELLED` |
 | `conversation_message.role` | `SENIOR`, `ROBOT` |
 | `conversation_summary.summary_type` | `CONVERSATION`, `DAILY` |
@@ -490,5 +613,6 @@ Qdrant (senior_id 필터 + 유사도) -> 후보 id
 - 반복 연락·협의가 별도 생명주기를 요구할 때 `care_coordination_event`
 - 긴 대화 중간 압축 문제가 확인될 때 `TIME_WINDOW`
 - 무배포 질문 편집이 필요할 때 `onboarding_question`
-- 재시작을 넘는 통신 멱등이 필요할 때 수신 원장·Outbox
+- 호출·산책 외 메시지의 재시작 안전 멱등이 필요할 때 범용 수신 원장
+- DB 커밋과 MQTT 발행을 하나의 전달 생명주기로 묶는 durable Outbox
 - 감사 요구가 확정될 때 `audit_log`

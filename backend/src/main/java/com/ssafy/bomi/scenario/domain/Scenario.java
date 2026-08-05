@@ -14,6 +14,7 @@ import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import lombok.AccessLevel;
@@ -102,6 +103,39 @@ public class Scenario {
     /** Stable terminal reason code; human prose belongs in logs, not this field. */
     @Column(name = "completion_reason_code", length = 100)
     private String completionReasonCode;
+
+    /** WALK 전용 FOLLOW_START 상관관계. STARTED 뒤에도 산책 종료까지 보존한다. */
+    @Column(name = "follow_start_command_id", length = 64)
+    private String followStartCommandId;
+
+    /** WALK 전용 FOLLOW_STOP 상관관계. START 명령과 절대 공유하지 않는다. */
+    @Column(name = "follow_stop_command_id", length = 64)
+    private String followStopCommandId;
+
+    @Column(name = "follow_start_requested_at")
+    private OffsetDateTime followStartRequestedAt;
+
+    @Column(name = "following_started_at")
+    private OffsetDateTime followingStartedAt;
+
+    @Column(name = "follow_stop_requested_at")
+    private OffsetDateTime followStopRequestedAt;
+
+    /** 마지막으로 상태에 반영한 FOLLOW_RESULT의 최소 구조화 이력. */
+    @Column(name = "last_follow_result_event_id", length = 64)
+    private String lastFollowResultEventId;
+
+    @Column(name = "last_follow_command_id", length = 64)
+    private String lastFollowCommandId;
+
+    @Column(name = "last_follow_result_code", length = 50)
+    private String lastFollowResultCode;
+
+    @Column(name = "last_follow_reason_code", length = 100)
+    private String lastFollowReasonCode;
+
+    @Column(name = "last_follow_result_at")
+    private OffsetDateTime lastFollowResultAt;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -236,6 +270,96 @@ public class Scenario {
         transitionTo(ScenarioStatus.NAVIGATING);
     }
 
+    /** Stores and starts the WALK FOLLOW_START command lifecycle. */
+    public void beginFollowStart(String commandId, OffsetDateTime requestedAt) {
+        requireWalk();
+        if (followStartCommandId != null) {
+            throw new IllegalStateException("WALK already has a FOLLOW_START command: " + id);
+        }
+        transitionTo(ScenarioStatus.STARTING_FOLLOW);
+        this.followStartCommandId = requireText(commandId, "commandId", 64);
+        this.followStartRequestedAt = requireNonNull(requestedAt, "requestedAt");
+    }
+
+    /** Applies STARTED/UNCHANGED and records when Backend confirmed FOLLOWING. */
+    public void confirmFollowing(
+        String eventId,
+        String commandId,
+        String resultCode,
+        String reasonCode,
+        OffsetDateTime resultOccurredAt,
+        OffsetDateTime confirmedAt
+    ) {
+        requireWalk();
+        transitionTo(ScenarioStatus.FOLLOWING);
+        recordFollowResult(eventId, commandId, resultCode, reasonCode, resultOccurredAt);
+        this.followingStartedAt = requireNonNull(confirmedAt, "confirmedAt");
+    }
+
+    /**
+     * Records the START acknowledgement that arrives after a STOP was requested. The state stays
+     * STOPPING_FOLLOW; the acknowledgement is only the causal proof needed to publish the
+     * already-persisted FOLLOW_STOP without risking STOP-before-START command reordering.
+     */
+    public void confirmFollowStartWhileStopping(
+        String eventId,
+        String commandId,
+        String resultCode,
+        String reasonCode,
+        OffsetDateTime resultOccurredAt,
+        OffsetDateTime confirmedAt
+    ) {
+        requireWalk();
+        if (finalStatus != ScenarioStatus.STOPPING_FOLLOW) {
+            throw new IllegalStateException(
+                "Deferred FOLLOW_START acknowledgement requires STOPPING_FOLLOW: " + id);
+        }
+        if (!Objects.equals(commandId, followStartCommandId)) {
+            throw new IllegalArgumentException(
+                "Deferred FOLLOW_START commandId does not match WALK start command");
+        }
+        if (followStopCommandId == null) {
+            throw new IllegalStateException("STOPPING_FOLLOW requires a FOLLOW_STOP command: " + id);
+        }
+        if (followingStartedAt != null) {
+            throw new IllegalStateException("WALK start acknowledgement is already recorded: " + id);
+        }
+        recordFollowResult(eventId, commandId, resultCode, reasonCode, resultOccurredAt);
+        this.followingStartedAt = requireNonNull(confirmedAt, "confirmedAt");
+    }
+
+    /** Stores a distinct FOLLOW_STOP command and enters STOPPING_FOLLOW exactly once. */
+    public void beginFollowStop(String commandId, OffsetDateTime requestedAt) {
+        requireWalk();
+        if (followStopCommandId != null) {
+            throw new IllegalStateException("WALK already has a FOLLOW_STOP command: " + id);
+        }
+        String validatedCommandId = requireText(commandId, "commandId", 64);
+        if (validatedCommandId.equals(followStartCommandId)) {
+            throw new IllegalArgumentException(
+                "FOLLOW_STOP commandId must differ from FOLLOW_START commandId");
+        }
+        transitionTo(ScenarioStatus.STOPPING_FOLLOW);
+        this.followStopCommandId = validatedCommandId;
+        this.followStopRequestedAt = requireNonNull(requestedAt, "requestedAt");
+    }
+
+    /** Records only stable FOLLOW_RESULT fields, never frames/tracks/raw speech. */
+    public void recordFollowResult(
+        String eventId,
+        String commandId,
+        String resultCode,
+        String reasonCode,
+        OffsetDateTime occurredAt
+    ) {
+        requireWalk();
+        this.lastFollowResultEventId = requireText(eventId, "eventId", 64);
+        this.lastFollowCommandId = requireText(commandId, "commandId", 64);
+        this.lastFollowResultCode = normalizeCode(resultCode, "resultCode", 50);
+        this.lastFollowReasonCode = normalizeCode(reasonCode, "reasonCode", 100);
+        this.lastFollowResultAt = requireNonNull(occurredAt, "occurredAt");
+    }
+
     public void checkInteraction() {
         transitionTo(ScenarioStatus.CHECKING_INTERACTION);
     }
@@ -295,12 +419,14 @@ public class Scenario {
             buildConversationTransitions();
         Map<ScenarioStatus, Set<ScenarioStatus>> wakeWord =
             buildWakeWordCallTransitions();
+        Map<ScenarioStatus, Set<ScenarioStatus>> walk = buildWalkTransitions();
         Map<ScenarioType, Map<ScenarioStatus, Set<ScenarioStatus>>> byType =
             new EnumMap<>(ScenarioType.class);
         for (ScenarioType type : ScenarioType.values()) {
             byType.put(type, conversation);
         }
         byType.put(ScenarioType.WAKE_WORD_CALL, wakeWord);
+        byType.put(ScenarioType.WALK, walk);
         return Map.copyOf(byType);
     }
 
@@ -333,6 +459,28 @@ public class Scenario {
         putTransition(map, ScenarioStatus.RECEIVED, ScenarioStatus.NAVIGATING,
             exceptionalTerminals);
         putTransition(map, ScenarioStatus.NAVIGATING, ScenarioStatus.COMPLETED,
+            exceptionalTerminals);
+        map.put(ScenarioStatus.COMPLETED, Set.of());
+        map.put(ScenarioStatus.FAILED, Set.of());
+        map.put(ScenarioStatus.CANCELLED, Set.of());
+        map.put(ScenarioStatus.TIMED_OUT, Set.of());
+        return map;
+    }
+
+    private static Map<ScenarioStatus, Set<ScenarioStatus>> buildWalkTransitions() {
+        Set<ScenarioStatus> exceptionalTerminals = EnumSet.of(
+            ScenarioStatus.FAILED, ScenarioStatus.CANCELLED, ScenarioStatus.TIMED_OUT);
+        Map<ScenarioStatus, Set<ScenarioStatus>> map = new EnumMap<>(ScenarioStatus.class);
+        putTransition(map, ScenarioStatus.RECEIVED, ScenarioStatus.STARTING_FOLLOW,
+            exceptionalTerminals);
+        putTransition(map, ScenarioStatus.STARTING_FOLLOW, ScenarioStatus.FOLLOWING,
+            exceptionalTerminals);
+        map.get(ScenarioStatus.STARTING_FOLLOW).add(ScenarioStatus.STOPPING_FOLLOW);
+        map.get(ScenarioStatus.STARTING_FOLLOW).add(ScenarioStatus.COMPLETED);
+        putTransition(map, ScenarioStatus.FOLLOWING, ScenarioStatus.STOPPING_FOLLOW,
+            exceptionalTerminals);
+        map.get(ScenarioStatus.FOLLOWING).add(ScenarioStatus.COMPLETED);
+        putTransition(map, ScenarioStatus.STOPPING_FOLLOW, ScenarioStatus.COMPLETED,
             exceptionalTerminals);
         map.put(ScenarioStatus.COMPLETED, Set.of());
         map.put(ScenarioStatus.FAILED, Set.of());
@@ -413,5 +561,11 @@ public class Scenario {
     private void clearNavigationCorrelation() {
         this.activeNavigationCommandId = null;
         this.activeNavigationTarget = null;
+    }
+
+    private void requireWalk() {
+        if (scenarioType != ScenarioType.WALK) {
+            throw new IllegalStateException("FOLLOW state is only valid for WALK scenarios: " + id);
+        }
     }
 }

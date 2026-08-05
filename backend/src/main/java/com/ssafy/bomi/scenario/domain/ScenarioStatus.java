@@ -20,6 +20,12 @@ public enum ScenarioStatus {
     RECEIVED,
     /** 범용 목적지로 이동 중. 기존 현관 전용 상태는 호환성을 위해 그대로 둔다. */
     NAVIGATING,
+    /** 산책 FOLLOW_START 결과를 기다리는 중. */
+    STARTING_FOLLOW,
+    /** Robot이 사용자를 따라가는 정상 산책 상태. */
+    FOLLOWING,
+    /** 산책 FOLLOW_STOP 결과를 기다리는 중. */
+    STOPPING_FOLLOW,
     MOVING_TO_ENTRANCE,
     CHECKING_INTERACTION,
     CONVERSING,

@@ -31,9 +31,9 @@ import org.hibernate.type.SqlTypes;
  *
  * <p>{@code record_type} is kept as a raw {@link String} because the allowed set
  * ({@code CARE_RECORD_ENUM}) is broad and still evolving; it can become an enum
- * once frozen. All id columns are raw {@link UUID} logical references, except
- * {@code source_message_id}, which the MVP ERD designates a physical FK to
- * {@code conversation_message} with {@code ON DELETE SET NULL} (§4).</p>
+ * once frozen. All id columns are raw {@link UUID} logical references, including
+ * {@code source_message_id}; V1~V16 declares no physical FK or automatic delete
+ * propagation (§4).</p>
  */
 @Entity
 @Table(
@@ -62,7 +62,7 @@ public class CareRecord {
     @Column(name = "source_conversation_id")
     private UUID sourceConversationId;
 
-    /** Physical FK to {@code conversation_message} ({@code ON DELETE SET NULL}). */
+    /** Logical reference to {@code conversation_message}; deletion is handled by policy. */
     @Column(name = "source_message_id")
     private UUID sourceMessageId;
 

@@ -27,7 +27,7 @@ import java.util.UUID;
  *     새어 들어갈 수 있다.
  * @param conversationId 이 사실이 나온 대화. {@code fact_candidate.conversation_id}.
  * @param sourceMessageId 이 사실의 근거가 된 발화. {@code fact_candidate.source_message_id}
- *     (conversation_message 에 대한 물리 FK, ON DELETE SET NULL). 반드시 conversationId 가
+ *     (conversation_message 에 대한 논리 참조; 자동 삭제 전파 없음). 반드시 conversationId 가
  *     가리키는 대화에 속한 메시지여야 한다.
  * @param targetDomain 이 사실이 최종적으로 실체화될 대상 도메인 (MEMORY / CARE_RECORD 등).
  * @param factType 사실의 종류. {@code memory_type} 또는 {@code care_record.record_type} 과
