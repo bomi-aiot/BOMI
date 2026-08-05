@@ -218,6 +218,34 @@ CREATE TABLE IF NOT EXISTS door_alert (
 """
 
 
+# 발화 이력 — 같은 종류의 알림에서 최근에 뭐라고 말했는지 (S15P11E102-256).
+#
+# 왜 필요한가
+#   §17.8 은 "같은 권유가 사흘 연속 토씨까지 같지 않아야 한다"를 요구한다. 그런데
+#   프롬프트 빌더(prompts/builder.py._format_recent_phrasings)는 이미 오래전부터
+#   그 문구를 받을 자리를 갖고 있었고, 채워주는 코드만 없었다 — 이 표가 그 값을
+#   만드는 쪽이다.
+#
+# phrasing_key 는 graph/phrasing.phrasing_key(origin, intent) 가 만든다. 이 표는
+# 그 키가 무엇을 뜻하는지 모른다 — 그냥 문자열로 저장하고 그대로 조회에 쓴다.
+_SPOKEN_PHRASING = """
+CREATE TABLE IF NOT EXISTS spoken_phrasing (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    senior_id    TEXT    NOT NULL,
+    phrasing_key TEXT    NOT NULL,
+    text         TEXT    NOT NULL,
+    spoken_at    REAL    NOT NULL
+)
+"""
+
+# 조회(같은 senior_id + phrasing_key, 최신순)와 정리(보관 기간·개수 상한) 모두
+# 이 세 컬럼으로 걸러진다. 색인이 없으면 발화 이력이 쌓일수록 매 턴 전체 스캔이다.
+_SPOKEN_PHRASING_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_spoken_phrasing_lookup
+    ON spoken_phrasing (senior_id, phrasing_key, spoken_at)
+"""
+
+
 def init_runtime(connection: sqlite3.Connection) -> None:
     """운영 상태 DB 의 표를 만든다. 멱등하다."""
     connection.execute(_RUNTIME_STATE)
@@ -228,6 +256,8 @@ def init_runtime(connection: sqlite3.Connection) -> None:
     connection.execute(_CONTEXT_CACHE)
     connection.execute(_COMPLETED_SLOT)
     connection.execute(_DOOR_ALERT)
+    connection.execute(_SPOKEN_PHRASING)
+    connection.execute(_SPOKEN_PHRASING_INDEX)
 
 
 def _add_missing_columns(

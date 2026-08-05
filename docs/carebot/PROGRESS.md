@@ -804,6 +804,35 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 
 ---
 
+### 256 — 표현 다양성 배선 ✅ (실기 미실시)
+
+| 완료 조건 | 결과 |
+|---|---|
+| 같은 종류의 능동 알림을 두 번 내보내면, 두 번째 프롬프트에 "표현 반복 피하기" 섹션과 첫 발화 문장이 들어 있다 | ✅ (`test_naturalness_replay.py` 시나리오 `08-varies-its-phrasing`, `proactive` 경로로 그래프 전체를 태움) |
+| 반응형 턴, 특히 능동 턴 직후의 반응형 턴 프롬프트에는 그 섹션이 절대 나타나지 않는다 | ✅ (`graph/context.py._lookup_recent_phrasings` 가 `trigger_type` 을 가드로 씀) |
+| 식사 권유와 수분 권유는 서로 다른 키로 분리되고, 같은 끼니(아침/점심/저녁)는 같은 키로 묶인다 | ✅ (`test_phrasing.py::test_meal_and_water_get_different_keys`, `test_same_meal_slot_shares_a_key_across_days`) |
+| 침묵 프로브와 T3 동의 질문은 기록·조회 대상에서 빠진다 | ✅ (`policy.RECENT_PHRASING_EXCLUDED_ORIGIN_PREFIXES`, `test_phrasing.py::test_silence_probe_is_excluded`·`test_t3_consent_question_is_excluded`) |
+| 보관 기간 만료, 재시작, 개수 상한 초과를 각각 검증 | ✅ (`test_phrasing.py::test_retention_expiry`·`test_survives_restart`·`test_max_rows_per_key_caps_storage`) |
+| 기록 과정에서 예외가 발생해도 로봇은 침묵하지 않고 발화를 끝까지 마친다 | ✅ (`graph/build.py._record_phrasing` 이 예외를 삼키고 경고 로그만 남김. `memory_write` 의 다른 실패 처리와 같은 자리) |
+| 새로 추가한 policy 상수를 실제로 읽는 운영 코드가 존재한다 | ✅ (`RECENT_PHRASING_RETENTION_DAYS`·`RECENT_PHRASING_MAX_ROWS_PER_KEY`·`RECENT_PHRASING_EXCLUDED_ORIGIN_PREFIXES` 모두 `localstore/phrasings.py`·`graph/phrasing.py` 가 읽음) |
+| 백엔드·Flyway 변경 없음, 로봇 테스트 전체·lint 통과 | ✅ (554 passed, ruff 0 오류) |
+
+**문제**: 프롬프트 빌더(`prompts/builder.py._format_recent_phrasings`)와 `state.py` 의 `recent_phrasings` 필드는 이미 있었지만, 그 값을 실제로 채우는 코드가 레포 어디에도 없었습니다 — "표현 반복 피하기" 섹션이 한 번도 프롬프트에 실린 적이 없었습니다. `tests/test_naturalness_replay.py._run_with_phrasings` 의 docstring 은 "게이트가 넣는 값"이라고 적혀 있었지만, 실제로는 `graph/gate.py` 의 반환 dict 에 그 키가 없었습니다 — 우회 테스트 헬퍼가 배선이 없다는 사실을 가려온 것입니다.
+
+**설계 판단 — 어디서 기록하고 어디서 조회할 것인가.** 기록은 `graph/build.py.memory_write` 가 발화가 최종 확정된 직후(`response_shaper` 다음) 담당하고, 조회는 `graph/context.py.context_read` 가 담당합니다. 둘 다 새 순수 함수 `graph/phrasing.phrasing_key(origin, intent)` 를 공유해서 같은 규칙으로 키를 만듭니다 — 한쪽만 고치면 저장은 되는데 조회가 안 되는(또는 그 반대) 조용한 어긋남을 막기 위해서입니다.
+
+**설계 판단 — 왜 `trigger_type` 가드가 핵심인가.** `speech_origin`·`intent` 는 체크포인트되는 `ConvState` 필드라 reducer 가 없습니다(기본 LastValue 채널). 능동 턴이 `"silence_ladder:1"` 을 남기면, 아무도 지우지 않는 한 바로 다음 반응형 턴(어르신이 말을 건 턴)에도 그 값이 그대로 남아 있습니다. 그래서 기록·조회 양쪽 모두 `state.get("trigger_type") in ("proactive", "backend_command")` 를 먼저 확인합니다 — 이 값은 매 턴 `route_ingress` 가 명시적으로 세우므로 새지 않습니다. 이 가드가 없었다면 "능동 턴 직후의 반응형 턴에 섹션이 새지 않는다"는 완료 조건을 지킬 수 없었습니다.
+
+**설계 판단 — 왜 침묵 프로브와 T3 동의 질문을 빼는가.** `policy.RECENT_PHRASING_EXCLUDED_ORIGIN_PREFIXES = ("silence_ladder", "t3_consent")` 로 origin 접두사 매칭을 합니다. 침묵 프로브는 생존 확인이 목적이라 매번 다른 문구가 오히려 "새 질문"으로 들려 혼란을 줍니다. T3 동의 질문은 애초에 `handlers.py` 에서 origin 자체가 콜론 뒤에 고정된 한국어 문장이라(id 가 아니라 문장), 다양화할 대상이 없습니다 — 티켓 원안은 "id 가 붙어 키가 늘어난다"를 이유로 들었지만 실제로는 문구가 고정이라는 것이 이유이고, 접두사 매칭으로 결과는 동일합니다.
+
+**설계 판단 — 정책 상수를 어디에 둘 것인가.** `RECENT_PHRASING_LOOKBACK`(프롬프트에 몇 개를 보여줄지)은 이미 있었고, 새로 `RECENT_PHRASING_RETENTION_DAYS`(보관 기간)와 `RECENT_PHRASING_MAX_ROWS_PER_KEY`(저장소 상한)를 추가했습니다. 둘을 분리한 이유는 "프롬프트에 몇 개를 보여줄까"와 "저장소에 몇 개까지 쌓아 둘까"가 다른 질문이기 때문입니다 — 보관 기간 안이어도 매일 같은 알림이 쌓이면 무한정 자라므로 별도 상한이 필요합니다(§18 microSD 쓰기 절감).
+
+**테스트 우회 제거.** `tests/test_naturalness_replay.py` 의 `_run_with_phrasings` (핸들러를 직접 부르는 우회)를 없애고, `_run_proactive_turn` 으로 바꿔 `jobs/ticks._invoke_proactive` 와 같은 모양으로 `trigger_type="proactive"` 로 그래프 전체(게이트 → `context_read` → `handle_companion` → `response_shaper` → `memory_write`)를 태우도록 시나리오 08 을 다시 썼습니다. `repeatTurns: 2` 로 같은 제안을 두 번 흘려서, 두 번째 프롬프트에 첫 번째 발화가 실제로 실려 오는지 봅니다.
+
+**미검증**: 실기(Jetson, 실제 스케줄러 틱이 사흘에 걸쳐 같은 알림을 몇 번 내는지). 자동 테스트는 압축 시계와 대역 LLM 으로 확인했습니다.
+
+---
+
 ## 7. 갱신 이력
 
 | 시점 | 내용 |
@@ -820,6 +849,7 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 | 227·209 푸시 후 | 227(서버 계약 API)과 209(로봇 계약 대화) 추가. §2.6 을 '절반 채워짐'으로 갱신. §3.7 계약 판정의 LLM 경계. **확인 판정 오탐 2건과 발화 결함 2건을 테스트·워크스루가 잡아 수정.** 온보딩 답변 누적 누락을 227 브랜치에 수정 커밋으로 반영 |
 | 307(AI) 푸시 후 | 307 로봇 쪽 추가. 네 클라이언트가 공유 세션 하나(`backend_client/session.py`)에서 인증 헤더를 얹도록 배선. 401/403 을 캐시 폴백·조용한 실패와 구분되는 "AUTH FAILURE" 경고로 표시. 백엔드 서블릿 필터(be-develop, 307)는 별도 워크트리라 실통합은 UNVERIFIED |
 | 311 푸시 후 | **날씨·의료 조회를 그래프에 연결.** `context_read` 가 조회를 맡고 `ctx["documents"]` 로 "참고 자료"를 채워, `handle_info` 는 그대로 얇게 남김(§16 생성 호출 1회, §23 핸들러 직접 I/O 금지 유지). 반응형 턴은 `classify_intent` 전이라 의료 힌트 표지로 좁힌 사전 판정을 도입, 라우터 판정을 `state["is_medical_query"]` 로 캐시해 두 번 안 부르게 함. 도시 추출을 `weather/client.py` 로 옮겨 legacy·그래프 경로가 공유. 테스트 도중 **선행 버그**(`test_bootstrap.py` 의 오디오 대역이 `onset_timeout_seconds` 를 안 받아 전체 스위트가 무한 대기)를 발견 — 범위 밖이라 별도 세션이 S15P11E102-319 로 분리 처리 |
+| 256 푸시 후 | **표현 다양성 배선.** 있던 자리(프롬프트 빌더, `state.recent_phrasings`, `RECENT_PHRASING_LOOKBACK`)를 채우는 코드가 없어 조용히 꺼져 있던 것을 배선했다. `graph/phrasing.phrasing_key`(순수 함수), `localstore/phrasings.py`(기록/조회/정리), `spoken_phrasing` 표를 신설했다. `memory_write`가 기록, `context_read`가 조회하며 `trigger_type` 가드로 반응형 턴에 새지 않게 했다. 침묵 프로브·T3 동의 질문은 `policy.RECENT_PHRASING_EXCLUDED_ORIGIN_PREFIXES` 로 제외. `test_naturalness_replay.py`의 우회 헬퍼(`_run_with_phrasings`)를 걷어내고 시나리오 08 이 실제 게이트 경로를 타도록 다시 썼다. |
 | 309 푸시 후 | **검증 문서 4종 + CLAUDE.md §20 정합.** `VERIFICATION.md` §3 에서 이미 머지된 263·226·218·227·232 를 참조하던 항목을 걷어냈다(263/232/226/227 은 표에서 삭제, 218 은 "완료됐지만 기본값이 꺼짐"으로 정정). §0 에 백엔드 명령이 `be-develop` 전용이라는 전제를 추가하고 각 백엔드 절에 표시를 붙였다. 존재하지 않던 테스트 이름(`test_sim_clock_compresses_a_day_into_ten_seconds`)을 실제 이름으로 고쳤다. `V1~V5` 하드코딩을 `FlywayMigrationValidationTest` 자기참조로 바꿨다. `READING-ORDER.md` 에 `mvp-erd.md` 가 `be-develop` 전용이라는 것, `bootstrap.py` 와 232 이후 신규 모듈들을 추가했다. `CLAUDE.md` §20 의 "아직 없음" 구분선을 지우고 실제 트리로 승격했다. 저장소 루트의 일회성 인계 문서를 지우고 6곳의 참조를 `docs/carebot/PROGRESS.md §2.2` 로 옮겼다(스프린트 경위·선행조건 순서·자해 목록 검토 요구사항의 유래는 §8 로 보존). |
 
 ---

@@ -33,6 +33,7 @@
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -42,6 +43,8 @@ from bomi_ai_chat.graph import context, handlers, ingress, output, triage
 from bomi_ai_chat.graph.gate import proactive_gate, route_gate
 from bomi_ai_chat.localstore.db import runtime_db_path
 from bomi_ai_chat.state import ConvState
+
+logger = logging.getLogger(__name__)
 
 # 일곱 개의 핸들러 인텐트. 한 곳에 두어서 라우터 매핑과 아래의 수렴 엣지가
 # 서로 어긋날 수 없게 한다.
@@ -114,7 +117,50 @@ def memory_write(state: ConvState) -> dict:
     if senior_message_id:
         # fact_candidate 추출(255)의 sourceMessageId 가 필요로 한다 (state.py 참고).
         out["last_message_id"] = senior_message_id
+
+    _record_phrasing(state)
     return out
+
+
+def _record_phrasing(state: ConvState) -> None:
+    """이번에 실제로 한 말을 표현 이력에 남긴다 (§17.8, S15P11E102-256).
+
+    무엇을 하는가
+        능동/명령 턴(스케줄러, 침묵 사다리, 백엔드 명령)에서만 phrasing_key 를
+        만들어 localstore.phrasings.record 를 부른다. 반응형 턴은 애초에
+        speech_origin 이 이번 턴의 것이라는 보장이 없으므로 건드리지 않는다 —
+        같은 가드가 graph/context.py 의 조회 쪽에도 있다. 둘이 어긋나면 저장은
+        되는데 조회는 안 되거나 그 반대가 되므로, 반드시 같은 조건을 쓴다.
+
+    왜 memory_write 안의 별도 함수인가
+        memory_write 는 이미 "턴을 기록한다"는 책임 하나를 지고 있다. 발화
+        이력도 그 책임의 일부이지만, phrasing_key 계산과 예외 처리를 본문에
+        섞으면 _record_turn 과 함께 memory_write 가 너무 길어진다.
+
+    누가 호출하는가
+        memory_write, out 을 만든 다음.
+
+    주의사항
+        예외를 여기서 삼킨다. 표현 다양화는 없어도 로봇이 말은 한다 — 이 기록이
+        실패했다고 해서 이미 확정된 발화를 취소하거나 턴을 실패시키면, 통계성
+        기능 하나가 대화 전체를 망가뜨리는 것이다(완료 조건).
+    """
+    if state.get("trigger_type") not in ("proactive", "backend_command"):
+        return
+
+    senior_id = state.get("senior_id")
+    text = (state.get("final_utterance") or state.get("response") or "").strip()
+    if not senior_id or not text:
+        return
+
+    try:
+        from bomi_ai_chat.graph.phrasing import phrasing_key
+        from bomi_ai_chat.localstore import phrasings
+
+        key = phrasing_key(state.get("speech_origin") or "", state.get("intent") or "")
+        phrasings.record(senior_id, key, text)
+    except Exception:  # noqa: BLE001 - 표현 이력 기록 실패가 턴을 죽이면 안 된다
+        logger.warning("failed to record spoken phrasing", exc_info=True)
 
 
 # 대화 적재 클라이언트. LLM 과 같은 이유로 지연 생성한다 — import 시점에 만들면

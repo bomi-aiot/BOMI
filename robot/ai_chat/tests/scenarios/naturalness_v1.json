@@ -20,6 +20,11 @@
     "  responseExcludes  최종 발화에 절대 없어야 하는 문자열들",
     "  intent            분류 결과가 이것이어야 한다",
     "  allPromptsIdentical  반복 턴의 프롬프트가 글자까지 같아야 한다",
+    "  proactive         반응형 대신 능동 제안을 게이트에 태운다(§17.8 처럼 능동",
+    "                    턴에서만 채워지는 값을 실제 배선으로 확인해야 할 때).",
+    "                    {intent, priority, seed, origin} 를 담은 객체. repeatTurns",
+    "                    와 함께 쓰면 같은 제안을 여러 번 반복해 표현 이력이 쌓이는",
+    "                    것을 확인할 수 있다.",
     "★ promptExcludes 함정: system.md 는 금지 예시를 '문장으로' 담고 있습니다.",
     "  예를 들어 '방금 말씀드렸는데' 는 쓰지 말라는 지시로 프롬프트 안에 있습니다.",
     "  그것을 금지 문자열로 넣으면 지시문 자체에 걸려 항상 실패합니다.",
@@ -88,12 +93,18 @@
     {
       "id": "08-varies-its-phrasing",
       "criterion": 8,
-      "title": "같은 알림이 3일 연속 글자까지 같지 않다",
-      "why": "같은 문장이 반복되면 사람이 아니라 알람으로 들린다. 최근 표현을 넘기고 다르게 말하라고 지시해야 한다.",
-      "recentPhrasings": ["물 한 잔 드시겠어요?", "물 좀 드세요."],
-      "turns": ["응"],
+      "title": "같은 알림이 사흘 연속 글자까지 같지 않다",
+      "why": "같은 문장이 반복되면 사람이 아니라 알람으로 들린다. 핸들러를 직접 부르는 우회가 아니라 실제 게이트 -> memory_write(기록) -> context_read(조회) 경로를 두 번 태워, 두 번째 프롬프트에 첫 번째 발화가 '표현 반복 피하기' 섹션으로 실제로 실려 오는지 확인한다 (S15P11E102-256).",
+      "proactive": {
+        "intent": "companion",
+        "priority": "high",
+        "seed": "물 한 잔 드시겠어요?",
+        "origin": "schedule:water:1000"
+      },
+      "repeatTurns": 2,
+      "llmReply": "물 한 잔 드세요.",
       "expect": {
-        "promptContains": ["물 한 잔 드시겠어요?", "물 좀 드세요."]
+        "promptContains": ["다르게 말합니다", "물 한 잔 드세요."]
       }
     },
     {
