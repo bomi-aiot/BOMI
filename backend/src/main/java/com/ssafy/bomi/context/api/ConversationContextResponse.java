@@ -65,6 +65,15 @@ public record ConversationContextResponse(
      *     shrugged off as "chronic" (CLAUDE.md §10).
      * @param preferredHospital the clinic or pharmacy the senior actually goes to,
      *     free-text. {@code null} when unset. Distinct from a nearby-clinic search.
+     * @param guardianSharingConsentGranted whether the senior has explicitly granted
+     *     T3 guardian-sharing consent (S15P11E102-253). The robot must not even
+     *     <strong>ask</strong> "may I tell your family?" unless this is {@code true} —
+     *     {@code false} covers both an explicit DENIED and the default NOT_REQUESTED,
+     *     matching {@code ConversationContextService.isGranted}'s "only explicit
+     *     GRANTED passes" rule. This is a permission gate, not content to filter: there
+     *     is nothing to omit when consent is missing, so unlike the other
+     *     consent-gated fields above, a boolean is exposed directly instead of an
+     *     empty collection.
      */
     public record SeniorProfile(
         UUID seniorId,
@@ -80,7 +89,8 @@ public record ConversationContextResponse(
         String wakeTime,
         String sleepTime,
         String chronicPainArea,
-        String preferredHospital
+        String preferredHospital,
+        boolean guardianSharingConsentGranted
     ) {}
 
     /**

@@ -1,4 +1,11 @@
 -- AI 대화 요청을 이동 전에 보존하고, MQTT 시작/종료 이벤트를 DB 행과 연결한다.
+--
+-- 왜 V14 인가 (S15P11E102-333 에서 정정)
+--   원래 이 파일은 V9 로 커밋됐다. 그런데 S15P11E102-259 가 이미 V9(app_user.birth_date)
+--   를 쓰고 있어서 Flyway 가 기동 시점에 "Found more than one migration with version 9"
+--   로 실패했다 — 빈 데이터베이스가 아예 안 뜨는 상태였다. 259 의 V9 는 이 파일보다
+--   먼저 커밋됐고(03:16 vs 10:55), 그 시점에 이미 V13 까지 순서대로 있었으므로 이
+--   파일이 번호를 잘못 골랐다. 다음 빈 번호인 V14 로 옮긴다.
 
 -- Flyway V14: persist and correlate scenario-driven AI conversations.
 ALTER TABLE scenario
