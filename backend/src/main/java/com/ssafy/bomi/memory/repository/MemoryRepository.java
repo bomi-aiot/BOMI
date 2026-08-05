@@ -16,6 +16,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface MemoryRepository extends JpaRepository<Memory, UUID> {
 
+    long countByEmbeddingStatus(EmbeddingStatus status);
+
     /**
      * 최근 기억 5건, 가시성 구분 없이.
      *

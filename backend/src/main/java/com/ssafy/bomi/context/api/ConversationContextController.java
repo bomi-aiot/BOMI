@@ -56,8 +56,10 @@ public class ConversationContextController {
             documents 는 info 인텐트에서만 true 로 보낸다. 잡담에 문서를 검색하면
             지연 예산을 낭비하고 프롬프트를 오염시킨다.
 
-            응답의 availability 를 반드시 확인한다. 목록이 비어 있는 것과 검색 자체가
-            불가능한 것은 다르며, 후자에서는 과거에 대해 단정적으로 말하지 않아야 한다.
+            availability 는 기능 가용성, retrieval 은 이번 요청의 실제 검색 실행 여부·
+            폴백 사유·hit 수·지연이다. 목록이 비어 있는 것, 검색하지 않은 것, 검색에
+            실패한 것은 서로 다른 상태이며 로봇은 retrieval 을 로그와 응답 안전성에
+            반영해야 한다.
             """)
     public ResponseEntity<ConversationContextResponse> assemble(
         @PathVariable UUID seniorId,
