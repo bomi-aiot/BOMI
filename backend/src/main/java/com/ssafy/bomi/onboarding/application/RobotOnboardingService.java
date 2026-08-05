@@ -341,10 +341,11 @@ public class RobotOnboardingService {
         answer.confirm(verification, senior.getId());
         candidate.confirm(value, senior.getId());
 
-        boolean materialized = materializer.materialize(question, senior, value);
-        if (materialized) {
-            candidate.materialize(senior.getId());
-        }
+        // candidate 를 MATERIALIZED 로 올리는 것까지 materializer 책임이다(S15P11E102-258).
+        // app_user 대상과 memory/care_record 대상이 서로 다른 방식으로 materialize 를
+        // 호출해야 해서(전자는 senior.getId(), 후자는 새로 만든 행의 id), 두 번 부르는
+        // 실수를 피하려면 호출을 한 곳에만 두는 것이 맞다.
+        boolean materialized = materializer.materialize(question, senior, candidate, value);
 
         return new AnswerResult(Outcome.ACCEPTED, questionCode, List.of(), null, null,
             candidate.getId(), materialized);

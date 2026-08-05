@@ -1,11 +1,10 @@
 package com.ssafy.bomi.scenario.inbound;
 
+import com.ssafy.bomi.conversation.domain.ConversationOutcome;
 import com.ssafy.bomi.mqtt.inbound.MqttInboundMessage;
 import com.ssafy.bomi.mqtt.inbound.MqttMessageHandler;
 import com.ssafy.bomi.mqtt.topic.MqttInboundCategory;
-import com.ssafy.bomi.scenario.application.HomecomingContract;
 import com.ssafy.bomi.scenario.application.HomecomingOrchestrator;
-import java.util.UUID;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -15,9 +14,7 @@ import org.springframework.stereotype.Component;
  *
  * <p>The voice/dialogue side (via the robot MQTT bridge) publishes this on the
  * robot {@code events} topic once the greeting conversation is over. The
- * scenario is identified by the {@code scenarioId} echoed in the payload (see
- * {@link HomecomingContract#readScenarioId}). This is the seam that replaces the
- * MVP logging stub so the homecoming happy path can complete end to end.</p>
+ * scenario and conversation are identified by the v1 top-level correlation IDs.</p>
  */
 @Component
 @ConditionalOnProperty(prefix = "bomi.mqtt", name = "enabled", havingValue = "true")
@@ -39,7 +36,17 @@ public class ConversationEndedHandler implements MqttMessageHandler {
 
     @Override
     public void handle(MqttInboundMessage message) {
-        UUID scenarioId = HomecomingContract.readScenarioId(message.body());
-        orchestrator.onConversationEnded(scenarioId);
+        ConversationOutcome outcome = ConversationOutcome.valueOf(
+            message.payload().path("outcome").asText());
+        var reasonNode = message.payload().get("reasonCode");
+        String reasonCode = reasonNode == null || reasonNode.isNull()
+            ? null : reasonNode.asText();
+        orchestrator.onConversationEnded(
+            message.requireScenarioId(),
+            message.requireConversationId(),
+            message.sourceId(),
+            outcome,
+            reasonCode,
+            message.occurredAt());
     }
 }

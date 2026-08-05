@@ -3,6 +3,7 @@ package com.ssafy.bomi.scenario.application;
 import com.ssafy.bomi.care.domain.CareRecord;
 import com.ssafy.bomi.care.domain.CareRecordStatus;
 import com.ssafy.bomi.care.repository.CareRecordRepository;
+import com.ssafy.bomi.conversation.domain.ConversationIntent;
 import com.ssafy.bomi.mqtt.outbound.RobotCommand;
 import com.ssafy.bomi.mqtt.outbound.RobotCommandPublisher;
 import com.ssafy.bomi.mqtt.outbound.RobotCommandType;
@@ -20,6 +21,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -136,11 +138,15 @@ public class MedicationReminderScheduler {
                     ScenarioType.MEDICATION_REMINDER, slotKey)) {
                 continue; // 오늘 이 슬롯은 이미 알렸다 (재시작에도 안전한 DB 판정)
             }
-            startReminder(schedule, slotKey);
+            startReminder(schedule, slotKey, slot);
         }
     }
 
-    private void startReminder(CareRecord schedule, String slotKey) {
+    private void startReminder(
+        CareRecord schedule,
+        String slotKey,
+        ZonedDateTime scheduledAt
+    ) {
         UUID seniorId = schedule.getSeniorId();
         var blocked = startGuard.check(seniorId, ScenarioType.MEDICATION_REMINDER, Duration.ZERO);
         if (blocked.isPresent()) {
@@ -157,15 +163,20 @@ public class MedicationReminderScheduler {
 
         Scenario scenario = Scenario.create(
             seniorId, robot.getId(), ScenarioType.MEDICATION_REMINDER, slotKey);
+        scenario.prepareConversation(
+            ConversationIntent.MEDICATION_REMINDER,
+            speakText(schedule),
+            conversationContext(schedule, slotKey, scheduledAt));
         scenario.beginMovingToEntrance(); // "시나리오 목적지로 이동 중"의 범용 의미
+        String navigationCommandId = UUID.randomUUID().toString();
+        scenario.expectNavigationResult(
+            navigationCommandId, HomecomingContract.TARGET_LIVING_ROOM);
         scenarioRepository.save(scenario);
         robot.changeMode(RobotModePolicy.forScenario(scenario.getFinalStatus()));
         robotRepository.save(robot);
 
-        publish(scenario.getId(), robot, RobotCommandType.NAVIGATE,
+        publish(navigationCommandId, scenario.getId(), robot, RobotCommandType.NAVIGATE,
             Map.of(HomecomingContract.NAV_TARGET_KEY, HomecomingContract.TARGET_LIVING_ROOM));
-        publish(scenario.getId(), robot, RobotCommandType.SPEAK,
-            Map.of(HomecomingContract.SPEAK_TEXT_KEY, speakText(schedule)));
 
         log.info("Medication reminder started: scenarioId={}, seniorId={}, slot={}",
             scenario.getId(), seniorId, slotKey);
@@ -230,18 +241,44 @@ public class MedicationReminderScheduler {
     }
 
     private String speakText(CareRecord schedule) {
-        Object name = schedule.getDetails().get("medicationName");
-        String medication = (name instanceof String text && !text.isBlank()) ? text : "약";
-        return "어르신, %s 드실 시간이에요.".formatted(medication);
+        return "어르신, %s 드실 시간이에요.".formatted(medicationName(schedule));
     }
 
-    private void publish(UUID scenarioId, Robot robot, RobotCommandType type, Map<String, Object> payload) {
+    private Map<String, Object> conversationContext(
+        CareRecord schedule,
+        String slotKey,
+        ZonedDateTime scheduledAt
+    ) {
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("medicationScheduleId", schedule.getId().toString());
+        context.put("medicationName", medicationName(schedule));
+        context.put("scheduledAt", scheduledAt.toOffsetDateTime().toString());
+        context.put("slotKey", slotKey);
+        context.put("location", HomecomingContract.TARGET_LIVING_ROOM);
+        return context;
+    }
+
+    private String medicationName(CareRecord schedule) {
+        Object name = schedule.getDetails().get("medicationName");
+        if (name instanceof String text && !text.isBlank()) {
+            return text;
+        }
+        return "약";
+    }
+
+    private void publish(
+        String commandId,
+        UUID scenarioId,
+        Robot robot,
+        RobotCommandType type,
+        Map<String, Object> payload
+    ) {
         if (robot.getDeviceId() == null) {
             throw new IllegalStateException("Robot has no deviceId; cannot address command: " + robot.getId());
         }
         OffsetDateTime now = OffsetDateTime.now(clock);
         commandPublisher.publish(new RobotCommand(
-            UUID.randomUUID().toString(), scenarioId, robot.getDeviceId(),
+            commandId, scenarioId, robot.getDeviceId(),
             type, now, now.plus(COMMAND_TTL), payload));
     }
 }

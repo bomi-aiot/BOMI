@@ -1,7 +1,6 @@
 package com.ssafy.bomi.embedding.application;
 
 import com.ssafy.bomi.embedding.config.EmbeddingProperties;
-import com.ssafy.bomi.vector.application.VectorStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -32,30 +31,36 @@ public class EmbeddingSyncScheduler {
     private static final Logger log = LoggerFactory.getLogger(EmbeddingSyncScheduler.class);
 
     private final EmbeddingSyncService syncService;
-    private final VectorStore vectorStore;
     private final EmbeddingProperties properties;
 
-    public EmbeddingSyncScheduler(EmbeddingSyncService syncService, VectorStore vectorStore,
+    public EmbeddingSyncScheduler(EmbeddingSyncService syncService,
         EmbeddingProperties properties) {
         this.syncService = syncService;
-        this.vectorStore = vectorStore;
         this.properties = properties;
     }
 
     /**
-     * Prepares the store once the app is up.
+     * Prepares the sync job once the app is up.
      *
-     * <p>{@code ApplicationReadyEvent} rather than {@code @PostConstruct}: creating a
-     * collection is a network call, and a network call during bean construction turns a
-     * temporarily unreachable Qdrant into a failed startup. The service must boot without
-     * its derived index.</p>
+     * <p><b>{@code ensureCollections()} used to be called here too (S15P11E102-218) — it no
+     * longer is (S15P11E102-308).</b> This whole bean only exists when sync is switched on, but
+     * search can be switched on without sync (that is the recommended demo-day shape), and
+     * search needs the collections to exist regardless. Creating them from here would tie two
+     * unrelated switches together, so that call moved to
+     * {@code VectorStoreStartupInitializer}, which reacts to whether a Qdrant host is
+     * configured instead. What stays here — marking stale rows after a model change — only
+     * matters when this job actually runs to act on them, so it belongs with the switch that
+     * gates the job.</p>
+     *
+     * <p>{@code ApplicationReadyEvent} rather than {@code @PostConstruct}: a network call
+     * during bean construction turns a temporarily unreachable dependency into a failed
+     * startup. The service must boot without its derived index.</p>
      *
      * <p>Marking rows stale after a model change costs nothing — no API calls, one UPDATE per
      * table. The re-embedding then happens through the ordinary capped runs.</p>
      */
     @EventListener(ApplicationReadyEvent.class)
     public void prepare() {
-        vectorStore.ensureCollections();
         syncService.markStaleAfterModelChange();
         log.info("embedding sync scheduled every {}ms, at most {} billed calls per run",
             properties.getSyncIntervalMillis(), properties.getSyncBatchSize());

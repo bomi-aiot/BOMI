@@ -1,21 +1,18 @@
 package com.ssafy.bomi.fact.web;
 
-import com.ssafy.bomi.care.domain.CareRecord;
-import com.ssafy.bomi.care.domain.CareRecordTime;
 import com.ssafy.bomi.care.repository.CareRecordRepository;
+import com.ssafy.bomi.fact.application.FactMaterializer;
+import com.ssafy.bomi.fact.application.FactMaterializer.MaterializedTarget;
 import com.ssafy.bomi.fact.domain.ClarificationReason;
 import com.ssafy.bomi.fact.domain.FactCandidate;
 import com.ssafy.bomi.fact.domain.FactCandidateStatus;
-import com.ssafy.bomi.fact.domain.FactTargetDomain;
 import com.ssafy.bomi.fact.repository.FactCandidateRepository;
 import com.ssafy.bomi.fact.web.ConfirmationUndoStore.Snapshot;
-import com.ssafy.bomi.memory.domain.Memory;
-import com.ssafy.bomi.memory.domain.MemoryType;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
 import com.ssafy.bomi.user.repository.AppUserRepository;
-import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -43,6 +40,7 @@ public class ConfirmationRequestService {
     private final AppUserRepository appUserRepository;
     private final FactCandidateMapper mapper;
     private final ConfirmationUndoStore undoStore;
+    private final FactMaterializer materializer;
 
     public ConfirmationRequestService(
             FactCandidateRepository factCandidateRepository,
@@ -50,13 +48,15 @@ public class ConfirmationRequestService {
             CareRecordRepository careRecordRepository,
             AppUserRepository appUserRepository,
             FactCandidateMapper mapper,
-            ConfirmationUndoStore undoStore) {
+            ConfirmationUndoStore undoStore,
+            FactMaterializer materializer) {
         this.factCandidateRepository = factCandidateRepository;
         this.memoryRepository = memoryRepository;
         this.careRecordRepository = careRecordRepository;
         this.appUserRepository = appUserRepository;
         this.mapper = mapper;
         this.undoStore = undoStore;
+        this.materializer = materializer;
     }
 
     @Transactional(readOnly = true)
@@ -130,52 +130,19 @@ public class ConfirmationRequestService {
         }
         candidate.confirm(value, null);
 
-        FactTargetDomain domain = candidate.getTargetDomain();
-        if (domain == FactTargetDomain.MEMORY) {
-            Memory memory = Memory.create(candidate.getSeniorId(), memoryType(value), memoryContent(value));
-            memory.attachSources(candidate.getConversationId(), null, candidate.getId());
-            Memory saved = memoryRepository.save(memory);
-            candidate.materialize(saved.getId());
-            return new Snapshot(previousStatus, "MEMORY", saved.getId());
-        }
-        if (domain == FactTargetDomain.CARE_RECORD) {
-            CareRecord record = CareRecord.create(candidate.getSeniorId(), candidate.getFactType(), value);
-            // 확인된 값이 시각을 품고 있으면 그것을 쓰고, 없으면 확인한 지금이다
-            // (S15P11E102-230). 어르신이 "어제 병원 다녀왔어"라고 한 것을 오늘 확인했다면
-            // 값 안의 어제가 맞다 — 확인 시각은 사건 시각이 아니다.
-            record.occurredAt(CareRecordTime.fromDetailsOrNow(value, OffsetDateTime.now()));
-            CareRecord saved = careRecordRepository.save(record);
-            candidate.materialize(saved.getId());
-            return new Snapshot(previousStatus, "CARE_RECORD", saved.getId());
-        }
-        // PROFILE / CARE_RELATIONSHIP: P0 에서는 materialize 대상 없음 → CONFIRMED 로만 둔다.
-        return new Snapshot(previousStatus, null, null);
+        // 실제 memory/care_record 쓰기는 공용 컴포넌트가 한다(S15P11E102-258). 온보딩·
+        // 재질의 경로도 같은 컴포넌트를 호출하므로 세 경로의 실체화 규칙이 갈라지지 않는다.
+        Optional<MaterializedTarget> materialized = materializer.materialize(candidate, value);
+        return materialized
+                .map(target -> new Snapshot(previousStatus, target.domain().name(), target.id()))
+                // PROFILE / CARE_RELATIONSHIP: 이 티켓 범위에서는 materialize 대상 없음 →
+                // CONFIRMED 로만 둔다.
+                .orElseGet(() -> new Snapshot(previousStatus, null, null));
     }
 
     private FactCandidate load(UUID id) {
         return factCandidateRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "확인요청을 찾을 수 없습니다: " + id));
-    }
-
-    private static MemoryType memoryType(Map<String, Object> value) {
-        Object raw = value.get("memoryType");
-        if (raw == null) {
-            return MemoryType.OTHER;
-        }
-        try {
-            return MemoryType.valueOf(raw.toString());
-        } catch (IllegalArgumentException e) {
-            return MemoryType.OTHER;
-        }
-    }
-
-    private static String memoryContent(Map<String, Object> value) {
-        Object content = value.get("content");
-        if (content != null) {
-            return content.toString();
-        }
-        Object title = value.get("title");
-        return title != null ? title.toString() : "새로 저장한 기억";
     }
 }

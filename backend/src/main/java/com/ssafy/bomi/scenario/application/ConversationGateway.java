@@ -13,5 +13,5 @@ import java.util.UUID;
 public interface ConversationGateway {
 
     /** Signals that the robot has greeted the senior and dialogue may begin. */
-    void startConversation(UUID scenarioId, UUID seniorId);
+    ConversationStartResult startConversation(UUID scenarioId);
 }

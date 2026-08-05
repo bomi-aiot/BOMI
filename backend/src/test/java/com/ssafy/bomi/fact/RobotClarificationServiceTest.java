@@ -3,6 +3,9 @@ package com.ssafy.bomi.fact;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.ssafy.bomi.care.domain.CareRecord;
+import com.ssafy.bomi.care.repository.CareRecordRepository;
+import com.ssafy.bomi.fact.application.FactMaterializer;
 import com.ssafy.bomi.fact.application.RobotClarificationService;
 import com.ssafy.bomi.fact.application.RobotClarificationService.ClarificationResult;
 import com.ssafy.bomi.fact.application.RobotClarificationService.Outcome;
@@ -13,6 +16,9 @@ import com.ssafy.bomi.fact.domain.FactOperation;
 import com.ssafy.bomi.fact.domain.FactTargetDomain;
 import com.ssafy.bomi.fact.domain.RiskLevel;
 import com.ssafy.bomi.fact.repository.FactCandidateRepository;
+import com.ssafy.bomi.memory.domain.Memory;
+import com.ssafy.bomi.memory.domain.MemoryType;
+import com.ssafy.bomi.memory.repository.MemoryRepository;
 import com.ssafy.bomi.user.domain.AppUser;
 import com.ssafy.bomi.user.repository.AppUserRepository;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
@@ -54,6 +60,9 @@ class RobotClarificationServiceTest {
     @Autowired private RobotClarificationService clarificationService;
     @Autowired private FactCandidateRepository candidateRepository;
     @Autowired private AppUserRepository appUserRepository;
+    @Autowired private CareRecordRepository careRecordRepository;
+    @Autowired private MemoryRepository memoryRepository;
+    @Autowired private FactMaterializer factMaterializer;
 
     private AppUser senior;
 
@@ -185,8 +194,73 @@ class RobotClarificationServiceTest {
 
         assertThat(result.outcome()).isEqualTo(Outcome.CONFIRMED);
         FactCandidate reloaded = reload(candidate);
-        assertThat(reloaded.getStatus()).isEqualTo(FactCandidateStatus.CONFIRMED);
+        // 확정에서 그치지 않고 care_record 로 실체화까지 이어진다(S15P11E102-258).
+        assertThat(reloaded.getStatus()).isEqualTo(FactCandidateStatus.MATERIALIZED);
         assertThat(reloaded.getConfirmedValue()).containsEntry("dose", 1);
+    }
+
+    // ── S15P11E102-258: 확정이 memory/care_record 로 실체화까지 이어진다 ──────────
+
+    @Test
+    void confirmingACareRecordCandidateMaterializesTheRow() {
+        FactCandidate candidate = pending("MEDICATION", RiskLevel.SENSITIVE, List.of("dose"));
+
+        clarificationService.answer(candidate.getId(), Map.of("dose", 1), true, null, null);
+
+        FactCandidate reloaded = reload(candidate);
+        assertThat(reloaded.getStatus()).isEqualTo(FactCandidateStatus.MATERIALIZED);
+
+        List<CareRecord> records = careRecordRepository.findBySeniorId(senior.getId());
+        assertThat(records).hasSize(1);
+        CareRecord record = records.get(0);
+        assertThat(record.getRecordType()).isEqualTo("MEDICATION");
+        assertThat(record.getDetails()).containsEntry("dose", 1);
+        // source_candidate_id 를 채우지 않으면 UNIQUE 제약이 중복 실체화를 막아주지
+        // 못한다 — 가디언웹 경로의 care_record 분기에 있던 실제 결함이었다.
+        assertThat(record.getSourceCandidateId()).isEqualTo(reloaded.getId());
+        assertThat(reloaded.getMaterializedTargetId()).isEqualTo(record.getId());
+    }
+
+    @Test
+    void confirmingAMemoryCandidateMaterializesTheRow() {
+        FactCandidate candidate = pending("DAILY_ROUTINE", RiskLevel.NORMAL, List.of("content"),
+            FactTargetDomain.MEMORY);
+
+        clarificationService.answer(candidate.getId(),
+            Map.of("content", "아침에 산책하고 점심 먹고 텃밭을 봐요"), false, null, null);
+
+        FactCandidate reloaded = reload(candidate);
+        assertThat(reloaded.getStatus()).isEqualTo(FactCandidateStatus.MATERIALIZED);
+
+        List<Memory> memories = memoryRepository.findBySeniorIdOrderByFirstObservedAtDesc(senior.getId());
+        assertThat(memories).hasSize(1);
+        Memory memory = memories.get(0);
+        assertThat(memory.getMemoryType()).isEqualTo(MemoryType.DAILY_ROUTINE);
+        assertThat(memory.getContent()).isEqualTo("아침에 산책하고 점심 먹고 텃밭을 봐요");
+        assertThat(memory.getSourceCandidateId()).isEqualTo(reloaded.getId());
+    }
+
+    /**
+     * 이미 실체화된 candidate 를 다시 실체화하려 하면(예: 온보딩 세션이 같은 답을
+     * 두 번 제출하는 경우) source_candidate_id 의 UNIQUE 제약이 두 번째 행을 막는다.
+     * 가디언웹 경로의 care_record 분기가 attachSources 를 빠뜨려서 이 방어가
+     * 무력화돼 있던 것이 이 티켓이 고친 결함이다.
+     */
+    @Test
+    void reMaterializingTheSameCandidateIsRejectedByTheUniqueConstraint() {
+        FactCandidate candidate = pending("MEDICATION", RiskLevel.SENSITIVE, List.of("dose"));
+        candidate.confirm(Map.of("dose", 1), senior.getId());
+        candidateRepository.saveAndFlush(candidate);
+        factMaterializer.materialize(candidate, Map.of("dose", 1));
+        careRecordRepository.flush();
+
+        // 재확정: 같은 candidate 가 다시 CONFIRMED 로 돌아갔다고 가정한다.
+        candidate.confirm(Map.of("dose", 1), senior.getId());
+
+        assertThatThrownBy(() -> {
+            factMaterializer.materialize(candidate, Map.of("dose", 1));
+            careRecordRepository.flush();
+        }).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
     }
 
     @Test
@@ -261,14 +335,24 @@ class RobotClarificationServiceTest {
      * conversation tables rather than this rule.</p>
      */
     private FactCandidate pending(String factType, RiskLevel risk, List<String> missing) {
-        return pending(factType, risk, missing, ClarificationReason.MISSING_REQUIRED_FIELD);
+        return pending(factType, risk, missing, FactTargetDomain.CARE_RECORD);
+    }
+
+    private FactCandidate pending(String factType, RiskLevel risk, List<String> missing,
+        FactTargetDomain domain) {
+        return pending(factType, risk, missing, domain, ClarificationReason.MISSING_REQUIRED_FIELD);
     }
 
     private FactCandidate pending(String factType, RiskLevel risk, List<String> missing,
         ClarificationReason reason) {
+        return pending(factType, risk, missing, FactTargetDomain.CARE_RECORD, reason);
+    }
+
+    private FactCandidate pending(String factType, RiskLevel risk, List<String> missing,
+        FactTargetDomain domain, ClarificationReason reason) {
         FactCandidate candidate = FactCandidate.fromOnboardingAnswer(
             senior.getId(), UUID.randomUUID(),
-            FactTargetDomain.CARE_RECORD, factType, FactOperation.CREATE, Map.of(), risk);
+            domain, factType, FactOperation.CREATE, Map.of(), risk);
         candidate.needsClarification(reason, missing);
         return candidateRepository.saveAndFlush(candidate);
     }

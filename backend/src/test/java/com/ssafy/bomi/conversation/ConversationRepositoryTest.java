@@ -3,6 +3,7 @@ package com.ssafy.bomi.conversation;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.ssafy.bomi.conversation.domain.Conversation;
+import com.ssafy.bomi.conversation.domain.ConversationOutcome;
 import com.ssafy.bomi.conversation.domain.ConversationStatus;
 import com.ssafy.bomi.conversation.repository.ConversationRepository;
 import java.time.OffsetDateTime;
@@ -49,5 +50,29 @@ class ConversationRepositoryTest {
         assertThat(found.getStatus()).isEqualTo(ConversationStatus.COMPLETED);
         assertThat(found.getEndedAt()).isNotNull();
         assertThat(found.getRawMessagesExpiresAt()).isNotNull();
+    }
+
+    @Test
+    void persistsAiCommandCorrelationStartAcknowledgementAndNoResponseOutcome() {
+        UUID scenarioId = UUID.randomUUID();
+        OffsetDateTime requestedAt = OffsetDateTime.parse("2026-08-05T10:00:00+09:00");
+        OffsetDateTime aiStartedAt = requestedAt.plusSeconds(1);
+        OffsetDateTime endedAt = requestedAt.plusMinutes(1);
+        Conversation conversation = Conversation.requestForScenario(
+            UUID.randomUUID(), scenarioId, "cmd-ai-01", requestedAt);
+        conversation.markAiStarted(aiStartedAt);
+        conversation.end(ConversationOutcome.NO_RESPONSE, null, endedAt);
+
+        Conversation saved = conversationRepository.saveAndFlush(conversation);
+        em.clear();
+
+        Conversation found = conversationRepository.findByScenarioId(scenarioId).orElseThrow();
+        assertThat(found.getId()).isEqualTo(saved.getId());
+        assertThat(found.getStartCommandId()).isEqualTo("cmd-ai-01");
+        assertThat(found.getStartedAt()).isEqualTo(requestedAt);
+        assertThat(found.getAiStartedAt()).isEqualTo(aiStartedAt);
+        assertThat(found.getEndOutcome()).isEqualTo(ConversationOutcome.NO_RESPONSE);
+        assertThat(found.getStatus()).isEqualTo(ConversationStatus.COMPLETED);
+        assertThat(found.getEndedAt()).isEqualTo(endedAt);
     }
 }
