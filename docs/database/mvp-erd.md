@@ -60,6 +60,7 @@ erDiagram
         TIME sleep_time
         TEXT chronic_pain_area
         TEXT preferred_hospital
+        TEXT home_address
     }
     CARE_RELATIONSHIP {
         UUID id PK
@@ -543,7 +544,7 @@ PK는 `id`, 명시 인덱스는 `idx_known_person_senior(senior_id)`다. `senior
 | `fact_candidate.target_domain` | `PROFILE`, `CARE_RELATIONSHIP`, `MEMORY`, `CARE_RECORD` |
 | `fact_candidate.operation` | `CREATE`, `UPDATE`, `CANCEL` |
 | `fact_candidate.risk_level` | `NORMAL`, `SENSITIVE`, `HIGH` |
-| `fact_candidate.status` | `CAPTURED`, `NEEDS_CLARIFICATION`, `NEEDS_CONFIRMATION`, `COORDINATION_REQUIRED`, `CONFIRMED`, `MATERIALIZED`, `REJECTED`, `EXPIRED` |
+| `fact_candidate.status` | `CAPTURED`, `NEEDS_CLARIFICATION`, `NEEDS_CONFIRMATION`, `COORDINATION_REQUIRED`, `CONFIRMED`, `MATERIALIZED`, `REJECTED`, `EXPIRED`, `CANCELLED_BY_SENIOR` |
 | `fact_candidate.clarification_reason` | `MISSING_REQUIRED_FIELD`, `AMBIGUOUS_VALUE`, `LOW_RECOGNITION_CONFIDENCE`, `CONFLICT_WITH_EXISTING_DATA`, `SENSITIVE_INFORMATION_CONFIRMATION` |
 | `fact_candidate.coordination_status` | `NOT_REQUIRED`, `COORDINATION_REQUIRED`, `WAITING_PRIMARY_GUARDIAN`, `WAITING_SENIOR`, `AGREED`, `DISAGREED`, `SENIOR_UNREACHABLE`, `GUARDIAN_OVERRIDE_CONFIRMED`, `COMPLETED` |
 | `fact_candidate.senior_position` | `NOT_REQUESTED`, `PENDING`, `AGREED`, `DISAGREED`, `UNREACHABLE` |

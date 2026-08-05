@@ -20,10 +20,23 @@ spring:
     # set this true so Flyway baselines the current state instead of failing.
     baseline-on-migrate: false
 management:
+  prometheus:
+    metrics:
+      export:
+        enabled: true
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics,prometheus
+  endpoint:
+    prometheus:
+      access: unrestricted
+    health:
+      show-details: always
+      status:
+        order: down,out-of-service,degraded,unknown,up
+        http-mapping:
+          degraded: 200
 
 springdoc:
   api-docs:
@@ -147,6 +160,12 @@ bomi:
     # 임베딩 모델과 정확히 같아야 한다. 이 숫자가 pgvector 를 불가능하게 만든 값이다.
     dimensions: ${QDRANT_DIMENSIONS:4096}
     timeout-millis: ${QDRANT_TIMEOUT_MILLIS:1500}
+
+  # 번들된 공공 복지 문서 코퍼스. 네트워크·임베딩 호출 없이 검색되며, 각 청크는
+  # 출처·버전·인용·URL을 보존한다. 정책 스냅샷을 교체하거나 긴급 롤백할 때만 끈다.
+  document-corpus:
+    enabled: ${DOCUMENT_CORPUS_ENABLED:true}
+    resource: ${DOCUMENT_CORPUS_RESOURCE:classpath:rag/welfare-corpus.json}
 
   # 임베딩 모델 (S15P11E102-218).
   #
