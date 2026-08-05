@@ -4,10 +4,14 @@
     그래프 밖. LangGraph 는 요청-응답이므로 누군가 깨워줘야 한다.
     이 함수들이 APScheduler 가 호출하는 것이고, 로봇이 먼저 말하는 유일한 이유다.
 
-    네 개의 루프.
+    여기 사는 루프들.
         silence_tick      -- 침묵 사다리를 올리고, 끝에서 T1 으로 에스컬레이션
         door_watch_tick   -- 현관 로그만이 볼 수 있는 패턴
         outbox_flush      -- 큐에 쌓인 보호자 알림 재시도
+        schedule_tick     -- 때가 된 일상 권유를 제안으로 큐잉
+        contract_tick     -- 온보딩·재질의를 제안으로 큐잉
+        consent_tick      -- 누적된 정서 신호로 T3 동의 질문을 큐잉 (S15P11E102-253)
+        extraction_flush  -- 큐에 쌓인 발화에서 사실을 뽑아 백엔드에 제출 (S15P11E102-255)
         daily_summary_job -- T2 일간 요약
 
 왜 노드가 아닌가
@@ -27,6 +31,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -41,6 +46,7 @@ from bomi_ai_chat.localstore import (
     audio_cache,
     context_cache,
     emotion,
+    extraction,
     outbox,
     proposals,
 )
@@ -1006,6 +1012,194 @@ def _has_pending_consent_proposal(senior_id: str) -> bool:
         (proposal.get("meta") or {}).get("t3_consent")
         for proposal in proposals.pending(senior_id)
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 사실 추출 큐 비우기  (S15P11E102-255, CLAUDE.md §8, §16)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def extraction_flush(
+    senior_id: str,
+    *,
+    llm=None,
+    fact_client=None,
+) -> dict[str, int]:
+    """추출 큐를 비운다 — LLM 으로 사실을 뽑고, 있으면 백엔드에 제출한다.
+
+    무엇을 하는가
+        graph.build.memory_write 가 쌓아 둔 localstore.extraction 의 대기 행을
+        오래된 순으로 최대 policy.EXTRACTION_FLUSH_BATCH_SIZE 개 읽는다. 행마다
+        생성 LLM 을 한 번 불러 사실을 뽑고(prompts.build_memory_extraction_prompt),
+        뽑힌 것이 있으면 fact_client 로 제출한다. 제출까지 성공했을 때만(또는
+        애초에 뽑을 것이 없었을 때만) 그 행을 extracted=1 로 표시한다.
+
+    왜 LLM 호출이 여기 있는가
+        턴 경로(graph/build.memory_write)는 큐잉만 하고 LLM 을 부르지 않는다
+        (CLAUDE.md §16 — 턴당 생성 호출 1회 예산). 이 틱은 그 예산 밖에서
+        도는 배경 작업이라 행마다 생성 호출을 하나씩 써도 된다.
+
+    누가 호출하는가
+        jobs.scheduler(policy.EXTRACTION_FLUSH_INTERVAL_SEC 마다), 그리고
+        압축 시계 경로의 run_all_ticks_once, 그리고 테스트.
+
+    반환값
+        {"processed": n, "submitted": n, "failed": n} — processed 는 이번
+        flush 에서 extracted=1 로 표시한 행 수(뽑을 것이 없었던 행 포함),
+        submitted 는 실제로 백엔드에 올라간 사실 개수, failed 는 이번에
+        처리하지 못해 다음 flush 로 넘긴 행 수.
+
+    주의사항
+        - 킬스위치(policy.EXTRACTION_ENABLED / config 의 환경변수) 중 하나라도
+          꺼지면 아무것도 하지 않는다.
+        - LLM 호출이 실패하거나 응답을 못 알아들으면 그 행은 표시하지 않고
+          다음 flush 로 넘긴다 — 다시 시도하는 것이 조용히 잃는 것보다 낫다.
+        - fact_client 제출이 실패하면(FactSubmissionError) 마찬가지로 표시하지
+          않는다. 여기서 표시해버리면 그 사실은 다시는 제출 시도되지 않는다
+          (backend_client/fact_client.py 의 모듈 docstring 참고).
+        - 예외를 밖으로 던지지 않는다. 이 틱이 죽으면 큐가 영원히 쌓이기만
+          하고, 그 사실을 아무도 모르게 된다(다른 틱들과 같은 원칙).
+    """
+    if not policy.EXTRACTION_ENABLED:
+        return {"processed": 0, "submitted": 0, "failed": 0}
+
+    from bomi_ai_chat.config import get_settings
+
+    try:
+        if not get_settings().extraction_enabled:
+            logger.info(
+                "fact extraction is disabled by the EXTRACTION_ENABLED env kill switch"
+            )
+            return {"processed": 0, "submitted": 0, "failed": 0}
+    except Exception:  # noqa: BLE001 - 설정 문제로 틱이 죽으면 안 된다
+        logger.warning(
+            "could not read the extraction kill switch; assuming enabled",
+            exc_info=True,
+        )
+
+    try:
+        rows = extraction.pending(limit=policy.EXTRACTION_FLUSH_BATCH_SIZE)
+    except Exception:  # noqa: BLE001 - 틱이 죽으면 큐가 영원히 멈춘다
+        logger.exception("extraction flush tick failed to read the queue")
+        return {"processed": 0, "submitted": 0, "failed": 0}
+
+    if not rows:
+        return {"processed": 0, "submitted": 0, "failed": 0}
+
+    resolved_llm = llm if llm is not None else _default_extraction_llm()
+    resolved_fact_client = fact_client if fact_client is not None else _default_fact_client()
+
+    result = {"processed": 0, "submitted": 0, "failed": 0}
+    for row in rows:
+        try:
+            facts = _extract_facts(resolved_llm, row)
+        except Exception:  # noqa: BLE001 - 한 행의 LLM 실패가 틱 전체를 죽이면 안 된다
+            logger.warning(
+                "extraction failed for job %s; will retry next flush",
+                row["id"], exc_info=True,
+            )
+            result["failed"] += 1
+            continue
+
+        if facts:
+            try:
+                resolved_fact_client.submit_fact_candidates(
+                    row["senior_id"],
+                    conversation_id=row["conversation_id"],
+                    source_message_id=row["source_message_id"],
+                    facts=facts,
+                )
+            except Exception:  # noqa: BLE001 - fact_client 는 FactSubmissionError 를
+                # 올리지만, 예상 못 한 예외까지도 이 행을 조용히 잃는 방향(잘못
+                # extracted=1 표시)으로 새면 안 된다. 좁게 못 잡을 이유가 없어도
+                # 넓게 잡아 안전한 쪽(재시도)으로 떨어뜨린다.
+                logger.warning(
+                    "fact candidate submission failed for job %s; will retry next flush",
+                    row["id"], exc_info=True,
+                )
+                result["failed"] += 1
+                continue
+            result["submitted"] += len(facts)
+
+        extraction.mark_extracted(row["id"])
+        result["processed"] += 1
+
+    if result["submitted"] or result["failed"]:
+        logger.info(
+            "extraction flush: processed=%d submitted=%d failed=%d pending=%d",
+            result["processed"], result["submitted"], result["failed"],
+            extraction.pending_count(senior_id),
+        )
+    return result
+
+
+def _default_extraction_llm():
+    """추출용 LLM 클라이언트를 지연 생성한다.
+
+    왜 지연 생성인가
+        graph/handlers._llm 과 같은 이유다. import 시점에 만들면 API 키가 없는
+        환경에서 이 모듈을 불러오는 것만으로 실패한다.
+    """
+    from bomi_ai_chat.llm.client import LLMClient
+
+    return LLMClient()
+
+
+def _default_fact_client():
+    """사실 제출 클라이언트를 지연 생성한다. 이유는 위와 같다."""
+    from bomi_ai_chat.backend_client.fact_client import BackendFactClient
+
+    return BackendFactClient()
+
+
+def _extract_facts(llm, row: dict) -> list[dict]:
+    """대기 행 하나에서 사실을 뽑는다. 못 뽑았거나 없으면 빈 리스트.
+
+    무엇을 호출하는가
+        prompts.build_memory_extraction_prompt 로 프롬프트를 조립하고, 이 턴의
+        유일한 생성 호출을 한다(row 하나당 최대 1회).
+
+    반환값
+        [{"factType": ..., "content": ...}, ...]. 최대
+        policy.EXTRACTION_MAX_FACTS_PER_UTTERANCE 개로 자른다 — 프롬프트가
+        상한을 지키라고 지시하지만, 모델이 어겨도 여기서 한 번 더 막는다.
+    """
+    from bomi_ai_chat.prompts import build_memory_extraction_prompt
+
+    prompt = build_memory_extraction_prompt(
+        row.get("preceding_robot_utterance") or "", row["content"],
+    )
+    raw = llm.generate(prompt)
+    facts = _parse_json_fact_array(raw)
+    return facts[: policy.EXTRACTION_MAX_FACTS_PER_UTTERANCE]
+
+
+def _parse_json_fact_array(raw: str | None) -> list[dict]:
+    """모델 출력에서 사실 배열을 꺼낸다. 실패하면 빈 리스트.
+
+    graph/handlers._parse_json_object 와 같은 원칙이다 — 코드 블록으로 감싸
+    오는 경우가 흔해서 대괄호 범위만 잘라 쓴다. 다만 여긴 객체가 아니라
+    배열이라 별도로 둔다(공유 헬퍼로 합치면 두 모듈이 서로를 몰라도 되는
+    경계가 흐려진다).
+    """
+    text = (raw or "").strip()
+    start, end = text.find("["), text.rfind("]")
+    if start < 0 or end <= start:
+        return []
+    try:
+        parsed = json.loads(text[start:end + 1])
+    except ValueError:
+        logger.warning("extraction did not return a JSON array; treating it as nothing found")
+        return []
+    if not isinstance(parsed, list):
+        return []
+    # factType 과 content 가 둘 다 있는, 비어 있지 않은 항목만 남긴다. 모델이
+    # 형태를 어겨도(예: 문자열만 나열) 백엔드로 그대로 새어나가지 않게 한다.
+    return [
+        {"factType": str(item["factType"]), "content": str(item["content"])}
+        for item in parsed
+        if isinstance(item, dict) and item.get("factType") and item.get("content")
+    ]
 
 
 def daily_summary_job(senior_id: str) -> None:

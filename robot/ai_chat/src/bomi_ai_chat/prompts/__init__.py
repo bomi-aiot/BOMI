@@ -7,6 +7,7 @@
 from bomi_ai_chat.prompts.builder import (
     build_extraction_prompt,
     build_field_question_prompt,
+    build_memory_extraction_prompt,
     build_prompt,
     load_template,
 )
@@ -14,6 +15,7 @@ from bomi_ai_chat.prompts.builder import (
 __all__ = [
     "build_extraction_prompt",
     "build_field_question_prompt",
+    "build_memory_extraction_prompt",
     "build_prompt",
     "load_template",
 ]
