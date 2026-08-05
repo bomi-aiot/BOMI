@@ -407,7 +407,7 @@ def main() -> int:
             "fact_candidate.status": {
                 "CAPTURED", "NEEDS_CLARIFICATION", "NEEDS_CONFIRMATION",
                 "COORDINATION_REQUIRED", "CONFIRMED", "MATERIALIZED",
-                "REJECTED", "EXPIRED",
+                "REJECTED", "EXPIRED", "CANCELLED_BY_SENIOR",
             },
             "fact_candidate.source_type": {
                 "ONBOARDING_ANSWER", "CONVERSATION_MESSAGE",
