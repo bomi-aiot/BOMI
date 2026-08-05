@@ -6,6 +6,8 @@ import com.ssafy.bomi.context.api.ConversationContextRequest;
 import com.ssafy.bomi.context.api.ConversationContextResponse;
 import com.ssafy.bomi.context.application.ConversationContextService;
 import com.ssafy.bomi.context.application.MemorySemanticSearch;
+import com.ssafy.bomi.conversation.domain.ConversationSummary;
+import com.ssafy.bomi.conversation.repository.ConversationSummaryRepository;
 import com.ssafy.bomi.memory.domain.Memory;
 import com.ssafy.bomi.memory.domain.MemoryLifecycleStatus;
 import com.ssafy.bomi.memory.domain.MemoryType;
@@ -19,6 +21,7 @@ import com.ssafy.bomi.user.domain.AppUser;
 import com.ssafy.bomi.user.repository.AppUserRepository;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import java.io.IOException;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterAll;
@@ -69,6 +72,7 @@ class SemanticHitsDoNotBypassTheAuthorityFilterTest {
     @Autowired private ConversationContextService contextService;
     @Autowired private AppUserRepository appUserRepository;
     @Autowired private MemoryRepository memoryRepository;
+    @Autowired private ConversationSummaryRepository summaryRepository;
     @Autowired private CareRelationshipRepository careRelationshipRepository;
     /**
      * Replaces the real search bean rather than competing with it.
@@ -117,8 +121,18 @@ class SemanticHitsDoNotBypassTheAuthorityFilterTest {
     /** Feeds the assembly exactly these hits, however wrong they are. */
     private void givenHits(MemorySemanticSearch.SemanticHit... hits) {
         Mockito.when(semanticSearch.search(
-                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.anyInt()))
-            .thenReturn(List.of(hits));
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.anyInt(),
+                ArgumentMatchers.anyInt()))
+            .thenReturn(new MemorySemanticSearch.SearchResult(
+                List.of(hits), List.of(), true, null, 1));
+    }
+
+    private void givenSummaryHits(MemorySemanticSearch.SemanticHit... hits) {
+        Mockito.when(semanticSearch.search(
+                ArgumentMatchers.any(), ArgumentMatchers.any(), ArgumentMatchers.anyInt(),
+                ArgumentMatchers.anyInt()))
+            .thenReturn(new MemorySemanticSearch.SearchResult(
+                List.of(), List.of(hits), true, null, 1));
     }
 
     // ── 낡은 payload 는 답을 만들지 못한다 ───────────────────────────────────
@@ -258,10 +272,71 @@ class SemanticHitsDoNotBypassTheAuthorityFilterTest {
             .isEqualTo("낚시를 좋아하신다");
     }
 
+    @Test
+    @DisplayName("의역 질의도 의미 hit 가 PostgreSQL 허용 기억 안에서 순위를 바꾼다")
+    void paraphraseUsesSemanticRankingWithinTheAllowedSet() {
+        Memory walking = allowed("저녁 산책이 가장 즐겁다고 하셨다");
+        Memory television = allowed("저녁에는 뉴스를 보신다");
+        givenHits(new MemorySemanticSearch.SemanticHit(walking.getId(), 0.92),
+            new MemorySemanticSearch.SemanticHit(television.getId(), 0.15));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest(
+                "밖에 나가서 좀 걷고 싶어", null, null, null, false, null));
+
+        assertThat(context.memories())
+            .extracting(ConversationContextResponse.MemoryItem::id)
+            .startsWith(walking.getId());
+    }
+
+    @Test
+    @DisplayName("★ 다른 어르신의 요약 hit 는 PostgreSQL 후보에 추가되지 않는다")
+    void ahitForSomebodyElsesSummaryAddsNothing() {
+        ConversationSummary mine = saveSummary(senior.getId(), "무릎 이야기를 나눴다", 1);
+        AppUser other = appUserRepository.save(AppUser.create("SENIOR", "이철수", null, "철수님"));
+        ConversationSummary theirs = saveSummary(other.getId(), "낚시 이야기를 나눴다", 2);
+        givenSummaryHits(new MemorySemanticSearch.SemanticHit(theirs.getId(), 0.99));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("낚시", null, null, null, false, null));
+
+        assertThat(context.relevantSummaries())
+            .extracting(ConversationContextResponse.SummaryItem::id)
+            .containsExactly(mine.getId())
+            .doesNotContain(theirs.getId());
+        assertThat(context.retrieval().hitCount())
+            .as("권위 필터를 통과하지 못한 벡터 hit 는 실제 hit 수에 포함하지 않는다")
+            .isZero();
+    }
+
+    @Test
+    @DisplayName("허용된 요약들 사이에서는 의미 유사도가 순위를 바꾼다")
+    void similarityReordersOnlyTheAllowedSummaries() {
+        ConversationSummary knee = saveSummary(senior.getId(), "무릎 이야기를 나눴다", 1);
+        ConversationSummary fishing = saveSummary(senior.getId(), "낚시 이야기를 나눴다", 2);
+        givenSummaryHits(new MemorySemanticSearch.SemanticHit(fishing.getId(), 0.95),
+            new MemorySemanticSearch.SemanticHit(knee.getId(), 0.10));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("무릎", null, null, null, false, null));
+
+        assertThat(context.relevantSummaries())
+            .extracting(ConversationContextResponse.SummaryItem::id)
+            .startsWith(fishing.getId());
+        assertThat(context.retrieval().semanticUsed()).isTrue();
+        assertThat(context.retrieval().hitCount()).isEqualTo(2);
+    }
+
     private Memory allowed(String content) {
         Memory memory = Memory.create(senior.getId(), MemoryType.OTHER, content);
         memory.changeVisibility(MemoryVisibility.SHARED_WITH_GUARDIANS);
         memory.setImportance((short) 3);
         return memoryRepository.save(memory);
+    }
+
+    private ConversationSummary saveSummary(UUID owner, String content, int daysAgo) {
+        OffsetDateTime end = OffsetDateTime.now().minusDays(daysAgo);
+        return summaryRepository.save(ConversationSummary.forDay(
+            owner, end.minusHours(1), end, content, 2));
     }
 }

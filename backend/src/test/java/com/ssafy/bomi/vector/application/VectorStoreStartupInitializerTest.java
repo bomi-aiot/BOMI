@@ -60,13 +60,15 @@ class VectorStoreStartupInitializerTest {
         }
 
         @Override
-        public void upsert(VectorCollection collection, UUID id, UUID seniorId, float[] vector) {
+        public VectorWriteStatus upsert(VectorCollection collection, UUID id, UUID seniorId,
+            float[] vector) {
+            return VectorWriteStatus.STORED;
         }
 
         @Override
-        public List<VectorHit> search(VectorCollection collection, UUID seniorId,
+        public VectorSearchResult search(VectorCollection collection, UUID seniorId,
             float[] queryVector, int limit) {
-            return List.of();
+            return new VectorSearchResult(List.of(), VectorSearchStatus.COMPLETED);
         }
 
         @Override

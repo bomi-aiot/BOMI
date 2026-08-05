@@ -3,10 +3,13 @@ package com.ssafy.bomi.context;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.ssafy.bomi.context.application.MemorySemanticSearch.SemanticHit;
+import com.ssafy.bomi.context.application.MemorySemanticSearch.SearchResult;
 import com.ssafy.bomi.context.application.QdrantMemorySearch;
 import com.ssafy.bomi.embedding.application.EmbeddingClient;
 import com.ssafy.bomi.vector.application.VectorCollection;
 import com.ssafy.bomi.vector.application.VectorStore;
+import com.ssafy.bomi.vector.application.VectorStore.VectorSearchResult;
+import com.ssafy.bomi.vector.application.VectorStore.VectorSearchStatus;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -72,7 +75,9 @@ class QdrantMemorySearchTest {
     }
 
     private static class StubVectorStore implements VectorStore {
-        List<VectorHit> hits = List.of();
+        List<VectorHit> memoryHits = List.of();
+        List<VectorHit> summaryHits = List.of();
+        VectorSearchStatus searchStatus = VectorSearchStatus.COMPLETED;
         boolean available = true;
         int searchCount = 0;
         int lastLimit = -1;
@@ -82,15 +87,19 @@ class QdrantMemorySearchTest {
         }
 
         @Override
-        public void upsert(VectorCollection collection, UUID id, UUID seniorId, float[] vector) {
+        public VectorWriteStatus upsert(VectorCollection collection, UUID id, UUID seniorId,
+            float[] vector) {
+            return VectorWriteStatus.STORED;
         }
 
         @Override
-        public List<VectorHit> search(VectorCollection collection, UUID seniorId,
+        public VectorSearchResult search(VectorCollection collection, UUID seniorId,
             float[] queryVector, int limit) {
             searchCount++;
             lastLimit = limit;
-            return hits;
+            List<VectorHit> hits = collection == VectorCollection.MEMORY
+                ? memoryHits : summaryHits;
+            return new VectorSearchResult(hits, searchStatus);
         }
 
         @Override
@@ -117,7 +126,7 @@ class QdrantMemorySearchTest {
         StubVectorStore store = new StubVectorStore();
         QdrantMemorySearch search = new QdrantMemorySearch(store, embedding);
 
-        search.search(SENIOR, "무릎이 아파", 5);
+        search.search(SENIOR, "무릎이 아파", 5, 0);
 
         assertThat(embedding.calls).containsExactly("query:무릎이 아파");
     }
@@ -127,13 +136,39 @@ class QdrantMemorySearchTest {
         UUID memoryId = UUID.randomUUID();
         RecordingEmbeddingClient embedding = new RecordingEmbeddingClient();
         StubVectorStore store = new StubVectorStore();
-        store.hits = List.of(new VectorStore.VectorHit(memoryId, 0.87));
+        store.memoryHits = List.of(new VectorStore.VectorHit(memoryId, 0.87));
         QdrantMemorySearch search = new QdrantMemorySearch(store, embedding);
 
-        List<SemanticHit> hits = search.search(SENIOR, "무릎", 5);
+        SearchResult result = search.search(SENIOR, "무릎", 5, 0);
 
-        assertThat(hits).containsExactly(new SemanticHit(memoryId, 0.87));
+        assertThat(result.memoryHits()).containsExactly(new SemanticHit(memoryId, 0.87));
+        assertThat(result.semanticUsed()).isTrue();
+        assertThat(result.fallbackReason()).isNull();
+        assertThat(result.embeddingLatencyMs()).isNotNegative();
+        assertThat(result.vectorSearchLatencyMs()).isNotNegative();
+        assertThat(result.latencyMs())
+            .isGreaterThanOrEqualTo(result.embeddingLatencyMs());
         assertThat(store.lastLimit).isEqualTo(5);
+    }
+
+    @Test
+    @DisplayName("기억과 요약을 한 번 임베딩해 각 컬렉션에서 함께 찾는다")
+    void memoryAndSummarySearchShareOneQueryEmbedding() {
+        UUID memoryId = UUID.randomUUID();
+        UUID summaryId = UUID.randomUUID();
+        RecordingEmbeddingClient embedding = new RecordingEmbeddingClient();
+        StubVectorStore store = new StubVectorStore();
+        store.memoryHits = List.of(new VectorStore.VectorHit(memoryId, 0.9));
+        store.summaryHits = List.of(new VectorStore.VectorHit(summaryId, 0.8));
+        QdrantMemorySearch search = new QdrantMemorySearch(store, embedding);
+
+        SearchResult result = search.search(SENIOR, "낚시", 5, 3);
+
+        assertThat(embedding.calls).containsExactly("query:낚시");
+        assertThat(store.searchCount).isEqualTo(2);
+        assertThat(result.memoryHits()).containsExactly(new SemanticHit(memoryId, 0.9));
+        assertThat(result.summaryHits()).containsExactly(new SemanticHit(summaryId, 0.8));
+        assertThat(result.semanticUsed()).isTrue();
     }
 
     // ── 2. 과금되는 호출을 낭비하지 않는다 ───────────────────────────────────
@@ -149,10 +184,10 @@ class QdrantMemorySearchTest {
         StubVectorStore store = new StubVectorStore();
         QdrantMemorySearch search = new QdrantMemorySearch(store, embedding);
 
-        assertThat(search.search(SENIOR, "", 5)).isEmpty();
-        assertThat(search.search(SENIOR, "   ", 5)).isEmpty();
-        assertThat(search.search(SENIOR, null, 5)).isEmpty();
-        assertThat(search.search(SENIOR, "무릎", 0)).isEmpty();
+        assertThat(search.search(SENIOR, "", 5, 0).semanticUsed()).isFalse();
+        assertThat(search.search(SENIOR, "   ", 5, 0).semanticUsed()).isFalse();
+        assertThat(search.search(SENIOR, null, 5, 0).semanticUsed()).isFalse();
+        assertThat(search.search(SENIOR, "무릎", 0, 0).semanticUsed()).isFalse();
 
         assertThat(embedding.calls).isEmpty();
         assertThat(store.searchCount).isZero();
@@ -165,12 +200,14 @@ class QdrantMemorySearchTest {
         QdrantMemorySearch search = new QdrantMemorySearch(store, embedding);
 
         store.available = false;
-        assertThat(search.search(SENIOR, "무릎", 5)).isEmpty();
+        assertThat(search.search(SENIOR, "무릎", 5, 0).fallbackReason())
+            .isEqualTo("semantic_unavailable");
         assertThat(search.isAvailable()).isFalse();
 
         store.available = true;
         embedding.available = false;
-        assertThat(search.search(SENIOR, "무릎", 5)).isEmpty();
+        assertThat(search.search(SENIOR, "무릎", 5, 0).fallbackReason())
+            .isEqualTo("semantic_unavailable");
         assertThat(search.isAvailable()).isFalse();
 
         assertThat(embedding.calls).isEmpty();
@@ -190,9 +227,32 @@ class QdrantMemorySearchTest {
         StubVectorStore store = new StubVectorStore();
         QdrantMemorySearch search = new QdrantMemorySearch(store, embedding);
 
-        assertThat(search.search(SENIOR, "무릎", 5)).isEmpty();
+        SearchResult result = search.search(SENIOR, "무릎", 5, 0);
+
+        assertThat(result.semanticUsed()).isFalse();
+        assertThat(result.fallbackReason()).isEqualTo("embedding_failed");
+        assertThat(result.embeddingLatencyMs()).isNotNegative();
+        assertThat(result.vectorSearchLatencyMs()).isZero();
         assertThat(store.searchCount)
             .as("임베딩이 없으면 검색할 벡터도 없다")
             .isZero();
+    }
+
+    @Test
+    @DisplayName("0건 성공과 Qdrant 실패를 서로 다른 상태로 반환한다")
+    void emptySuccessAndVectorFailureAreDistinguishable() {
+        RecordingEmbeddingClient embedding = new RecordingEmbeddingClient();
+        StubVectorStore store = new StubVectorStore();
+        QdrantMemorySearch search = new QdrantMemorySearch(store, embedding);
+
+        SearchResult empty = search.search(SENIOR, "무릎", 5, 0);
+        assertThat(empty.semanticUsed()).isTrue();
+        assertThat(empty.memoryHits()).isEmpty();
+        assertThat(empty.fallbackReason()).isNull();
+
+        store.searchStatus = VectorSearchStatus.FAILED;
+        SearchResult failed = search.search(SENIOR, "무릎", 5, 0);
+        assertThat(failed.semanticUsed()).isFalse();
+        assertThat(failed.fallbackReason()).isEqualTo("memory_vector_search_failed");
     }
 }
