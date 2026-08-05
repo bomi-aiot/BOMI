@@ -77,6 +77,22 @@ def _format_profile(ctx: dict[str, Any]) -> str:
         value = profile.get(key)
         if value:
             lines.append(f"- {label}: {_join(value)}")
+
+    # 대화 성향(conversationPreferences)과 오래 아픈 부위(chronicPainArea).
+    #
+    # 백엔드는 처음부터 이 필드들을 내려주고 있었는데 로봇이 읽지 않았다
+    # (docs/natural-conversation/current-state-audit.md C1). 성향은 말투를
+    # 고르는 재료이고, 만성 통증 부위는 "무릎이 또 아파" 같은 말을 응급이
+    # 아니라 일상으로 알아듣는 재료다 — 트리아지의 CHRONIC_PAIN_PARTS 와
+    # 별개로, 대화 자체도 이를 알고 있어야 §17.2(이어짐)가 산다.
+    prefs = profile.get("conversationPreferences")
+    if prefs:
+        if isinstance(prefs, dict):
+            prefs = ", ".join(f"{k} {v}" for k, v in sorted(prefs.items()))
+        lines.append(f"- 대화 성향: {_join(prefs)}")
+    chronic = profile.get("chronicPainArea")
+    if chronic:
+        lines.append(f"- 오래 아픈 부위: {_join(chronic)} (새 증상과 구분해서 듣기)")
     return "\n".join(lines)
 
 

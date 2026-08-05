@@ -133,3 +133,33 @@ def clear(senior_id: str) -> None:
     connection = runtime_db()
     schema.init_runtime(connection)
     connection.execute("DELETE FROM extraction_job WHERE senior_id = ?", (senior_id,))
+
+
+def forget_conversation(senior_id: str, conversation_id: str) -> int:
+    """"기억하지 마" — 이 대화에서 아직 처리되지 않은 추출 대기 행을 지운다.
+
+    무엇을 하는가
+        (senior_id, conversation_id) 의 extracted=0 행을 삭제하고 지운 개수를
+        돌려준다. 이미 extracted=1 인 행은 손대지 않는다 — 그 사실은 이미 서버의
+        fact_candidate 로 넘어갔고, 로봇 쪽 행을 지워 봐야 없던 일이 되지 않는다.
+        서버 측 취소는 별도 엔드포인트가 필요하다(BE 티켓, 현재 없음).
+
+    누가 호출하는가
+        graph/ingress.note_interaction — 어르신이 MEMORY_FORGET_MARKERS 로
+        요청했을 때. 봉인(emotion.mark_sealed)과 항상 함께 불린다: 봉인은
+        '앞으로'를 막고, 이 함수는 '이미 쌓인 것'을 지운다. 둘 중 하나만 하면
+        요청이 절반만 지켜진다.
+
+    왜 extracted=0 만 지우는가
+        extracted=1 을 지우면 "지웠다"는 착각만 남는다. 지울 수 없는 것은
+        지웠다고 말하지 않는다 — 서버 취소가 생기기 전까지 이 함수의 한계는
+        문서(implementation-plan P1-B1)에 그대로 적혀 있다.
+    """
+    connection = runtime_db()
+    schema.init_runtime(connection)
+    cursor = connection.execute(
+        "DELETE FROM extraction_job "
+        "WHERE senior_id = ? AND conversation_id = ? AND extracted = 0",
+        (senior_id, conversation_id),
+    )
+    return cursor.rowcount

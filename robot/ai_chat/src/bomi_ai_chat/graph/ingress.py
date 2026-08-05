@@ -218,6 +218,17 @@ def note_interaction(state: ConvState) -> dict:
     # 맞장구로 끝나는 턴에서도 먼저 저장한다. "응" 한마디도 생존 증거다.
     _persist_interaction(state, now)
 
+    # 프라이버시 요청("우리끼리 얘기", "기억하지 마")을 모든 반응형 턴에서 듣는다.
+    #
+    # ★ 예전에는 T4 봉인 표지를 정서 턴(handle_emotional)에서만 검사했다
+    #   어르신이 잡담(companion) 중에 "우리끼리 얘긴데"라고 하면 봉인되지 않고
+    #   그 발화가 추출 큐로 들어갔다 (current-state-audit.md §3 — T4 봉인의
+    #   인텐트 한정). 비밀 요청이 인텐트 분류 결과에 따라 지켜지거나 안 지켜지는
+    #   것은 §9 의 "T4 는 진짜여야 한다"를 깨는 일이라, 인텐트 분류 '전'인
+    #   여기서 듣는다. LLM 은 이 결정에 관여하지 않는다.
+    _honor_privacy_requests(state, effective_conversation_id=(
+        None if crossed_boundary else state.get("conversation_id")))
+
     if not state.get("speaking"):
         return out
 
@@ -254,6 +265,53 @@ def note_interaction(state: ConvState) -> dict:
     out["speaking"] = False
     out["interrupted_remainder"] = _yield_playback(state)
     return out
+
+
+def _honor_privacy_requests(
+    state: ConvState, *, effective_conversation_id: str | None
+) -> None:
+    """"우리끼리 얘기" / "기억하지 마"를 결정론으로 지킨다. (시나리오 K, §9 T4)
+
+    무엇을 하는가
+        두 가지 표지를 본다.
+          1. T4 봉인(policy.T4_SEAL_MARKERS): 이 대화를 봉인한다 → 앞으로 이
+             대화의 발화는 추출 큐에 들어가지 않고(T4), T3 동의 질문의 재료도
+             되지 않는다.
+          2. 삭제 요청(policy.MEMORY_FORGET_MARKERS): 봉인에 더해, 이 대화에서
+             '이미' 큐에 쌓인 추출 대기 행을 지운다.
+
+    왜 note_interaction 에서 하는가
+        인텐트 분류보다 먼저여야 한다. 비밀 요청이 emotional 로 분류될 때만
+        지켜진다면 T4 는 확률적 약속이 되고, 어르신은 그것을 믿을 수 없다
+        (§9 — "T4 must be real"). 여기는 모든 반응형 턴이 지나는 첫 노드다.
+
+    무엇을 못 하는가 (정직하게)
+        이미 서버로 제출된 fact_candidate 는 취소하지 못한다 — 백엔드에 취소
+        엔드포인트가 없다(BE 티켓 대기). 그때까지 이 함수가 지키는 것은
+        "로봇이 아직 보내지 않은 것은 절대 보내지 않는다"까지다.
+    """
+    senior_id = state.get("senior_id") or ""
+    text = state.get("user_input") or ""
+    if not senior_id or not text:
+        return
+    normalized = text.replace(" ", "")
+
+    wants_forget = any(m in normalized for m in policy.MEMORY_FORGET_MARKERS)
+    wants_seal = wants_forget or any(m in text for m in policy.T4_SEAL_MARKERS)
+    if not wants_seal:
+        return
+
+    from bomi_ai_chat.localstore import emotion, extraction
+
+    conversation_id = effective_conversation_id or ""
+    if conversation_id:
+        emotion.mark_sealed(senior_id, conversation_id)
+        logger.info("T4_SEALED conversation=%s", conversation_id)
+    if wants_forget and conversation_id:
+        dropped = extraction.forget_conversation(senior_id, conversation_id)
+        # 발화 원문은 로그에 싣지 않는다 — 지우라는 요청을 로그로 남기는 모순.
+        logger.info("MEMORY_FORGOTTEN conversation=%s pending_dropped=%d",
+                    conversation_id, dropped)
 
 
 def _persist_interaction(state: ConvState, now: float) -> None:

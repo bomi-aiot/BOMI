@@ -55,7 +55,7 @@ from bomi_ai_chat.clock import clock
 from bomi_ai_chat.graph import context_slots, contract_dialogue
 from bomi_ai_chat.llm.medical_flow import handle_medical_query
 from bomi_ai_chat.state import ConvState
-from bomi_ai_chat.weather.client import WeatherClient, describe_forecast
+from bomi_ai_chat.weather.client import WeatherClient, describe_forecast, extract_city
 
 logger = logging.getLogger(__name__)
 
@@ -383,6 +383,18 @@ def _lookup_weather_documents(state: ConvState, text: str) -> list[dict]:
     """
     city, source = context_slots.resolve_location(
         state.get("context_candidates"), text, clock.now())
+    if not city:
+        # 마지막 폴백: 프로필의 집 주소 (문맥 선택 5순위, CLAUDE.md §30).
+        #
+        # "오늘 날씨 어때?"의 대부분은 '우리 동네' 질문이다. 백엔드 계약
+        # (SeniorProfile)에 address 가 아직 없어서 지금은 거의 항상 빈손이지만,
+        # 필드가 오는 순간 이 폴백이 시나리오 C 를 살린다 — 로봇 쪽을 먼저
+        # 준비해 두고 계약 확장(BE 티켓)을 기다린다. 없으면 현행대로 조회하지
+        # 않고, 모델이 지역을 되묻는다. 지어내는 것보다 되묻는 것이 낫다.
+        address = str(((state.get("ctx") or {}).get("profile") or {})
+                      .get("address") or "")
+        city = extract_city(address)
+        source = context_slots.PROFILE_DEFAULT if city else "none"
     if not city:
         return []
     if source != "utterance":
