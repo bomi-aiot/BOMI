@@ -174,7 +174,41 @@ def context_read(state: ConvState) -> dict:
         # 이번 턴까지 새는 것을 막는다. checkpoint 된 state 는 이 노드가 손대지
         # 않는 키를 그대로 들고 있기 때문이다(state.py 의 is_medical_query 설명 참고).
         "is_medical_query": medical_flag,
+        "recent_phrasings": _lookup_recent_phrasings(state, senior_id),
     }
+
+
+def _lookup_recent_phrasings(state: ConvState, senior_id: str) -> list[str]:
+    """같은 종류의 알림에서 최근에 쓴 표현을 찾는다 (§17.8, S15P11E102-256).
+
+    무엇을 하는가
+        능동/명령 턴(trigger_type in "proactive"/"backend_command")에서만
+        phrasing_key 를 만들어 localstore.phrasings.recent 로 조회한다.
+
+    ★ 왜 반응형 턴은 항상 빈 리스트인가 — 이 함수에서 가장 중요한 판단
+        speech_origin 과 intent 는 checkpoint 된 state 의 필드라 reducer 가 없다
+        (state.py 참고). 능동 턴이 "silence_ladder:1" 을 남기고 나면, 바로 다음
+        어르신 발화(user_utterance) 턴에도 그 값이 그대로 남아 있다 — 아무도
+        지우지 않았을 뿐이다. 이 함수가 trigger_type 을 보지 않고 speech_origin
+        만 봤다면, "능동 턴 직후의 반응형 턴"에 지난 알림의 표현 이력이 새어
+        들어간다. graph/build.py._record_phrasing 도 기록 쪽에서 같은 가드를
+        쓴다 — 둘이 어긋나면 저장과 조회 중 하나만 걸러져 조용히 틀린다.
+
+    누가 호출하는가
+        context_read, ctx 를 만든 다음.
+
+    반환값
+        표현 문자열 목록. 반응형 턴이거나, origin/intent 가 다양화 대상이 아니면
+        (graph.phrasing.phrasing_key 참고) 빈 리스트.
+    """
+    if state.get("trigger_type") not in ("proactive", "backend_command"):
+        return []
+
+    from bomi_ai_chat.graph.phrasing import phrasing_key
+    from bomi_ai_chat.localstore import phrasings
+
+    key = phrasing_key(state.get("speech_origin") or "", state.get("intent") or "")
+    return phrasings.recent(senior_id, key)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
