@@ -241,6 +241,17 @@ def _run_graph_runtime(settings: Settings, audio_in, audio_out, *, once: bool) -
     # 레거시 경로에는 있었는데 그래프 경로에만 빠져 있었다.
     bootstrap.warm_up_intent_router()
 
+    # 마이크 빔을 로봇 정면으로 고정한다 (S15P11E102-333).
+    #
+    # 이 배선도 레거시 경로(위 main())에만 있었다. 그래프 경로에서는 reSpeaker 의
+    # 빔이 자동 추적으로 남아, 로봇 자신의 스피커나 TV 쪽으로 귀가 끌려갈 수 있다.
+    # BEAM_FIX_ENABLED 가 꺼져 있거나 xvf_host 가 없는 환경(노트북)에서는
+    # apply_fixed_beam 이 스스로 건너뛰므로 여기서 조건을 걸지 않는다.
+    from bomi_ai_chat.audio_io.beam_control import BeamController
+
+    beam = BeamController()
+    beam.apply_fixed_beam()
+
     # 웨이크워드('보미야')를 그래프 경로에도 붙인다 -> 웨이크워드 + 기억이 함께 동작.
     # --once(한 턴 점검)에서는 상시 청취가 무의미하므로 붙이지 않는다(레거시 --once 와 동일).
     wake = None if once else _build_wakeword(settings)
@@ -251,6 +262,12 @@ def _run_graph_runtime(settings: Settings, audio_in, audio_out, *, once: bool) -
             max_turns=1 if once else None,
             wake=wake, audio_out=audio_out)
     finally:
+        # 빔 고정을 풀어 다음 실행(캘리브레이션 포함)이 깨끗한 상태에서 시작하게 한다.
+        # 해제 실패가 종료 절차(runtime.shutdown)를 삼키면 안 되므로 예외는 여기서 그친다.
+        try:
+            beam.reset()
+        except Exception:  # noqa: BLE001 - 장치 정리 실패가 종료를 막으면 안 된다
+            logger.warning("could not reset the mic beam; it stays fixed", exc_info=True)
         # --once 일 때만 재생이 끝나기를 기다린다 (S15P11E102-233).
         #
         # ★ 재생은 daemon 스레드다. --once 는 한 턴 뒤 바로 끝나므로, 기다리지 않으면

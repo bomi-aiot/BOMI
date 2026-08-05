@@ -561,3 +561,105 @@ def test_the_alert_is_sent_again_once_the_window_passes(frozen_clock, guardian):
     triage.escalation(state)
 
     assert len(alerts(guardian, reason="emergency")) == 2
+
+
+# ── T1 상태 고착과 확인 질문의 시효  (233 실기 폭주의 남은 반쪽) ──────────────
+
+
+def test_a_reactive_turn_resets_last_turns_t1(frozen_clock):
+    """★★ 지난 턴의 T1 이 checkpoint 로 넘어와도 이번 턴을 오염시키지 않는다.
+
+    233 실기에서 T1 한 번 뒤 모든 발화가 — "괜찮아요"조차 — 분류 없이 T1 로
+    직행해 같은 문장이 6분간 14번 반복됐고, 재시작 후 첫 발화까지 즉시 T1 이
+    됐다. safety_level/escalation 은 reducer 없는 채널이라 지난 턴의 값이
+    그대로 넘어오는데, safety_triage 의 첫 분기가 그것을 '사전 세팅'으로
+    오인한 것이다. note_interaction 의 매 턴 리셋이 그 루프의 차단막이다.
+    """
+    frozen_clock(start=MORNING_UTC)
+    from bomi_ai_chat.graph import ingress
+
+    out = ingress.note_interaction({
+        "senior_id": SENIOR,
+        "user_input": "오늘은 날이 좋네",
+        "safety_level": "T1",
+        "escalation": {"reason": "emergency", "ts": MORNING_UTC - 60},
+    })
+
+    assert out["safety_level"] == "none"
+    assert out["escalation"] is None
+
+
+def test_a_stale_confirmation_is_not_treated_as_an_answer(frozen_clock):
+    """★ 한참 전에 던진 확인 질문의 답으로 지금 발화를 판정하지 않는다.
+
+    _resolve_pending_check 는 "명확한 부정 외에는 전부 T1" 이다. 시효를 보지
+    않으면 재시작 뒤 첫 인사("점심 뭐 먹을까")가 보호자 호출이 된다. 답이 오지
+    않은 확인의 에스컬레이션은 silence_tick 이 마감 시점에 이미 처리했다.
+    """
+    frozen_clock(start=MORNING_UTC)
+    asked = MORNING_UTC - 3600
+    pending = {"reason": "emergency", "asked_at": asked,
+               "expires_at": asked + policy.SAFETY_CONFIRMATION_TIMEOUT_SEC}
+
+    out = turn("점심에 뭐 먹을까", pending_safety_check=pending)
+
+    assert out["safety_level"] == "none"
+    assert out["pending_safety_check"] is None
+    assert outbox.pending_count() == 0
+
+
+def test_a_stale_confirmation_still_hears_a_new_symptom(frozen_clock):
+    """시효가 지났어도 새 발화 자체가 증상이면 새 확인 질문으로 이어진다."""
+    frozen_clock(start=MORNING_UTC)
+    asked = MORNING_UTC - 3600
+    pending = {"reason": "emergency", "asked_at": asked,
+               "expires_at": asked + policy.SAFETY_CONFIRMATION_TIMEOUT_SEC}
+
+    out = turn("가슴이 아파", pending_safety_check=pending)
+
+    assert out["safety_level"] == "confirm"
+    assert out["pending_safety_check"]["reason"] == "emergency"
+
+
+def test_a_pending_check_without_a_deadline_is_stale(frozen_clock):
+    """과거 빌드가 남긴 expires_at 없는 checkpoint 를 답 판정에 쓰지 않는다."""
+    frozen_clock(start=MORNING_UTC)
+
+    out = turn("글쎄", pending_safety_check={"reason": "emergency"})
+
+    assert out["safety_level"] == "none"
+
+
+# ── 반복 T1 의 응답 품질  (같은 약속을 되풀이하지 않는다) ────────────────────
+
+
+def test_a_suppressed_duplicate_speaks_differently(frozen_clock, guardian):
+    """★ 억제 창 안의 두 번째 T1 은 연락을 '새로' 약속하지 않는다.
+
+    "제가 가족분께 연락드릴게요"를 6분간 14번 들은 것이 233 실기에서 가장
+    기계적으로 들린 부분이다. 이미 연락된 상태라면 그 사실을 말하는 것이
+    정직하고 덜 무섭다.
+    """
+    frozen_clock(start=MORNING_UTC)
+    state = {"senior_id": SENIOR, "escalation": {"reason": "emergency"}}
+
+    first = triage.escalation(state)["response"]
+    second = triage.escalation(state)["response"]
+
+    assert first != second
+    assert "조금 전" in second or "이미" in second
+    assert len(alerts(guardian, reason="emergency")) == 1
+
+
+def test_safety_wording_does_not_assume_a_son(frozen_clock):
+    """★ 보호자가 아들이라는 가정을 문구에 박지 않는다.
+
+    보호자는 딸일 수도, 형제일 수도, 돌봄 담당자일 수도 있다. 아들이 없는
+    어르신에게 "아드님"은 로봇이 자기를 모른다는 증거로 들린다 (CLAUDE.md §17.3).
+    """
+    frozen_clock(start=MORNING_UTC)
+
+    assert "아드님" not in triage.safety_confirm({})["response"]
+    for responses in (triage._RESPONSES, triage._RESPONSES_ALREADY_SENT):
+        for spoken in responses.values():
+            assert "아드님" not in spoken
