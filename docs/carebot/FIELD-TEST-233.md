@@ -130,20 +130,33 @@ ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c '\d app_user'"
 일어난 것처럼 보입니다). 값은 `NOT_REQUESTED`/`GRANTED`/`DENIED`/`REVOKED` 중
 하나입니다.
 
+아래는 실제로 돌려서 성공을 확인한 문장입니다(233 실기 점검 중 확보). **동의 4종
+말고도 `conversation_preferences`(jsonb)·`onboarding_status`·`time_zone`·
+`status`·`created_at`·`updated_at` 여섯 칼럼도 기본값이 없는 `NOT NULL` 이라
+처음엔 이걸 빠뜨려서 `null value in column "conversation_preferences" violates
+not-null constraint` 로 실패했습니다.** `\d app_user` 결과가 이것과 다르면(새 칼럼이
+추가됐다면) 그쪽을 따르십시오 — 이 문장은 그 시점의 스냅샷입니다.
+
 ```bash
 ssh bomi "docker exec -i bomi-postgres psql -U bomi -d bomi" <<'SQL'
 INSERT INTO app_user (
   id, user_type, name,
+  conversation_preferences, onboarding_status, time_zone,
   personalization_consent_status, health_data_consent_status,
-  schedule_consent_status, guardian_sharing_consent_status
-  /*, 그 외 확인한 필수 칼럼들 */
+  schedule_consent_status, guardian_sharing_consent_status,
+  status, created_at, updated_at
 ) VALUES (
   '99999999-0000-4000-8000-000000000001', 'SENIOR', '점검용',
-  'GRANTED', 'GRANTED', 'GRANTED', 'GRANTED'
-  /*, ... */
+  '{}'::jsonb, 'NOT_STARTED', 'Asia/Seoul',
+  'GRANTED', 'GRANTED', 'GRANTED', 'GRANTED',
+  'ACTIVE', now(), now()
 );
 SQL
 ```
+
+`onboarding_status` 는 `NOT_STARTED`/`IN_PROGRESS`/`COMPLETED`/`DECLINED` 중
+하나, `status` 는 `ACTIVE`/`SUSPENDED`/`WITHDRAWN` 중 하나입니다. 점검용 어르신은
+`NOT_STARTED`·`ACTIVE` 로 충분합니다 — 9절(온보딩)을 하면서 실제로 진행됩니다.
 
 만든 UUID 를 `.env` 의 `SENIOR_ID` 와 셸 변수에 둘 다 넣습니다.
 
