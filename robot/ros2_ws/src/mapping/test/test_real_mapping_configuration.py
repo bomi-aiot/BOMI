@@ -37,3 +37,18 @@ def test_real_mapping_reuses_lidar_launch_without_static_tf_duplication():
     assert "static_transform_publisher" not in launch_source
     assert '"odom_topic": odom_topic' in launch_source
     assert '"publish_tf": True' in launch_source
+
+
+def test_real_mapping_launch_forwards_measured_lidar_transform():
+    """실측 LiDAR 위치와 자세를 하위 launch에 전달하는지 검증한다."""
+    launch_source = REAL_LAUNCH.read_text(encoding="utf-8")
+
+    for argument in (
+        "laser_x",
+        "laser_y",
+        "laser_z",
+        "laser_roll",
+        "laser_pitch",
+        "laser_yaw",
+    ):
+        assert f'"{argument}": {argument}' in launch_source
