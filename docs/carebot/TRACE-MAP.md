@@ -11,8 +11,8 @@
 > | [§4 저장소 지도](#4-저장소-지도--무엇이-어디에-쌓이는가) | "이 값은 어느 파일 어느 표에 있는가" |
 > | [§5 조절 가능한 값](#5-조절-가능한-값--무엇을-바꾸면-무엇이-달라지나) | "동작이 마음에 안 든다, 어디를 고치는가" |
 
-**줄 번호는 브랜치 `S15P11E102-233-ai-실기-점검` 기준입니다.** 다른 브랜치에서는 어긋날 수
-있으니, 줄 번호가 안 맞으면 함수 이름으로 찾으십시오.
+**줄 번호는 `ai-develop` 기준입니다** (마지막 확인: 253 상위 동의 확인 머지 직후).
+계속 바뀌는 값이니, 줄 번호가 안 맞으면 함수 이름으로 찾으십시오.
 
 ## 먼저, 용어 여덟 개
 
@@ -74,7 +74,7 @@
 | 8 | `"비 와?"` | `info` | `none` | `handle_info` | 〃 (도시 없음) |
 | 9 | `"추워?"` | `info` | `none` | `handle_info` | 〃 (도시 없음) |
 | | **정서 — 이 제품의 본체** | | | | |
-| 10 ★ | `"외로워"` | `emotional` | `none` | `handle_emotional` | `_EMOTIONAL_MARKERS`. **그 턴에 공유 동의를 물으면 실패** |
+| 10 ★ | `"외로워"` | `emotional` | `none` | `handle_emotional` | `_EMOTIONAL_MARKERS`. **한 번으로는 공유 동의를 안 물어야 함** — 253 이후 누적 3회 문턱(§2.7) |
 | 11 | `"쓸쓸하네"` | `emotional` | `none` | `handle_emotional` | 〃 |
 | 12 | `"우울해"` | `emotional` | `none` | `handle_emotional` | 〃 |
 | 13 | `"영감이 보고 싶어"` | `emotional` | `none` | `handle_emotional` | 회피 목록에 배우자가 있으면 **살아있는 것처럼 말하면 안 됨** |
@@ -256,11 +256,31 @@ payload 에 **발화 원문을 싣지 않습니다.** 보호자에게 필요한 
 |---|---|---|
 | `handle_info` | ⚪ 없음 | **LLM 호출 1회.** 날씨·의료 조회는 `context_read` 가 미리 해 둡니다 — 아래 참고 |
 | `handle_companion` | ⚪ 없음 | LLM 호출 1회. 침묵 프로브도 여기로 옵니다 |
-| `handle_emotional` | 🔵 제안 큐에 T3 동의 질문을 **45분 뒤로** 예약 | 속마음을 꺼낸 직후 "가족분께 전해도 될까요"로 끊으면, 로봇은 그 한 문장으로 말벗에서 감시 장치가 됩니다 |
+| `handle_emotional` | 🔵 세 갈래 (아래 참고) | 253 이후 **즉시 큐잉하지 않습니다** — 신호만 누적합니다 |
 | `handle_schedule` | 🔵 `completed_slot` 에 완료 표시 | `"약 먹었어"` → 오늘 그 알림 폐기 |
 | `handle_greeting` | ⚪ 없음 | 백엔드가 정해준 문구를 옮길 뿐 |
 | `handle_onboarding` | 🟣 **읽기·쓰기(서버)** | 온보딩 계약 API (§3) |
 | `handle_clarification` | 🟣 **읽기·쓰기(서버)** | 재질의 계약 API (§3) |
+
+> **`handle_emotional` 이 왜 세 갈래인가 — 263 → 253 으로 바뀐 부분**
+>
+> 예전(263)에는 정서 발화 **한 번**이 45분 뒤 동의 질문을 곧바로 제안 큐에 넣었습니다.
+> 253 이 이걸 걷어내고 **누적 문턱** 방식으로 바꿨습니다. 한 번 부를 때마다 셋 중
+> 하나입니다.
+>
+> | 갈래 | 조건 | 하는 일 | DB 접근 |
+> | --- | --- | --- | --- |
+> | 1. 답 판정 | `state.pending_consent` 가 있음 (방금 로봇이 동의 질문을 던진 턴) | "응"/"아니"를 규칙으로 판정, GRANTED 만 발신 큐(T3)로 | 🔵 `consent_request` 갱신 + (GRANTED 면) `outbox` |
+> | 2. 질문 발화 | `_is_t3_consent_turn` — 게이트가 이긴 제안이 이 동의 질문임 | 미리 정해진 문장을 그대로 말함(LLM 없음) | ⚪ 없음 |
+> | 3. 평범한 정서 턴 | 그 외 전부 | 봉인 표지("우리끼리 얘기")가 있으면 봉인, 없으면 신호 1건 기록 | 🔵 `emotional_signal` **쓰기** |
+>
+> **큐에 실제로 넣는 것은 여기가 아니라 배경 틱입니다.** `jobs.ticks.consent_tick` 이
+> 주기적으로(`policy.CONTRACT_TICK_INTERVAL_SEC`, 385줄, 10분) 누적 신호가 문턱
+> (`policy.T3_CONSENT_SIGNAL_THRESHOLD = 3`, 753줄)을 넘었는지, 상위 동의
+> (`guardianSharingConsentGranted`)가 있는지, 대화가 봉인 안 됐는지, 자연스러운
+> 창인지를 전부 확인한 뒤에만 `speech_proposal` 에 한 건을 넣습니다. 자세한 조건
+> 순서는 [FIELD-TEST-233.md §5-4](FIELD-TEST-233.md#5-4-외로워--이-제품의-1번-문제)
+> 참고.
 
 > **날씨·의료 조회는 어디서 하는가 — `handle_info` 가 아닙니다 (311)**
 >
@@ -426,6 +446,8 @@ T2 요약에서 어르신 발화량과 로봇 발화량을 분리해야 하기 �
 | 〃 | `speech_proposal` | 말하겠다는 **제안**(아직 발화 아님) | 스케줄러·사다리·T3 동의 |
 | 〃 | `context_cache` | 백엔드 문맥의 읽기 캐시 | 문맥 조회 성공 시 |
 | 〃 | `completed_slot` | `"약 먹었어"` 로 완료된 복약 슬롯 | `handle_schedule` |
+| 〃 | `emotional_signal` | 정서 발화 누적 신호 (**발화 원문 없음**, 253) | `handle_emotional` 매 정서 턴마다 |
+| 〃 | `consent_request` | T3 동의 질문의 상태(PENDING/GRANTED/DECLINED) | `consent_tick` 이 만들고, 답변 판정이 갱신 |
 | 〃 | `door_alert` | 현관 알림 중복 방지 이력 | 현관 감시 |
 | 〃 | `cached_audio` | 미리 만들어 둔 음성 파일 목록 | 프로브 최초 생성 |
 | 〃 | **(LangGraph 대화 저장점)** | 대화 상태 (`thread_id` = 어르신 UUID) | 매 노드마다 자동 |
@@ -489,26 +511,35 @@ T2 요약에서 어르신 발화량과 로봇 발화량을 분리해야 하기 �
 |---|---|---|---|---|
 | `COOLDOWN_SEC` | 92 | 8분 | 로봇이 더 조용해짐 | 잔소리꾼이 됨 |
 | `GREETING_TTL_SEC` | 107 | 45초 | 늦은 인사도 나감 (**빈 현관에 "어서오세요"**) | 인사를 자주 놓침 |
-| `BACKCHANNELS` | 119 | 8개 | 맞장구를 더 많이 인정 | 로봇이 문장 중간에 자꾸 멈춤 |
-| `BACKCHANNEL_MAX_SEC` | 124 | 1.0초 | 긴 말도 맞장구로 봄 (**진짜 끼어들기를 무시**) | 로봇이 자주 멈춤 |
-| `ECHO_GUARD_SEC` | 132 | 0.3초 | 자기 목소리를 덜 오인 | 로봇이 자기 말에 멈춤 |
-| `ECHO_VAD_THRESHOLD_MULTIPLIER` | 146 | 2.5 | 〃 | 〃 |
-| `SILENCE_LADDER_SEC` | 162 | `[3시간, 45분, 20분]` | 오탐이 줌, 발견이 늦어짐 | 발견이 빨라짐, **보호자가 알림을 안 읽게 됨** |
-| `RESTING_PATIENCE_MULTIPLIER` | 173 | 3.0 | 쉬는 중엔 더 참음 | 낮잠에도 프로브가 나감 |
-| `SILENCE_TICK_INTERVAL_SEC` | 177 | 60초 | 배터리 절약 | 반응이 빨라짐, 전력 소모 |
-| `DOOR_HEARTBEAT_TIMEOUT_SEC` | 208 | 5분 | 파이 죽음을 늦게 알아챔 | 잠깐 끊겨도 알림 |
-| `ABSENCE_CONCERN_SEC` / `ABSENCE_ALERT_SEC` | 222·223 | 6시간 / 12시간 | 늦게 알림 | 나들이에도 알림 |
-| `DOOR_OPEN_TOO_LONG_SEC` | 233 | 20분 | 문 방치를 늦게 알아챔 | 환기에도 알림 |
-| `NIGHT_EXIT_HOURS` | 238 | 23~5시 | 배회 감지 범위 넓힘 | 좁힘 |
-| `HIGH_RISK_BODY_PARTS` | 338 | 가슴·심장·명치·머리·배·속·뒷목 | **부위 추가 = 확인 질문 대상 늘어남** | 놓칩니다 |
-| `CHRONIC_PAIN_PARTS` | 341 | 무릎·허리·어깨 등 | **부위 추가 = 평범한 턴으로 흘려보냄** | 오탐 늘어남 |
-| `SELF_HARM_MARKERS` | 401 | 보수적 목록 | 감지 늘어남, 오탐 위험 | 놓칩니다 |
-| `SELF_HARM_MARKERS_REVIEWED` | 416 | **`False`** | 🔴 **사람의 검토가 아직 안 끝났습니다.** 기동할 때마다 경고가 찍히는 것이 정상입니다 |
-| `SAFETY_CONFIRMATION_TIMEOUT_SEC` | 428 | 90초 | 생각할 시간이 늘고 알림이 늦어짐 | **화장실 다녀온 사이에 보호자 호출** |
-| `MAX_SENTENCES` | 440 | 2 | 더 길게 말함 (**소리로 못 따라감**) | 더 짧게 |
-| `MEMORY_TOP_K` | 459 | 6 | 기억을 더 많이 (지연 증가) | 문맥이 얕아짐 |
-| `TURN_LATENCY_BUDGET_SEC` | 501 | 2.0초 | 경고가 덜 나옴 | 자주 경고 |
-| `OUTBOX_MAX_ATTEMPTS` | 558 | 티어별 | — | **T1 은 무제한이어야 합니다** |
+| `BACKCHANNELS` | 206 | 8개 | 맞장구를 더 많이 인정 | 로봇이 문장 중간에 자꾸 멈춤 |
+| `BACKCHANNEL_MAX_SEC` | 211 | 1.0초 | 긴 말도 맞장구로 봄 (**진짜 끼어들기를 무시**) | 로봇이 자주 멈춤 |
+| `ECHO_GUARD_SEC` | 219 | 0.3초 | 자기 목소리를 덜 오인 | 로봇이 자기 말에 멈춤 |
+| `ECHO_VAD_THRESHOLD_MULTIPLIER` | 233 | 2.5 | 〃 | 〃 |
+| `SILENCE_LADDER_SEC` | 249 | `[3시간, 45분, 20분]` | 오탐이 줌, 발견이 늦어짐 | 발견이 빨라짐, **보호자가 알림을 안 읽게 됨** |
+| `RESTING_PATIENCE_MULTIPLIER` | 260 | 3.0 | 쉬는 중엔 더 참음 | 낮잠에도 프로브가 나감 |
+| `SILENCE_TICK_INTERVAL_SEC` | 264 | 60초 | 배터리 절약 | 반응이 빨라짐, 전력 소모 |
+| `DOOR_HEARTBEAT_TIMEOUT_SEC` | 295 | 5분 | 파이 죽음을 늦게 알아챔 | 잠깐 끊겨도 알림 |
+| `ABSENCE_CONCERN_SEC` / `ABSENCE_ALERT_SEC` | 309·310 | 6시간 / 12시간 | 늦게 알림 | 나들이에도 알림 |
+| `DOOR_OPEN_TOO_LONG_SEC` | 320 | 20분 | 문 방치를 늦게 알아챔 | 환기에도 알림 |
+| `NIGHT_EXIT_HOURS` | 325 | 23~5시 | 배회 감지 범위 넓힘 | 좁힘 |
+| `CONTRACT_TICK_INTERVAL_SEC` | 385 | 10분 | 재질의·온보딩·T3 동의 확인이 더 늦게 돎 | 배경 작업이 잦아짐, 배터리 소모 |
+| `HIGH_RISK_BODY_PARTS` | 480 | 가슴·심장·명치·머리·배·속·뒷목 | **부위 추가 = 확인 질문 대상 늘어남** | 놓칩니다 |
+| `CHRONIC_PAIN_PARTS` | 483 | 무릎·허리·어깨 등 | **부위 추가 = 평범한 턴으로 흘려보냄** | 오탐 늘어남 |
+| `SELF_HARM_MARKERS` | 544 | 보수적 목록 | 감지 늘어남, 오탐 위험 | 놓칩니다 |
+| `SELF_HARM_MARKERS_REVIEWED` | 559 | **`False`** | 🔴 **사람의 검토가 아직 안 끝났습니다.** 기동할 때마다 경고가 찍히는 것이 정상입니다 |
+| `SAFETY_CONFIRMATION_TIMEOUT_SEC` | 571 | 90초 | 생각할 시간이 늘고 알림이 늦어짐 | **화장실 다녀온 사이에 보호자 호출** |
+| `MAX_SENTENCES` | 583 | 2 | 더 길게 말함 (**소리로 못 따라감**) | 더 짧게 |
+| `MEMORY_TOP_K` | 643 | 6 | 기억을 더 많이 (지연 증가) | 문맥이 얕아짐 |
+| `T3_CONSENT_DELAY_SEC` | 729 | 45분 | 속마음과 동의 질문 사이 여운이 늘어남 | 감시처럼 느껴질 위험 (§CLAUDE.md §9) |
+| `T3_CONSENT_TTL_SEC` | 736 | 6시간 | 늦은 질문도 유효 | 지나간 이야기를 재차 묻는 것을 더 빨리 막음 |
+| `T3_CONSENT_SIGNAL_THRESHOLD` | 753 | 3회 | 덜 민감 (**놓칠 위험**) | 더 민감 (**하루 한두 마디에도 물음, 감시처럼 느껴짐**) |
+| `T3_CONSENT_ENABLED` | 764 | `True` | — | T3 전체가 꺼짐. 실기에서 문제가 생기면 즉시 끌 수 있는 킬스위치 |
+| `TURN_LATENCY_BUDGET_SEC` | 685 | 2.0초 | 경고가 덜 나옴 | 자주 경고 |
+| `OUTBOX_MAX_ATTEMPTS` | 782 | 티어별 | — | **T1 은 무제한이어야 합니다** |
+
+> **T3 관련 다섯 줄이 새로 생겼습니다 (253).** 5-4 스텝을 실기로 할 때 가장 먼저
+> 확인할 값은 `T3_CONSENT_SIGNAL_THRESHOLD` 입니다 — 이 값을 모르고 "외로워"를
+> 한 번만 말하면 아무 반응이 없어 보이고, 그걸 결함으로 오해하기 쉽습니다.
 
 > **`policy.py` 를 고치면 되돌리는 것을 잊지 마십시오.** 특히 `SILENCE_LADDER_SEC` 를 짧게
 > 바꿔 놓고 되돌리지 않으면, 실사용에서 몇 분마다 프로브가 나갑니다. 반대로 에코 관련 값

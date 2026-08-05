@@ -62,7 +62,7 @@ cd backend && ./gradlew test
 
 | 결과 | 판정 |
 |---|---|
-| 로봇 `499 passed` + `All checks passed` | ✅ |
+| 로봇 `633 passed` + `All checks passed` | ✅ |
 | **[be-develop]** 백엔드 `BUILD SUCCESSFUL` | ✅ |
 | 하나라도 실패 | ❌ — 아래에서 어느 영역인지 좁힌다 |
 
@@ -73,10 +73,10 @@ cd backend && ./gradlew test
 ### 정서 표현에 대답하는지 (263)
 
 ```bash
-cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py -q
+cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py tests/test_t3_consent.py -q
 ```
 
-`20 passed` 여야 합니다. 특히 다음 두 개가 이 티켓의 핵심입니다.
+`19 passed` (`test_emotional_handler.py`) 여야 합니다. 특히 다음이 이 티켓의 핵심입니다.
 
 | 테스트 | 무엇이 깨지면 잡히는가 |
 |---|---|
@@ -84,7 +84,16 @@ cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py -q
 | `test_the_consent_question_is_not_asked_in_the_same_turn` | 속마음을 꺼낸 직후 "가족분께 전해도 될까요"로 끊는 것. 로봇이 문장 하나로 감시 장치가 됩니다 |
 | `test_the_gate_defers_a_proposal_that_is_not_due_yet` | 45분 지연이 장식이 되는 것. 게이트가 `not_before` 를 안 보면 다음 틱에 바로 나갑니다 |
 
-**실기에서 확인할 것**(233): 마이크에 "외로워"라고 말하고 대답이 나오는지, 그 대답에 가족·공유 이야기가 섞이지 않는지. 그리고 45분 뒤에 동의 질문이 실제로 나오는지 — 압축 시계로는 `SimClock` 을 advance 해서 볼 수 있지만, 실시간 45분은 실기에서만 확인됩니다.
+> **253 이 이 흐름을 즉시-큐잉에서 누적-문턱으로 바꿨습니다** — `test_t3_consent.py` 가
+> 그 변경의 완료 조건을 검증합니다("외로워" 세 번 이상 + 상위 동의 + 자연스러운 창).
+> 자세한 것은 [`FIELD-TEST-233.md` §5-4](FIELD-TEST-233.md#5-4-외로워--이-제품의-1번-문제).
+
+**실기에서 확인할 것**(233): 마이크에 "외로워"라고 말하고 대답이 나오는지, 그 대답에
+가족·공유 이야기가 **한 번 말한 정도로는** 섞이지 않는지. **세 번 이상** 말했을 때
+`consent_tick` 이 실제로 질문을 큐에 넣는지, 그리고 45분 뒤에야 실제로 나오는지 —
+압축 시계로는 `SimClock` 을 advance 해서 볼 수 있지만, 실시간 45분은 실기에서만
+확인됩니다. **상위 동의(`guardian_sharing_consent_status`)가 없는 어르신에게는
+아무리 말해도 질문이 안 나가야 정상입니다** — 이걸 결함으로 오해하지 마십시오.
 
 ### 자연스러움 10개 항목 (212)
 
@@ -532,11 +541,11 @@ semantic search unavailable; memories ranked by keyword overlap...
 |---|---|
 | 로봇이 아무 말도 안 함 | 로그에 `turn failed` 가 있는지. 미구현 핸들러일 가능성 |
 | 로봇이 자기 말에 멈춤 | `ECHO_GUARD_SEC`·`ECHO_VAD_THRESHOLD_MULTIPLIER` (실기 실측 필요) |
-| 기억을 못 함 | `availability.semanticSearch` 가 `false` 인지 (218 전이면 정상) |
+| 기억을 못 함 | `availability.semanticSearch` 가 `false` 인지 (218 은 완료됐지만 `EMBEDDING_ENABLED` 기본값이 꺼짐이면 정상) |
 | 복약을 잘못 말함 | 🔴 즉시 확인. `careRecords` 가 정확 조회로 왔는지, 의미 검색이 섞이지 않았는지 |
 | 보호자에게 알림이 안 감 | `outbox` 테이블의 `status`·`last_error`. 채널이 아직 없으면 로그만 |
 | 새벽에 말을 검 | `app_user.quiet_hours_start/end` 와 게이트 (206) |
 | 침묵 사다리가 안 돎 | `runtime_state.last_user_interaction_at` 이 0 인지. **0 이면 그래프가 내구 저장소에 안 쓰고 있는 것** (208 에서 고친 결함, CONCEPTS §6.1) |
 | 문 이벤트가 안 옴 | `MQTT_ENABLED`, `MQTT_BROKER_URL`. 비활성이면 시작 시 경고가 나옵니다 |
-| `occupancy` 가 계속 `UNKNOWN` | 정상일 수 있습니다. `AWAY`/`HOME` 은 백엔드 확정값과 발화만 만듭니다 (226 전이면 발화뿐) |
+| `occupancy` 가 계속 `UNKNOWN` | 정상일 수 있습니다. `AWAY`/`HOME` 은 백엔드 확정값과 발화만 만듭니다. 226 은 완료됐지만 인사가 실기로 검증된 적은 없습니다(§2.7) |
 | 문 이벤트 시각이 이상함 | `door node clock is off by ...` 경고. 라즈베리파이 RTC 문제이고 동작은 안전합니다 |
