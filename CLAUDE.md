@@ -42,6 +42,24 @@ alone, information delivery is the *least* important part. Three pillars carry t
 Medication, weather, and clinic lookup sit **on top** of these three. Do not let retrieval features
 crowd out the pillars.
 
+### Natural continuous conversation is the bar, not an add-on (2026-08)
+
+All three pillars are delivered through one surface: conversation. A robot that answers each
+utterance correctly but in isolation — re-asks the wakeword mid-session, loses "제주" by the next
+question, keeps proposing solutions while the senior is voicing a feeling, or ignores "기억하지
+마" — fails the pillars even when every lookup is right. So **conversational continuity is a core
+product requirement with the same standing as the pillars**, not polish:
+
+- one wakeword opens a *session*; follow-ups need no re-trigger, and the session closes on a
+  farewell cue or silence (the session state machine in `conversation_control.py`);
+- lookup context (region, later schedule/person) carries across turns under the deterministic
+  rules of §30 — never by hoping the LLM infers it;
+- emotion-first response ordering, correction handling, and privacy/forget requests are
+  deterministic application rules (§8, §9), not prompt suggestions.
+
+The operational definition is §17's checklist; the phased plan and current status live in
+`docs/natural-conversation/`.
+
 ### Concrete needs the three pillars imply
 
 **Safety.** Non-response detection and escalation. Emergency triage that *routes*, never diagnoses.
@@ -452,6 +470,24 @@ The ERD already solves this, more thoroughly than our original design: extractio
 - **One active candidate queried per conversation.** This is a dialogue-policy rule and the graph
   must enforce it (§12).
 
+### Correction and forgetting — the senior's word beats the stored fact (2026-08)
+
+When the current utterance contradicts stored data, the utterance wins in *conversation*
+immediately, and the *store* catches up through the safe write path above — never by a silent
+in-place edit. Two deterministic rules are implemented on the robot (`ingress.
+_honor_privacy_requests`, every reactive turn, before intent classification):
+
+- **"우리끼리 얘기" (T4 seal)** — the conversation is sealed regardless of which intent the turn
+  classifies into. A privacy promise that depends on the intent classifier is not a promise (§9).
+- **"기억하지 마" (forget)** — the conversation is sealed *and* its still-pending extraction rows
+  are deleted (`extraction.forget_conversation`). Rows already submitted to the backend become
+  `fact_candidate`s the robot cannot cancel: **a server-side cancel endpoint does not exist yet,
+  and the BE ticket for it still needs to be filed** (§24). Until it exists, never describe a
+  submitted fact as deleted — the honest guarantee is "nothing not yet sent will ever be sent."
+
+Corrections of *context* ("대전 말고 대구") are handled in the context layer (§30): the wrong
+candidate is replaced, not merely outranked, so a later "거기" cannot resurrect it.
+
 ### Orientation repetition — a design principle, not a bug
 
 Seniors ask "what day is it?" repeatedly; early dementia makes it frequent.
@@ -787,13 +823,15 @@ system.** Settle the boundary before building on it.
 **Deployed state (2026-08-06):** the live graph path is intentionally **half-duplex** — after each
 turn `bootstrap._wait_for_playback()` polls until playback ends and the mic stays closed (commit
 `035f71e`, 2026-08-04). The barge-in machinery above (cancel, back-channel test, remainder
-extraction) exists and is unit-tested, but is not reachable in this mode; `interrupted_remainder`
-is written and never consumed; EchoGuard is wired into playback but **not into capture**. The
-"sync-bug-prone spot" warning proved out anyway: `speaking` is set on emit and never cleared on
-normal playback end, so from the second turn on every utterance classifies as a barge-in. Fix plan
-and evidence: `docs/natural-conversation/current-state-audit.md` §3-B1~B3, Phase 1 of the
-implementation plan. Re-enabling true barge-in still requires §13.1 (echo on the capture side)
-first.
+extraction) exists and is unit-tested, but is not reachable in this mode. EchoGuard is wired into
+playback but **not into capture**. Two audit findings here were since fixed (Phase 1,
+`tests/test_conversation_session.py`): `note_interaction` now asks the playback handle whether it
+already finished — so a turn after normal playback is no longer misclassified as a barge-in — and
+`proactive_gate` merges `interrupted_remainder` back into the proposal competition at its original
+priority, so a cut-off remainder is actually respoken. The "sync-bug-prone spot" warning stands:
+the handle, not the checkpointed state, is the authority on progress. Evidence:
+`docs/natural-conversation/current-state-audit.md` §0. Re-enabling true barge-in still requires
+§13.1 (echo on the capture side) first.
 
 ---
 
@@ -893,7 +931,24 @@ one prompt line that buys §17.8 outright.
 10. **Reminiscence works.** Can invite and follow an old story. Therapeutic value, and the emotional
     pillar's core loop.
 
-Bank a small set of transcripts and replay them against these ten points. That is our regression
+Added 2026-08 (natural-conversation work stream — items 11+ so the numbering of 1–10, which code
+comments cite, never moves):
+
+11. **One wakeword carries a whole session.** Follow-up utterances need no re-trigger; the session
+    ends on a farewell cue or silence and re-arms the wakeword (scenario A·B·L,
+    `tests/test_conversation_session.py`).
+12. **Lookup context carries.** "제주도 가" then "날씨 어때?" queries Jeju; "거기" resolves through
+    §30, deterministically — the LLM continues the *sentences*, the context layer continues the
+    *tool arguments* (scenario B·D, `tests/test_context_slots.py`).
+13. **Corrections are honored and stick.** "대전 말고 대구" replaces the context; a later "거기"
+    means Daegu, and Daejeon does not come back (scenario H).
+14. **Topic shifts release old context.** "그런데 오늘 분리수거 날이야?" is not about Jeju
+    (scenario E). Decay plus discourse markers, not an LLM guess.
+15. **Privacy requests are kept immediately.** "우리끼리 얘기" seals in any intent; "기억하지 마"
+    also drops pending extraction rows (scenario K, `tests/test_memory_privacy.py`). What cannot be
+    deleted (already-submitted facts) is never claimed deleted.
+
+Bank a small set of transcripts and replay them against these points. That is our regression
 test for naturalness.
 
 ---
@@ -1077,7 +1132,9 @@ S15P11E102/
 │           ├── audio_io/           <- laptop/robot adapters, sounddevice backend, beam
 │           │                          control, wakeword
 │           ├── contracts/          <- wire-format schemas shared across machines (door events)
-│           ├── llm/                <- Gemini client, medical flow, embedding router (EXISTS)
+│           ├── llm/                <- Gemini client, medical flow, intent rules (the embedding
+│           │                          router was removed after measurement — d7ce99a; evals/ keeps
+│           │                          the comparison harness)
 │           ├── stt/, tts/, weather/, db/   <- external clients (EXIST — delegate, do not rewrite)
 │           ├── pipeline.py         <- legacy STT -> LLM -> TTS driver, `--legacy` flag only;
 │           │                          does not go through the graph (232)
@@ -1105,8 +1162,10 @@ Rules:
   merged: `config.py` changes when you move deployments, `policy.py` changes when a product
   judgement changes. (Earlier drafts of this section said `config.py` — `policy.py` is correct.)
 - `llm/`, `stt/`, `tts/`, `weather/`, `db/`, and `audio_io/` already exist and are tested.
-  Handlers **delegate** to them; do not reimplement. `llm/router.py` already does embedding-based
-  intent routing — filter with rules first and only delegate when genuinely ambiguous (§16).
+  Handlers **delegate** to them; do not reimplement. `llm/router.py` judges medical/weather lookup
+  intent with cheap local keyword rules — the SentenceTransformer embedding router was removed
+  after measurement (startup 6.28s, ~732MB working set, no accuracy win — d7ce99a); the legacy
+  model survives only as an offline comparison in `evals/` (§16).
 - `db/` is medical *reference* lookup (hospital, pharmacy, drug). The senior's own facts and
   memories go through `backend_client/`. Never read memory through `db/ssh_tunnel`.
 - The guardian channel is one adapter in `notify/`. Its shape must not leak into the graph.
@@ -1239,10 +1298,11 @@ Each step exists because the next is untestable otherwise. Do not reorder withou
 The classic failure mode is building proactivity and safety while the basic reactive loop is still
 broken. Resist it.
 
-> **Status (2026-08-06):** steps 0–7 are all built and wired (232) — logic green (`655 passed`),
-> hardware largely unverified (233 본검사 미실시). This list is now history, not a to-do. Ongoing
-> conversation work follows the phases in `docs/natural-conversation/implementation-plan.md`
-> (Phase 1: session-layer bug fixes + the first session-lifecycle tests).
+> **Status (2026-08-06):** steps 0–7 are all built and wired (232) — logic green (`712 passed`
+> measured on `ai/natural-conversation-wip`), hardware largely unverified (233 본검사 미실시).
+> This list is now history, not a to-do. Ongoing conversation work follows the phases in
+> `docs/natural-conversation/implementation-plan.md`; Phases 1·2·3·5(1단계) are implemented and
+> regression-locked, with field verification still pending.
 
 ---
 
@@ -1303,6 +1363,12 @@ and writing it that way is what lets someone else trust the parts that *are* fin
 - Letting the robot play therapist on self-harm signals, compute a dose, or make a medical
   judgement.
 - Adding fall detection.
+- Adding a cross-turn context field (LastValue channel) without an expiry/scope rule and a real
+  downstream reader in the same change (§30) — that is a state leak, not memory.
+- Handling a privacy request ("우리끼리 얘기", "기억하지 마") after intent classification, or
+  leaving it to the LLM. It is deterministic and runs in `note_interaction`, first (§8, §9).
+- Claiming a memory is deleted when only the robot-local pending row was dropped — an
+  already-submitted `fact_candidate` needs the (not yet existing) server cancel endpoint (§24).
 
 ---
 
@@ -1328,6 +1394,8 @@ and writing it that way is what lets someone else trust the parts that *are* fin
 | Reference document corpus for welfare-program RAG | Source and chunking not decided (§8). |
 | Weather default region — the profile contract has no address | "오늘 날씨 어때" cannot resolve a city; the robot re-asks (and field test 233 saw the LLM invent temperatures instead). Needs a BE contract change to `SeniorProfile` before the robot can default to the senior's home region. See `docs/natural-conversation/implementation-plan.md` P1-A5. |
 | Travel-time lookup (route API) | "거기까지 얼마나 걸려?" has no tool at all — adopting a route/duration API is a new-service decision (§28: propose first). P1-A8. |
+| Server-side `fact_candidate` cancel endpoint | Step 2 of the forget flow (§8): the robot can only drop *pending* extraction rows; an already-submitted candidate needs a BE cancel/deactivate endpoint. **A BE ticket has not been filed yet** — file it before promising deletion to the senior. |
+| Robot-side wakeword MQTT publish | BE `S15P11E102-335` (`WakeWordDetectedHandler`, merged to be-develop) expects the robot to publish wakeword detections; the robot currently detects locally and publishes nothing. Decide the topic/payload with `docs/mqtt/topic-convention.md` and wire it, or the 보미야-호출 scenario never fires. |
 
 ---
 
@@ -1490,7 +1558,8 @@ Priority, highest first:
 6. No candidate: ask a short clarification question or skip the lookup.
 
 Lifecycle is as important as ranking. `context_slots.update` removes expired/low-confidence values,
-replaces an older value on an explicit correction, decays unrelated topics, and clears `SESSION`
-values at a conversation boundary. A reference expression refreshes the candidate it actually
-uses. Every new context type needs an expiry/scope rule and a real downstream reader in the same
+replaces an older value on an explicit correction, and decays unrelated topics; the conversation-
+boundary reset is the caller's job — `ingress.note_interaction` passes an empty candidate list into
+`update` when the 30-minute boundary (§8) was crossed. A reference expression refreshes the
+candidates it uses instead of decaying them. Every new context type needs an expiry/scope rule and a real downstream reader in the same
 change; a LastValue field with no expiry is a cross-turn leak, not memory.

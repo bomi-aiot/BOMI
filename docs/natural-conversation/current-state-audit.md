@@ -10,6 +10,40 @@
 
 ---
 
+## 0. 해소 현황 — 이 감사 이후 무엇이 바뀌었나 (2026-08-06 갱신)
+
+이 문서의 본문은 `eadc3bf`(감사 시점) 기준 스냅샷이다. 이후 `ai/natural-conversation-wip`
+브랜치가 아래를 해소했다 — **본문에서 아래 항목을 만나면 이 표가 우선한다.**
+
+| 감사 항목 | 상태 | 근거 |
+| --- | --- | --- |
+| B1 `speaking` 미복원 (2턴째부터 바지인 오분류) | **해소** | `ingress.note_interaction` 핸들 생사 확인, `test_conversation_session.py` |
+| B2 `interrupted_remainder` 소비처 부재 | **해소** | `proactive_gate` 합류·소비, 동 테스트 |
+| §1.2 세션 FSM 부재 | **해소** — `SessionState` 5상태 + 순수 전이 함수, 라이브 루프 구동 | `conversation_control.py`, 세션 테스트 18건 |
+| A1 문맥 슬롯 부재 (지역) | **해소(지역 한정)** — `context_candidates` + 수명 규칙(만료·감쇠·정정·경계 리셋) | `graph/context_slots.py`, `test_context_slots.py` 16건, CLAUDE.md §30 |
+| A2/D1 "거기" 참조가 조회에 안 닿음 | **해소(날씨 한정)** — 발화→활성 문맥 순 해석. 의료 지역 주입은 후속 | `context.py` 날씨 조회 |
+| A3 기억 삭제 부재 | **1단계 해소** — "기억하지 마" = 봉인+대기 행 삭제. 제출된 fact_candidate 취소는 **BE 엔드포인트 부재로 불가**(정직한 한계) | `ingress._honor_privacy_requests`, `extraction.forget_conversation`, `test_memory_privacy.py` |
+| T4 봉인이 정서 턴 한정 | **해소** — 전 반응형 턴, 인텐트 분류 전 | 상동 |
+| C1 프로필 5필드 미사용 | **부분 해소** — `conversationPreferences`·`chronicPainArea` 프롬프트 반영. 나머지 3필드는 미착수 | `prompts/builder.py` |
+| A4 주소 부재 | **로봇 측 준비 완료** — `profile.address` 가 오면 즉시 기본 지역으로 동작. 계약 확장은 BE 티켓 | `context.py` 주소 폴백 |
+| A7 종료 응답 부재 | **정정** — 감사가 절반 틀렸다. 작별 발화는 그래프로 처리된 뒤 종료되므로 그 응답이 곧 종료 응답이다(재생 완료 후 세션 닫음). 무응답 종료가 무언인 것은 설계(§14) | `bootstrap._run_graph_conversation` docstring |
+| J 세션 수명주기 테스트 0건 | **해소** — 시나리오 A·B·L·무응답 + FSM | `test_conversation_session.py` |
+| 시나리오 커버리지 (8종 중 1종) | A·B·C(로봇측)·D·E·H·K(로컬)·L 커버로 확대. F·G·I·J·M 은 잔여 | 신규 테스트 3파일 43건 |
+| (감사 이후) 그래프 순서 | `classify_intent → context_read` 로 교체됨. §1.1 흐름도는 `1e04d04` 에서 이미 신순서로 갱신되어 있음 | 커밋 `26e9635` |
+| (감사 이후) 의도 라우터 | **본문 §1.1·§2 의 "로컬 임베딩 라우터" 서술은 구버전** — 실측(기동 6.28s·약 732MB, 정확도 이득 없음) 근거로 SentenceTransformer 를 제거하고 키워드 결정 규칙으로 교체. 비교 평가는 `evals/router-evaluation.md` | 커밋 `d7ce99a` |
+| (감사 이후) BE 계약 | `retrieval`(요청별 실행 결과) 필드가 실제 계약으로 고정되어 로봇이 소비. BE 쪽은 `0436b71` 로 be-develop 머지 | 커밋 `666ae0d` |
+
+여전히 유효한 것: B3(에코 입력 미배선), B4(`audio_ctx`), B5(`proposal_meta`), B6·B8
+(B7 `availability` 미소비는 `26e9635` 로 해소 — 본문 B7 행 참고), K1·K2(원문 로깅 —
+행 번호는 감사 시점 기준, 결함 자체는 유효), K4(T2 동의 확인), A5b(이동 시간 도구),
+A6(구조화 이벤트 — 부분: CONTEXT_RESOLVED/T4_SEALED/MEMORY_FORGOTTEN/SESSION_* 로그
+라인은 생김), A8(T2 요약).
+
+신규 통합 지점 (원격 be-develop 머지로 생김, 2026-08-06): BE `S15P11E102-335`(보미야
+호출 시나리오)가 로봇의 **웨이크워드 감지 MQTT 발행**을 기다린다 — 로봇은 현재 로컬
+감지만 하고 발행하지 않는다(전수 grep 0히트). `S15P11E102-337`(산책)은 RobotCommand
+타입을 확장했다. CLAUDE.md §24 미결 표에 등재.
+
 ## 1. 현재 처리 흐름 (실제 코드 기준)
 
 ### 1.1 반응형 턴 전체 경로
