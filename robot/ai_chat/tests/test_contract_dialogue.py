@@ -529,6 +529,20 @@ def test_a_plain_answer_goes_to_the_pending_contract_question():
     assert out["intent"] == "clarification"
 
 
+def test_an_emotional_utterance_is_not_swallowed_as_a_field_value():
+    """★★ (S15P11E102-253) 온보딩이 필드를 기다리는 중에도 "외로워"는 정서다.
+
+    가로채지 않으면 이 발화가 _extract_value 를 거쳐 필드값 후보가 되려 들고,
+    정서 핸들러는 이 턴을 아예 보지 못한다 — 위로도 못 받고 신호도 안 쌓인다.
+    """
+    out = context.classify_intent({
+        "user_input": "외로워",
+        "pending_contract": {"kind": "onboarding", "session_id": "s-1", "fields": ["age"]},
+    })
+
+    assert out["intent"] == "emotional"
+
+
 def test_a_question_without_a_question_mark_still_counts():
     """ASR 은 물음표를 잘 붙이지 않는다. 어미로도 본다."""
     assert contract_dialogue.looks_like_a_question("오늘 무슨 요일이지") is False
