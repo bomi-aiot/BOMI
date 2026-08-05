@@ -108,7 +108,27 @@ class FlywayMigrationValidationTest {
         // 로딩 단계에서 죽어 있었기 때문에, 이 assertion 자체가 실행된 적이 없어서
         // 회귀가 드러나지 않았다.
         assertThat(applied).containsExactly(
-            "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16");
+            "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17");
+    }
+
+    @Test
+    void robotModeRecoveryMigrationAddsImmutableSafetyAuditShape() throws Exception {
+        assertThat(columnExists("robot_mode_recovery_audit", "robot_id")).isTrue();
+        assertThat(columnExists("robot_mode_recovery_audit", "operator_id")).isTrue();
+        assertThat(columnExists("robot_mode_recovery_audit", "previous_mode")).isTrue();
+        assertThat(columnExists("robot_mode_recovery_audit", "target_mode")).isTrue();
+        assertThat(columnExists(
+            "robot_mode_recovery_audit", "physical_safety_confirmed")).isTrue();
+        assertThat(columnExists("robot_mode_recovery_audit", "reason")).isTrue();
+        assertThat(columnExists("robot_mode_recovery_audit", "recovered_at")).isTrue();
+        assertThat(constraintExists(
+            "robot_mode_recovery_audit", "ck_robot_mode_recovery_target_idle")).isTrue();
+        assertThat(constraintExists(
+            "robot_mode_recovery_audit",
+            "ck_robot_mode_recovery_physical_confirmation")).isTrue();
+        assertThat(constraintExists(
+            "robot_mode_recovery_audit", "ck_robot_mode_recovery_disposition")).isTrue();
+        assertThat(indexExists("ix_robot_mode_recovery_audit_robot_time")).isTrue();
     }
 
     @Test

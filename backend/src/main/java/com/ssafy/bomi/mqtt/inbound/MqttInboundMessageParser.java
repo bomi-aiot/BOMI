@@ -20,6 +20,12 @@ public class MqttInboundMessageParser {
     private static final Set<String> NAVIGATION_REASON_CODES = Set.of(
         "COMMAND_EXPIRED", "UNKNOWN_TARGET", "PATH_BLOCKED", "LOCALIZATION_LOST",
         "EXECUTION_TIMEOUT", "SAFETY_STOP", "INTERNAL_ERROR");
+    private static final Set<String> NAVIGATION_LOCATIONS = Set.of(
+        "LIVING_ROOM", "ENTRANCE", "DEFAULT");
+    private static final Set<String> V1_RESULT_ENVELOPE_FIELDS = Set.of(
+        "eventId", "commandId", "scenarioId", "robotId", "type", "occurredAt", "payload");
+    private static final Set<String> NAVIGATION_RESULT_PAYLOAD_FIELDS = Set.of(
+        "outcome", "resultCode", "reasonCode", "location", "message");
     private static final Set<String> FOLLOW_REASON_CODES = Set.of(
         "PERSON_LOST", "COMMAND_EXPIRED", "EXECUTION_TIMEOUT", "SAFETY_STOP",
         "INTERNAL_ERROR");
@@ -236,6 +242,10 @@ public class MqttInboundMessageParser {
             return new Correlation(scenarioId, null, null, true);
         }
 
+        rejectUnexpectedFields(body, V1_RESULT_ENVELOPE_FIELDS,
+            "NAVIGATION_RESULT envelope");
+        rejectUnexpectedFields(payload, NAVIGATION_RESULT_PAYLOAD_FIELDS,
+            "NAVIGATION_RESULT payload");
         UUID scenarioId = requiredUuid(body, "scenarioId", "scenarioId");
         String commandId = requiredText(body, "commandId", MAX_OPAQUE_ID_LENGTH);
         String outcome = requiredText(payload, "outcome", 32);
@@ -262,7 +272,29 @@ public class MqttInboundMessageParser {
             throw new MqttContractViolationException(
                 "Unsuccessful NAVIGATION_RESULT must be NOT_ARRIVED with a reasonCode");
         }
+        validateOptionalNavigationDetails(payload, resultCode);
         return new Correlation(scenarioId, null, commandId, false);
+    }
+
+    private static void validateOptionalNavigationDetails(
+        JsonNode payload,
+        String resultCode
+    ) {
+        if (payload.has("location")) {
+            String location = requiredText(payload, "location", 32);
+            if (!NAVIGATION_LOCATIONS.contains(location)) {
+                throw new MqttContractViolationException(
+                    "Unsupported NAVIGATION_RESULT location '" + location + "'");
+            }
+            if (!"ARRIVED".equals(resultCode)) {
+                throw new MqttContractViolationException(
+                    "NAVIGATION_RESULT location is only allowed when resultCode=ARRIVED");
+            }
+        }
+        if (payload.has("message") && !payload.get("message").isTextual()) {
+            throw new MqttContractViolationException(
+                "MQTT payload field 'message' must be a string");
+        }
     }
 
     private static Correlation validateConversationStarted(JsonNode body) {

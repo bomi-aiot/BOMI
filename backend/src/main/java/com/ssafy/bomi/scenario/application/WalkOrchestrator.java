@@ -42,6 +42,7 @@ public class WalkOrchestrator {
     private final RobotRepository robotRepository;
     private final List<RobotCommandPublisher> commandPublishers;
     private final ScenarioStartGuard startGuard;
+    private final ScenarioRobotStartPolicy startPolicy;
     private final WalkTimeoutProperties properties;
     private final Clock clock;
 
@@ -51,6 +52,7 @@ public class WalkOrchestrator {
         RobotRepository robotRepository,
         List<RobotCommandPublisher> commandPublishers,
         ScenarioStartGuard startGuard,
+        ScenarioRobotStartPolicy startPolicy,
         WalkTimeoutProperties properties,
         Clock clock
     ) {
@@ -59,6 +61,7 @@ public class WalkOrchestrator {
         this.robotRepository = robotRepository;
         this.commandPublishers = List.copyOf(commandPublishers);
         this.startGuard = startGuard;
+        this.startPolicy = startPolicy;
         this.properties = properties;
         this.clock = clock;
     }
@@ -93,44 +96,20 @@ public class WalkOrchestrator {
     }
 
     private WalkRequestResult start(WalkRequest request) {
-        Robot observedRobot = robotRepository.findByDeviceId(request.robotDeviceId()).orElse(null);
-        if (observedRobot == null) {
-            return rejectNew(request, WalkRequestDisposition.REJECTED_UNKNOWN_ROBOT);
-        }
-        UUID admissionSeniorId = observedRobot.getSeniorId();
-        if (admissionSeniorId == null) {
-            return rejectNew(request, WalkRequestDisposition.REJECTED_UNASSIGNED_ROBOT);
-        }
-
-        var blocked = startGuard.check(admissionSeniorId, ScenarioType.WALK, Duration.ZERO);
+        var admission = startPolicy.admitByDevice(
+            request.robotDeviceId(),
+            ScenarioType.WALK,
+            Duration.ZERO,
+            ScenarioRobotStartPolicy.ModePolicy.IDLE_ONLY);
         WalkRequestReceipt previous = findReceipt(request);
         if (previous != null) {
             return duplicateResult(previous, request);
         }
-
-        Robot robot = robotRepository.findByDeviceIdForUpdate(request.robotDeviceId()).orElse(null);
-        if (robot == null) {
-            return rejectNew(request, WalkRequestDisposition.REJECTED_UNKNOWN_ROBOT);
+        if (!admission.allowed()) {
+            return rejectNew(request, walkDisposition(admission.blockReason()));
         }
-        if (!robot.isActive()) {
-            return rejectNew(request, WalkRequestDisposition.REJECTED_INACTIVE_ROBOT);
-        }
-        if (robot.getSeniorId() == null || !robot.getSeniorId().equals(admissionSeniorId)
-            || blocked.orElse(null) == ScenarioStartGuard.BlockReason.SENIOR_NOT_FOUND) {
-            return rejectNew(request, WalkRequestDisposition.REJECTED_UNASSIGNED_ROBOT);
-        }
-        if (robot.getCurrentMode() == RobotMode.SAFE_STOP) {
-            return rejectNew(request, WalkRequestDisposition.REJECTED_SAFE_STOP);
-        }
-        if (robot.getCurrentMode() == RobotMode.REST_GUARD) {
-            return rejectNew(request, WalkRequestDisposition.REJECTED_REST_GUARD);
-        }
-        if (blocked.isPresent()) {
-            return rejectNew(request, WalkRequestDisposition.REJECTED_ACTIVE_SCENARIO);
-        }
-        if (robot.getCurrentMode() != RobotMode.IDLE) {
-            return rejectNew(request, WalkRequestDisposition.REJECTED_BUSY_MODE);
-        }
+        Robot robot = admission.robot();
+        UUID admissionSeniorId = robot.getSeniorId();
 
         RobotCommandPublisher publisher = commandPublisherOrNull();
         if (publisher == null) {
@@ -456,6 +435,22 @@ public class WalkOrchestrator {
         WalkRequestReceipt receipt = requestClaim.receipt();
         receipt.resolve(disposition, null, null);
         return result(receipt, false);
+    }
+
+    private static WalkRequestDisposition walkDisposition(
+        ScenarioRobotStartPolicy.BlockReason reason
+    ) {
+        return switch (reason) {
+            case UNKNOWN_ROBOT, UNREGISTERED_ROBOT ->
+                WalkRequestDisposition.REJECTED_UNKNOWN_ROBOT;
+            case INACTIVE_ROBOT -> WalkRequestDisposition.REJECTED_INACTIVE_ROBOT;
+            case UNASSIGNED_ROBOT -> WalkRequestDisposition.REJECTED_UNASSIGNED_ROBOT;
+            case SAFE_STOP -> WalkRequestDisposition.REJECTED_SAFE_STOP;
+            case REST_GUARD -> WalkRequestDisposition.REJECTED_REST_GUARD;
+            case ACTIVE_SCENARIO_EXISTS, COOLDOWN_ACTIVE ->
+                WalkRequestDisposition.REJECTED_ACTIVE_SCENARIO;
+            case BUSY_MODE -> WalkRequestDisposition.REJECTED_BUSY_MODE;
+        };
     }
 
     private ReceiptClaim claim(WalkRequest request) {

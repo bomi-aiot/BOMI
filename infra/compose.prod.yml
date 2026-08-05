@@ -177,6 +177,9 @@ services:
       # 여기 넘기지 않으면 production.env 에 값을 적어도 컨테이너에 도달하지
       # 않는다(EMBEDDING_ENABLED 가 겪은 것과 같은 실패 모양, S15P11E102-218).
       ROBOT_SHARED_SECRET: ${ROBOT_SHARED_SECRET:-}
+      # Separate fail-closed credential and server-owned audit identity for operator recovery.
+      OPERATOR_SHARED_SECRET: ${OPERATOR_SHARED_SECRET:-}
+      OPERATOR_ID: ${OPERATOR_ID:-}
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:8080/actuator/health"]
       interval: 10s

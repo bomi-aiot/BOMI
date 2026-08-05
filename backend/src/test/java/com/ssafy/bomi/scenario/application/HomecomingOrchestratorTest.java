@@ -76,7 +76,10 @@ class HomecomingOrchestratorTest {
             commandPublisher,
             conversationGateway,
             properties,
-            new ScenarioStartGuard(scenarioRepository, appUserRepository),
+            new ScenarioRobotStartPolicy(
+                new ScenarioStartGuard(scenarioRepository, appUserRepository),
+                robotRepository,
+                scenarioRepository),
             clock);
         when(appUserRepository.findByIdForUpdate(any()))
             .thenReturn(Optional.of(mock(AppUser.class)));
@@ -93,7 +96,7 @@ class HomecomingOrchestratorTest {
 
     @Test
     void missingRobotIsDroppedWithoutThrowing() {
-        when(robotRepository.findBySeniorId(seniorId)).thenReturn(Optional.empty());
+        when(robotRepository.findBySeniorIdForUpdate(seniorId)).thenReturn(Optional.empty());
 
         orchestrator.startHomecoming(sensorId);
 
@@ -103,13 +106,27 @@ class HomecomingOrchestratorTest {
 
     @Test
     void activeScenarioSuppressesNewHomecoming() {
-        when(robotRepository.findBySeniorId(seniorId))
+        when(robotRepository.findBySeniorIdForUpdate(seniorId))
             .thenReturn(Optional.of(robot()));
         when(scenarioRepository.existsBySeniorIdAndFinalStatusIn(eq(seniorId), anyCollection()))
             .thenReturn(true);
 
         orchestrator.startHomecoming(sensorId);
 
+        verify(scenarioRepository, never()).save(any());
+        verifyNoInteractions(commandPublisher);
+    }
+
+    @Test
+    void safeStopSuppressesHomecomingWithoutScenarioOrCommand() {
+        Robot robot = robot();
+        robot.changeMode(RobotMode.SAFE_STOP);
+        when(robotRepository.findBySeniorIdForUpdate(seniorId))
+            .thenReturn(Optional.of(robot));
+
+        orchestrator.startHomecoming(sensorId);
+
+        assertThat(robot.getCurrentMode()).isEqualTo(RobotMode.SAFE_STOP);
         verify(scenarioRepository, never()).save(any());
         verifyNoInteractions(commandPublisher);
     }
@@ -124,7 +141,7 @@ class HomecomingOrchestratorTest {
 
     @Test
     void startStoresConversationRequestAndOnlyNavigatesToEntrance() {
-        when(robotRepository.findBySeniorId(seniorId))
+        when(robotRepository.findBySeniorIdForUpdate(seniorId))
             .thenReturn(Optional.of(robot()));
 
         orchestrator.startHomecoming(sensorId);
@@ -152,7 +169,7 @@ class HomecomingOrchestratorTest {
         Scenario scenario = scenarioAt(ScenarioStatus.MOVING_TO_ENTRANCE);
         when(scenarioRepository.findByIdForUpdate(scenario.getId()))
             .thenReturn(Optional.of(scenario));
-        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot()));
+        when(robotRepository.findByIdForUpdate(robotUuid)).thenReturn(Optional.of(robot()));
 
         orchestrator.onRobotArrived(scenario.getId(), deviceId);
 
@@ -181,7 +198,7 @@ class HomecomingOrchestratorTest {
         ReflectionTestUtils.setField(scenario, "id", UUID.randomUUID());
         when(scenarioRepository.findByIdForUpdate(scenario.getId()))
             .thenReturn(Optional.of(scenario));
-        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot()));
+        when(robotRepository.findByIdForUpdate(robotUuid)).thenReturn(Optional.of(robot()));
 
         orchestrator.onRobotArrived(
             scenario.getId(), deviceId, LIVING_ROOM_COMMAND_ID, false);
@@ -197,7 +214,7 @@ class HomecomingOrchestratorTest {
         Scenario scenario = scenarioAt(ScenarioStatus.MOVING_TO_ENTRANCE);
         when(scenarioRepository.findByIdForUpdate(scenario.getId()))
             .thenReturn(Optional.of(scenario));
-        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot()));
+        when(robotRepository.findByIdForUpdate(robotUuid)).thenReturn(Optional.of(robot()));
         when(conversationGateway.startConversation(scenario.getId()))
             .thenReturn(ConversationStartResult.failed(
                 UUID.randomUUID(), MqttConversationGateway.REASON_AI_COMMAND_PUBLISH_FAILED));
@@ -214,9 +231,9 @@ class HomecomingOrchestratorTest {
     void startedEventMovesScenarioToConversing() {
         Scenario scenario = scenarioAt(ScenarioStatus.CHECKING_INTERACTION);
         Conversation conversation = requestedConversation(scenario, false);
-        when(scenarioRepository.findById(scenario.getId()))
+        when(scenarioRepository.findByIdForUpdate(scenario.getId()))
             .thenReturn(Optional.of(scenario));
-        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot()));
+        when(robotRepository.findByIdForUpdate(robotUuid)).thenReturn(Optional.of(robot()));
         when(conversationRepository.findByIdForUpdate(conversation.getId()))
             .thenReturn(Optional.of(conversation));
 
@@ -234,7 +251,7 @@ class HomecomingOrchestratorTest {
         Scenario scenario = scenarioAt(ScenarioStatus.RETURNING_TO_DEFAULT);
         when(scenarioRepository.findByIdForUpdate(scenario.getId()))
             .thenReturn(Optional.of(scenario));
-        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot()));
+        when(robotRepository.findByIdForUpdate(robotUuid)).thenReturn(Optional.of(robot()));
 
         assertThatThrownBy(() -> orchestrator.onRobotArrived(
             scenario.getId(), deviceId, ENTRANCE_COMMAND_ID, false))
@@ -249,9 +266,9 @@ class HomecomingOrchestratorTest {
     void endedEventStoresOutcomeAndPublishesDefaultOnlyOnce() {
         Scenario scenario = scenarioAt(ScenarioStatus.CONVERSING);
         Conversation conversation = requestedConversation(scenario, true);
-        when(scenarioRepository.findById(scenario.getId()))
+        when(scenarioRepository.findByIdForUpdate(scenario.getId()))
             .thenReturn(Optional.of(scenario));
-        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot()));
+        when(robotRepository.findByIdForUpdate(robotUuid)).thenReturn(Optional.of(robot()));
         when(conversationRepository.findByIdForUpdate(conversation.getId()))
             .thenReturn(Optional.of(conversation));
 
@@ -269,6 +286,28 @@ class HomecomingOrchestratorTest {
     }
 
     @Test
+    void conversationEndDoesNotPublishReturnOrClearExternalSafeStop() {
+        Scenario scenario = scenarioAt(ScenarioStatus.CONVERSING);
+        Conversation conversation = requestedConversation(scenario, true);
+        Robot robot = robot();
+        robot.changeMode(RobotMode.SAFE_STOP);
+        when(scenarioRepository.findByIdForUpdate(scenario.getId()))
+            .thenReturn(Optional.of(scenario));
+        when(robotRepository.findByIdForUpdate(robotUuid)).thenReturn(Optional.of(robot));
+        when(conversationRepository.findByIdForUpdate(conversation.getId()))
+            .thenReturn(Optional.of(conversation));
+
+        orchestrator.onConversationEnded(
+            scenario.getId(), conversation.getId(), deviceId,
+            ConversationOutcome.COMPLETED, null, OffsetDateTime.now(clock));
+
+        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.FAILED);
+        assertThat(scenario.getCompletionReasonCode()).isEqualTo("SAFETY_STOP");
+        assertThat(robot.getCurrentMode()).isEqualTo(RobotMode.SAFE_STOP);
+        verify(commandPublisher, never()).publish(any());
+    }
+
+    @Test
     void successfulReturnAfterAiFailureRecordsFailureButLeavesRobotIdle() {
         Scenario scenario = scenarioAt(ScenarioStatus.RETURNING_TO_DEFAULT);
         Conversation conversation = requestedConversation(scenario, true);
@@ -278,7 +317,7 @@ class HomecomingOrchestratorTest {
         robot.changeMode(RobotMode.SCENARIO_ACTIVE);
         when(scenarioRepository.findByIdForUpdate(scenario.getId()))
             .thenReturn(Optional.of(scenario));
-        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot));
+        when(robotRepository.findByIdForUpdate(robotUuid)).thenReturn(Optional.of(robot));
         when(conversationRepository.findByScenarioId(scenario.getId()))
             .thenReturn(Optional.of(conversation));
 
@@ -295,9 +334,9 @@ class HomecomingOrchestratorTest {
         Robot robot = robot();
         when(scenarioRepository.findByIdForUpdate(scenario.getId()))
             .thenReturn(Optional.of(scenario));
-        when(scenarioRepository.findById(scenario.getId()))
-            .thenReturn(Optional.of(scenario));
-        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot));
+        when(robotRepository.findByIdForUpdate(robotUuid)).thenReturn(Optional.of(robot));
+        when(conversationRepository.findScenarioIdById(conversation.getId()))
+            .thenReturn(Optional.of(scenario.getId()));
         when(conversationRepository.findByIdForUpdate(conversation.getId()))
             .thenReturn(Optional.of(conversation));
         when(conversationRepository.findByScenarioId(scenario.getId()))
@@ -321,7 +360,7 @@ class HomecomingOrchestratorTest {
         Robot robot = robot();
         when(scenarioRepository.findByIdForUpdate(scenario.getId()))
             .thenReturn(Optional.of(scenario));
-        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot));
+        when(robotRepository.findByIdForUpdate(robotUuid)).thenReturn(Optional.of(robot));
 
         orchestrator.onNavigationFailed(scenario.getId(), deviceId);
 

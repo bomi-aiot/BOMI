@@ -45,6 +45,10 @@ springdoc:
         - /api/v1/confirmation-requests/**
         - /api/v1/elders/**
         - /api/v1/known-persons/**
+    - group: bomi-operator
+      display-name: "[BE-Operator] 운영자 안전 복구 API"
+      paths-to-match:
+        - /api/v1/operator/**
     - group: bomi-backend
       display-name: "[BE-All] 백엔드 전체 API"
       packages-to-scan: com.ssafy.bomi
@@ -67,7 +71,7 @@ springdoc:
     # 가치는 유지하고 파괴적 실행만 막는다.
     supported-submit-methods:
       - get
-    # group-configs 의 세 그룹은 springdoc 이 display-name 으로 자동 등록한다.
+    # group-configs 의 네 그룹은 springdoc 이 display-name 으로 자동 등록한다.
     # 여기에 다시 적으면 드롭다운에 같은 항목이 두 번 뜬다. 정적 YAML 만 적는다.
     urls:
       - name: "[AI-Vision] 인식 요청 API (계약·미구현)"
@@ -216,3 +220,9 @@ bomi:
   #   통과해야 한다. 배포에서 실제 값을 채우는 것은 별도 결정이다.
   robot-channel:
     shared-secret: ${ROBOT_SHARED_SECRET:}
+
+  # Safety-critical operator mutations are fail-closed. When either value is empty,
+  # /api/v1/operator/** returns 503 instead of exposing an unauthenticated mutation.
+  operator-channel:
+    shared-secret: ${OPERATOR_SHARED_SECRET:}
+    operator-id: ${OPERATOR_ID:}

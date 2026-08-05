@@ -482,6 +482,8 @@ class WalkOrchestratorTest {
     @Test
     void startRejectsUnknownInactiveUnassignedAndActiveScenarioPolicies() {
         Fixture unknown = new Fixture();
+        when(unknown.robotRepository.findLockCandidateByDeviceId(unknown.deviceId))
+            .thenReturn(Optional.empty());
         when(unknown.robotRepository.findByDeviceId(unknown.deviceId))
             .thenReturn(Optional.empty());
         assertThat(unknown.orchestrator.handleRequest(
@@ -550,6 +552,10 @@ class WalkOrchestratorTest {
 
         private Fixture() {
             ReflectionTestUtils.setField(robot, "id", robotId);
+            RobotRepository.LockCandidate candidate = mock(RobotRepository.LockCandidate.class);
+            when(candidate.getSeniorId()).thenReturn(seniorId);
+            when(robotRepository.findLockCandidateByDeviceId(deviceId))
+                .thenReturn(Optional.of(candidate));
             when(robotRepository.findByDeviceId(deviceId)).thenReturn(Optional.of(robot));
             when(robotRepository.findByDeviceIdForUpdate(deviceId)).thenReturn(Optional.of(robot));
             when(robotRepository.findByIdForUpdate(robotId)).thenReturn(Optional.of(robot));
@@ -617,6 +623,8 @@ class WalkOrchestratorTest {
                 robotRepository,
                 List.of(publisher),
                 startGuard,
+                new ScenarioRobotStartPolicy(
+                    startGuard, robotRepository, scenarioRepository),
                 properties,
                 clock);
         }

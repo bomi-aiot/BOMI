@@ -35,6 +35,7 @@ import com.ssafy.bomi.scenario.application.HomecomingOrchestrator;
 import com.ssafy.bomi.scenario.application.MedicationReminderScheduler;
 import com.ssafy.bomi.scenario.application.MqttConversationGateway;
 import com.ssafy.bomi.scenario.application.NavigationResultRouter;
+import com.ssafy.bomi.scenario.application.ScenarioRobotStartPolicy;
 import com.ssafy.bomi.scenario.application.ScenarioStartGuard;
 import com.ssafy.bomi.scenario.application.WakeWordCallOrchestrator;
 import com.ssafy.bomi.scenario.application.WellnessCheckOrchestrator;
@@ -114,6 +115,8 @@ class HomecomingE2eTest {
         aiPublisher = new RecordingAiPublisher();
         ScenarioStartGuard startGuard =
             new ScenarioStartGuard(scenarioRepository, appUserRepository);
+        ScenarioRobotStartPolicy startPolicy = new ScenarioRobotStartPolicy(
+            startGuard, robotRepository, scenarioRepository);
         MqttConversationGateway gateway = new MqttConversationGateway(
             scenarioRepository,
             conversationRepository,
@@ -128,7 +131,7 @@ class HomecomingE2eTest {
             robotPublisher,
             gateway,
             homecomingProperties,
-            startGuard,
+            startPolicy,
             clock);
         WakeWordCallOrchestrator wakeWordCallOrchestrator =
             new WakeWordCallOrchestrator(
@@ -136,7 +139,7 @@ class HomecomingE2eTest {
                 wakeWordTriggerReceiptRepository,
                 robotRepository,
                 robotPublisher,
-                startGuard,
+                startPolicy,
                 clock);
         NavigationResultRouter navigationResultRouter = new NavigationResultRouter(
             scenarioRepository, orchestrator, wakeWordCallOrchestrator);
@@ -144,14 +147,14 @@ class HomecomingE2eTest {
         RobotObservationService observationService = new RobotObservationService(
             robotRepository, careRecordRepository, observationProperties);
         WellnessCheckOrchestrator wellnessOrchestrator = new WellnessCheckOrchestrator(
-            scenarioRepository, robotRepository, robotPublisher, startGuard,
+            scenarioRepository, robotRepository, robotPublisher, startPolicy,
             observationProperties, new WellnessProperties());
         medicationScheduler = new MedicationReminderScheduler(
             careRecordRepository,
             scenarioRepository,
             robotRepository,
             robotPublisher,
-            startGuard,
+            startPolicy,
             new MedicationReminderProperties(),
             clock);
 

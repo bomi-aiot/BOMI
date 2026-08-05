@@ -156,6 +156,76 @@ class AsyncApiDocumentationTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void navigationSchemasMatchTheFinalRobotBridgeContract() throws IOException {
+        Map<String, Object> components =
+            (Map<String, Object>) loadSpec().get("components");
+        Map<String, Object> schemas =
+            (Map<String, Object>) components.get("schemas");
+
+        Map<String, Object> commandEnvelope =
+            (Map<String, Object>) schemas.get("CommandEnvelope");
+        assertThat((List<String>) commandEnvelope.get("required"))
+            .containsExactly(
+                "commandId", "scenarioId", "robotId", "type", "occurredAt", "expiresAt",
+                "payload");
+
+        Map<String, Object> navigate =
+            (Map<String, Object>) schemas.get("NavigateCommand");
+        List<Map<String, Object>> navigateAllOf =
+            (List<Map<String, Object>>) navigate.get("allOf");
+        Map<String, Object> navigateProperties =
+            (Map<String, Object>) navigateAllOf.get(1).get("properties");
+        Map<String, Object> navigatePayload =
+            (Map<String, Object>) navigateProperties.get("payload");
+        assertThat(navigatePayload.get("additionalProperties")).isEqualTo(false);
+        assertThat((List<String>) navigatePayload.get("required"))
+            .containsExactly("target");
+        Map<String, Object> navigatePayloadProperties =
+            (Map<String, Object>) navigatePayload.get("properties");
+        assertThat(navigatePayloadProperties).containsOnlyKeys("target");
+        assertThat((List<String>) ((Map<String, Object>)
+            navigatePayloadProperties.get("target")).get("enum"))
+            .containsExactly("LIVING_ROOM", "ENTRANCE", "DEFAULT");
+
+        Map<String, Object> resultEnvelope =
+            (Map<String, Object>) schemas.get("ResultEnvelope");
+        assertThat(resultEnvelope.get("additionalProperties")).isEqualTo(false);
+        assertThat((List<String>) resultEnvelope.get("required"))
+            .containsExactly(
+                "eventId", "commandId", "scenarioId", "robotId", "type", "occurredAt",
+                "payload");
+        Map<String, Object> resultProperties =
+            (Map<String, Object>) resultEnvelope.get("properties");
+        assertThat(resultProperties)
+            .containsOnlyKeys(
+                "eventId", "commandId", "scenarioId", "robotId", "type", "occurredAt",
+                "payload");
+
+        Map<String, Object> navigationResult =
+            (Map<String, Object>) schemas.get("NavigationResultPayload");
+        List<Map<String, Object>> resultAllOf =
+            (List<Map<String, Object>>) navigationResult.get("allOf");
+        Map<String, Object> navigationResultProperties =
+            (Map<String, Object>) resultAllOf.get(1).get("properties");
+        Map<String, Object> navigationResultPayload =
+            (Map<String, Object>) navigationResultProperties.get("payload");
+        assertThat(navigationResultPayload.get("additionalProperties")).isEqualTo(false);
+        assertThat((List<String>) navigationResultPayload.get("required"))
+            .containsExactly("outcome", "resultCode", "reasonCode");
+        Map<String, Object> navigationResultPayloadProperties =
+            (Map<String, Object>) navigationResultPayload.get("properties");
+        assertThat(navigationResultPayloadProperties)
+            .containsOnlyKeys("outcome", "resultCode", "location", "reasonCode", "message");
+        assertThat((List<String>) ((Map<String, Object>)
+            navigationResultPayloadProperties.get("resultCode")).get("enum"))
+            .containsExactly("ARRIVED", "NOT_ARRIVED");
+        assertThat((List<String>) ((Map<String, Object>)
+            navigationResultPayloadProperties.get("location")).get("enum"))
+            .containsExactly("LIVING_ROOM", "ENTRANCE", "DEFAULT");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void walkAndFollowSchemasMatchTheFinalRuntimeContract() throws IOException {
         Map<String, Object> components =
             (Map<String, Object>) loadSpec().get("components");

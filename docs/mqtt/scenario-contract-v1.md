@@ -672,27 +672,24 @@ TRIGGERED → NAVIGATING → CONVERSING → COMPLETED
 
 ---
 
-## 10. 현재 구현과의 차이
+## 10. 구현 정렬 현황과 남은 통합 과제
 
-이 표는 이 계약을 적용할 때 Backend를 중심으로 확인해야 할 구현 gap이다. 현재 구현이 틀렸다는 의미가 아니라, 최종 계약으로 이동하기 위한 작업 목록이다.
+Backend의 다섯 시나리오와 v1 envelope 구현은 정렬되어 있다. 아래 표의 남은 항목은 확정된 시나리오 의미를 바꾸는 작업이 아니라, 외부 Robot Bridge·AI 구현이 이 계약을 실제로 생산·소비하는지 확인하는 통합 과제다.
 
-| 영역 | 현재 상태 | v1에 필요한 변경 |
+| 영역 | Backend 현재 상태 | 남은 통합 과제 |
 |---|---|---|
-| 계약 문서 | draft와 여러 Robot 계약 문서에 서로 다른 필드와 상태 표현이 존재 | 이 문서를 기준으로 AsyncAPI와 보조 문서를 정렬 |
-| 수신 이벤트 타입 | `WAKE_WORD_DETECTED`, `WALK_REQUESTED`, `FOLLOW_RESULT`, `CONVERSATION_STARTED`의 파서·타입별 검증이 구현됨 | 완료. v1 envelope와 enum을 문서 테스트로 유지 |
-| Robot 명령 타입 | `NAVIGATE`, `SPEAK`, `CANCEL`, `FOLLOW_START`, `FOLLOW_STOP`이 구현됨 | 완료. FOLLOW 명령의 빈 payload, QoS 1, retain=false를 회귀 테스트로 유지 |
-| AI 명령 | AI commands 토픽, `START_CONVERSATION` 모델과 publisher가 없음 | `bomi/v1/ai/{robotId}/commands` 발행 경로와 모델 추가 |
-| 대화 연결 | 대화 gateway가 실제 AI 명령 발행 대신 임시 동작에 가까움 | `scenarioId`와 `conversationId`를 저장하고 실제 명령 발행 |
-| 대화 종료 | 기존 handler가 `scenarioId`를 `payload`에서 읽음 | 관련 ID를 최상위에서 읽고 네 가지 대화 outcome 처리 |
-| 대화 시작 | `CONVERSATION_STARTED` 처리 없음 | 대시보드용 상태를 `CONVERSING`으로 전이 |
-| Robot 결과 | 기존 결과가 `status` 중심이며 연관 ID 위치가 혼재 | `outcome`, 타입별 `resultCode`, `reasonCode`와 최상위 ID로 통일 |
-| 발화 결과 | `SPEAK_RESULT`를 기대하는 코드가 있으나 기존 payload 형식 확인 필요 | one-way 발화 뒤에도 `SPEAK_RESULT`를 받고 `SPOKEN`/`NOT_SPOKEN`과 공통 outcome 형식으로 통일 |
-| 호출 | `WAKE_WORD_CALL` 전용 입력·orchestrator·결과 routing과 영속 receipt가 구현됨. Backend는 `NAVIGATE(LIVING_ROOM)`만 발행하고 `ARRIVED`에서 즉시 완료함 | 완료. 호출에서 `START_CONVERSATION`, `conversationId`, `NAVIGATE(DEFAULT)`를 추가하지 않는 책임 경계를 회귀 테스트로 유지 |
-| 산책 | Voice MQTT와 Guardian REST가 같은 `WalkOrchestrator`를 사용하며 WALK 상태, START·STOP command 상관관계, timeout, 영속 요청 receipt가 구현됨 | 완료. Robot 추종 제어와 Backend 정책·이력의 책임 경계를 회귀 테스트로 유지 |
-| 스케줄러 | 복약 스케줄러는 존재하지만 대화 시작 계약과 실행 원자성 확인 필요 | 일정 선점, 재시도 중복 방지, `START_CONVERSATION` 연결 검증 |
-| 개인 일정 | `fact_candidate` 후보와 `care_record` 물질화 흐름이 스케줄러에 연결되지 않음 | `CONFIRMED` 후 `care_record`로 `MATERIALIZED`된 기록만 scheduler 입력으로 연결 |
-| 중복 제거 | 공통 dispatcher는 프로세스 메모리 기반이지만 호출은 `wake_word_trigger_receipt`, 산책은 `(ingress, request_id)` 범위의 `walk_request_receipt`로 수락·거절 재처리를 영속 차단함 | 다른 이벤트의 범용 영속 inbox와 명령 발행의 영속 outbox는 별도 신뢰성 과제로 남음 |
-| 대시보드 | 시나리오와 대화 상태의 단일 조회 모델이 불명확 | Backend 저장 상태를 기준으로 조회 API/이력 모델 정렬 |
+| 계약 문서 | 이 문서와 AsyncAPI를 최종 v1 기준으로 사용한다. draft와 legacy envelope는 폐기됐다. | Robot·AI 보조 문서와 배포 설정도 v1을 가리키는지 지속 확인 |
+| 수신 이벤트 타입 | `WAKE_WORD_DETECTED`, `WALK_REQUESTED`, `FOLLOW_RESULT`, `CONVERSATION_STARTED`를 포함한 v1 파서·타입별 검증이 구현됐다. | 외부 생산자가 최상위 상관관계 ID와 타입별 payload를 그대로 발행하는지 E2E 확인 |
+| Robot 명령 타입 | `NAVIGATE`, `SPEAK`, `CANCEL`, `FOLLOW_START`, `FOLLOW_STOP` 발행과 QoS 1, retain=false가 구현됐다. | 최종 Robot Bridge의 명령 역직렬화, `commandId` 멱등성, `expiresAt` 거절을 실물 없이 계약 테스트로 교차검증 |
+| AI 명령·대화 연결 | `bomi/v1/ai/{robotId}/commands`, `START_CONVERSATION`, conversation 저장과 command 상관관계가 구현됐다. | 실제 AI가 같은 `scenarioId`, `conversationId`, `commandId`를 보존해 시작·종료 이벤트를 반환하는지 확인 |
+| 대화 시작·종료 | `CONVERSATION_STARTED`와 `CONVERSATION_ENDED`의 최상위 연관 ID 및 outcome 처리가 구현됐다. | 외부 AI의 legacy payload 의존 제거와 네 가지 종료 outcome E2E 확인 |
+| 이동·추종 Robot 결과 | `NAVIGATION_RESULT`와 `FOLLOW_RESULT`의 v1 `outcome`, 타입별 `resultCode`, `reasonCode`와 최상위 `scenarioId`·`commandId` 검증·routing이 구현됐다. | 최종 Robot Bridge가 legacy `status`나 payload 내부 ID가 아닌 v1 결과만 발행하도록 정렬 |
+| 호출 | `WAKE_WORD_CALL` 전용 입력·orchestrator·결과 routing과 영속 receipt가 구현됐다. Backend는 `NAVIGATE(LIVING_ROOM)`만 발행하고 `ARRIVED`에서 즉시 완료한다. | AI의 자체 대화와 Robot 이동을 함께 관찰하는 통합 확인. 호출에는 `START_CONVERSATION`, `conversationId`, `NAVIGATE(DEFAULT)`를 추가하지 않음 |
+| 산책 | Voice MQTT와 Guardian REST가 같은 `WalkOrchestrator`를 사용하며 START·STOP command 상관관계, timeout, 영속 요청 receipt가 구현됐다. | 최종 Robot Bridge의 `FOLLOW_START`·`FOLLOW_STOP` 및 `FOLLOW_RESULT` v1 상호운용 확인 |
+| 복약 스케줄러 | 복약 슬롯 조회, 시나리오 시작, 이동과 대화 명령 연결이 구현됐다. | 다중 Backend 인스턴스에서 같은 슬롯을 원자적으로 선점하는 DB 불변식은 별도 과제 |
+| 개인 일정 | `fact_candidate` 후보와 `care_record` 물질화 흐름은 스케줄러 입력과 아직 완전히 연결되지 않았다. | `CONFIRMED` 후 `care_record`로 `MATERIALIZED`된 기록만 scheduler 입력으로 연결 |
+| 중복 제거·전송 신뢰성 | 호출과 산책 요청은 영속 receipt로 재처리를 차단하고, 그 밖의 공통 dispatcher는 프로세스 메모리 기반이다. | 범용 영속 inbox와 명령 발행의 영속 outbox는 별도 신뢰성 과제 |
+| 대시보드 | 시나리오·대화 상태는 Backend에 저장된다. | 운영 조회 API와 단일 이력 모델의 노출 범위 정렬 |
 
 ---
 
