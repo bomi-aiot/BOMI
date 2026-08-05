@@ -49,21 +49,26 @@
 
 # 0. 준비
 
-## 0-1. 브랜치가 맞는가
+## 0-1. 코드가 최신인가
 
 ```bash
-cd /c/Users/workspaces/S15P11E102 && git branch --show-current && git log --oneline -1
+cd /c/Users/workspaces/S15P11E102 && git fetch origin && git log --oneline -1 origin/ai-develop
+git log --oneline -1
 ```
 
-**기대**: `S15P11E102-233-ai-실기-점검`
+**기대**: 로컬 `HEAD` 가 `origin/ai-develop` 과 같거나(§25 대로 최신 `ai-develop` 을
+체크아웃한 상태), 그 위에 얹은 티켓 브랜치입니다.
 
-> **왜 이 브랜치여야 하는가.** 두 가지가 여기에만 있습니다.
+> **이 점검이 왜 특정 브랜치가 아니라 "최신 `ai-develop`" 을 요구하는가.** 예전 판(233
+> 최초 작성 시점)에는 로그 복구 코드와 이 문서 자체가 별도 미머지 브랜치에만 있었습니다.
+> 지금은 **둘 다 `ai-develop` 에 머지됐습니다** — 로그 복구는 232/233 라인에서, 이
+> 문서·`probe.py` 는 233 문서 개정에서. 특정 브랜치 이름을 박아 두면 그 브랜치가
+> 머지·삭제된 뒤에 "찾을 수 없는 브랜치"를 요구하는 죽은 지시가 됩니다.
 >
-> 1. **로그.** `ai-develop` 의 `main.py` 는 `logging.basicConfig` 가 주석 처리돼 있고
->    `-v` 옵션이 없습니다. 그 상태로 로봇을 켜면 대답 소리는 들리지만 **어느 함수가
->    돌았는지, 갈래가 뭐로 정해졌는지, 지연이 얼마인지 볼 방법이 전혀 없습니다.**
->    눈을 감고 점검하는 셈입니다.
-> 2. 이 문서와 `tests/manual/probe.py`.
+> 로그가 실제로 살아 있는지는 여기서 짐작하지 말고 **창 1 을 띄워 눈으로 확인**하십시오
+> (§1). `main.py` 의 `-v` 옵션과 파일 로깅이 없으면 대답 소리는 들려도 **어느 함수가
+> 돌았는지, 갈래가 뭐로 정해졌는지, 지연이 얼마인지 볼 방법이 전혀 없어** 눈을 감고
+> 점검하는 셈입니다.
 
 ## 0-2. 자동 테스트가 먼저 초록인가
 
@@ -119,12 +124,24 @@ cd robot/ai_chat && ./venv/Scripts/ruff.exe check src tests
 ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c '\d app_user'"
 ```
 
-확인한 칼럼으로 한 행을 만듭니다.
+확인한 칼럼으로 한 행을 만듭니다. **동의 4종 칼럼은 `NOT NULL` 이라 값을 반드시
+채워야 합니다** — 특히 `guardian_sharing_consent_status` 를 `'GRANTED'` 로 넣지
+않으면 **5-4(정서 동의) 스텝이 조용히 항상 막힙니다** (에러 없이 그냥 아무 일도 안
+일어난 것처럼 보입니다). 값은 `NOT_REQUESTED`/`GRANTED`/`DENIED`/`REVOKED` 중
+하나입니다.
 
 ```bash
 ssh bomi "docker exec -i bomi-postgres psql -U bomi -d bomi" <<'SQL'
-INSERT INTO app_user (id, user_type, name /*, 확인한 필수 칼럼들 */)
-VALUES ('99999999-0000-4000-8000-000000000001', 'SENIOR', '점검용' /*, ... */);
+INSERT INTO app_user (
+  id, user_type, name,
+  personalization_consent_status, health_data_consent_status,
+  schedule_consent_status, guardian_sharing_consent_status
+  /*, 그 외 확인한 필수 칼럼들 */
+) VALUES (
+  '99999999-0000-4000-8000-000000000001', 'SENIOR', '점검용',
+  'GRANTED', 'GRANTED', 'GRANTED', 'GRANTED'
+  /*, ... */
+);
 SQL
 ```
 
@@ -366,9 +383,9 @@ cd robot/ai_chat && ./venv/Scripts/python.exe -m bomi_ai_chat --once -v
 
 1. 스피커와 마이크를 물리적으로 떼어 놓습니다 (가장 효과 큼)
 2. 스피커 볼륨을 낮춥니다
-3. `policy.ECHO_GUARD_SEC` (132줄) 을 올립니다 — 로봇이 말을 시작한 뒤 몇 초간 마이크
+3. `policy.ECHO_GUARD_SEC` (219줄) 을 올립니다 — 로봇이 말을 시작한 뒤 몇 초간 마이크
    입력을 무시할지
-4. `policy.ECHO_VAD_THRESHOLD_MULTIPLIER` (146줄) 를 올립니다 — 재생 중에는 얼마나 큰
+4. `policy.ECHO_VAD_THRESHOLD_MULTIPLIER` (233줄) 를 올립니다 — 재생 중에는 얼마나 큰
    소리여야 "사람이 말한다"로 볼지
 
 - [ ] 결과지 **3-1** 에 거리·볼륨·최종 임계치를 적었습니다
@@ -401,7 +418,7 @@ cd robot/ai_chat && ./venv/Scripts/python.exe -m bomi_ai_chat -v
 
 같은 말을 5번 하고 `turn latency` 를 적습니다.
 
-**기대**: 5회 중 4회 이상이 **2.0초 이내** (`policy.TURN_LATENCY_BUDGET_SEC`, 501줄).
+**기대**: 5회 중 4회 이상이 **2.0초 이내** (`policy.TURN_LATENCY_BUDGET_SEC`, 685줄).
 
 넘으면 창 2에서 단계별 내역을 봅니다. 대개 네트워크(문맥 조회·문장 생성·음성 합성)이고
 로컬 계산이 아닙니다.
@@ -753,33 +770,86 @@ tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "lookup documents|intent=
 > 않던** 시기가 있었습니다 — 정보 질문에는 답하고 잡담에도 답하면서, 속마음을 꺼낼 때만
 > 조용했습니다. 이 제품이 낼 수 있는 가장 나쁜 모양의 실패입니다.
 
-**말할 것** ▶ `"외로워"`
+> **★ 253 이 이 스텝의 모양을 완전히 바꿨습니다.** 예전(263)에는 "외로워" **한 번**이
+> 45분 뒤 동의 질문을 곧바로 제안 큐에 넣었습니다. 지금은 **한 번의 정서 발화가 곧바로
+> 아무것도 큐에 넣지 않습니다.** 대신 발화 원문 없이 **신호만 하나** 남기고
+> (`emotional_signal` 표), 배경 틱(`jobs.ticks.consent_tick`)이 주기적으로 다음을
+> **전부** 확인해야 동의 질문 하나가 큐에 오릅니다.
+>
+> | # | 확인하는 것 | 실측에 필요한 준비 |
+> | --- | --- | --- |
+> | 1 | 기능 킬스위치가 켜져 있는가 | 기본값 켜짐 |
+> | 2 | **상위 동의** — 어르신이 가족 공유 자체에 동의했는가 | **0-4 에서 `guardian_sharing_consent_status='GRANTED'` 로 심었는지** ↓ |
+> | 3 | 이미 대기 중인 동의 질문이 없는가 | 이 스텝을 처음 한다면 자동 통과 |
+> | 4 | 이 대화가 봉인(sealed)되지 않았는가 | "우리끼리 얘기" 류를 말하지 않았는지 |
+> | 5 | **누적 신호가 문턱(3회)을 넘었는가** | **"외로워" 류를 세 번 이상 말해야 함** |
+> | 6 | 자연스러운 창인가 (사다리 0, 안전 확인 대기 없음, 재실 AWAY 아님) | 앞 스텝들에서 이미 충족돼 있을 것 |
+>
+> 문턱이 `policy.T3_CONSENT_SIGNAL_THRESHOLD = 3` 입니다. **즉 한 번 말하고 끝나는
+> 스텝이 아닙니다** — 세 번 이상 말해야 관찰할 것이 생깁니다.
 
-대체 문장: `"쓸쓸하네"` `"우울해"` `"영감이 보고 싶어"` `"사는 게 힘들어"`
+**0-4 를 다시 확인하십시오.** 테스트 전용 어르신의 `app_user` 행에
+`guardian_sharing_consent_status` 를 `'GRANTED'` 로 넣지 않았다면, 아래에서 아무리
+말해도 **2번 조건에서 항상 조용히 막힙니다** — 오류도, 로그도 없이 그냥 아무 일도
+안 일어나는 것처럼 보입니다. 그리고 그 값은 서버가 문맥 조립 응답의 `profile` 에
+실어 보내야 로봇이 알 수 있으므로, **이 스텝 전에 문맥 조회가 최소 한 번 성공해서
+로컬 캐시에 반영돼 있어야** 합니다(4-1 을 먼저 통과했다면 충족됩니다).
 
-**예상 경로**: 5-1 과 같되 6번이 `handle_emotional` 이고, 여기서 **제안 큐에 한 건을
-씁니다**(🔵 `runtime.sqlite` / `speech_proposal`).
+**말할 것** ▶ `"외로워"` 를 **세 번 이상**, 서로 다른 턴으로 (같은 대화 안에서)
 
-**예상 발화**
+대체 문장: `"쓸쓸하네"` `"우울해"` `"영감이 보고 싶어"` `"사는 게 힘들어"` — 매번 다른
+표현을 섞어도 됩니다. 신호는 문구가 아니라 갈래(`emotional`)를 셉니다.
+
+**예상 경로 (매 발화마다)**: 5-1 과 같되 6번이 `handle_emotional` 이고, **매번**
+`emotional_signal` 에 한 행을 남깁니다(🔵 쓰기). **`speech_proposal` 은 아직 안
+건드립니다.**
+
+**1~2번째 발화 — 예상 발화 · 로컬 저장소**
 
 | 확인 | 정상 | 실패 |
 | --- | --- | --- |
 | 대답이 나오는가 | 나옴 | 침묵하면 🔴 |
 | 정보를 주려 드는가 | 안 듦. 듣는 것이 목적 | "노인복지관에 가보세요" 같은 해결책 제시 |
-| **가족·공유 이야기** | **그 턴에 안 나옴** | "가족분께 전해드릴까요?" 가 나오면 🔴 |
+| **가족·공유 이야기** | **안 나옴** (아직 문턱 전) | 뭐라도 언급되면 🔴 |
 
-> **★ 마지막 항목이 이 스텝의 핵심입니다.** 속마음을 꺼낸 직후에 "가족분께 전해도
-> 될까요"로 끊으면, 로봇은 그 한 문장으로 말벗에서 감시 장치가 됩니다. 그 뒤로 어르신은
-> 털어놓지 않고, 그러면 가족에게 전할 내용 자체가 사라집니다. 그래서 그 질문은 **45분
-> 뒤**로 미뤄 제안 큐에 넣습니다.
-
-**예상 로컬 저장소 변화**
-
-| 파일 | 표 | 무엇 | 이전 | 이후 |
+| 파일 | 표 | 칼럼/무엇 | 이전 | 이후 |
 | --- | --- | --- | --- | --- |
-| `runtime.sqlite` | `speech_proposal` | (행 수) | 0 | **1** — 45분 뒤로 예약된 동의 질문 |
+| `runtime.sqlite` | `emotional_signal` | (행 수, 이 대화분) | 0, 1 | 1, **2** |
+| `runtime.sqlite` | `speech_proposal` | (행 수) | 0 | **0 유지** |
 
-`probe --diff` 아래쪽 목록에 그 제안이 보여야 합니다.
+**3번째 발화 (문턱 도달) — 아직 배경 틱 전이라 즉시 반응은 없습니다**
+
+| 파일 | 표 | 칼럼/무엇 | 이전 | 이후 |
+| --- | --- | --- | --- | --- |
+| `runtime.sqlite` | `emotional_signal` | (행 수) | 2 | **3** — 문턱 충족 |
+| `runtime.sqlite` | `speech_proposal` | (행 수) | 0 | **0 유지** (틱이 아직 안 돎) |
+
+**틱을 강제로 한 번 돌립니다** (배경 스케줄러가 `CONTRACT_TICK_INTERVAL_SEC`(10분)마다
+자동으로 하지만, 점검에서 10분을 기다릴 필요는 없습니다):
+
+```bash
+cd robot/ai_chat && ./venv/Scripts/python.exe -c "
+import os
+from bomi_ai_chat.jobs.ticks import consent_tick
+n = consent_tick(os.environ['SENIOR_ID'])
+print('새로 큐에 넣은 개수:', n)
+"
+```
+
+**기대**: `새로 큐에 넣은 개수: 1`
+
+| 파일 | 표 | 칼럼 | 이전 | 이후 |
+| --- | --- | --- | --- | --- |
+| `runtime.sqlite` | `speech_proposal` | (행 수) | 0 | **1** — `not_before` = 지금 + 45분 |
+| `runtime.sqlite` | `emotional_signal` | (행 수, 소비됨) | 3 (미소비) | 3 (**소비 처리**, 다시 안 셈) |
+
+`probe --diff` 의 `speech_proposal` 아래쪽 목록에 그 제안이 보여야 하고, `seed` 가
+`"아까 마음이 힘들다고 하셨던 이야기, 가족분께 전해도 괜찮을까요?"` 여야 합니다.
+
+> **★ 이 스텝의 핵심은 여전히 지연입니다.** 그 제안의 `not_before` 가 미래(지금+45분)로
+> 찍혀 있어야 하고, 게이트가 그걸 지켜야 합니다 — 큐에 들어간 순간 다음 틱에 바로
+> 나가면 지연은 장식입니다. 45분을 실시간으로 기다리지 않으려면 7-2 와 같은 방식으로
+> 압축 시계를 쓰거나, `not_before` 값을 `probe.py` 로 직접 확인해 시각만 검증합니다.
 
 **결과지** ▶ **5-4**
 
@@ -789,8 +859,9 @@ tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "lookup documents|intent=
 | --- | --- |
 | 대답이 없음 | `handlers.py` `handle_emotional` |
 | 갈래가 `companion` | `context.py` `_EMOTIONAL_MARKERS` |
-| 같은 턴에 동의를 물음 | `handle_emotional` 의 지연 로직 |
-| 제안이 안 쌓임 | 위와 같음 |
+| 세 번 넘게 말해도 `consent_tick` 이 0 을 돌려줌 | `jobs/ticks.py` `_guardian_sharing_consented` — **0-4 의 상위 동의 값부터 의심** |
+| `consent_tick` 은 1 인데 `speech_proposal` 이 안 늘어남 | `proposals.enqueue` 호출부, 또는 사다리·안전 확인·재실 조건 중 하나가 안 열려 있음 |
+| 문턱 전(1~2회)에 벌써 질문이 나감 | `policy.T3_CONSENT_SIGNAL_THRESHOLD` — 지금 3이어야 함 |
 
 ---
 
@@ -909,8 +980,8 @@ outbox          (행 수)                    0            0            유지
 
 | 증상 | 어디 | 무엇을 바꾸면 |
 | --- | --- | --- |
-| 확인 질문이 나옴 | `policy.py` `CHRONIC_PAIN_PARTS` (341줄) | 부위를 **추가**하면 평범한 턴으로 흘러갑니다 |
-| 확인 질문 (부위 문제 아님) | `policy.py` `HIGH_RISK_BODY_PARTS` (338줄) | `"배"`·`"속"` 이 있어 `"배가 고파"` 류에 걸릴 수 있음 |
+| 확인 질문이 나옴 | `policy.py` `CHRONIC_PAIN_PARTS` (483줄) | 부위를 **추가**하면 평범한 턴으로 흘러갑니다 |
+| 확인 질문 (부위 문제 아님) | `policy.py` `HIGH_RISK_BODY_PARTS` (480줄) | `"배"`·`"속"` 이 있어 `"배가 고파"` 류에 걸릴 수 있음 |
 | 갈래가 `companion` 이 아님 | `context.py` `_classify` | 검사 순서 확인 |
 | `occupancy` 가 안 바뀜 | `ingress.py` `_persist_interaction` | 여기가 안 쓰면 **침묵 감시가 영영 안 돕니다** |
 | 서버에 행이 없음 | `.env` `BACKEND_BASE_URL` | 0-6 으로 |
@@ -963,7 +1034,7 @@ outbox          (행 수)                    0            0            유지
 > **왜 마감 시각을 저장소에 적는가.** 어르신이 확인 질문에 **아예 대답하지 않으면**
 > 그래프는 다시 호출되지 않습니다. 대답이 없는 것은 이벤트가 아니니까요. 그래서 "언제까지
 > 답이 없으면 부른다"를 저장해 두고 배경 감시가 대신 봅니다. 90초는
-> `policy.SAFETY_CONFIRMATION_TIMEOUT_SEC` (428줄) 입니다.
+> `policy.SAFETY_CONFIRMATION_TIMEOUT_SEC` (571줄) 입니다.
 
 **예상 API — 5-8 과 다릅니다**
 
@@ -992,10 +1063,10 @@ outbox          (행 수)                    0            0            유지
 
 | 증상 | 어디 | 무엇을 바꾸면 |
 | --- | --- | --- |
-| 아무 반응 없음 (평범한 턴) | `policy.py` `HIGH_RISK_BODY_PARTS` (338줄) | 부위를 **추가** |
-| `safety_check_until` 이 안 채워짐 | `triage.py` (303줄) | 이게 없으면 **대답 안 했을 때 아무도 안 챙깁니다** |
-| `conversation-context` 가 호출됨 | `build.py` (295~305줄) | 안전 경로가 네트워크에 묶입니다 |
-| 90초가 너무 짧다/길다 | `policy.py` (428줄) | **늘리면** 생각할 시간↑ 알림↓ / **줄이면** 화장실 다녀온 사이에 호출 |
+| 아무 반응 없음 (평범한 턴) | `policy.py` `HIGH_RISK_BODY_PARTS` (480줄) | 부위를 **추가** |
+| `safety_check_until` 이 안 채워짐 | `triage.py` (305줄) | 이게 없으면 **대답 안 했을 때 아무도 안 챙깁니다** |
+| `conversation-context` 가 호출됨 | `build.py` (469~483줄) | 안전 경로가 네트워크에 묶입니다 |
+| 90초가 너무 짧다/길다 | `policy.py` (571줄) | **늘리면** 생각할 시간↑ 알림↓ / **줄이면** 화장실 다녀온 사이에 호출 |
 | 로봇이 진단을 말함 | `prompts/` 의 금지 문구 | "진단하지 않는다"가 빠졌는지 |
 
 ---
@@ -1018,7 +1089,7 @@ outbox          (행 수)                    0            0            유지
 
 **결과지** ▶ **5-10**
 
-**안 맞으면**: `policy.py` `SYMPTOM_NEGATIONS` (360줄)
+**안 맞으면**: `policy.py` `SYMPTOM_NEGATIONS` (502줄)
 
 ---
 
@@ -1044,7 +1115,7 @@ outbox          (행 수)                    0            0            유지
 
 **결과지** ▶ **5-11**
 
-**안 맞으면**: `policy.py` `PAST_TIME_WORDS` (377줄), `ONGOING_MARKERS` (384줄)
+**안 맞으면**: `policy.py` `PAST_TIME_WORDS` (519줄), `ONGOING_MARKERS` (526줄)
 
 ---
 
@@ -1063,7 +1134,7 @@ outbox          (행 수)                    0            0            유지
 
 **결과지** ▶ **5-12**
 
-**안 맞으면**: `policy.py` `SELF_HARM_MARKERS` (401줄). 8-3 에서 이 목록을 통째로
+**안 맞으면**: `policy.py` `SELF_HARM_MARKERS` (544줄). 8-3 에서 이 목록을 통째로
 검토합니다.
 
 ---
@@ -1092,7 +1163,7 @@ tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "intent=|safety_level="
 
 | # | 무엇을 하나 | 기대 | 안 되면 |
 | --- | --- | --- | --- |
-| 6-1 | 로봇이 말하는 중 **`"응"`** | **계속** 말함 | `policy.BACKCHANNELS`(119줄), `BACKCHANNEL_MAX_SEC`(124줄) |
+| 6-1 | 로봇이 말하는 중 **`"응"`** | **계속** 말함 | `policy.BACKCHANNELS`(206줄), `BACKCHANNEL_MAX_SEC`(211줄) |
 | 6-2 | 로봇이 말하는 중 **`"잠깐만"`** | 즉시 멈춤 | 양보 정책이 죽은 것 |
 | 6-3 | 6-2 뒤 잠시 대기 | 못 한 말이 이어짐 | 문장 중간이 잘려 사라짐 |
 | 6-4 | `"그래서 어제 병원에 갔는데"` | 맞장구 아님. 진짜 발화로 처리 | `"그래"` 가 앞부분에 걸린 것 |
@@ -1156,7 +1227,7 @@ for i in range(12):
 
 **기대 — 정확한 숫자가 아니라 성질입니다**
 
-지금 값은 `policy.SILENCE_LADDER_SEC` (162줄) 의 `[3시간, 45분, 20분]` 이므로 대략
+지금 값은 `policy.SILENCE_LADDER_SEC` (249줄) 의 `[3시간, 45분, 20분]` 이므로 대략
 3.0h / 3.75h / 4.08h 에 한 칸씩 올라갑니다. **그 값이 적절한지가 이 스텝의 진짜
 질문**이므로, 고정해서 볼 것은 다음 셋입니다.
 
@@ -1225,7 +1296,7 @@ ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"SELECT notificatio
 2. `"아들한테 전화해줘"` 라고 말합니다 (확인 질문 없이 즉시 T1)
 3. `probe` 로 `outbox` 에 쌓인 것을 확인합니다
 4. 와이파이를 켭니다
-5. 30초 안에(`OUTBOX_FLUSH_INTERVAL_SEC`, 565줄) 전송되는지 봅니다
+5. 30초 안에(`OUTBOX_FLUSH_INTERVAL_SEC`, 789줄) 전송되는지 봅니다
 
 | 확인 | 정상 |
 | --- | --- |
@@ -1439,7 +1510,8 @@ ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"SELECT count(*) FR
 | 로봇 본체 미연결 | 문 앞으로 이동하는 동작을 확인할 수 없습니다 |
 | Qdrant·Mosquitto 배포 불명 | 0-7 에서 안 보이면 10·11절을 건너뜁니다 |
 | 임베딩 API 잔액 | 시연까지 아껴야 합니다. 배치를 작게 두고, 끝나면 끕니다 |
-| 날씨·병원 조회 미배선 | 5-3 참고. 실패가 아니라 아직 안 만든 것입니다 |
+| 날씨는 도시명이 있을 때만 조회됨 | 미배선이 아니라 조건부입니다. 5-3 참고 |
+| 정서 동의는 세 번 이상 말해야 반응함 | 즉시 큐잉이 아니라 누적 문턱(253)입니다. 5-4 참고 |
 | **실제 어르신 아님** | 발음·리듬·사투리가 실제 사용자와 다릅니다 |
 
 마지막이 중요합니다. **개발자 목소리로 맞춘 임계치는 78세 어르신에게 맞지 않을 수
