@@ -24,8 +24,17 @@ class MqttTopicsTest {
     }
 
     @Test
+    void createsAiCommandTopicFromSafeRobotId() {
+        assertThat(MqttTopics.aiCommands("robot-01"))
+            .isEqualTo("bomi/v1/ai/robot-01/commands");
+    }
+
+    @Test
     void rejectsTopicInjectionInRobotId() {
         assertThatThrownBy(() -> MqttTopics.robotCommands("robot-01/#"))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("topic-safe");
+        assertThatThrownBy(() -> MqttTopics.aiCommands("robot-01/#"))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("topic-safe");
     }

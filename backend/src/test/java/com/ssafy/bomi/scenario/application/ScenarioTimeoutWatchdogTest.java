@@ -44,7 +44,8 @@ class ScenarioTimeoutWatchdogTest {
     private final UUID robotId = UUID.randomUUID();
 
     private ScenarioTimeoutWatchdog watchdog() {
-        return new ScenarioTimeoutWatchdog(scenarioRepository, robotRepository, properties, fixedClock);
+        return new ScenarioTimeoutWatchdog(
+            scenarioRepository, robotRepository, properties, fixedClock);
     }
 
     private Scenario conversingScenario() {

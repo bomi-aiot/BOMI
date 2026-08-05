@@ -158,13 +158,16 @@ public class MedicationReminderScheduler {
         Scenario scenario = Scenario.create(
             seniorId, robot.getId(), ScenarioType.MEDICATION_REMINDER, slotKey);
         scenario.beginMovingToEntrance(); // "시나리오 목적지로 이동 중"의 범용 의미
+        String navigationCommandId = UUID.randomUUID().toString();
+        scenario.expectNavigationResult(
+            navigationCommandId, HomecomingContract.TARGET_LIVING_ROOM);
         scenarioRepository.save(scenario);
         robot.changeMode(RobotModePolicy.forScenario(scenario.getFinalStatus()));
         robotRepository.save(robot);
 
-        publish(scenario.getId(), robot, RobotCommandType.NAVIGATE,
+        publish(navigationCommandId, scenario.getId(), robot, RobotCommandType.NAVIGATE,
             Map.of(HomecomingContract.NAV_TARGET_KEY, HomecomingContract.TARGET_LIVING_ROOM));
-        publish(scenario.getId(), robot, RobotCommandType.SPEAK,
+        publish(UUID.randomUUID().toString(), scenario.getId(), robot, RobotCommandType.SPEAK,
             Map.of(HomecomingContract.SPEAK_TEXT_KEY, speakText(schedule)));
 
         log.info("Medication reminder started: scenarioId={}, seniorId={}, slot={}",
@@ -235,13 +238,19 @@ public class MedicationReminderScheduler {
         return "어르신, %s 드실 시간이에요.".formatted(medication);
     }
 
-    private void publish(UUID scenarioId, Robot robot, RobotCommandType type, Map<String, Object> payload) {
+    private void publish(
+        String commandId,
+        UUID scenarioId,
+        Robot robot,
+        RobotCommandType type,
+        Map<String, Object> payload
+    ) {
         if (robot.getDeviceId() == null) {
             throw new IllegalStateException("Robot has no deviceId; cannot address command: " + robot.getId());
         }
         OffsetDateTime now = OffsetDateTime.now(clock);
         commandPublisher.publish(new RobotCommand(
-            UUID.randomUUID().toString(), scenarioId, robot.getDeviceId(),
+            commandId, scenarioId, robot.getDeviceId(),
             type, now, now.plus(COMMAND_TTL), payload));
     }
 }

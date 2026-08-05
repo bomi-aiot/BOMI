@@ -33,6 +33,11 @@ public final class MqttTopics {
         return "bomi/v1/robot/" + robotId + "/commands";
     }
 
+    public static String aiCommands(String robotId) {
+        requireSafeTopicId(robotId, "robotId");
+        return "bomi/v1/ai/" + robotId + "/commands";
+    }
+
     public static MqttTopicMatch matchInbound(String topic) {
         if (topic == null || topic.isBlank()) {
             throw new IllegalArgumentException("MQTT received topic must not be blank");

@@ -1,6 +1,7 @@
 package com.ssafy.bomi.scenario.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
@@ -11,6 +12,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import com.ssafy.bomi.conversation.domain.Conversation;
+import com.ssafy.bomi.conversation.domain.ConversationIntent;
+import com.ssafy.bomi.conversation.domain.ConversationOutcome;
+import com.ssafy.bomi.conversation.repository.ConversationRepository;
 import com.ssafy.bomi.mqtt.outbound.RobotCommand;
 import com.ssafy.bomi.mqtt.outbound.RobotCommandPublisher;
 import com.ssafy.bomi.mqtt.outbound.RobotCommandType;
@@ -22,6 +27,10 @@ import com.ssafy.bomi.scenario.domain.Scenario;
 import com.ssafy.bomi.scenario.domain.ScenarioStatus;
 import com.ssafy.bomi.scenario.domain.ScenarioType;
 import com.ssafy.bomi.scenario.repository.ScenarioRepository;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -32,11 +41,17 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 class HomecomingOrchestratorTest {
 
+    private static final String ENTRANCE_COMMAND_ID = "navigate-entrance";
+    private static final String DEFAULT_COMMAND_ID = "navigate-default";
+
     private final ScenarioRepository scenarioRepository = mock(ScenarioRepository.class);
+    private final ConversationRepository conversationRepository = mock(ConversationRepository.class);
     private final RobotRepository robotRepository = mock(RobotRepository.class);
     private final RobotCommandPublisher commandPublisher = mock(RobotCommandPublisher.class);
     private final ConversationGateway conversationGateway = mock(ConversationGateway.class);
     private final HomecomingProperties properties = new HomecomingProperties();
+    private final Clock clock = Clock.fixed(
+        Instant.parse("2026-08-05T01:00:00Z"), ZoneOffset.UTC);
 
     private HomecomingOrchestrator orchestrator;
 
@@ -48,55 +63,31 @@ class HomecomingOrchestratorTest {
     @BeforeEach
     void setUp() {
         properties.setSensorToSenior(Map.of(sensorId, seniorId));
-        // 가드는 목이 아닌 실물을 쓴다. 판정 재료(exists 쿼리)만 목 리포지토리가 주고,
-        // 기본값(false)이면 "막을 이유 없음"이라 기존 테스트는 그대로 통과한다.
         orchestrator = new HomecomingOrchestrator(
-            scenarioRepository, robotRepository, commandPublisher, conversationGateway, properties,
-            new ScenarioStartGuard(scenarioRepository));
-        // Simulate JPA assigning an id on save.
+            scenarioRepository,
+            conversationRepository,
+            robotRepository,
+            commandPublisher,
+            conversationGateway,
+            properties,
+            new ScenarioStartGuard(scenarioRepository),
+            clock);
         when(scenarioRepository.save(any(Scenario.class))).thenAnswer(invocation -> {
-            Scenario s = invocation.getArgument(0);
-            if (s.getId() == null) {
-                ReflectionTestUtils.setField(s, "id", UUID.randomUUID());
+            Scenario scenario = invocation.getArgument(0);
+            if (scenario.getId() == null) {
+                ReflectionTestUtils.setField(scenario, "id", UUID.randomUUID());
             }
-            return s;
+            return scenario;
         });
-    }
-
-    private Robot robot() {
-        Robot robot = Robot.create(seniorId, deviceId);
-        ReflectionTestUtils.setField(robot, "id", robotUuid);
-        return robot;
-    }
-
-    private Scenario scenarioAt(ScenarioStatus status) {
-        Scenario s = Scenario.create(seniorId, robotUuid, ScenarioType.HOMECOMING);
-        switch (status) {
-            case MOVING_TO_ENTRANCE -> s.beginMovingToEntrance();
-            case CONVERSING -> {
-                s.beginMovingToEntrance();
-                s.checkInteraction();
-                s.beginConversation();
-            }
-            case RETURNING_TO_DEFAULT -> {
-                s.beginMovingToEntrance();
-                s.checkInteraction();
-                s.beginConversation();
-                s.decideReturn();
-                s.returnToDefault();
-            }
-            default -> { /* RECEIVED: leave as created */ }
-        }
-        ReflectionTestUtils.setField(s, "id", UUID.randomUUID());
-        return s;
+        when(conversationGateway.startConversation(any(UUID.class)))
+            .thenReturn(ConversationStartResult.published(UUID.randomUUID()));
     }
 
     @Test
     void missingRobotIsDroppedWithoutThrowing() {
-        // 예외가 새어 나가면 브로커가 무한 재전송한다. 로봇 미배정은 경고 후 폐기.
-        when(robotRepository.findBySeniorId(seniorId)).thenReturn(java.util.Optional.empty());
+        when(robotRepository.findBySeniorId(seniorId)).thenReturn(Optional.empty());
 
-        orchestrator.startHomecoming(sensorId); // must not throw
+        orchestrator.startHomecoming(sensorId);
 
         verify(scenarioRepository, never()).save(any());
         verifyNoInteractions(commandPublisher);
@@ -104,7 +95,8 @@ class HomecomingOrchestratorTest {
 
     @Test
     void activeScenarioSuppressesNewHomecoming() {
-        // 로봇은 한 대뿐이다. 진행 중 시나리오가 있으면 새 귀가 인사를 시작하지 않는다.
+        when(robotRepository.findBySeniorId(seniorId))
+            .thenReturn(Optional.of(robot()));
         when(scenarioRepository.existsBySeniorIdAndFinalStatusIn(eq(seniorId), anyCollection()))
             .thenReturn(true);
 
@@ -116,104 +108,230 @@ class HomecomingOrchestratorTest {
 
     @Test
     void startHomecomingFromUnmappedSensorIsDroppedWithoutThrowing() {
-        // 예외가 새어 나가면 인바운드 엔드포인트가 ack 를 생략해 브로커가
-        // 같은 메시지를 무한 재전송한다. 미등록 센서는 조용히 폐기해야 한다.
-        orchestrator.startHomecoming("unmapped-sensor"); // must not throw
+        orchestrator.startHomecoming("unmapped-sensor");
 
         verifyNoInteractions(scenarioRepository);
         verifyNoInteractions(commandPublisher);
     }
 
     @Test
-    void startHomecomingCreatesScenarioAndNavigatesToEntrance() {
-        when(robotRepository.findBySeniorId(seniorId)).thenReturn(Optional.of(robot()));
+    void startStoresConversationRequestAndOnlyNavigatesToEntrance() {
+        when(robotRepository.findBySeniorId(seniorId))
+            .thenReturn(Optional.of(robot()));
 
         orchestrator.startHomecoming(sensorId);
 
         ArgumentCaptor<Scenario> scenarioCaptor = ArgumentCaptor.forClass(Scenario.class);
         verify(scenarioRepository).save(scenarioCaptor.capture());
         Scenario saved = scenarioCaptor.getValue();
-        assertThat(saved.getScenarioType()).isEqualTo(ScenarioType.HOMECOMING);
         assertThat(saved.getFinalStatus()).isEqualTo(ScenarioStatus.MOVING_TO_ENTRANCE);
-        assertThat(saved.getExternalEventId()).isEqualTo(sensorId);
+        assertThat(saved.requirePreparedConversation().intent())
+            .isEqualTo(ConversationIntent.HOMECOMING_GREETING);
+        assertThat(saved.requirePreparedConversation().text()).isEqualTo(
+            HomecomingOrchestrator.DEFAULT_GREETING);
+        assertThat(saved.requirePreparedConversation().triggerContext())
+            .containsEntry("sourceId", sensorId)
+            .containsEntry("location", "ENTRANCE");
 
-        // 이동과 발화가 함께 나간다 (S15P11E102-226).
-        //
-        // 예전에는 인사가 '도착한 뒤'에 나갔다. 그러면 느리거나 실패한 이동이 인사를
-        // 통째로 삼키는데, 인사의 마감 시간은 약 45초로 의자를 돌아가는 경로 계산보다
-        // 짧다. 목소리는 방을 건너 들리므로 바퀴를 기다릴 이유가 없다 (CLAUDE.md §11).
         ArgumentCaptor<RobotCommand> commandCaptor = ArgumentCaptor.forClass(RobotCommand.class);
-        verify(commandPublisher, times(2)).publish(commandCaptor.capture());
-
-        RobotCommand navigate = commandCaptor.getAllValues().stream()
-            .filter(c -> c.type() == RobotCommandType.NAVIGATE).findFirst().orElseThrow();
-        assertThat(navigate.robotId()).isEqualTo(deviceId);
-        assertThat(navigate.payload()).containsEntry("target", "ENTRANCE");
-        assertThat(navigate.scenarioId()).isNotNull();
-
-        assertThat(commandCaptor.getAllValues())
-            .anyMatch(c -> c.type() == RobotCommandType.SPEAK);
+        verify(commandPublisher).publish(commandCaptor.capture());
+        assertThat(commandCaptor.getValue().type()).isEqualTo(RobotCommandType.NAVIGATE);
+        assertThat(commandCaptor.getValue().payload()).containsEntry("target", "ENTRANCE");
     }
 
     @Test
-    void arrivalAtEntranceHandsOffToConversationWithoutSpeakingAgain() {
-        /*
-         * ★ 인사는 startHomecoming 에서 이미 나갔다 (S15P11E102-226).
-         *
-         * 도착 시점에 또 말하면 어르신은 같은 인사를 두 번 듣고, 두 번째는 로봇이
-         * 도착한 뒤라 한참 늦다. 도착이 하는 일은 대화로 넘기는 것뿐이다.
-         */
+    void arrivalRequestsAiAndWaitsForStartedEvent() {
         Scenario scenario = scenarioAt(ScenarioStatus.MOVING_TO_ENTRANCE);
-        UUID scenarioId = scenario.getId();
-        when(scenarioRepository.findById(scenarioId)).thenReturn(Optional.of(scenario));
+        when(scenarioRepository.findByIdForUpdate(scenario.getId()))
+            .thenReturn(Optional.of(scenario));
         when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot()));
 
-        orchestrator.onRobotArrived(scenarioId);
+        orchestrator.onRobotArrived(scenario.getId(), deviceId);
 
-        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.CONVERSING);
+        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.CHECKING_INTERACTION);
+        verify(conversationGateway).startConversation(scenario.getId());
         verify(commandPublisher, never()).publish(any());
-        verify(conversationGateway).startConversation(scenarioId, seniorId);
     }
 
     @Test
-    void conversationEndedNavigatesBackToDefault() {
-        Scenario scenario = scenarioAt(ScenarioStatus.CONVERSING);
-        UUID scenarioId = scenario.getId();
-        when(scenarioRepository.findById(scenarioId)).thenReturn(Optional.of(scenario));
+    void immediateAiPublishFailureReturnsToDefault() {
+        Scenario scenario = scenarioAt(ScenarioStatus.MOVING_TO_ENTRANCE);
+        when(scenarioRepository.findByIdForUpdate(scenario.getId()))
+            .thenReturn(Optional.of(scenario));
         when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot()));
+        when(conversationGateway.startConversation(scenario.getId()))
+            .thenReturn(ConversationStartResult.failed(
+                UUID.randomUUID(), MqttConversationGateway.REASON_AI_COMMAND_PUBLISH_FAILED));
 
-        orchestrator.onConversationEnded(scenarioId);
+        orchestrator.onRobotArrived(scenario.getId(), deviceId);
 
         assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
         ArgumentCaptor<RobotCommand> commandCaptor = ArgumentCaptor.forClass(RobotCommand.class);
         verify(commandPublisher).publish(commandCaptor.capture());
-        assertThat(commandCaptor.getValue().type()).isEqualTo(RobotCommandType.NAVIGATE);
         assertThat(commandCaptor.getValue().payload()).containsEntry("target", "DEFAULT");
     }
 
     @Test
-    void arrivalAfterReturnCompletesScenario() {
-        Scenario scenario = scenarioAt(ScenarioStatus.RETURNING_TO_DEFAULT);
-        UUID scenarioId = scenario.getId();
-        Robot robot = robot();
-        robot.changeMode(RobotMode.SCENARIO_ACTIVE);
-        when(scenarioRepository.findById(scenarioId)).thenReturn(Optional.of(scenario));
-        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot));
+    void startedEventMovesScenarioToConversing() {
+        Scenario scenario = scenarioAt(ScenarioStatus.CHECKING_INTERACTION);
+        Conversation conversation = requestedConversation(scenario, false);
+        when(scenarioRepository.findById(scenario.getId()))
+            .thenReturn(Optional.of(scenario));
+        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot()));
+        when(conversationRepository.findByIdForUpdate(conversation.getId()))
+            .thenReturn(Optional.of(conversation));
 
-        orchestrator.onRobotArrived(scenarioId);
+        OffsetDateTime startedAt = OffsetDateTime.now(clock).plusSeconds(1);
+        orchestrator.onConversationStarted(
+            scenario.getId(), conversation.getId(), conversation.getStartCommandId(), deviceId,
+            ConversationIntent.HOMECOMING_GREETING, startedAt);
 
-        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.COMPLETED);
-        assertThat(robot.getCurrentMode()).isEqualTo(RobotMode.IDLE); // mode synced on completion
-        verifyNoInteractions(commandPublisher);
+        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.CONVERSING);
+        assertThat(conversation.getAiStartedAt()).isEqualTo(startedAt);
     }
 
     @Test
-    void arrivalForUnknownScenarioIsIgnored() {
-        UUID unknown = UUID.randomUUID();
-        when(scenarioRepository.findById(unknown)).thenReturn(Optional.empty());
+    void staleNavigationCommandCannotCompleteCurrentReturn() {
+        Scenario scenario = scenarioAt(ScenarioStatus.RETURNING_TO_DEFAULT);
+        when(scenarioRepository.findByIdForUpdate(scenario.getId()))
+            .thenReturn(Optional.of(scenario));
+        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot()));
 
-        orchestrator.onRobotArrived(unknown); // must not throw
+        assertThatThrownBy(() -> orchestrator.onRobotArrived(
+            scenario.getId(), deviceId, ENTRANCE_COMMAND_ID, false))
+            .isInstanceOf(com.ssafy.bomi.mqtt.inbound.MqttContractViolationException.class)
+            .hasMessageContaining("commandId does not match");
 
-        verifyNoInteractions(commandPublisher);
+        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
+        assertThat(scenario.getActiveNavigationCommandId()).isEqualTo(DEFAULT_COMMAND_ID);
+    }
+
+    @Test
+    void endedEventStoresOutcomeAndPublishesDefaultOnlyOnce() {
+        Scenario scenario = scenarioAt(ScenarioStatus.CONVERSING);
+        Conversation conversation = requestedConversation(scenario, true);
+        when(scenarioRepository.findById(scenario.getId()))
+            .thenReturn(Optional.of(scenario));
+        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot()));
+        when(conversationRepository.findByIdForUpdate(conversation.getId()))
+            .thenReturn(Optional.of(conversation));
+
+        OffsetDateTime endedAt = OffsetDateTime.now(clock).plusMinutes(1);
+        orchestrator.onConversationEnded(
+            scenario.getId(), conversation.getId(), deviceId,
+            ConversationOutcome.COMPLETED, null, endedAt);
+        orchestrator.onConversationEnded(
+            scenario.getId(), conversation.getId(), deviceId,
+            ConversationOutcome.COMPLETED, null, endedAt);
+
+        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
+        assertThat(conversation.getEndOutcome()).isEqualTo(ConversationOutcome.COMPLETED);
+        verify(commandPublisher, times(1)).publish(any());
+    }
+
+    @Test
+    void successfulReturnAfterAiFailureRecordsFailureButLeavesRobotIdle() {
+        Scenario scenario = scenarioAt(ScenarioStatus.RETURNING_TO_DEFAULT);
+        Conversation conversation = requestedConversation(scenario, true);
+        conversation.end(ConversationOutcome.FAILED, "AI_PROVIDER_ERROR",
+            OffsetDateTime.now(clock));
+        Robot robot = robot();
+        robot.changeMode(RobotMode.SCENARIO_ACTIVE);
+        when(scenarioRepository.findByIdForUpdate(scenario.getId()))
+            .thenReturn(Optional.of(scenario));
+        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot));
+        when(conversationRepository.findByScenarioId(scenario.getId()))
+            .thenReturn(Optional.of(conversation));
+
+        orchestrator.onRobotArrived(scenario.getId(), deviceId);
+
+        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.FAILED);
+        assertThat(robot.getCurrentMode()).isEqualTo(RobotMode.IDLE);
+    }
+
+    @Test
+    void startTimeoutReturnsToDefaultThenFinishesTimedOutAndIdle() {
+        Scenario scenario = scenarioAt(ScenarioStatus.CHECKING_INTERACTION);
+        Conversation conversation = requestedConversation(scenario, false);
+        Robot robot = robot();
+        when(scenarioRepository.findByIdForUpdate(scenario.getId()))
+            .thenReturn(Optional.of(scenario));
+        when(scenarioRepository.findById(scenario.getId()))
+            .thenReturn(Optional.of(scenario));
+        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot));
+        when(conversationRepository.findByIdForUpdate(conversation.getId()))
+            .thenReturn(Optional.of(conversation));
+        when(conversationRepository.findByScenarioId(scenario.getId()))
+            .thenReturn(Optional.of(conversation));
+
+        orchestrator.onConversationStartTimedOut(conversation.getId());
+
+        assertThat(conversation.getReasonCode())
+            .isEqualTo(HomecomingOrchestrator.REASON_AI_START_TIMEOUT);
+        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
+
+        orchestrator.onRobotArrived(scenario.getId(), deviceId);
+
+        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.TIMED_OUT);
+        assertThat(robot.getCurrentMode()).isEqualTo(RobotMode.IDLE);
+    }
+
+    @Test
+    void navigationFailureUsesSafeStop() {
+        Scenario scenario = scenarioAt(ScenarioStatus.RETURNING_TO_DEFAULT);
+        Robot robot = robot();
+        when(scenarioRepository.findByIdForUpdate(scenario.getId()))
+            .thenReturn(Optional.of(scenario));
+        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot));
+
+        orchestrator.onNavigationFailed(scenario.getId(), deviceId);
+
+        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.FAILED);
+        assertThat(robot.getCurrentMode()).isEqualTo(RobotMode.SAFE_STOP);
+    }
+
+    private Robot robot() {
+        Robot robot = Robot.create(seniorId, deviceId);
+        ReflectionTestUtils.setField(robot, "id", robotUuid);
+        return robot;
+    }
+
+    private Scenario scenarioAt(ScenarioStatus status) {
+        Scenario scenario = Scenario.create(seniorId, robotUuid, ScenarioType.HOMECOMING, sensorId);
+        scenario.prepareConversation(
+            ConversationIntent.HOMECOMING_GREETING,
+            HomecomingOrchestrator.DEFAULT_GREETING,
+            Map.of("sourceId", sensorId, "location", "ENTRANCE"));
+        if (status != ScenarioStatus.RECEIVED) {
+            scenario.beginMovingToEntrance();
+            if (status == ScenarioStatus.MOVING_TO_ENTRANCE) {
+                scenario.expectNavigationResult(ENTRANCE_COMMAND_ID, "ENTRANCE");
+            }
+        }
+        if (status == ScenarioStatus.CHECKING_INTERACTION
+            || status == ScenarioStatus.CONVERSING
+            || status == ScenarioStatus.RETURNING_TO_DEFAULT) {
+            scenario.checkInteraction();
+        }
+        if (status == ScenarioStatus.CONVERSING || status == ScenarioStatus.RETURNING_TO_DEFAULT) {
+            scenario.beginConversation();
+        }
+        if (status == ScenarioStatus.RETURNING_TO_DEFAULT) {
+            scenario.decideReturn();
+            scenario.returnToDefault();
+            scenario.expectNavigationResult(DEFAULT_COMMAND_ID, "DEFAULT");
+        }
+        ReflectionTestUtils.setField(scenario, "id", UUID.randomUUID());
+        return scenario;
+    }
+
+    private Conversation requestedConversation(Scenario scenario, boolean started) {
+        Conversation conversation = Conversation.requestForScenario(
+            seniorId, scenario.getId(), "command-01", OffsetDateTime.now(clock));
+        ReflectionTestUtils.setField(conversation, "id", UUID.randomUUID());
+        if (started) {
+            conversation.markAiStarted(OffsetDateTime.now(clock).plusSeconds(1));
+        }
+        return conversation;
     }
 }

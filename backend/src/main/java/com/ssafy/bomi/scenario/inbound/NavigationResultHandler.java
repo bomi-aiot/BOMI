@@ -3,23 +3,18 @@ package com.ssafy.bomi.scenario.inbound;
 import com.ssafy.bomi.mqtt.inbound.MqttInboundMessage;
 import com.ssafy.bomi.mqtt.inbound.MqttMessageHandler;
 import com.ssafy.bomi.mqtt.topic.MqttInboundCategory;
-import com.ssafy.bomi.scenario.application.HomecomingContract;
 import com.ssafy.bomi.scenario.application.HomecomingOrchestrator;
-import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * Inbound adapter for a robot navigation result: advances or fails the scenario
- * the result refers to, based on the robot's reported {@code status}.
+ * Inbound adapter for a robot navigation result using MQTT contract v1.
  *
- * <p>The scenario is identified by the {@code scenarioId} the robot echoes back
- * (see {@link HomecomingContract#readScenarioId}). Only an explicit
- * {@code ARRIVED} advances the scenario; {@code FAILED} stops it; any absent or
- * unknown status is logged and ignored (so a malformed result never counts as
- * an arrival).</p>
+ * <p>During the Robot migration window, the legacy nested scenarioId/status form
+ * is read only when no v1 correlation field is present. The parser rejects mixed
+ * envelopes before this handler runs.</p>
  */
 @Component
 @ConditionalOnProperty(prefix = "bomi.mqtt", name = "enabled", havingValue = "true")
@@ -42,17 +37,37 @@ public class NavigationResultHandler implements MqttMessageHandler {
 
     @Override
     public void handle(MqttInboundMessage message) {
-        UUID scenarioId = HomecomingContract.readScenarioId(message.body());
-        String status = HomecomingContract.readResultStatus(message.body());
-
-        if (HomecomingContract.RESULT_STATUS_ARRIVED.equals(status)) {
-            orchestrator.onRobotArrived(scenarioId);
-        } else if (HomecomingContract.RESULT_STATUS_FAILED.equals(status)) {
-            orchestrator.onNavigationFailed(scenarioId);
+        String outcome;
+        String commandId = null;
+        if (message.legacyContract()) {
+            String status = message.payload().path("status").asText();
+            log.warn("Reading legacy NAVIGATION_RESULT without commandId; remove after Robot "
+                    + "v1 migration: scenarioId={}, robotId={}",
+                message.requireScenarioId(), message.sourceId());
+            outcome = switch (status) {
+                case "ARRIVED" -> "SUCCEEDED";
+                case "CANCELLED" -> "CANCELLED";
+                default -> "FAILED";
+            };
         } else {
-            log.warn(
-                "NAVIGATION_RESULT with absent/unknown status; ignoring: scenarioId={}, status={}",
-                scenarioId, status);
+            outcome = message.payload().path("outcome").asText();
+            commandId = message.requireCommandId();
+        }
+
+        switch (outcome) {
+            case "SUCCEEDED" -> orchestrator.onRobotArrived(
+                message.requireScenarioId(), message.sourceId(), commandId,
+                message.legacyContract());
+            case "FAILED" -> orchestrator.onNavigationFailed(
+                message.requireScenarioId(), message.sourceId(), commandId,
+                message.legacyContract());
+            case "CANCELLED" -> orchestrator.onNavigationCancelled(
+                message.requireScenarioId(), message.sourceId(), commandId,
+                message.legacyContract());
+            case "TIMED_OUT" -> orchestrator.onNavigationTimedOut(
+                message.requireScenarioId(), message.sourceId(), commandId,
+                message.legacyContract());
+            default -> log.warn("Unexpected validated navigation outcome: {}", outcome);
         }
     }
 }
