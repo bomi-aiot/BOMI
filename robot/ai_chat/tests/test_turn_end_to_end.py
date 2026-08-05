@@ -37,10 +37,12 @@ class FakeContextClient:
         # S15P11E102-306 의 완료 조건("2턴째부터 conversation_id 가 실린다")을
         # 검증하는 유일한 창구다.
         self.received_conversation_ids: list[str | None] = []
+        self.received_documents: list[bool] = []
 
     def fetch_context(self, senior_id, **kwargs):
         self.calls += 1
         self.received_conversation_ids.append(kwargs.get("conversation_id"))
+        self.received_documents.append(bool(kwargs.get("documents")))
         return ContextResult(ctx=self.ctx, is_cached=self.is_cached)
 
 
@@ -179,6 +181,59 @@ def test_prompt_receives_context_from_backend(wired):
     run_user_turn(app, SENIOR, "안녕하세요")
 
     assert "순자님" in llm.prompts[0]
+
+
+def test_information_turn_requests_documents_and_preserves_retrieval_evidence(wired):
+    """정보 분류→문서 요청→근거·검색 상태→프롬프트가 한 턴에서 이어진다."""
+    app, _client, llm, _player = wired
+    client = FakeContextClient({
+        "documents": [{
+            "title": "노인맞춤돌봄서비스",
+            "content": "만 65세 이상 신청할 수 있습니다.",
+            "source": "보건복지부",
+            "version": "2026-07",
+            "chunkId": "welfare-001#eligibility",
+            "citation": "사업안내 12쪽",
+        }],
+        "availability": {
+            "semanticSearch": False,
+            "documentCorpus": True,
+            "notes": ["semantic search unavailable"],
+        },
+        "retrieval": {
+            "semanticRequested": True,
+            "semanticUsed": False,
+            "fallbackReason": "embedding_disabled",
+            "hitCount": 0,
+            "latencyMs": 7,
+        },
+    })
+    context_node.set_client(client)
+
+    state = run_user_turn(app, SENIOR, "복지제도 알려줘")
+
+    assert state["intent"] == "info"
+    assert client.received_documents == [True]
+    assert state["retrieval_status"] == {
+        "source": "backend",
+        "documents_requested": True,
+        "document_hit_count": 1,
+        "semantic_available": False,
+        "document_corpus_available": True,
+        "semantic_requested": True,
+        "semantic_used": False,
+        "fallback_reason": "embedding_disabled",
+        "hit_count": 0,
+        "latency_ms": 7,
+        "notes": ["semantic search unavailable"],
+    }
+    prompt = llm.prompts[0]
+    assert "노인맞춤돌봄서비스" in prompt
+    assert "출처=보건복지부" in prompt
+    assert "버전=2026-07" in prompt
+    assert "청크=welfare-001#eligibility" in prompt
+    assert "인용=사업안내 12쪽" in prompt
+    assert "의미 기반 기억 검색을 사용할 수 없습니다" in prompt
 
 
 def test_cached_context_marks_the_turn(wired, monkeypatch, tmp_path):

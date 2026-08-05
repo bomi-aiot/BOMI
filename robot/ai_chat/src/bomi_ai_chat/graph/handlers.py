@@ -159,6 +159,7 @@ def _generate(state: ConvState, *, fallback: str = _FALLBACK_RESPONSE) -> str:
             speech_origin=state.get("speech_origin", ""),
             recent_phrasings=state.get("recent_phrasings"),
             is_medical=bool(state.get("is_medical_query")),
+            retrieval_status=state.get("retrieval_status"),
         )
         # 참고 자료가 실제로 이 프롬프트에 실렸는지 확인할 방법이 없었다 —
         # context_read 가 문서를 찾아도, 그게 build_prompt 를 거쳐 실제로

@@ -176,8 +176,10 @@ def test_emotional_wins_over_information():
 
 
 def test_existing_intent_is_not_reclassified():
-    """게이트가 이긴 제안에서 인텐트가 이미 붙어 오면 그대로 둔다."""
-    assert context_node.classify_intent({"intent": "greeting", "user_input": "안녕"}) == {}
+    """게이트가 이긴 제안은 유지하되 지난 턴의 의료 판정은 지운다."""
+    assert context_node.classify_intent(
+        {"intent": "greeting", "user_input": "안녕", "is_medical_query": True}
+    ) == {"is_medical_query": None}
 
 
 def test_default_intent_is_companion_not_info():

@@ -21,7 +21,7 @@
     않는다 (CLAUDE.md §8).
 
 읽는 값   user_input, intent, is_medical_query
-쓰는 값   ctx, ctx_is_cached, is_medical_query
+쓰는 값   ctx, ctx_is_cached, is_medical_query, retrieval_status
 
 db/ 와 backend_client/ 의 경계  ★ 혼동 주의
     db/medical_repository.py = 의료 '참조' 데이터 조회(병원·약국·의약품 허가).
@@ -122,7 +122,8 @@ def context_read(state: ConvState) -> dict:
         backend_client.fetch_context. 실패 시 localstore.read_context_cache.
 
     반환값
-        {"ctx": {...}, "ctx_is_cached": bool, "is_medical_query": bool | None}
+        {"ctx": {...}, "ctx_is_cached": bool, "is_medical_query": bool | None,
+         "retrieval_status": {...}}
 
     주의사항
         - 이 호출은 지연 예산 '안에' 있다. top-k 는 policy.MEMORY_TOP_K 로 유지하고,
@@ -132,10 +133,9 @@ def context_read(state: ConvState) -> dict:
         - ctx_is_cached 가 True 면 핸들러는 일정과 복약에 대해 단정적으로 말하지 않아야
           한다. 캐시는 낡았을 수 있고, 낡은 복약 정보를 단정적으로 말하는 것은 품질
           문제가 아니라 안전 문제다.
-        - 날씨·의료 조회(S15P11E102-311)는 백엔드 문서 검색과 별개다. 반응형 턴은
-          이 시점에 아직 classify_intent 가 돌지 않았으므로(intent 가 비어 있다),
-          같은 규칙으로 '미리' 살펴봐서 조회 여부를 정한다. 자세한 이유는
-          _gather_lookup_documents 참고.
+        - 날씨·의료 조회(S15P11E102-311)는 백엔드 문서 검색과 별개다. 현재는
+          classify_intent 가 먼저 돌아 intent 와 의료 판정 캐시를 채운다. 이 노드는
+          그 결과로 백엔드 문서 요청 여부를 정하고, 로컬 조회에는 판정을 재사용한다.
     """
     senior_id = state.get("senior_id")
     if not senior_id:
@@ -143,7 +143,15 @@ def context_read(state: ConvState) -> dict:
         # 오류이고, 조용히 빈 문맥으로 넘어가면 "왜 로봇이 아무것도 기억 못 하나"를
         # 나중에 추적할 수 없다.
         logger.error("context_read called without senior_id; continuing with empty context")
-        return {"ctx": {}, "ctx_is_cached": True}
+        return {
+            "ctx": {},
+            "ctx_is_cached": True,
+            "retrieval_status": {
+                "source": "empty",
+                "documents_requested": False,
+                "document_hit_count": 0,
+            },
+        }
 
     # 문서는 info 인텐트에서만 요청한다(§8). top-k 는 함수에 박지 않고 policy 에서 읽으며,
     # 성능 저하 모드에서는 낮춘 값이 들어온다(policy.DEGRADATION_ORDER).
@@ -160,32 +168,50 @@ def context_read(state: ConvState) -> dict:
         documents=want_documents,
     )
 
-    lookup_documents, medical_flag = _gather_lookup_documents(state)
     ctx = result.ctx
+    backend_document_hit_count = len(ctx.get("documents") or [])
+    lookup_documents, medical_flag = _gather_lookup_documents(state)
     if lookup_documents:
         # 백엔드 문서(복지제도·FAQ)와 우리가 직접 조회한 날씨·의료 자료를 같은
         # "참고 자료" 슬롯에 합친다. build_prompt 는 출처를 구분하지 않는다 —
         # 어차피 둘 다 "모델이 답을 지어내지 말고 참고할 것"이라는 같은 역할이다.
         ctx = {**ctx, "documents": [*(ctx.get("documents") or []), *lookup_documents]}
 
+    retrieval_status = _normalize_retrieval_status(
+        ctx,
+        is_cached=result.is_cached,
+        documents_requested=want_documents,
+        document_hit_count=backend_document_hit_count,
+    )
+
     # 참고 자료가 실제로 채워졌는지 눈으로 확인할 방법이 없었다 — emit() 로그는
     # intent/response 만 찍고, "핸들러가 뭘 참고했는지"는 안 보였다. is_medical_query
     # 가 True 인데 문서가 비어 있으면(조회 실패·시설 못 찾음 등), 답변이 참고 자료
     # 없이 나온 것이므로 이 로그로 바로 의심할 수 있어야 한다.
     #
-    # content 도 남기는 이유
-    #   제목만으로는 "의료 조회 결과"가 실제로 구체적인 병원 이름을 담고 있는지,
-    #   아니면 "어느 곳을 알려드릴까요?" 류의 안내/실패 메시지인지 구분이 안 된다.
-    #   그 구분이 "일반 LLM이 참고 자료를 무시했다" 대 "참고 자료 자체가 애매했다"
-    #   를 가른다. 200자로 자르는 이유는 파일에 매 턴 남는 로그라 통짜로 쌓이는
-    #   것을 막기 위해서다 — 이 정도면 애매한지 구체적인지 구분하기엔 충분하다.
+    # 본문은 남기지 않는다. 의료 조회 결과와 복지 문서는 개인 발화와 결합될 수 있어
+    # 검색 진단을 위해 원문을 복제하면 개인정보 보관면만 넓히게 된다.
     logger.debug(
         "lookup documents=%d medical=%s details=%s",
         len(lookup_documents), medical_flag,
         [
-            {"title": doc.get("title"), "content": (doc.get("content") or "")[:200]}
+            {"title": doc.get("title"), "source": doc.get("source")}
             for doc in lookup_documents
         ],
+    )
+    logger.info(
+        "retrieval source=%s semantic_available=%s semantic_requested=%s "
+        "semantic_used=%s fallback=%s hits=%s latency_ms=%s "
+        "documents_requested=%s document_hits=%s",
+        retrieval_status.get("source"),
+        retrieval_status.get("semantic_available"),
+        retrieval_status.get("semantic_requested"),
+        retrieval_status.get("semantic_used"),
+        retrieval_status.get("fallback_reason"),
+        retrieval_status.get("hit_count"),
+        retrieval_status.get("latency_ms"),
+        retrieval_status.get("documents_requested"),
+        retrieval_status.get("document_hit_count"),
     )
 
     return {
@@ -195,8 +221,58 @@ def context_read(state: ConvState) -> dict:
         # 이번 턴까지 새는 것을 막는다. checkpoint 된 state 는 이 노드가 손대지
         # 않는 키를 그대로 들고 있기 때문이다(state.py 의 is_medical_query 설명 참고).
         "is_medical_query": medical_flag,
+        "retrieval_status": retrieval_status,
         "recent_phrasings": _lookup_recent_phrasings(state, senior_id),
     }
+
+
+def _normalize_retrieval_status(
+    ctx: dict, *, is_cached: bool, documents_requested: bool, document_hit_count: int,
+) -> dict:
+    """현재·차기 백엔드 응답을 로봇의 한 가지 검색 상태로 정규화한다.
+
+    현재 백엔드는 availability(기능 가용성)만 보낸다. 차기 계약은 retrieval 또는
+    availability 안에 요청별 semanticRequested/semanticUsed 등을 추가할 수 있다.
+    전환 기간에 어느 한쪽만 배포돼도 로봇이 깨지지 않도록 두 위치를 모두 읽는다.
+    값이 없는 것은 '모름'이므로 키 자체를 만들지 않는다.
+    """
+    availability = ctx.get("availability")
+    if not isinstance(availability, dict):
+        availability = {}
+    retrieval = ctx.get("retrieval") or ctx.get("retrievalStatus")
+    if not isinstance(retrieval, dict):
+        retrieval = availability
+
+    status: dict = {
+        "source": "cache" if is_cached else "backend",
+        "documents_requested": documents_requested,
+        # 날씨·의료 로컬 조회 문서는 백엔드 코퍼스 hit가 아니다. 합치기 전 개수를
+        # 넘겨 둘을 구분해야 "코퍼스 0건"을 날씨 문서 1건이 숨기지 않는다.
+        "document_hit_count": document_hit_count,
+    }
+    _copy_typed(status, "semantic_available", availability, "semanticSearch", bool)
+    _copy_typed(status, "document_corpus_available", availability, "documentCorpus", bool)
+    _copy_typed(status, "semantic_requested", retrieval, "semanticRequested", bool)
+    _copy_typed(status, "semantic_used", retrieval, "semanticUsed", bool)
+    _copy_typed(status, "fallback_reason", retrieval, "fallbackReason", str)
+    _copy_typed(status, "hit_count", retrieval, "hitCount", int)
+    _copy_typed(status, "latency_ms", retrieval, "latencyMs", int)
+
+    notes = availability.get("notes")
+    if isinstance(notes, list):
+        status["notes"] = [note for note in notes if isinstance(note, str)]
+    return status
+
+
+def _copy_typed(
+    target: dict, target_key: str, source: dict, source_key: str, expected_type: type,
+) -> None:
+    """JSON 값의 타입이 계약과 맞을 때만 복사한다. bool은 int로 세지 않는다."""
+    value = source.get(source_key)
+    if expected_type is int and isinstance(value, bool):
+        return
+    if isinstance(value, expected_type):
+        target[target_key] = value
 
 
 def _lookup_recent_phrasings(state: ConvState, senior_id: str) -> list[str]:
@@ -280,11 +356,11 @@ def _gather_lookup_documents(state: ConvState) -> tuple[list[dict], bool | None]
         본다. 의료가 이기는 이유는 legacy 경로(pipeline.py)와 같다 — 두 조건이
         동시에 참인 문장은 드물고, 있다면 의료 쪽이 더 안전 관련이 크다.
 
-    왜 classify_intent 의 판정을 그대로 못 쓰는가
-        그래프 순서가 context_read -> classify_intent 다. 반응형 턴(어르신이
-        먼저 말한 턴)은 이 시점에 아직 intent 가 없다. intent 가 없다고 조회를
-        건너뛰면 "근처 병원 어디야" 같은 흔한 질문이 이 티켓이 고치려는 문제
-        그대로 남는다. 그래서 여기서 같은 규칙을 '미리' 한 번 본다.
+    classify_intent 와의 관계
+        그래프는 classify_intent -> context_read 순서다. classify_intent 가 의료
+        힌트 표지가 있는 발화에서 로컬 라우터를 먼저 부르고 is_medical_query 에
+        캐시한다. 이 함수는 그 값을 재사용하며, 직접 호출되는 단위 테스트·구버전
+        체크포인트처럼 값이 없을 때만 방어적으로 판정한다.
 
     왜 의료 판정이 classify_intent._classify 보다 넓은가  ★
         _classify 는 "어디야"·"뭐야"·"알려줘" 같은 값싼 정보 표지에 먼저 걸리면
@@ -295,33 +371,28 @@ def _gather_lookup_documents(state: ConvState) -> tuple[list[dict], bool | None]
         훑어 라우터를 부른다 — _classify 가 보는 _INFO_MARKERS 매칭과는 무관하다.
 
     왜 힌트가 없으면 라우터를 아예 안 부르는가 (그리고 그것이 왜 안전한가)
-        _classify 는 원래도 "질문형으로 끝나고 다른 표지가 없을 때만" 라우터를
-        불렀다. 그 좁은 문(원래 동작)은 여기서 그대로 classify_intent 에 남아
-        있다 — 힌트가 없어 여기서 판정하지 않은 턴은 is_medical_query 가 None 인
-        채로 넘어가고, classify_intent 는 자기 힌트가 없으니 원래 하던 대로
-        (필요하면 스스로 라우터를 불러) 판정한다. 즉 이 사전 필터는 '더 넓게
-        잡는 지름길'을 추가할 뿐, 기존 좁은 경로를 막지 않는다.
+        classify_intent 는 의료 표지가 있는 발화만 넓게 판정하고, 그 결과를 이
+        함수에 넘긴다. 표지가 없고 일반 의문형인 경우의 좁은 라우팅도 분류 노드가
+        이미 끝냈다. 여기서는 조회할 의료 대상을 찾을 근거가 없으므로 무거운 로컬
+        모델을 다시 부르지 않는다.
 
     반환값
         (documents, is_medical) - documents 는 build_prompt 의 "참고 자료"에
         들어갈 {"title", "content"} 목록. is_medical 은 라우터를 이 턴에 실제로
         불렀을 때만 bool, 그 외에는 캐시할 것이 없다는 뜻으로 None.
 
-    주의사항  ★ state["is_medical_query"] 를 여기서 '읽지' 않는다
-        이 함수는 그 값을 채우는 쪽이지 읽는 쪽이 아니다. context_read 는 이번
-        턴에 가장 먼저 도는 노드라, 이 시점의 state["is_medical_query"] 는 이번
-        턴에 아직 아무도 쓰지 않은 값 — 즉 checkpoint 에 남은 '지난 턴' 값이다.
-        그것을 캐시로 믿으면 지난 발화의 의료 판정을 이번 발화에 그대로
-        재사용하는 사고가 난다. 캐시는 classify_intent(context_read 다음 노드,
-        같은 턴)만 읽는다.
+    주의사항
+        note_interaction 과 classify_intent 는 반응형 턴마다 is_medical_query 를
+        명시적으로 초기화한다. 이 전제가 깨지면 지난 턴 판정이 새 발화에 샌다.
     """
     text = (state.get("user_input") or "").strip()
     if not _eligible_for_lookup(state, text):
         return [], None
 
-    medical_flag: bool | None = None
+    medical_flag: bool | None = state.get("is_medical_query")
     if any(marker in text for marker in _MEDICAL_HINT_MARKERS):
-        medical_flag = _is_medical(text)
+        if medical_flag is None:
+            medical_flag = _is_medical(text)
         if medical_flag:
             return _lookup_medical_documents(text), medical_flag
 
@@ -461,7 +532,7 @@ def classify_intent(state: ConvState) -> dict:
         왕복을 늘리지 말고 생성 호출에 분류를 합쳐서 JSON 으로 받는다.
 
     누가 호출하는가
-        build.py, context_read 다음.
+        build.py, context_read 직전.
 
     반환값
         이미 알고 있으면 {}, 아니면 {"intent": ...}.
@@ -487,7 +558,9 @@ def classify_intent(state: ConvState) -> dict:
         return {"intent": "emotional"}
 
     if state.get("intent"):
-        return {}
+        # 능동/백엔드 명령은 인텐트가 이미 있지만 의료 판정은 이전 턴 값일 수 있다.
+        # context_read 가 필요하면 이번 seed 로 다시 판정하도록 명시적으로 비운다.
+        return {"is_medical_query": None}
 
     if not text:
         # 발화가 없는데 인텐트도 없다면 말벗으로 둔다. info 로 두면 있지도 않은
@@ -498,9 +571,18 @@ def classify_intent(state: ConvState) -> dict:
     if pending:
         return {"intent": pending}
 
-    # context_read 가 이미 의료 라우터를 불렀다면(S15P11E102-311) 그 결과를 넘겨
-    # 받아 재사용한다 — 같은 턴에 같은 로컬 모델을 두 번 부르지 않는다.
-    return {"intent": _classify(text, medical_hint=state.get("is_medical_query"))}
+    # 백엔드 문서 요청보다 먼저 intent 를 확정해야 "복지제도 알려줘"가
+    # includeDocuments=true 로 나간다. 의료 힌트가 있는 문장은 같은 시점에 로컬
+    # 라우터를 한 번만 불러 결과를 context_read 에 넘긴다.
+    medical_hint: bool | None = None
+    if _eligible_for_lookup(state, text) and any(
+        marker in text for marker in _MEDICAL_HINT_MARKERS
+    ):
+        medical_hint = _is_medical(text)
+    result = {"intent": _classify(text, medical_hint=medical_hint)}
+    if medical_hint is not None:
+        result["is_medical_query"] = medical_hint
+    return result
 
 
 def _pending_contract_intent(state: ConvState, text: str) -> str | None:

@@ -177,6 +177,10 @@ def note_interaction(state: ConvState) -> dict:
         #   능동 턴(스케줄러/현관/backend_command)은 영향 없다 — 그쪽은 자기 노드가
         #   이번 턴에 intent 를 새로 채워 넣는다(ingress.py 의 다른 진입점들 참고).
         "intent": None,
+        # classify_intent 가 context_read 보다 먼저 도는 현재 그래프에서 의료
+        # 판정도 매 반응형 턴 새로 계산해야 한다. 지우지 않으면 지난 턴의 병원
+        # 질문 결과가 이번 잡담의 조회 여부까지 결정한다.
+        "is_medical_query": None,
         # 안전 판정도 이번 턴에 새로 하게 한다.
         #
         # ★ 이게 없으면 T1 한 번이 영원히 이어진다 — 233 실기 폭주의 남은 반쪽

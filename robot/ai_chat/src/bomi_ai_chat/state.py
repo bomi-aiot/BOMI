@@ -125,6 +125,28 @@ class ContextCandidate(TypedDict, total=False):
     last_used_at: float
 
 
+class RetrievalStatus(TypedDict, total=False):
+    """백엔드 검색이 이번 요청에서 실제로 무엇을 했는지 나타내는 상태.
+
+    availability 는 "할 수 있는가"이고 semantic_used 는 "이번 요청에서 했는가"다.
+    둘을 한 값으로 합치면 임베딩 API 실패로 키워드 폴백한 턴도 의미 검색 성공처럼
+    보인다. 백엔드가 아직 새 요청별 필드를 보내지 않는 동안에는 모르는 키를 비워
+    둔다. 모르는 것을 False 로 쓰지 않는 것이 이 상태의 핵심이다.
+    """
+
+    source: Literal["backend", "cache", "empty"]
+    semantic_available: bool
+    document_corpus_available: bool
+    semantic_requested: bool
+    semantic_used: bool
+    fallback_reason: str
+    hit_count: int
+    latency_ms: int
+    documents_requested: bool
+    document_hit_count: int
+    notes: list[str]
+
+
 class ConvState(TypedDict, total=False):
     # ── 신원 ──
     #
@@ -268,6 +290,10 @@ class ConvState(TypedDict, total=False):
     # 백엔드에 닿지 못해 로컬 읽기 캐시에서 가져왔을 때 True.
     # 이 경우 핸들러는 사실에 대해 단정적으로 말하지 않아야 한다.
     ctx_is_cached: bool
+    # 기능 가용성과 이번 요청에서 실제 검색했는지를 분리한 상태. 백엔드 응답의
+    # availability/retrieval 을 context_read 가 정규화한다. 로봇은 벡터 검색을
+    # 직접 하지 않지만, 폴백 사실을 모른 채 자신 있게 말해서도 안 된다.
+    retrieval_status: RetrievalStatus
     # 이번 턴에 요청할 기억 개수. 비어 있으면 policy.MEMORY_TOP_K 를 쓴다.
     # 성능 저하 모드가 이 값을 낮춰 넣는다(policy.DEGRADATION_ORDER 첫 단계).
     memory_top_k: int
@@ -396,5 +422,6 @@ def initial_state(senior_id: str) -> ConvState:
         "audio_ctx": {},
         "ctx": {},
         "ctx_is_cached": False,
+        "retrieval_status": {"source": "empty", "documents_requested": False},
         "context_candidates": [],
     }
