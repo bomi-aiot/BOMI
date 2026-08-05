@@ -271,6 +271,31 @@ class ConversationContextServiceTest {
         assertThat(context.profile().preferredHospital()).isNull();
     }
 
+    // ── S15P11E102-347: 자택 주소 — "오늘 날씨 어때?"의 기본 지역 ─────────────
+
+    /** 주소가 채워지면 문맥의 프로필에 실려야 한다(완료 조건). 로봇의 지역 폴백이
+     *  정확히 이 키(address)를 읽는다 — 로봇 CLAUDE.md §30. */
+    @Test
+    void profileCarriesHomeAddress() {
+        senior.changeHomeAddress("부산광역시 부산진구");
+        appUserRepository.save(senior);
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().address()).isEqualTo("부산광역시 부산진구");
+    }
+
+    /** 주소가 없는 어르신은 지금과 동일하게(오류 없이, 로봇은 지역을 되물으며)
+     *  동작한다(완료 조건). 모르는 값을 지어내지 않는다. */
+    @Test
+    void missingHomeAddressYieldsNullWithoutError() {
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().address()).isNull();
+    }
+
     // ── S15P11E102-253: 상위 동의 없이는 질문 자체를 만들지 않는다 ────────────
 
     /** 명시적으로 GRANTED 인 경우만 로봇이 동의 질문을 만들어도 된다고 본다(완료 조건). */
