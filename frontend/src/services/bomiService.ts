@@ -22,7 +22,11 @@ import {
   type MedicationDto,
   type MedicationResponseDto,
 } from "./mappers/medication";
-import { mapMemory, type MemoryDto } from "./mappers/memory";
+import {
+  isGuardianVisibleMemory,
+  mapMemory,
+  type MemoryDto,
+} from "./mappers/memory";
 import {
   mapElderProfile,
   type ElderProfileDto,
@@ -57,6 +61,8 @@ export const API_BASE_URL = (
 ).replace(/\/+$/, "");
 
 export const USE_MOCK_API = import.meta.env.VITE_USE_MOCK_API !== "false";
+export const GUARDIAN_API_AUTH_READY =
+  import.meta.env.VITE_GUARDIAN_API_AUTH_READY === "true";
 
 export const API_ENDPOINTS = {
   dashboard: `${API_BASE_URL}/v1/guardian/dashboard`,
@@ -81,6 +87,28 @@ const createId = (prefix: string): string => {
 };
 
 const nowIso = (): string => new Date().toISOString();
+
+type MockScenario =
+  | "default"
+  | "urgent"
+  | "alert-error"
+  | "empty"
+  | "unknown"
+  | "stale"
+  | "error";
+
+const readMockScenario = (): MockScenario => {
+  if (typeof window === "undefined") return "default";
+  const value = new URLSearchParams(window.location.search).get("demoState");
+  return value === "urgent" ||
+    value === "alert-error" ||
+    value === "empty" ||
+    value === "unknown" ||
+    value === "stale" ||
+    value === "error"
+    ? value
+    : "default";
+};
 
 const withLatency = <T>(factory: () => T): Promise<T> =>
   new Promise<T>((resolve, reject) => {
@@ -150,9 +178,22 @@ const isProfilePreferenceType = (
   memoryType === "HOBBY" ||
   memoryType === "DAILY_ROUTINE";
 
+const isGuardianVisibleActivity = (activity: ActivitySummary): boolean =>
+  activity.visibility === "SHARED_WITH_PRIMARY" ||
+  activity.visibility === "SHARED_WITH_GUARDIANS";
+
+export type BomiDataKey =
+  | "dashboard"
+  | "elderProfile"
+  | "conversationPreferences"
+  | "confirmationRequests"
+  | "medications"
+  | "medicationResponses"
+  | "schedules";
+
 export interface BomiInitialData {
-  dashboard: HomeDashboardSummary;
-  elderProfile: ElderProfile;
+  dashboard: HomeDashboardSummary | null;
+  elderProfile: ElderProfile | null;
   conversationPreferences: ConversationPreference[];
   confirmationRequests: ConfirmationRequest[];
   medications: Medication[];
@@ -160,6 +201,7 @@ export interface BomiInitialData {
   schedules: Schedule[];
   robotStatus: RobotStatus;
   activities: ActivitySummary[];
+  errors?: Partial<Record<BomiDataKey, string>>;
 }
 
 export interface BomiService {
@@ -218,6 +260,7 @@ class MockBomiService implements BomiService {
       this.conversationPreferences
         .filter(
           (preference) =>
+            isGuardianVisibleMemory(preference) &&
             isProfilePreferenceType(preference.memoryType) &&
             preference.lifecycleStatus !== "DELETED",
         )
@@ -484,6 +527,10 @@ class MockBomiService implements BomiService {
   }
 
   private buildDashboard(): HomeDashboardSummary {
+    const scenario = readMockScenario();
+    if (scenario === "error") {
+      throw new Error("예시 오류 상태입니다. 정보를 다시 확인해 주세요.");
+    }
     const pendingRequests = this.confirmationRequests.filter(
       (request) => request.status === "PENDING",
     );
@@ -513,13 +560,12 @@ class MockBomiService implements BomiService {
       },
     );
 
-    return {
+    const result: HomeDashboardSummary = {
       ...clone(mockDashboardSummary),
       elder: {
         ...clone(mockDashboardSummary.elder),
         id: this.elderProfile.elder.id,
         displayName: this.elderProfile.elder.preferredName,
-        lastCheckedAt: this.elderProfile.elder.lastCheckedAt,
       },
       robot: clone(this.robotStatus),
       todaySchedules: this.schedules.filter(
@@ -532,9 +578,49 @@ class MockBomiService implements BomiService {
       medicationProgress: progress,
       pendingConfirmationCount: pendingRequests.length,
       confirmationRequests: clone(pendingRequests),
-      recentActivities: clone(this.activities),
+      recentActivities: clone(
+        this.activities.filter(isGuardianVisibleActivity),
+      ),
       generatedAt: nowIso(),
     };
+
+    if (scenario === "urgent") {
+      result.safetyAlerts = [
+        {
+          id: "example-urgent-alert",
+          message: "보미의 안전 확인에 응답이 없어 보호자 알림이 도착했어요.",
+          occurredAt: "2026-08-06T00:20:00+09:00",
+          status: "OPEN",
+        },
+      ];
+    } else if (scenario === "alert-error") {
+      result.safetyAlerts = null;
+    } else if (scenario === "empty") {
+      result.safetyAlerts = [];
+      result.todaySchedules = [];
+      result.medicationResponses = [];
+      result.medicationProgress = {
+        total: 0,
+        confirmed: 0,
+        noResponse: 0,
+        upcoming: 0,
+        missed: 0,
+      };
+      result.pendingConfirmationCount = 0;
+      result.confirmationRequests = [];
+      result.recentActivities = [];
+    } else if (scenario === "unknown") {
+      result.robot.currentMode = undefined;
+      result.homeEnvironment = {};
+      result.elder.lastObservedAt = undefined;
+    } else if (scenario === "stale") {
+      const staleAt = "2026-07-30T10:33:20+09:00";
+      result.elder.lastObservedAt = staleAt;
+      result.robot.ambientObservedAt = staleAt;
+      result.homeEnvironment.lastObservedAt = staleAt;
+    }
+
+    return result;
   }
 
   getInitialData(): Promise<BomiInitialData> {
@@ -544,7 +630,7 @@ class MockBomiService implements BomiService {
         dashboard: this.buildDashboard(),
         elderProfile: this.elderProfile,
         conversationPreferences: this.conversationPreferences.filter(
-          (preference) => preference.lifecycleStatus !== "DELETED",
+          isGuardianVisibleMemory,
         ),
         confirmationRequests: this.confirmationRequests,
         medications: this.medications.filter(
@@ -557,7 +643,7 @@ class MockBomiService implements BomiService {
         ),
         schedules: this.schedules,
         robotStatus: this.robotStatus,
-        activities: this.activities,
+        activities: this.activities.filter(isGuardianVisibleActivity),
       };
     });
   }
@@ -592,9 +678,7 @@ class MockBomiService implements BomiService {
 
   getConversationPreferences(): Promise<ConversationPreference[]> {
     return withLatency(() =>
-      this.conversationPreferences.filter(
-        (preference) => preference.lifecycleStatus !== "DELETED",
-      ),
+      this.conversationPreferences.filter(isGuardianVisibleMemory),
     );
   }
 
@@ -726,6 +810,12 @@ class MockBomiService implements BomiService {
       );
       if (existing.status !== "PENDING") {
         throw new Error("이미 처리된 확인 요청입니다.");
+      }
+      if (resolution === "REASK" && existing.canRequestRecheck === false) {
+        throw new Error("현재 상태에서는 다시 확인을 요청할 수 없습니다.");
+      }
+      if (resolution !== "REASK" && existing.canResolve === false) {
+        throw new Error("필요한 확인 절차가 끝나기 전에는 이 정보를 확정할 수 없습니다.");
       }
       const proposedValue =
         resolution === "EDIT" && options?.editedValue !== undefined
@@ -1050,7 +1140,7 @@ class MockBomiService implements BomiService {
         dashboard: this.buildDashboard(),
         elderProfile: this.elderProfile,
         conversationPreferences: this.conversationPreferences.filter(
-          (preference) => preference.lifecycleStatus !== "DELETED",
+          isGuardianVisibleMemory,
         ),
         confirmationRequests: this.confirmationRequests,
         medications: this.medications.filter(
@@ -1063,35 +1153,75 @@ class MockBomiService implements BomiService {
         ),
         schedules: this.schedules,
         robotStatus: this.robotStatus,
-        activities: this.activities,
+        activities: this.activities.filter(isGuardianVisibleActivity),
       };
     });
   }
 }
 
-/**
- * 실제 API 연동 서비스. P0 두 화면(대시보드·확인요청)만 실제 서버를 호출하고,
- * 아직 백엔드가 없는 나머지(프로필·복약·일정 등)는 MockBomiService 동작을 그대로 상속한다.
- */
-class HttpBomiService extends MockBomiService {
+const unsupportedRealMutation = (label: string): never => {
+  throw new Error(`${label} 기능은 아직 보호자 API와 연결되지 않았습니다.`);
+};
+
+const assertGuardianApiReady = (): void => {
+  if (!GUARDIAN_API_AUTH_READY) {
+    throw new Error(
+      "인증된 보호자와 어르신 관계를 확인하는 API 계약이 준비되지 않아 실제 데이터를 조회하지 않았습니다.",
+    );
+  }
+};
+
+/** 실제 API 연동 서비스. mock 상태를 생성하거나 상속하지 않는다. */
+class HttpBomiService implements BomiService {
   async getDashboard(): Promise<HomeDashboardSummary> {
+    assertGuardianApiReady();
     const dto = await httpGet<DashboardDto>(API_ENDPOINTS.dashboard);
     return mapDashboard(dto);
   }
 
   async getElderProfile(): Promise<ElderProfile> {
+    assertGuardianApiReady();
     const dto = await httpGet<ElderProfileDto>(API_ENDPOINTS.elderProfile);
     return mapElderProfile(dto);
   }
 
   async getConversationPreferences(): Promise<ConversationPreference[]> {
+    assertGuardianApiReady();
     const dtos = await httpGet<MemoryDto[]>(
       API_ENDPOINTS.conversationPreferences,
     );
-    return dtos.map(mapMemory);
+    return dtos.map(mapMemory).filter(isGuardianVisibleMemory);
+  }
+
+  async saveElderProfile(_profile: ElderProfile): Promise<ElderProfile> {
+    return unsupportedRealMutation("어르신 설정 저장");
+  }
+
+  async createConversationPreference(
+    _input: CreateConversationPreferenceInput,
+  ): Promise<ConversationPreference> {
+    return unsupportedRealMutation("대화 정보 추가");
+  }
+
+  async updateConversationPreference(
+    _id: string,
+    _input: UpdateConversationPreferenceInput,
+  ): Promise<ConversationPreference> {
+    return unsupportedRealMutation("대화 정보 수정");
+  }
+
+  async deleteConversationPreference(_id: string): Promise<string> {
+    return unsupportedRealMutation("대화 정보 삭제");
+  }
+
+  async toggleConversationPreference(
+    _id: string,
+  ): Promise<ConversationPreference> {
+    return unsupportedRealMutation("대화 정보 사용 설정");
   }
 
   async getConfirmationRequests(): Promise<ConfirmationRequest[]> {
+    assertGuardianApiReady();
     const dtos = await httpGet<FactCandidateDto[]>(
       API_ENDPOINTS.confirmationRequests,
     );
@@ -1106,6 +1236,7 @@ class HttpBomiService extends MockBomiService {
       note?: string;
     },
   ): Promise<ConfirmationRequest> {
+    assertGuardianApiReady();
     const dto = await httpPost<FactCandidateDto>(
       `${API_ENDPOINTS.confirmationRequests}/${id}/resolve`,
       {
@@ -1118,6 +1249,7 @@ class HttpBomiService extends MockBomiService {
   }
 
   async undoConfirmationResolution(id: string): Promise<ConfirmationRequest> {
+    assertGuardianApiReady();
     const dto = await httpPost<FactCandidateDto>(
       `${API_ENDPOINTS.confirmationRequests}/${id}/undo`,
     );
@@ -1125,16 +1257,25 @@ class HttpBomiService extends MockBomiService {
   }
 
   async getSchedules(): Promise<Schedule[]> {
+    assertGuardianApiReady();
     const dtos = await httpGet<ScheduleDto[]>(API_ENDPOINTS.schedules);
-    return dtos.map(mapSchedule);
+    return dtos.flatMap((dto) => {
+      try {
+        return [mapSchedule(dto)];
+      } catch {
+        return [];
+      }
+    });
   }
 
   async getMedications(): Promise<Medication[]> {
+    assertGuardianApiReady();
     const dtos = await httpGet<MedicationDto[]>(API_ENDPOINTS.medications);
     return dtos.map(mapMedication);
   }
 
   async getMedicationResponses(): Promise<MedicationResponse[]> {
+    assertGuardianApiReady();
     const dtos = await httpGet<MedicationResponseDto[]>(
       API_ENDPOINTS.medicationResponses,
     );
@@ -1142,6 +1283,7 @@ class HttpBomiService extends MockBomiService {
   }
 
   async createMedication(input: CreateMedicationInput): Promise<Medication> {
+    assertGuardianApiReady();
     const dto = await httpPost<MedicationDto>(API_ENDPOINTS.medications, input);
     return mapMedication(dto);
   }
@@ -1150,6 +1292,7 @@ class HttpBomiService extends MockBomiService {
     id: string,
     input: UpdateMedicationInput,
   ): Promise<Medication> {
+    assertGuardianApiReady();
     const dto = await httpPut<MedicationDto>(
       `${API_ENDPOINTS.medications}/${id}`,
       input,
@@ -1158,6 +1301,7 @@ class HttpBomiService extends MockBomiService {
   }
 
   async toggleMedicationStatus(id: string): Promise<Medication> {
+    assertGuardianApiReady();
     const dto = await httpPost<MedicationDto>(
       `${API_ENDPOINTS.medications}/${id}/toggle-status`,
     );
@@ -1165,6 +1309,7 @@ class HttpBomiService extends MockBomiService {
   }
 
   async toggleMedicationReminder(id: string): Promise<Medication> {
+    assertGuardianApiReady();
     const dto = await httpPost<MedicationDto>(
       `${API_ENDPOINTS.medications}/${id}/toggle-reminder`,
     );
@@ -1172,6 +1317,7 @@ class HttpBomiService extends MockBomiService {
   }
 
   async deleteMedication(id: string): Promise<string> {
+    assertGuardianApiReady();
     const res = await httpDelete<{ id: string }>(
       `${API_ENDPOINTS.medications}/${id}`,
     );
@@ -1179,6 +1325,7 @@ class HttpBomiService extends MockBomiService {
   }
 
   async createSchedule(input: CreateScheduleInput): Promise<Schedule> {
+    assertGuardianApiReady();
     const dto = await httpPost<ScheduleDto>(API_ENDPOINTS.schedules, input);
     return mapSchedule(dto);
   }
@@ -1187,6 +1334,7 @@ class HttpBomiService extends MockBomiService {
     id: string,
     input: UpdateScheduleInput,
   ): Promise<Schedule> {
+    assertGuardianApiReady();
     const dto = await httpPut<ScheduleDto>(
       `${API_ENDPOINTS.schedules}/${id}`,
       input,
@@ -1195,16 +1343,7 @@ class HttpBomiService extends MockBomiService {
   }
 
   async getInitialData(): Promise<BomiInitialData> {
-    const base = await super.getInitialData();
-    const [
-      dashboard,
-      confirmationRequests,
-      elderProfile,
-      conversationPreferences,
-      schedules,
-      medications,
-      medicationResponses,
-    ] = await Promise.all([
+    const results = await Promise.allSettled([
       this.getDashboard(),
       this.getConfirmationRequests(),
       this.getElderProfile(),
@@ -1213,8 +1352,39 @@ class HttpBomiService extends MockBomiService {
       this.getMedications(),
       this.getMedicationResponses(),
     ]);
+    const errors: Partial<Record<BomiDataKey, string>> = {};
+    const readResult = <T,>(
+      result: PromiseSettledResult<T>,
+      key: BomiDataKey,
+      fallback: T,
+    ): T => {
+      if (result.status === "fulfilled") return result.value;
+      errors[key] =
+        result.reason instanceof Error
+          ? result.reason.message
+          : "정보를 불러오지 못했습니다.";
+      return fallback;
+    };
+    const dashboard = readResult(results[0], "dashboard", null);
+    const confirmationRequests = readResult(
+      results[1],
+      "confirmationRequests",
+      [],
+    );
+    const elderProfile = readResult(results[2], "elderProfile", null);
+    const conversationPreferences = readResult(
+      results[3],
+      "conversationPreferences",
+      [],
+    );
+    const schedules = readResult(results[4], "schedules", []);
+    const medications = readResult(results[5], "medications", []);
+    const medicationResponses = readResult(
+      results[6],
+      "medicationResponses",
+      [],
+    );
     return {
-      ...base,
       dashboard,
       confirmationRequests,
       elderProfile,
@@ -1222,7 +1392,18 @@ class HttpBomiService extends MockBomiService {
       schedules,
       medications,
       medicationResponses,
+      robotStatus: dashboard?.robot ?? {
+        id: "",
+        elderId: "",
+        registrationActive: false,
+      },
+      activities: dashboard?.recentActivities ?? [],
+      errors,
     };
+  }
+
+  async resetMockData(): Promise<BomiInitialData> {
+    return unsupportedRealMutation("예시 데이터 초기화");
   }
 }
 

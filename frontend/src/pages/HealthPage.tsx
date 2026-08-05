@@ -39,11 +39,12 @@ const emptyMedicationForm: MedicationFormValue = {
 }
 
 const responseLabel: Record<MedicationResponseStatus, string> = {
-  CONFIRMED: '복용 확인',
-  NO_RESPONSE: '응답 없음',
-  UPCOMING: '예정',
-  MISSED: '미복용',
-  DECLINED: '복용 안 함',
+  CONFIRMED: '복용했다고 응답했어요',
+  NO_RESPONSE: '아직 응답이 확인되지 않았어요',
+  UPCOMING: '복용 예정이에요',
+  MISSED: '아직 응답이 확인되지 않았어요',
+  DECLINED: '복용하지 않았다고 응답했어요',
+  UNKNOWN: '응답 상태를 확인 중이에요',
 }
 
 const responseTone: Record<
@@ -53,8 +54,17 @@ const responseTone: Record<
   CONFIRMED: 'success',
   NO_RESPONSE: 'warning',
   UPCOMING: 'info',
-  MISSED: 'danger',
+  MISSED: 'warning',
   DECLINED: 'neutral',
+  UNKNOWN: 'neutral',
+}
+
+const medicationSourceLabel: Record<Medication['sourceType'], string> = {
+  USER: '어르신 입력',
+  GUARDIAN: '보호자 입력',
+  ROBOT: '로봇 기록',
+  AI: 'AI 제안',
+  SYSTEM: '출처 확인 중',
 }
 
 export function HealthPage({ onNavigate }: HealthPageProps) {
@@ -65,12 +75,16 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
     isLoading,
     pendingActionId,
     error,
+    dataErrors,
     refresh,
     addMedication,
     updateMedication,
     toggleMedicationReminder,
     deleteMedication,
   } = useBomi()
+  const profileError = dataErrors.elderProfile ?? error
+  const medicationDataError = dataErrors.medications
+  const responseDataError = dataErrors.medicationResponses
   const [medicationModalOpen, setMedicationModalOpen] = useState(false)
   const [editingMedication, setEditingMedication] = useState<Medication | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Medication | null>(null)
@@ -83,6 +97,16 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
 
   const activeMedicationCount = useMemo(
     () => medications.filter((medication) => medication.status === 'ACTIVE').length,
+    [medications],
+  )
+  const activeReminderCount = useMemo(
+    () =>
+      medications.filter(
+        (medication) =>
+          medication.status === 'ACTIVE' &&
+          medication.reminderEnabled &&
+          medication.schedules.some((schedule) => schedule.isActive),
+      ).length,
     [medications],
   )
 
@@ -159,8 +183,8 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
     return <LoadingState label="복약 정보를 불러오는 중입니다" rows={6} />
   }
 
-  if (error && !elderProfile) {
-    return <ErrorState description={error} onRetry={() => void refresh()} />
+  if (profileError && !elderProfile) {
+    return <ErrorState description={profileError} onRetry={() => void refresh()} />
   }
 
   if (!elderProfile) {
@@ -192,34 +216,40 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
 
       <section className="summary-grid" aria-label="복약 현황 요약">
         <article className="summary-card summary-card--green">
-          <p className="summary-card__label">현재 복용 중</p>
-          <strong className="summary-card__value">{activeMedicationCount}개</strong>
-          <span className="summary-card__detail">보호자가 활성화한 복약 정보</span>
+          <p className="summary-card__label">활성 복약 정보</p>
+          <strong className="summary-card__value">{medicationDataError ? '—' : `${activeMedicationCount}개`}</strong>
+          <span className="summary-card__detail">{medicationDataError ? '복약 정보를 불러오지 못했어요' : '현재 관리 중으로 등록된 정보'}</span>
         </article>
         <article className="summary-card summary-card--blue">
-          <p className="summary-card__label">오늘 복용 확인</p>
+          <p className="summary-card__label">오늘 응답 확인</p>
           <strong className="summary-card__value">
-            {medicationResponses.filter((item) => item.status === 'CONFIRMED').length}회
+            {responseDataError ? '—' : `${medicationResponses.filter((item) => item.status === 'CONFIRMED').length}회`}
           </strong>
-          <span className="summary-card__detail">어르신 응답으로 확인된 횟수</span>
+          <span className="summary-card__detail">{responseDataError ? '복약 응답을 불러오지 못했어요' : '로봇이 받은 응답 기록'}</span>
         </article>
         <article className="summary-card summary-card--orange">
           <p className="summary-card__label">응답 없음</p>
           <strong className="summary-card__value">
-            {medicationResponses.filter((item) => item.status === 'NO_RESPONSE').length}회
+            {responseDataError ? '—' : `${medicationResponses.filter((item) => item.status === 'NO_RESPONSE').length}회`}
           </strong>
-          <span className="summary-card__detail">보호자 확인이 필요한 알림</span>
+          <span className="summary-card__detail">{responseDataError ? '복약 응답을 불러오지 못했어요' : '응답이 아직 확인되지 않은 기록'}</span>
         </article>
         <article className="summary-card summary-card--lavender">
           <p className="summary-card__label">알림 켜짐</p>
           <strong className="summary-card__value">
-            {medications.filter((item) => item.reminderEnabled).length}개
+            {medicationDataError ? '—' : `${activeReminderCount}개`}
           </strong>
-          <span className="summary-card__detail">보미가 복약 시간에 음성 안내</span>
+          <span className="summary-card__detail">활성 복약 중 알림이 설정된 항목</span>
         </article>
       </section>
 
-      {medications.length > 0 ? (
+      {medicationDataError ? (
+        <ErrorState
+          title="복약 정보를 불러오지 못했어요"
+          description={medicationDataError}
+          onRetry={() => void refresh()}
+        />
+      ) : medications.length > 0 ? (
         <section className="medication-grid" aria-label="등록된 복약 정보">
           {medications.map((medication) => (
             <article
@@ -231,10 +261,22 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
               <div className="medication-card__header">
                 <div>
                   <Badge
-                    tone={medication.status === 'ACTIVE' ? 'success' : 'neutral'}
+                    tone={
+                      medication.status === 'ACTIVE'
+                        ? 'success'
+                        : medication.status === 'UNKNOWN'
+                          ? 'warning'
+                          : 'neutral'
+                    }
                     dot
                   >
-                    {medication.status === 'ACTIVE' ? '복용 중' : '종료'}
+                    {medication.status === 'ACTIVE'
+                      ? '복약 관리 중'
+                      : medication.status === 'PAUSED'
+                        ? '일시 중지'
+                        : medication.status === 'ENDED'
+                          ? '종료'
+                          : '상태 확인 중'}
                   </Badge>
                   <h2 className="medication-card__title">{medication.name}</h2>
                 </div>
@@ -263,10 +305,17 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
                     <span key={`${schedule.id}-${time}`}>{time} 복용</span>
                   )),
                 )}
-                <span>{medication.reminderEnabled ? '알림 켜짐' : '알림 꺼짐'}</span>
+                <span>
+                  {medication.status !== 'ACTIVE'
+                    ? '알림 동작 안 함'
+                    : medication.reminderEnabled &&
+                        medication.schedules.some((schedule) => schedule.isActive)
+                      ? '알림 설정됨'
+                      : '알림 꺼짐'}
+                </span>
               </div>
               <div className="medication-card__meta">
-                <span>출처: 보호자 입력</span>
+                <span>출처: {medicationSourceLabel[medication.sourceType]}</span>
                 <span>수정: {formatDate(medication.updatedAt)}</span>
               </div>
               <div className="medication-card__actions">
@@ -309,31 +358,41 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
         heading="오늘의 복약 응답"
         description="응답 없음은 미복용을 의미하지 않습니다. 필요할 때 어르신께 직접 확인해 주세요."
       >
-        {medicationResponses.length > 0 ? (
-          <table className="medication-response-table">
-            <thead>
-              <tr>
-                <th scope="col">예정 시간</th>
-                <th scope="col">응답 내용</th>
-                <th scope="col">응답 시간</th>
-                <th scope="col">상태</th>
-              </tr>
-            </thead>
-            <tbody>
-              {medicationResponses.map((response) => (
-                <tr key={response.id}>
-                  <td>{formatTime(response.scheduledAt)}</td>
-                  <td>{response.responseText ?? '아직 응답이 없습니다.'}</td>
-                  <td>{response.respondedAt ? formatTime(response.respondedAt) : '—'}</td>
-                  <td>
-                    <Badge tone={responseTone[response.status]}>
-                      {responseLabel[response.status]}
-                    </Badge>
-                  </td>
+        {responseDataError ? (
+          <ErrorState compact description={responseDataError} onRetry={() => void refresh()} />
+        ) : medicationResponses.length > 0 ? (
+          <div
+            className="medication-table-scroll"
+            role="region"
+            aria-label="오늘의 복약 응답 표"
+            tabIndex={0}
+          >
+            <table className="medication-response-table">
+              <caption className="sr-only">복약별 예정 시간과 어르신 응답</caption>
+              <thead>
+                <tr>
+                  <th scope="col">복약</th>
+                  <th scope="col">예정 시간</th>
+                  <th scope="col">응답 상태</th>
+                  <th scope="col">응답 시간</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {medicationResponses.map((response) => (
+                  <tr key={response.id}>
+                    <td>{medications.find((item) => item.id === response.medicationId)?.name ?? '복약 정보 미확인'}</td>
+                    <td>{formatTime(response.scheduledAt)}</td>
+                    <td>
+                      <Badge tone={responseTone[response.status]}>
+                        {responseLabel[response.status]}
+                      </Badge>
+                    </td>
+                    <td>{response.respondedAt ? formatTime(response.respondedAt) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <EmptyState compact title="오늘 전송된 복약 알림이 없습니다" />
         )}

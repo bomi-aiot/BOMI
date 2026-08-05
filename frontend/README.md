@@ -27,7 +27,10 @@ Docker 이미지의 builder 단계에서 `npm ci`와 `npm run build`를 수행�
 
 운영 도메인 `i15e102.p.ssafy.io`에서는 같은 출처의 `/api`와 `/ws`를 사용합니다.
 백엔드 연동 시 `VITE_USE_MOCK_API=false`로 변경하고 서비스 계층의 계약을 실제 API에
-연결합니다. 서버 주소를 코드에 직접 넣지 않도록 환경변수를 사용합니다.
+연결합니다. 서버 주소를 코드에 직접 넣지 않도록 환경변수를 사용합니다. 현재 백엔드에는
+인증된 보호자-어르신 관계 경계가 없으므로 `VITE_GUARDIAN_API_AUTH_READY=false`가
+안전한 기본값입니다. 서버에서 모든 Guardian API의 권한 검증이 구현·검증된 뒤에만 이
+값을 `true`로 빌드해야 합니다. 그렇지 않으면 실제 데이터 조회를 명시적으로 중단합니다.
 
 현재 API 경로는 `src/services/bomiService.ts`에 한곳으로 모아 둔 임시 계약입니다.
 프론트 내부는 camelCase를 사용하며, 실제 PostgreSQL 물리 컬럼의 snake_case 변환은

@@ -2,7 +2,6 @@ import {
   useMemo,
   useState,
   type ChangeEvent,
-  type FormEvent,
 } from 'react'
 import {
   Badge,
@@ -12,7 +11,6 @@ import {
   EmptyState,
   ErrorState,
   LoadingState,
-  Modal,
   PageHeader,
   Toast,
 } from '../components'
@@ -67,6 +65,7 @@ const STATUS_LABELS: Record<ConfirmationRequestStatus, string> = {
   EDITED: '수정 후 확정',
   REJECTED: '반영 안 함',
   REASK_REQUESTED: '다시 질문 요청',
+  EXPIRED: '확인 기한 종료',
 }
 
 const STATUS_TONES: Record<
@@ -78,10 +77,11 @@ const STATUS_TONES: Record<
   EDITED: 'success',
   REJECTED: 'neutral',
   REASK_REQUESTED: 'info',
+  EXPIRED: 'neutral',
 }
 
 const RISK_LABELS: Record<RiskLevel, string> = {
-  NORMAL: '정상',
+  NORMAL: '일반',
   SENSITIVE: '민감',
   HIGH: '높음',
 }
@@ -112,8 +112,21 @@ const VALUE_KEY_LABELS: Record<string, string> = {
   startsAt: '일시',
   medicationName: '약 이름',
   localTime: '복용 시각',
+  localTimes: '복용 시각',
   statusLevel: '상태',
 }
+
+const WAITING_REASON_COPY: Record<
+  NonNullable<ConfirmationRequest['waitingReason']>,
+  string
+> = {
+  CLARIFICATION: '제안 내용이 충분하지 않아 바로 확정할 수 없어요. 어르신께 다시 확인해 주세요.',
+  COORDINATION: '조율이 완료될 때까지 바로 확정할 수 없어요. 필요한 사람에게 다시 확인해 주세요.',
+  CAPTURED: '정보 후보를 정리 중이에요. 확정 가능한 상태가 될 때까지 기다려 주세요.',
+  EXPIRED: '확인 기한이 지나 자동 종료됐어요. 보호자가 반영하지 않은 것으로 기록하지 않았습니다.',
+}
+
+const VISIBLE_VALUE_KEYS = new Set(Object.keys(VALUE_KEY_LABELS))
 
 const VALUE_ENUM_LABELS: Record<string, string> = {
   HOBBY: '취미·관심사',
@@ -121,7 +134,7 @@ const VALUE_ENUM_LABELS: Record<string, string> = {
   APPOINTMENT: '병원 일정',
   PERSONAL_SCHEDULE: '개인 일정',
   HEALTH_OBSERVATION: '건강 관찰',
-  NORMAL: '정상',
+  NORMAL: '특이 상태 미표기 · 확인 전',
   ATTENTION: '관찰 필요',
   DANGER: '위험',
 }
@@ -167,34 +180,13 @@ const messageFromError = (error: unknown): string =>
     ? error.message
     : '요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'
 
-const isStructuredValue = (value: unknown): value is StructuredValue => {
-  if (
-    value === null ||
-    typeof value === 'string' ||
-    typeof value === 'number' ||
-    typeof value === 'boolean'
-  ) {
-    return true
-  }
-
-  if (Array.isArray(value)) {
-    return value.every(isStructuredValue)
-  }
-
-  if (typeof value === 'object') {
-    return Object.values(value).every(isStructuredValue)
-  }
-
-  return false
-}
-
 const formatScalarValue = (key: string, value: StructuredValue): string => {
   if (value === null) return '미입력'
   if (Array.isArray(value)) {
     return value.map((item) => formatScalarValue(key, item)).join(', ')
   }
   if (typeof value === 'object') {
-    return JSON.stringify(value)
+    return '표시할 수 없는 형식'
   }
   if (typeof value === 'boolean') return value ? '예' : '아니요'
 
@@ -226,12 +218,14 @@ function StructuredValuePanel({
       <h3 className="value-panel__title">{label}</h3>
       {isRecord ? (
         <dl className="value-panel__list">
-          {Object.entries(value).map(([key, item]) => (
+          {Object.entries(value)
+            .filter(([key]) => VISIBLE_VALUE_KEYS.has(key))
+            .map(([key, item]) => (
             <div key={key}>
               <dt>{VALUE_KEY_LABELS[key] ?? key}</dt>
               <dd>{formatScalarValue(key, item)}</dd>
             </div>
-          ))}
+            ))}
         </dl>
       ) : (
         <p>{formatScalarValue('value', value)}</p>
@@ -263,11 +257,13 @@ export function ConfirmationRequestsPage() {
     confirmationRequests,
     isLoading,
     error,
+    dataErrors,
     pendingActionId,
     refresh,
     resolveConfirmationRequest,
     undoConfirmationRequest,
   } = useBomi()
+  const pageError = dataErrors.confirmationRequests ?? error
 
   const [kindFilter, setKindFilter] = useState<KindFilter>('ALL')
   const [statusFilter, setStatusFilter] =
@@ -275,10 +271,6 @@ export function ConfirmationRequestsPage() {
   const [resolutionDialog, setResolutionDialog] =
     useState<ResolutionDialogState | null>(null)
   const [resolutionNote, setResolutionNote] = useState('')
-  const [editTarget, setEditTarget] =
-    useState<ConfirmationRequest | null>(null)
-  const [editedValue, setEditedValue] = useState('')
-  const [editNote, setEditNote] = useState('')
   const [dialogError, setDialogError] = useState<string | null>(null)
   const [undoToast, setUndoToast] = useState<UndoToastState>({
     open: false,
@@ -345,26 +337,6 @@ export function ConfirmationRequestsPage() {
     setDialogError(null)
   }
 
-  const openEditDialog = (request: ConfirmationRequest): void => {
-    setEditTarget(request)
-    setEditedValue(JSON.stringify(request.proposedValue, null, 2))
-    setEditNote('')
-    setDialogError(null)
-  }
-
-  const closeEditDialog = (): void => {
-    if (
-      editTarget &&
-      pendingActionId === `confirmation-${editTarget.id}`
-    ) {
-      return
-    }
-    setEditTarget(null)
-    setEditedValue('')
-    setEditNote('')
-    setDialogError(null)
-  }
-
   const handleResolution = async (): Promise<void> => {
     if (!resolutionDialog) return
 
@@ -381,43 +353,6 @@ export function ConfirmationRequestsPage() {
         message: copy.completedMessage,
         tone: 'success',
         requestId: request.id,
-      })
-    } catch (requestError: unknown) {
-      setDialogError(messageFromError(requestError))
-    }
-  }
-
-  const handleEdit = async (
-    event: FormEvent<HTMLFormElement>,
-  ): Promise<void> => {
-    event.preventDefault()
-    if (!editTarget) return
-
-    let parsedValue: unknown
-    try {
-      parsedValue = JSON.parse(editedValue) as unknown
-    } catch {
-      setDialogError('수정 내용의 JSON 형식을 확인해 주세요.')
-      return
-    }
-
-    if (!isStructuredValue(parsedValue)) {
-      setDialogError('문자, 숫자, 참·거짓, 목록 또는 객체만 입력할 수 있습니다.')
-      return
-    }
-
-    try {
-      await resolveConfirmationRequest(editTarget.id, 'EDIT', {
-        editedValue: parsedValue,
-        note: editNote.trim() || undefined,
-      })
-      const requestId = editTarget.id
-      setEditTarget(null)
-      setUndoToast({
-        open: true,
-        message: '수정한 내용으로 확정했습니다.',
-        tone: 'success',
-        requestId,
       })
     } catch (requestError: unknown) {
       setDialogError(messageFromError(requestError))
@@ -447,11 +382,11 @@ export function ConfirmationRequestsPage() {
     )
   }
 
-  if (error && confirmationRequests.length === 0) {
+  if (pageError && confirmationRequests.length === 0) {
     return (
       <ErrorState
         title="AI 확인 요청을 불러오지 못했습니다"
-        description={error}
+        description={pageError}
         onRetry={() => void refresh()}
       />
     )
@@ -529,9 +464,9 @@ export function ConfirmationRequestsPage() {
         </div>
       </Card>
 
-      {error ? (
+      {pageError ? (
         <div className="page-inline-alert" role="alert">
-          <span>{error}</span>
+          <span>{pageError}</span>
           <Button variant="quiet" size="small" onClick={() => void refresh()}>
             다시 불러오기
           </Button>
@@ -569,6 +504,10 @@ export function ConfirmationRequestsPage() {
         <ul className="confirmation-list" aria-label="AI 확인 요청 목록">
           {filteredRequests.map((request) => {
             const isPending = request.status === 'PENDING'
+            const canDirectlyResolve =
+              request.canResolve === true &&
+              request.riskLevel !== 'HIGH' &&
+              request.coordinationStatus === 'NOT_REQUIRED'
             const isProcessing =
               pendingActionId === `confirmation-${request.id}`
             const showCoordination =
@@ -604,12 +543,12 @@ export function ConfirmationRequestsPage() {
                   <p className="confirmation-card__summary">
                     {request.summary}
                   </p>
-                  <blockquote className="confirmation-evidence">
+                  <aside className="confirmation-evidence" role="note">
                     <span className="confirmation-evidence__label">
-                      판단 근거
+                      확인 배경
                     </span>
                     <p>{request.evidence}</p>
-                  </blockquote>
+                  </aside>
 
                   <div
                     className={`confirmation-comparison${
@@ -654,46 +593,50 @@ export function ConfirmationRequestsPage() {
 
                   {isPending ? (
                     <div className="confirmation-card__actions">
-                      <Button
-                        size="small"
-                        onClick={() =>
-                          openResolutionDialog(request, 'CONFIRM')
-                        }
-                        isLoading={isProcessing}
-                        disabled={pendingActionId !== null && !isProcessing}
-                      >
-                        {request.kind === 'MEDICATION_CONFLICT'
-                          ? '확인 결과 저장'
-                          : '확정'}
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        size="small"
-                        onClick={() => openEditDialog(request)}
-                        disabled={pendingActionId !== null}
-                      >
-                        내용 수정
-                      </Button>
-                      <Button
-                        variant="quiet"
-                        size="small"
-                        onClick={() =>
-                          openResolutionDialog(request, 'REASK')
-                        }
-                        disabled={pendingActionId !== null}
-                      >
-                        다시 질문
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="small"
-                        onClick={() =>
-                          openResolutionDialog(request, 'REJECT')
-                        }
-                        disabled={pendingActionId !== null}
-                      >
-                        반영 안 함
-                      </Button>
+                      {canDirectlyResolve ? (
+                        <>
+                          <Button
+                            size="small"
+                            onClick={() =>
+                              openResolutionDialog(request, 'CONFIRM')
+                            }
+                            isLoading={isProcessing}
+                            disabled={pendingActionId !== null && !isProcessing}
+                          >
+                            확인하고 반영하기
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="small"
+                            onClick={() =>
+                              openResolutionDialog(request, 'REJECT')
+                            }
+                            disabled={pendingActionId !== null}
+                          >
+                            반영하지 않기
+                          </Button>
+                        </>
+                      ) : (
+                        <p className="confirmation-card__guardrail" role="note">
+                          {request.waitingReason
+                            ? WAITING_REASON_COPY[request.waitingReason]
+                            : request.riskLevel === 'HIGH'
+                              ? '민감도가 높은 정보라 바로 확정할 수 없어요. 어르신과 안전한 확인 절차를 거쳐 주세요.'
+                              : '이 정보는 바로 확정할 수 없어요. 필요한 확인 절차를 먼저 진행해 주세요.'}
+                        </p>
+                      )}
+                      {request.canRequestRecheck !== false ? (
+                        <Button
+                          variant="secondary"
+                          size="small"
+                          onClick={() =>
+                            openResolutionDialog(request, 'REASK')
+                          }
+                          disabled={pendingActionId !== null}
+                        >
+                          어르신께 다시 확인하기
+                        </Button>
+                      ) : null}
                     </div>
                   ) : (
                     <div className="confirmation-card__resolution">
@@ -705,6 +648,9 @@ export function ConfirmationRequestsPage() {
                       </span>
                       {request.resolutionNote ? (
                         <p>{request.resolutionNote}</p>
+                      ) : null}
+                      {request.waitingReason === 'EXPIRED' ? (
+                        <p>{WAITING_REASON_COPY.EXPIRED}</p>
                       ) : null}
                     </div>
                   )}
@@ -754,98 +700,6 @@ export function ConfirmationRequestsPage() {
           </p>
         ) : null}
       </ConfirmModal>
-
-      <Modal
-        open={editTarget !== null}
-        title="제안 내용 수정 후 확정"
-        description="AI가 구조화한 내용을 확인하고 필요한 부분만 고쳐 주세요."
-        onClose={closeEditDialog}
-        closeOnBackdrop={
-          !(
-            editTarget &&
-            pendingActionId === `confirmation-${editTarget.id}`
-          )
-        }
-        closeOnEscape={
-          !(
-            editTarget &&
-            pendingActionId === `confirmation-${editTarget.id}`
-          )
-        }
-        closeDisabled={
-          Boolean(
-            editTarget &&
-              pendingActionId === `confirmation-${editTarget.id}`,
-          )
-        }
-        footer={
-          <>
-            <Button
-              variant="secondary"
-              onClick={closeEditDialog}
-              disabled={
-                editTarget !== null &&
-                pendingActionId === `confirmation-${editTarget.id}`
-              }
-            >
-              취소
-            </Button>
-            <Button
-              type="submit"
-              form="confirmation-edit-form"
-              isLoading={
-                editTarget !== null &&
-                pendingActionId === `confirmation-${editTarget.id}`
-              }
-            >
-              수정 후 확정
-            </Button>
-          </>
-        }
-      >
-        <form
-          className="form-grid confirmation-edit-form"
-          id="confirmation-edit-form"
-          onSubmit={(event) => void handleEdit(event)}
-        >
-          {editTarget?.kind === 'MEDICATION_CONFLICT' ? (
-            <MedicationSafetyNotice />
-          ) : null}
-          <label className="form-field form-field--wide">
-            <span className="form-field__label">구조화된 제안 내용</span>
-            <textarea
-              className="structured-value-editor"
-              value={editedValue}
-              onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
-                setEditedValue(event.target.value)
-              }
-              rows={10}
-              spellCheck={false}
-              aria-describedby="structured-value-help"
-              required
-            />
-            <span className="form-field__help" id="structured-value-help">
-              중괄호와 따옴표를 포함한 JSON 형식을 유지해 주세요.
-            </span>
-          </label>
-          <label className="form-field form-field--wide">
-            <span className="form-field__label">수정 메모 (선택)</span>
-            <textarea
-              value={editNote}
-              onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
-                setEditNote(event.target.value)
-              }
-              rows={3}
-              placeholder="수정한 이유를 적어 주세요."
-            />
-          </label>
-          {dialogError ? (
-            <p className="form-error form-field--wide" role="alert">
-              {dialogError}
-            </p>
-          ) : null}
-        </form>
-      </Modal>
 
       <Toast
         open={undoToast.open}

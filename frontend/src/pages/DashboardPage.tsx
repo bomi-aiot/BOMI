@@ -1,103 +1,87 @@
-import { Badge, Button, Card, ErrorState, LoadingState, PageHeader } from '../components'
+import { Badge, Button, Card, EmptyState, ErrorState, LoadingState, PageHeader } from '../components'
 import { useBomi } from '../state/BomiContext'
-import { formatRelativeTime } from '../utils/date'
 import type {
-  MedicationResponse,
   MedicationResponseStatus,
+  RobotMode,
   Schedule,
-  StatusLevel,
 } from '../types/domain'
+import { formatDateTime, formatRelativeTime, formatTime } from '../utils/date'
 
 interface DashboardPageProps {
   onNavigate: (path: string) => void
 }
 
-const dateTimeFormatter = new Intl.DateTimeFormat('ko-KR', {
-  timeZone: 'Asia/Seoul',
-  month: 'short',
-  day: 'numeric',
-  weekday: 'short',
-  hour: '2-digit',
-  minute: '2-digit',
-})
-
-const timeFormatter = new Intl.DateTimeFormat('ko-KR', {
-  timeZone: 'Asia/Seoul',
-  hour: '2-digit',
-  minute: '2-digit',
-})
-
-const statusTone = (status: StatusLevel): 'success' | 'warning' | 'danger' | 'neutral' => {
-  if (status === 'NORMAL') return 'success'
-  if (status === 'ATTENTION') return 'warning'
-  if (status === 'DANGER') return 'danger'
-  return 'neutral'
+const ROBOT_MODE_COPY: Record<RobotMode, string> = {
+  IDLE: '돌봄 대기 중',
+  SCENARIO_ACTIVE: '돌봄 수행 중',
+  REST_GUARD: '휴식 지킴 중',
+  SAFE_STOP: '안전 정지 · 확인 필요',
+  HOMECOMING: '귀가 맞이 중',
 }
 
-const medicationStatusLabel: Record<MedicationResponseStatus, string> = {
-  CONFIRMED: '복용 확인',
-  NO_RESPONSE: '응답 없음',
-  UPCOMING: '예정',
-  MISSED: '미복용',
-  DECLINED: '복용 안 함',
+const MEDICATION_RESPONSE_COPY: Record<MedicationResponseStatus, string> = {
+  CONFIRMED: '복용했다고 응답했어요.',
+  DECLINED: '복용하지 않았다고 응답했어요.',
+  UPCOMING: '복용 예정이에요.',
+  NO_RESPONSE: '아직 응답이 확인되지 않았어요.',
+  MISSED: '아직 응답이 확인되지 않았어요.',
+  UNKNOWN: '응답 상태를 확인 중이에요.',
 }
 
-const medicationStatusTone: Record<
-  MedicationResponseStatus,
-  'success' | 'warning' | 'info' | 'danger' | 'neutral'
-> = {
-  CONFIRMED: 'success',
-  NO_RESPONSE: 'warning',
-  UPCOMING: 'info',
-  MISSED: 'danger',
-  DECLINED: 'neutral',
-}
-
-function deriveMedicationStatus(
-  response: MedicationResponse,
-  now: Date,
-): MedicationResponseStatus {
-  if (response.respondedAt) {
-    return response.status === 'DECLINED' ? 'DECLINED' : 'CONFIRMED'
-  }
-  return new Date(response.scheduledAt).getTime() > now.getTime()
-    ? 'UPCOMING'
-    : 'MISSED'
+const isStale = (value: string | undefined, hours = 6): boolean => {
+  if (!value) return false
+  const timestamp = new Date(value).getTime()
+  return Number.isFinite(timestamp) && Date.now() - timestamp > hours * 60 * 60 * 1000
 }
 
 function ScheduleRow({ schedule }: { schedule: Schedule }) {
   return (
-    <li className="timeline-row">
-      <time dateTime={schedule.startsAt} className="timeline-row__time">
-        {timeFormatter.format(new Date(schedule.startsAt))}
+    <li className="care-row">
+      <time dateTime={schedule.startsAt} className="care-row__time">
+        {formatTime(schedule.startsAt)}
       </time>
-      <span className="timeline-row__marker" aria-hidden="true" />
-      <div className="timeline-row__content">
+      <span className="care-row__marker" aria-hidden="true" />
+      <div className="care-row__content">
         <strong>{schedule.title}</strong>
         <span>
           {[schedule.location, schedule.relatedPersonName].filter(Boolean).join(' · ') ||
-            '장소 정보 없음'}
+            '세부 장소는 등록되지 않았어요.'}
         </span>
       </div>
-      <Badge tone={schedule.recordType === 'APPOINTMENT' ? 'info' : 'neutral'}>
-        {schedule.recordType === 'APPOINTMENT' ? '진료' : '개인 일정'}
-      </Badge>
+      <div className="care-row__badges">
+        <Badge tone={schedule.recordType === 'APPOINTMENT' ? 'info' : 'neutral'}>
+          {schedule.recordType === 'APPOINTMENT' ? '진료' : '개인 일정'}
+        </Badge>
+        {schedule.status === 'UNKNOWN' ? (
+          <Badge tone="warning">상태 확인 중</Badge>
+        ) : null}
+      </div>
     </li>
   )
 }
 
 export function DashboardPage({ onNavigate }: DashboardPageProps) {
-  const { dashboard, isLoading, error, refresh } = useBomi()
+  const {
+    dashboard,
+    elderProfile,
+    medications,
+    isLoading,
+    error,
+    dataErrors,
+    refresh,
+  } = useBomi()
+  const dashboardError = dataErrors.dashboard ?? error
 
   if (isLoading && !dashboard) {
-    return <LoadingState label="오늘의 돌봄 정보를 불러오는 중입니다" rows={5} />
+    return <LoadingState label="정보를 확인하고 있어요" rows={6} />
   }
 
   if (!dashboard) {
     return (
       <ErrorState
-        title="대시보드 정보를 불러오지 못했습니다"
-        description={error ?? '잠시 후 다시 시도해 주세요.'}
+        title="오늘의 돌봄 정보를 불러오지 못했어요"
+        description={dashboardError ?? '잠시 후 다시 확인해 주세요.'}
+        retryLabel="다시 확인하기"
         onRetry={() => void refresh()}
       />
     )
@@ -106,37 +90,61 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const {
     elder,
     robot,
+    safetyAlerts,
     homeEnvironment,
-    todayIncidentCount,
     todaySchedules,
     medicationResponses,
     confirmationRequests,
     recentActivities,
   } = dashboard
+  const pendingConfirmations = confirmationRequests.filter(
+    (request) => request.status === 'PENDING',
+  )
+  const activeSchedules = todaySchedules
+    .filter((schedule) => schedule.status !== 'CANCELLED')
+    .sort((left, right) => left.startsAt.localeCompare(right.startsAt))
+  const nextSchedule = activeSchedules.find(
+    (schedule) => schedule.status === 'UPCOMING',
+  )
+  const nextMedication = medicationResponses.find(
+    (response) => response.status === 'UPCOMING',
+  ) ?? medicationResponses.find(
+    (response) =>
+      response.status === 'NO_RESPONSE' || response.status === 'MISSED',
+  )
+  const nextMedicationName = nextMedication
+    ? medications.find((medication) => medication.id === nextMedication.medicationId)?.name
+    : undefined
+  const lastObservedAt = elder.lastObservedAt ?? homeEnvironment.lastObservedAt
+  const observationIsStale = isStale(lastObservedAt)
+  const hasUrgentAlert = safetyAlerts !== null && safetyAlerts.length > 0
+  const phone = elderProfile?.elder.phone?.trim()
 
-  const now = new Date(dashboard.generatedAt)
-  const medicationStatuses = medicationResponses.map((response) => ({
-    response,
-    status: deriveMedicationStatus(response, now),
-  }))
-  const medicationProgress = {
-    total: medicationStatuses.length,
-    confirmed: medicationStatuses.filter((m) => m.status === 'CONFIRMED').length,
-    upcoming: medicationStatuses.filter((m) => m.status === 'UPCOMING').length,
-    missed: medicationStatuses.filter((m) => m.status === 'MISSED').length,
-    noResponse: medicationStatuses.filter((m) => m.status === 'NO_RESPONSE').length,
-  }
+  const careSummary = hasUrgentAlert
+    ? '보미가 즉시 확인이 필요한 알림을 보냈어요.'
+    : pendingConfirmations.length > 0
+      ? `보미가 새 정보 ${pendingConfirmations.length}개를 확인해 달라고 했어요.`
+      : recentActivities === null
+        ? '최근 돌봄 기록은 현재 확인할 수 없어요.'
+        : recentActivities.length > 0
+        ? `보호자에게 공유된 돌봄 기록 ${recentActivities.length}건이 있어요.`
+        : '오늘 보호자에게 공유된 돌봄 기록은 아직 없어요.'
 
   return (
-    <div className="page-stack">
+    <div className="page-stack today-page">
       <PageHeader
-        eyebrow="오늘의 돌봄 요약"
-        title={`${elder.displayName}, 오늘도 편안하게 지내고 계세요`}
-        description="보미가 수집한 오늘의 생활 정보와 보호자가 확인할 항목을 한눈에 모았습니다."
+        eyebrow="오늘"
+        title={`${elder.displayName}의 오늘`}
+        description="관찰된 기록을 기준으로 꼭 필요한 내용만 전해드려요."
         metadata={
-          <span>
-            마지막 확인 {dateTimeFormatter.format(new Date(elder.lastCheckedAt))}
-          </span>
+          lastObservedAt ? (
+            <span>
+              마지막 관찰 · {formatDateTime(lastObservedAt)}
+              {observationIsStale ? ' · 이후 새 기록 없음' : ''}
+            </span>
+          ) : (
+            <span>마지막 관찰 시각을 확인할 수 없어요.</span>
+          )
         }
         actions={
           <Button variant="secondary" onClick={() => void refresh()} isLoading={isLoading}>
@@ -145,209 +153,229 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
         }
       />
 
-      <section className="summary-grid" aria-label="오늘의 핵심 상태">
-        <article className="summary-card summary-card--green">
-          <div className="summary-card__topline">
-            <span className="summary-card__icon" aria-hidden="true">봄</span>
-            <Badge tone={statusTone(elder.statusLevel)} dot>
-              {elder.statusLabel}
-            </Badge>
+      {safetyAlerts === null ? (
+        <section className="alert-availability alert-availability--error" role="alert">
+          <div>
+            <strong>긴급 알림 정보를 확인하지 못했어요.</strong>
+            <span>알림이 없다고 판단하지 않고 다시 조회해 주세요.</span>
           </div>
-          <p className="summary-card__label">어르신 상태</p>
-          <strong className="summary-card__value">편안히 생활 중</strong>
-          <span className="summary-card__detail">오늘 대화와 활동에서 특이사항이 없어요.</span>
-        </article>
+          <Button variant="secondary" size="small" onClick={() => void refresh()}>
+            다시 확인하기
+          </Button>
+        </section>
+      ) : hasUrgentAlert ? (
+        <section className="urgent-care-alert" role="alert" aria-labelledby="urgent-alert-title">
+          <div className="urgent-care-alert__icon" aria-hidden="true">!</div>
+          <div className="urgent-care-alert__copy">
+            <p>즉시 안전 확인 요청</p>
+            <h2 id="urgent-alert-title">지금 직접 확인이 필요해요.</h2>
+            <ul>
+              {safetyAlerts.map((alert) => (
+                <li key={alert.id}>
+                  <span>{alert.message}</span>
+                  {alert.occurredAt ? (
+                    <time dateTime={alert.occurredAt}>
+                      {formatRelativeTime(alert.occurredAt)}
+                    </time>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+          {phone ? (
+            <a className="button button--danger button--medium urgent-care-alert__action" href={`tel:${phone.replace(/[^+\d]/g, '')}`}>
+              어르신께 전화하기
+            </a>
+          ) : (
+            <p className="urgent-care-alert__contact-note" role="note">
+              등록된 연락처가 없어 평소 사용하던 연락 수단으로 직접 확인해 주세요.
+            </p>
+          )}
+        </section>
+      ) : (
+        <section className="alert-availability" aria-label="긴급 알림 조회 결과">
+          <span className="alert-availability__mark" aria-hidden="true">✓</span>
+          <div>
+            <strong>현재 도착한 긴급 알림은 없어요.</strong>
+            <span>
+              {lastObservedAt
+                ? `마지막 관찰 · ${formatRelativeTime(lastObservedAt)}`
+                : '관찰 시각은 현재 확인할 수 없어요.'}
+            </span>
+          </div>
+        </section>
+      )}
 
-        <article className="summary-card summary-card--blue">
-          <div className="summary-card__topline">
-            <span className="summary-card__icon" aria-hidden="true">B</span>
-            <Badge tone={robot.isActive ? 'success' : 'neutral'} dot>
-              {robot.isActive ? '활성' : '비활성'}
-            </Badge>
-          </div>
-          <p className="summary-card__label">돌봄 로봇</p>
-          <strong className="summary-card__value">
-            {robot.currentMode === 'IDLE' ? '돌봄 대기 중' : '돌봄 수행 중'}
-          </strong>
-          <span className="summary-card__detail">현재 모드 · {robot.currentMode}</span>
-        </article>
+      <section className="today-primary-grid" aria-label="오늘의 핵심 돌봄 정보">
+        <Card
+          className="today-summary-card"
+          heading="오늘의 돌봄 요약"
+          description={lastObservedAt ? `근거 기록 · ${formatDateTime(lastObservedAt)}` : '근거 시각 미확인'}
+        >
+          <p className="today-summary-card__statement">{careSummary}</p>
+          <p className="today-summary-card__note">
+            기록이 없다는 것이 활동이 없었다는 뜻은 아니에요.
+          </p>
+        </Card>
 
-        <article className="summary-card summary-card--orange">
-          <div className="summary-card__topline">
-            <span className="summary-card__icon" aria-hidden="true">!</span>
-            <Badge tone={todayIncidentCount > 0 ? 'warning' : 'success'}>
-              {todayIncidentCount > 0 ? '확인 필요' : '안정'}
-            </Badge>
-          </div>
-          <p className="summary-card__label">오늘 발생한 이벤트</p>
-          <strong className="summary-card__value">{todayIncidentCount}건</strong>
-          <span className="summary-card__detail">
-            {todayIncidentCount > 0 ? '보호자 확인을 기다리는 항목이 있어요.' : '긴급한 이벤트가 없어요.'}
-          </span>
-        </article>
-
-        <article className="summary-card summary-card--lavender">
-          <div className="summary-card__topline">
-            <span className="summary-card__icon" aria-hidden="true">집</span>
-            {homeEnvironment.lastObservedAt ? (
-              <Badge tone="neutral">
-                {formatRelativeTime(homeEnvironment.lastObservedAt)}
-              </Badge>
-            ) : null}
-          </div>
-          <p className="summary-card__label">집 안 환경</p>
-          <strong className="summary-card__value">
-            {homeEnvironment.temperatureC ?? '—'}℃
-          </strong>
-          <span className="summary-card__detail">
-            습도 {homeEnvironment.humidityPercent ?? '—'}% · 로봇 관찰값
-          </span>
-        </article>
+        <Card
+          className="next-care-card"
+          heading="다음 돌봄"
+          actions={
+            <Button variant="quiet" size="small" onClick={() => onNavigate('/care-plan')}>
+              돌봄 계획 보기
+            </Button>
+          }
+        >
+          {nextSchedule || nextMedication ? (
+            <ul className="next-care-list">
+              {nextSchedule ? (
+                <li>
+                  <span>일정</span>
+                  <strong>{formatTime(nextSchedule.startsAt)} · {nextSchedule.title}</strong>
+                </li>
+              ) : null}
+              {nextMedication ? (
+                <li>
+                  <span>복약 응답</span>
+                  <strong>
+                    {formatTime(nextMedication.scheduledAt)} · {nextMedicationName ?? '복약 알림'}
+                  </strong>
+                  <small>{MEDICATION_RESPONSE_COPY[nextMedication.status]}</small>
+                </li>
+              ) : null}
+            </ul>
+          ) : (
+            <p className="inline-empty">현재 확인할 수 있는 다음 일정이나 복약 알림이 없어요.</p>
+          )}
+        </Card>
       </section>
 
-      <div className="dashboard-columns">
-        <div className="page-stack page-stack--compact">
-          <Card
-            heading="오늘 일정"
-            description={`${todaySchedules.length}개의 일정이 예정되어 있어요.`}
-            actions={
-              <Button variant="quiet" size="small" onClick={() => onNavigate('/schedules')}>
-                전체 보기
-              </Button>
-            }
-          >
-            {todaySchedules.length > 0 ? (
-              <ol className="timeline-list">
-                {todaySchedules.map((schedule) => (
-                  <ScheduleRow key={schedule.id} schedule={schedule} />
-                ))}
-              </ol>
-            ) : (
-              <p className="inline-empty">오늘 예정된 일정이 없습니다.</p>
-            )}
-          </Card>
-
-          <Card
-            heading="오늘 복약"
-            description={`${medicationProgress.confirmed}/${medicationProgress.total}회 복용을 확인했어요.`}
-            actions={
-              <Button variant="quiet" size="small" onClick={() => onNavigate('/medications')}>
-                복약 관리
-              </Button>
-            }
-          >
-            <div
-              className="progress-track"
-              role="progressbar"
-              aria-label="오늘 복약 진행률"
-              aria-valuemin={0}
-              aria-valuemax={medicationProgress.total}
-              aria-valuenow={medicationProgress.confirmed}
-            >
-              <span
-                style={{
-                  width: `${
-                    medicationProgress.total
-                      ? (medicationProgress.confirmed / medicationProgress.total) * 100
-                      : 0
-                  }%`,
-                }}
-              />
-            </div>
-            <ul className="compact-list">
-              {medicationStatuses.map(({ response, status }) => (
-                <li key={response.id}>
-                  <div>
-                    <strong>
-                      {response.responseText?.split('·')[0]?.trim() ?? '복약 알림'}
-                    </strong>
-                    <span>{timeFormatter.format(new Date(response.scheduledAt))}</span>
-                  </div>
-                  <Badge tone={medicationStatusTone[status]}>
-                    {medicationStatusLabel[status]}
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        </div>
-
-        <div className="page-stack page-stack--compact">
-          <Card
-            className="attention-card"
-            heading="보미가 확인을 기다려요"
-            description="대화에서 새롭게 파악한 정보는 보호자가 확인해야 반영됩니다."
-            actions={<Badge tone="warning">{dashboard.pendingConfirmationCount}건</Badge>}
-          >
-            <ul className="request-preview-list">
-              {confirmationRequests.slice(0, 3).map((request) => (
+      <Card
+        className="guardian-action-card"
+        heading="보호자가 확인할 일"
+        description={
+          pendingConfirmations.length > 0
+            ? `확인할 일이 ${pendingConfirmations.length}개 있어요. 확인 후 돌봄 계획에 반영됩니다.`
+            : '지금 확인할 일은 없어요.'
+        }
+        actions={
+          pendingConfirmations.length > 0 ? (
+            <Badge tone="warning">{pendingConfirmations.length}개</Badge>
+          ) : (
+            <Badge tone="success">확인 완료</Badge>
+          )
+        }
+      >
+        {pendingConfirmations.length > 0 ? (
+          <>
+            <ul className="confirmation-preview">
+              {pendingConfirmations.slice(0, 3).map((request) => (
                 <li key={request.id}>
-                  <span className="request-preview-list__kind">
-                    {request.kind === 'MEDICATION_CONFLICT'
-                      ? '복약'
-                      : request.kind === 'SCHEDULE'
-                        ? '일정'
-                        : request.kind === 'HEALTH'
-                          ? '건강'
-                          : '관심사'}
-                  </span>
-                  <div>
-                    <strong>{request.title}</strong>
-                    <p>{request.summary}</p>
-                  </div>
+                  <span>{request.kind === 'SCHEDULE' ? '일정' : request.kind === 'MEDICATION_CONFLICT' ? '복약' : request.kind === 'HEALTH' ? '건강' : '생활 정보'}</span>
+                  <strong>{request.title}</strong>
+                  <p>{request.summary}</p>
                 </li>
               ))}
             </ul>
-            <Button fullWidth onClick={() => onNavigate('/confirmation-requests')}>
-              확인 요청 검토하기
+            <Button onClick={() => onNavigate('/confirmation-requests')}>
+              확인할 일 살펴보기
             </Button>
-          </Card>
+          </>
+        ) : (
+          <p className="inline-empty">새로운 확인 요청이 도착하면 이곳에 먼저 알려드릴게요.</p>
+        )}
+      </Card>
 
-          <Card
-            heading="최근 대화에서 알게 된 것"
-            description="다음 대화가 자연스럽도록 보미가 기억한 내용입니다."
-          >
-            <ul className="activity-list">
-              {recentActivities.map((activity) => (
+      <section className="today-secondary-grid">
+        <Card
+          heading="보미가 함께한 오늘"
+          description="보호자 공유가 허용된 의미 있는 기록만 보여드려요."
+          actions={
+            <Button variant="quiet" size="small" onClick={() => onNavigate('/records')}>
+              생활 기록 보기
+            </Button>
+          }
+        >
+          {recentActivities === null ? (
+            <div className="unavailable-panel">
+              <Badge tone="neutral">아직 연결되지 않음</Badge>
+              <strong>보호자 공유 기록을 현재 확인할 수 없어요.</strong>
+              <p>공유 범위가 확인되는 API 계약이 준비되기 전에는 기록 없음으로 표시하지 않아요.</p>
+            </div>
+          ) : recentActivities.length > 0 ? (
+            <ol className="care-timeline">
+              {recentActivities.slice(0, 4).map((activity) => (
                 <li key={activity.id}>
-                  <span className="activity-list__dot" aria-hidden="true" />
+                  <time dateTime={activity.occurredAt}>{formatTime(activity.occurredAt)}</time>
+                  <span aria-hidden="true" />
                   <div>
                     <strong>{activity.title}</strong>
                     <p>{activity.summary}</p>
-                    <time dateTime={activity.occurredAt}>
-                      {dateTimeFormatter.format(new Date(activity.occurredAt))}
-                    </time>
                   </div>
                 </li>
               ))}
-            </ul>
-          </Card>
-        </div>
-      </div>
+            </ol>
+          ) : (
+            <EmptyState
+              compact
+              title="아직 기록된 돌봄 활동이 없어요"
+              description="기록이 없다는 것이 활동이 없었다는 뜻은 아니에요."
+            />
+          )}
+        </Card>
 
-      <Card heading="빠른 작업" description="자주 쓰는 관리 기능으로 바로 이동합니다.">
-        <div className="quick-action-grid">
-          <button type="button" onClick={() => onNavigate('/elder/profile')}>
-            <span aria-hidden="true">01</span>
-            <strong>어르신 정보</strong>
-            <small>기본 정보 보기</small>
-          </button>
-          <button type="button" onClick={() => onNavigate('/conversation-preferences')}>
-            <span aria-hidden="true">02</span>
-            <strong>대화 정보</strong>
-            <small>보미가 학습한 내용 보기</small>
-          </button>
-          <button type="button" onClick={() => onNavigate('/medications')}>
-            <span aria-hidden="true">03</span>
-            <strong>복약 관리</strong>
-            <small>약과 알림 상태 확인</small>
-          </button>
-          <button type="button" onClick={() => onNavigate('/schedules')}>
-            <span aria-hidden="true">04</span>
-            <strong>일정 등록</strong>
-            <small>병원·개인 약속 추가</small>
-          </button>
-        </div>
+        <Card
+          heading="보미와 집"
+          description="등록 상태, 현재 모드와 마지막 환경 관측을 구분해 보여드려요."
+          actions={
+            <Button variant="quiet" size="small" onClick={() => onNavigate('/bomi-home')}>
+              자세히 보기
+            </Button>
+          }
+        >
+          <dl className="bomi-home-summary">
+            <div>
+              <dt>보미 등록</dt>
+              <dd>{robot.id && robot.registrationActive ? '어르신 댁에 등록되어 있어요.' : '등록 상태를 확인 중이에요.'}</dd>
+            </div>
+            <div>
+              <dt>현재 모드</dt>
+              <dd>{robot.currentMode ? ROBOT_MODE_COPY[robot.currentMode] : '현재 모드를 확인할 수 없어요.'}</dd>
+            </div>
+            <div>
+              <dt>실내 환경</dt>
+              <dd>
+                {homeEnvironment.temperatureC !== undefined
+                  ? `온도 ${homeEnvironment.temperatureC}℃${homeEnvironment.humidityPercent !== undefined ? ` · 습도 ${homeEnvironment.humidityPercent}%` : ''}`
+                  : '현재 확인할 수 없어요.'}
+              </dd>
+              {homeEnvironment.lastObservedAt ? (
+                <small>
+                  마지막 측정 {formatDateTime(homeEnvironment.lastObservedAt)}
+                  {isStale(homeEnvironment.lastObservedAt) ? ' · 이후 새 기록 없음' : ''}
+                </small>
+              ) : null}
+            </div>
+            <div>
+              <dt>집 상태</dt>
+              <dd>현재 집 상태를 확인 중이에요.</dd>
+              <small>확정된 재실 정보가 보호자 API에 연결되기 전에는 추정하지 않아요.</small>
+            </div>
+          </dl>
+        </Card>
+      </section>
+
+      <Card heading="오늘의 일정" description="등록된 일정만 시간순으로 보여드려요.">
+        {activeSchedules.length > 0 ? (
+          <ol className="care-list">
+            {activeSchedules.map((schedule) => (
+              <ScheduleRow key={schedule.id} schedule={schedule} />
+            ))}
+          </ol>
+        ) : (
+          <p className="inline-empty">오늘 확인된 일정이 없어요.</p>
+        )}
       </Card>
     </div>
   )

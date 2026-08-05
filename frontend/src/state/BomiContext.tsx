@@ -11,6 +11,7 @@ import {
   API_BASE_URL,
   USE_MOCK_API,
   bomiService,
+  type BomiDataKey,
 } from "../services/bomiService";
 import type {
   ConfirmationRequest,
@@ -50,6 +51,7 @@ export interface BomiContextValue {
   isSaving: boolean;
   pendingActionId: string | null;
   error: string | null;
+  dataErrors: Partial<Record<BomiDataKey, string>>;
   toast: BomiToast | null;
   isMockMode: boolean;
   apiBaseUrl: string;
@@ -124,6 +126,9 @@ export function BomiProvider({ children }: BomiProviderProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dataErrors, setDataErrors] = useState<
+    Partial<Record<BomiDataKey, string>>
+  >({});
   const [toast, setToast] = useState<BomiToast | null>(null);
 
   const showToast = useCallback(
@@ -190,6 +195,7 @@ export function BomiProvider({ children }: BomiProviderProps) {
   const refresh = useCallback(async () => {
     setIsLoading(true);
     setError(null);
+    setDataErrors({});
     try {
       const data = await bomiService.getInitialData();
       setDashboard(data.dashboard);
@@ -199,6 +205,7 @@ export function BomiProvider({ children }: BomiProviderProps) {
       setMedications(data.medications);
       setMedicationResponses(data.medicationResponses);
       setSchedules(data.schedules);
+      setDataErrors(data.errors ?? {});
     } catch (requestError: unknown) {
       setError(messageFromError(requestError));
     } finally {
@@ -511,6 +518,7 @@ export function BomiProvider({ children }: BomiProviderProps) {
   const resetDemoData = useCallback(async (): Promise<void> => {
     setIsLoading(true);
     setError(null);
+    setDataErrors({});
     try {
       const data = await bomiService.resetMockData();
       setDashboard(data.dashboard);
@@ -520,6 +528,7 @@ export function BomiProvider({ children }: BomiProviderProps) {
       setMedications(data.medications);
       setMedicationResponses(data.medicationResponses);
       setSchedules(data.schedules);
+      setDataErrors(data.errors ?? {});
       showToast("데모 데이터를 초기 상태로 되돌렸습니다.", "INFO");
     } catch (requestError: unknown) {
       setError(messageFromError(requestError));
@@ -544,6 +553,7 @@ export function BomiProvider({ children }: BomiProviderProps) {
       isSaving,
       pendingActionId,
       error,
+      dataErrors,
       toast,
       isMockMode: USE_MOCK_API,
       apiBaseUrl: API_BASE_URL,
@@ -578,6 +588,7 @@ export function BomiProvider({ children }: BomiProviderProps) {
       isSaving,
       pendingActionId,
       error,
+      dataErrors,
       toast,
       refresh,
       saveElderProfile,
