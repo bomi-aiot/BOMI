@@ -225,6 +225,38 @@ class ConversationContextServiceTest {
         assertThat(context.profile().conditions()).isEmpty();
     }
 
+    // ── S15P11E102-261: 개인차가 있어야 하는 값 세 가지 ──────────────────────
+
+    /** 세 값이 모두 채워지면 문맥의 프로필에 실려야 한다(완료 조건). */
+    @Test
+    void profileCarriesWakeSleepTimeChronicPainAreaAndPreferredHospital() {
+        senior.changeWakeTime(java.time.LocalTime.of(6, 30));
+        senior.changeSleepTime(java.time.LocalTime.of(22, 30));
+        senior.changeChronicPainArea("왼쪽 무릎");
+        senior.changePreferredHospital("행복내과의원");
+        appUserRepository.save(senior);
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().wakeTime()).isEqualTo("06:30");
+        assertThat(context.profile().sleepTime()).isEqualTo("22:30");
+        assertThat(context.profile().chronicPainArea()).isEqualTo("왼쪽 무릎");
+        assertThat(context.profile().preferredHospital()).isEqualTo("행복내과의원");
+    }
+
+    /** 세 값이 전부 비어 있는 어르신도 지금과 동일하게(오류 없이) 동작한다(완료 조건). */
+    @Test
+    void missingWakeSleepTimeChronicPainAreaAndPreferredHospitalYieldNullWithoutError() {
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().wakeTime()).isNull();
+        assertThat(context.profile().sleepTime()).isNull();
+        assertThat(context.profile().chronicPainArea()).isNull();
+        assertThat(context.profile().preferredHospital()).isNull();
+    }
+
     // ── S15P11E102-260: known_person 이 회피 대상의 새 출처 ──────────────────
 
     /**

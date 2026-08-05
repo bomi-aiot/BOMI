@@ -19,6 +19,10 @@ app_user,17,quiet_hours_end,조용 시간 종료,TIME,Y,,,app_user.quiet_hours_e
 app_user,18,home_latitude,집 위도,"NUMERIC(9,6)",N,,,app_user.home_latitude에는 병원·약국 근처 조회의 기준 위도를 저장한다.,집 위도은(는) 근처 시설 조회 기능이 거리 계산에서 조회한다.,NULL을 허용하며 좌표를 모르는 어르신은 위치 기능만 저하된다.,37.501234
 app_user,19,home_longitude,집 경도,"NUMERIC(9,6)",N,,,app_user.home_longitude에는 병원·약국 근처 조회의 기준 경도를 저장한다.,집 경도은(는) home_latitude와 함께 거리 계산에서 조회한다.,NULL을 허용하며 좌표를 모르는 어르신은 위치 기능만 저하된다.,127.039876
 app_user,20,birth_date,생년월일,DATE,N,,,app_user.birth_date에는 대화 문맥의 나이를 계산하는 기준 값을 저장한다.,생년월일은(는) 대화 문맥 조립이 나이를 계산할 때마다 조회한다.,나이는 저장하지 않고 매번 계산하며 NULL이면 나이 줄만 빠진다.,1950-05-12
+app_user,21,wake_time,기상 시각,TIME,N,,,app_user.wake_time에는 어르신의 평소 기상 시각을 저장한다.,기상 시각은(는) 침묵 사다리 루틴 베이스라인 필터가 조회할 예정이다.,NULL을 허용하며 응답하지 않은 어르신은 개인화 없이 동작한다.,06:30
+app_user,22,sleep_time,취침 시각,TIME,N,,,app_user.sleep_time에는 어르신의 평소 취침 시각을 저장한다.,취침 시각은(는) 침묵 사다리 루틴 베이스라인 필터가 조회할 예정이다.,NULL을 허용하며 응답하지 않은 어르신은 개인화 없이 동작한다.,22:30
+app_user,23,chronic_pain_area,만성 통증 부위,TEXT,N,,,app_user.chronic_pain_area에는 어르신이 밝힌 만성 통증 부위를 저장한다.,만성 통증 부위는(는) 대화 문맥 조립이 프로필에 실을 때 조회한다.,응급 판정에는 절대 쓰지 않으며 NULL이면 프로필 줄만 빠진다.,왼쪽 무릎
+app_user,24,preferred_hospital,단골 병원,TEXT,N,,,app_user.preferred_hospital에는 어르신이 다니는 단골 병원·약국 이름을 저장한다.,단골 병원은(는) 대화 문맥 조립이 프로필에 실을 때 조회한다.,근처 병원 검색과 별개이며 NULL이면 프로필 줄만 빠진다.,행복내과의원
 care_relationship,1,id,관계 ID,UUID,Y,PK,,care_relationship.id에는 시니어-보호자 연결을 식별하는 값을 저장한다.,관계 ID은(는) 시니어-보호자 연결을 식별할 때 조회·검증·갱신한다.,사용자 ID 조합을 외부 식별자로 쓰지 않는다.,b839bd4c-efeb-4c86-917c-51896392819e
 care_relationship,2,senior_id,시니어 ID,UUID,Y,FK,app_user.id,care_relationship.senior_id에는 돌봄 대상 시니어를 연결하는 값을 저장한다.,시니어 ID은(는) 돌봄 대상 시니어를 연결할 때 조회·검증·갱신한다.,참조 사용자가 SENIOR인지 검증한다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
 care_relationship,3,guardian_id,보호자 ID,UUID,Y,FK,app_user.id,care_relationship.guardian_id에는 연결 보호자를 지정하는 값을 저장한다.,보호자 ID은(는) 연결 보호자를 지정할 때 조회·검증·갱신한다.,참조 사용자가 GUARDIAN인지 검증한다.,8e1339cb-b0bf-42df-9a7f-f6592be3e84f

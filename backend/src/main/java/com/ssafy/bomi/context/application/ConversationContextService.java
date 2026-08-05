@@ -215,7 +215,11 @@ public class ConversationContextService {
             preferences,
             extractAvoidTopics(senior.getId(), preferences),
             computeAge(senior),
-            loadConditions(senior)
+            loadConditions(senior),
+            senior.getWakeTime() == null ? null : senior.getWakeTime().toString(),
+            senior.getSleepTime() == null ? null : senior.getSleepTime().toString(),
+            senior.getChronicPainArea(),
+            senior.getPreferredHospital()
         );
     }
 
