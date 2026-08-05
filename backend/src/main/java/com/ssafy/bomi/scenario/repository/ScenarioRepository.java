@@ -47,6 +47,40 @@ public interface ScenarioRepository extends JpaRepository<Scenario, UUID> {
      */
     boolean existsByScenarioTypeAndExternalEventId(ScenarioType scenarioType, String externalEventId);
 
+    /** Restart-safe lookup for the one active WALK owned by a Robot. */
+    @Query("""
+        select s from Scenario s
+        where s.robotId = :robotId
+          and s.scenarioType = com.ssafy.bomi.scenario.domain.ScenarioType.WALK
+          and s.finalStatus in :statuses
+        """)
+    java.util.Optional<Scenario> findActiveWalkByRobotId(
+        @Param("robotId") UUID robotId,
+        @Param("statuses") Collection<ScenarioStatus> statuses);
+
+    /** Serializes STOP and result handling for a Robot's active WALK. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+        select s from Scenario s
+        where s.robotId = :robotId
+          and s.scenarioType = com.ssafy.bomi.scenario.domain.ScenarioType.WALK
+          and s.finalStatus in :statuses
+        """)
+    java.util.Optional<Scenario> findActiveWalkByRobotIdForUpdate(
+        @Param("robotId") UUID robotId,
+        @Param("statuses") Collection<ScenarioStatus> statuses);
+
+    /** Locks active WALK rows in deterministic id order for the dedicated watchdog. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+        select s from Scenario s
+        where s.scenarioType = com.ssafy.bomi.scenario.domain.ScenarioType.WALK
+          and s.finalStatus in :statuses
+        order by s.id
+        """)
+    List<Scenario> findActiveWalksForUpdate(
+        @Param("statuses") Collection<ScenarioStatus> statuses);
+
     /**
      * 주어진 상태들에 머물러 있으면서 {@code before} 이전에 마지막으로 갱신된 시나리오.
      *
@@ -55,7 +89,17 @@ public interface ScenarioRepository extends JpaRepository<Scenario, UUID> {
      * 것은 그 상태에서 다음으로 넘어가는 이벤트가 한참 오지 않았다는 뜻이다.
      * {@code ScenarioTimeoutWatchdog}가 안전망으로 사용한다 — 대화 핸드오프가 아직 로깅
      * 스텁이거나 이벤트가 유실돼도, 그 어르신의 다음 시나리오가 영원히 막히지 않게 한다.</p>
-     */
+    */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+        select s from Scenario s
+        where s.scenarioType <> :excludedType
+          and s.finalStatus in :statuses
+          and s.updatedAt < :before
+        order by s.id
+        """)
     List<Scenario> findByFinalStatusInAndUpdatedAtBefore(
-        Collection<ScenarioStatus> statuses, OffsetDateTime before);
+        @Param("excludedType") ScenarioType excludedType,
+        @Param("statuses") Collection<ScenarioStatus> statuses,
+        @Param("before") OffsetDateTime before);
 }

@@ -4,13 +4,15 @@ care_relationship,돌봄 관계,시니어와 보호자의 연결 한 건,보호�
 robot,로봇,로봇 한 대의 현재 배정·모드·환경 스냅샷,MQTT 대상과 현재 제어·환경 상태를 연결한다.,senior_id → app_user; 온보딩·시나리오가 참조,"센서 시계열, 배터리, 온라인 접속 원장이 아니다."
 onboarding_session,온보딩 세션,앱 또는 로봇에서 시작해 양 채널이 이어갈 수 있는 온보딩 한 번,"질문 세트 버전, 최초 채널, 진행 위치와 종료 결과를 관리한다.",senior_id → app_user; robot_id → robot; answer가 참조,한 시니어의 IN_PROGRESS 세션은 하나이고 projection과 같은 트랜잭션에서 갱신한다.
 onboarding_answer,온보딩 답변,세션의 질문 코드 하나에 대한 현재 정규화 답변,앱과 로봇 입력을 같은 JSON 구조로 보존하고 근거 메시지와 확인자를 연결한다.,session → onboarding_session; 사용자·대화·메시지 FK,최종 프로필 원본이 아니며 민감한 중간 값은 반영 후 무기한 중복 보존하지 않는다.
-scenario,시나리오,로봇 행동 흐름 한 번,외부 시작 사건과 로봇·시니어·굵은 진행 및 종료 상태를 묶는다.,senior → app_user; robot → robot; 대화·돌봄이 참조,모든 MQTT eventId·commandId·세부 상태를 저장하는 원장이 아니다.
+scenario,시나리오,로봇 행동 흐름 한 번,"외부 시작 사건과 로봇·시니어·굵은 진행, 이동·FOLLOW 상관관계 및 종료 상태를 묶는다.",senior → app_user; robot → robot; 대화·돌봄이 참조,고빈도 프레임·추적 데이터 원장이 아니며 WALK의 START/STOP 명령 ID만 최소 이력으로 보존한다.
 conversation,대화,시니어와 로봇의 대화 묶음,"대화 경계, 상태, Raw 메시지 보존 만료 시점을 관리한다.",senior → app_user; scenario → scenario; message·summary가 참조,발화 본문은 두지 않으며 ended_at과 raw_messages_expires_at의 의미를 구분한다.
 conversation_message,대화 메시지,시니어 또는 로봇의 실제 텍스트 발화 한 번,최근 N개·대화 전체·사용자 현지 오늘 메시지를 같은 Raw 집합에서 조회한다.,conversation_id → conversation; 답변·후보·돌봄의 근거 FK,음성·영상·전체 프롬프트는 저장하지 않고 보존 조건 충족 뒤 삭제할 수 있다.
 conversation_summary,대화 요약,대화 하나 또는 사용자 현지 날짜 하루의 요약 한 건,Raw 문맥을 압축해 다음 대화에 선택적으로 제공한다.,senior → app_user; conversation·superseded self FK; memory가 참조,장기 개인화 사실이 아니며 재생성 시 덮어쓰지 않는다.
 fact_candidate,사실 후보,아직 최종 원본에 반영되지 않은 사실 후보 한 건,"재질의, 민감정보 확인, 시니어·PRIMARY 협의와 멱등 반영을 한 생명주기로 관리한다.",답변·대화·메시지·사용자 FK; 최종 대상은 논리 참조,status와 coordination_status는 서로 다른 축이며 confirmed_value만 물리 반영한다.
 memory,장기 기억,대화 없이 이해되고 장기간 재사용할 개인화 사실 한 건,키워드와 벡터를 혼합해 관련 기억을 찾고 확인·공개·수명을 적용한다.,senior·대화·요약·후보 FK; superseded self FK,Raw 전문이나 요약 전문을 복사하지 않고 건강 업무 원본을 대신하지 않는다.
 care_record,돌봄 기록,확정된 건강·복약·일정·관찰·알림 사실 한 건,"민감 돌봄 사실과 반복 규칙, 근거, 버전 관계를 보존한다.",사용자·시나리오·대화·메시지·후보·parent self FK,변경은 기존 행 덮어쓰기가 아니라 새 행과 parent_record_id로 연결한다.
-occupancy_event,현관 이벤트,현관을 통과했거나 재실 상태가 바뀐 사건 한 건,"루틴 베이스라인 학습, 외출 빈도 추세, 야간 배회 감지처럼 침묵 사다리가 원리적으로 잡지 못하는 신호를 남긴다.",senior_id·robot_id → app_user·robot,"시나리오 실행 기록이 아니라 통과 사실 원장이며, 하루 몇 행 수준이고 원본 이동 로그를 보호자에게 그대로 보내지 않는다."
-daily_activity_metric,일간 활동 지표,시니어 한 명의 하루치 집계 지표 한 건,T2 일일 요약이 복약·식사·수면·발화량·외출 추세를 시계열로 조회하도록 원본 관찰이 아닌 집계만 보관한다.,senior_id → app_user,"(senior_id, metric_date) 유일 제약으로 하루 한 행이며, 측정하지 못한 지표는 0이 아니라 NULL로 남긴다."
-known_person,아는 사람 명부,어르신 주변 인물(가족·지인) 한 명,이름·관계·생존 여부를 구조화해 회피 대상을 결정론적으로 가려낸다. 대화 문맥 API의 avoidTopics 출처.,senior_id → app_user; guardian_user_id → app_user (논리 참조),"is_deceased가 NULL이면 '모른다'이며 TRUE와 동일하게 회피 대상으로 취급한다. memory로 보내지 않으며(벡터 검색 금지), deceased_note는 프롬프트에 노출하지 않는다."
+occupancy_event,재실 변화 이벤트,현관·발화·하트비트로 확정한 재실 변화 한 건,시나리오 실행 여부와 무관하게 재실 사실과 판단 당시 상태를 시계열로 보존한다.,senior_id → app_user; robot_id → robot (논리 참조),고빈도 위치 추적이 아니라 하루 수건 수준의 확정 변화만 저장한다.
+daily_activity_metric,일간 활동 지표,어르신 현지 날짜 하루의 집계 지표 한 행,복약·수면·발화·외출·지남력 추세를 원본 없이 열 단위로 조회한다.,senior_id → app_user; occupancy_event·conversation_message 등에서 집계,"모르는 값은 0이 아니라 null이며 (senior_id, metric_date)는 유일하다."
+known_person,주요 인물 명부,어르신 문맥에서 식별해야 할 인물 한 명,생존 여부·관계·동거 여부를 구조화해 위험한 선제 언급을 결정론적으로 막는다.,senior_id → app_user; guardian_user_id는 app_user 논리 참조,deceased_note는 보호자 내부 메모이며 프롬프트 원문으로 노출하지 않는다.
+wake_word_trigger_receipt,호출 트리거 처리 영수증,검증된 WAKE_WORD_DETECTED 이벤트 한 건의 최종 처리 결정,QoS 1 재전송과 Backend 재시작 뒤에도 수락·거절 이벤트를 다시 실행하지 않게 한다.,"robot_device_id로 robot을 권위 조회하고, 수락 건은 scenario_id를 논리 연결",원본 음성·전체 STT는 저장하지 않으며 event_id 재사용 시 원래 최소 문맥과 일치해야 한다.
+walk_request_receipt,산책 요청 처리 영수증,Voice MQTT 또는 Guardian REST 산책 요청 한 건의 최종 처리 결정,"QoS 1 재전송과 App 재시도, Backend 재시작 뒤에도 START·STOP을 다시 실행하지 않게 한다.",robot_device_id로 robot을 조회하고 수락 건의 scenario_id를 논리 연결,ingress와 request_id 조합만 유일하며 원본 음성·영상·tracking 데이터는 저장하지 않는다.

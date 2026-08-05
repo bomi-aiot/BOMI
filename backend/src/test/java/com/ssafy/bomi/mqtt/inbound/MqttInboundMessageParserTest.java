@@ -141,6 +141,320 @@ class MqttInboundMessageParserTest {
     }
 
     @Test
+    void parsesWakeWordDetectedWithValidEnvelope() {
+        MqttInboundMessage withConfidence = parser.parse(
+            "bomi/v1/robot/robot-01/events",
+            wakeWordEvent(null, "\"keyword\": \"보미야\", \"confidence\": 0.92"),
+            1,
+            false);
+
+        assertThat(withConfidence.category()).isEqualTo(MqttInboundCategory.ROBOT_EVENT);
+        assertThat(withConfidence.type()).isEqualTo("WAKE_WORD_DETECTED");
+        assertThat(withConfidence.sourceId()).isEqualTo("robot-01");
+        assertThat(withConfidence.payload().path("keyword").asText()).isEqualTo("보미야");
+        assertThat(withConfidence.scenarioId()).isNull();
+        assertThat(withConfidence.conversationId()).isNull();
+        assertThat(withConfidence.commandId()).isNull();
+
+        assertThat(parser.parse(
+            "bomi/v1/robot/robot-01/events",
+            wakeWordEvent(null, "\"keyword\": \"보미야\""),
+            1,
+            false).type()).isEqualTo("WAKE_WORD_DETECTED");
+    }
+
+    @Test
+    void validatesWakeWordKeyword() {
+        for (String invalidPayload : new String[] {
+            "",
+            "\"keyword\": \"   \"",
+            "\"keyword\": \"123456789012345678901\""
+        }) {
+            assertThatThrownBy(() -> parser.parse(
+                "bomi/v1/robot/robot-01/events",
+                wakeWordEvent(null, invalidPayload),
+                1,
+                false))
+                .isInstanceOf(MqttContractViolationException.class)
+                .hasMessageContaining("keyword");
+        }
+    }
+
+    @Test
+    void validatesOptionalWakeWordConfidence() {
+        for (String validConfidence : new String[] {"0", "1"}) {
+            assertThat(parser.parse(
+                "bomi/v1/robot/robot-01/events",
+                wakeWordEvent(null,
+                    "\"keyword\": \"보미야\", \"confidence\": " + validConfidence),
+                1,
+                false).type()).isEqualTo("WAKE_WORD_DETECTED");
+        }
+
+        for (String invalidConfidence : new String[] {"\"0.9\"", "-0.01", "1.01", "null"}) {
+            assertThatThrownBy(() -> parser.parse(
+                "bomi/v1/robot/robot-01/events",
+                wakeWordEvent(null,
+                    "\"keyword\": \"보미야\", \"confidence\": " + invalidConfidence),
+                1,
+                false))
+                .isInstanceOf(MqttContractViolationException.class)
+                .hasMessageContaining("confidence");
+        }
+    }
+
+    @Test
+    void rejectsCorrelationIdsOnWakeWordTrigger() {
+        for (String correlation : new String[] {
+            "\"scenarioId\": \"" + UUID.randomUUID() + "\"",
+            "\"conversationId\": \"" + UUID.randomUUID() + "\"",
+            "\"commandId\": \"cmd-wake-01\""
+        }) {
+            assertThatThrownBy(() -> parser.parse(
+                "bomi/v1/robot/robot-01/events",
+                wakeWordEvent(correlation, "\"keyword\": \"보미야\""),
+                1,
+                false))
+                .isInstanceOf(MqttContractViolationException.class)
+                .hasMessageContaining("must not include correlation field");
+        }
+    }
+
+    @Test
+    void rejectsWakeWordFieldsOutsideTheFinalAsyncApiSchema() {
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-01/events",
+            wakeWordEvent("\"rawAudio\": \"forbidden\"", "\"keyword\": \"보미야\""),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("unsupported field 'rawAudio'");
+
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-01/events",
+            wakeWordEvent(null,
+                "\"keyword\": \"보미야\", \"fullStt\": \"보미야 오늘 뭐 해\""),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("unsupported field 'fullStt'");
+    }
+
+    @Test
+    void rejectsWakeWordWhenTopicRobotDoesNotMatchEnvelopeRobot() {
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-02/events",
+            wakeWordEvent(null, "\"keyword\": \"bomi\""),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("does not match");
+    }
+
+    @Test
+    void parsesWalkRequestedWithStrictStartAndStopEnvelopes() {
+        UUID conversationId = UUID.randomUUID();
+        MqttInboundMessage start = parser.parse(
+            "bomi/v1/robot/robot-01/events",
+            walkRequested(
+                "\"conversationId\": \"" + conversationId + "\"",
+                "\"action\": \"START\", \"source\": \"VOICE\""),
+            1,
+            false);
+
+        assertThat(start.type()).isEqualTo("WALK_REQUESTED");
+        assertThat(start.conversationId()).isEqualTo(conversationId);
+        assertThat(start.scenarioId()).isNull();
+        assertThat(start.commandId()).isNull();
+        assertThat(start.payload().path("action").asText()).isEqualTo("START");
+
+        MqttInboundMessage stop = parser.parse(
+            "bomi/v1/robot/robot-01/events",
+            walkRequested(null, "\"action\": \"STOP\", \"source\": \"APP\""),
+            1,
+            false);
+        assertThat(stop.conversationId()).isNull();
+        assertThat(stop.payload().path("source").asText()).isEqualTo("APP");
+    }
+
+    @Test
+    void rejectsInvalidWalkRequestedFieldsAndEnums() {
+        for (String payloadFields : new String[] {
+            "\"source\": \"VOICE\"",
+            "\"action\": \"START\"",
+            "\"action\": \"PAUSE\", \"source\": \"VOICE\"",
+            "\"action\": \"START\", \"source\": \"ROBOT\""
+        }) {
+            assertThatThrownBy(() -> parser.parse(
+                "bomi/v1/robot/robot-01/events",
+                walkRequested(null, payloadFields),
+                1,
+                false))
+                .isInstanceOf(MqttContractViolationException.class);
+        }
+
+        for (String forbiddenCorrelation : new String[] {
+            "\"scenarioId\": \"" + UUID.randomUUID() + "\"",
+            "\"commandId\": \"cmd-follow-start\""
+        }) {
+            assertThatThrownBy(() -> parser.parse(
+                "bomi/v1/robot/robot-01/events",
+                walkRequested(forbiddenCorrelation,
+                    "\"action\": \"START\", \"source\": \"VOICE\""),
+                1,
+                false))
+                .isInstanceOf(MqttContractViolationException.class)
+                .hasMessageContaining("field");
+        }
+
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-01/events",
+            walkRequested("\"conversationId\": \"not-a-uuid\"",
+                "\"action\": \"START\", \"source\": \"VOICE\""),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("conversationId");
+
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-01/events",
+            walkRequested("\"conversationId\": \"1-1-1-1-1\"",
+                "\"action\": \"START\", \"source\": \"VOICE\""),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("conversationId");
+
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-01/events",
+            walkRequested("\"unexpected\": true",
+                "\"action\": \"START\", \"source\": \"VOICE\""),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("unsupported field 'unexpected'");
+
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-01/events",
+            walkRequested(null,
+                "\"action\": \"START\", \"source\": \"VOICE\", \"trackId\": \"x\""),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("unsupported field 'trackId'");
+    }
+
+    @Test
+    void parsesFollowResultWithRequiredCorrelationAndReasonRules() {
+        UUID scenarioId = UUID.randomUUID();
+        MqttInboundMessage started = parser.parse(
+            "bomi/v1/robot/robot-01/results",
+            followResult(scenarioId, "cmd-follow-start",
+                "\"outcome\": \"SUCCEEDED\", \"resultCode\": \"STARTED\", "
+                    + "\"reasonCode\": null"),
+            1,
+            false);
+
+        assertThat(started.type()).isEqualTo("FOLLOW_RESULT");
+        assertThat(started.requireScenarioId()).isEqualTo(scenarioId);
+        assertThat(started.requireCommandId()).isEqualTo("cmd-follow-start");
+        assertThat(started.legacyContract()).isFalse();
+
+        for (String outcome : new String[] {"FAILED", "CANCELLED", "TIMED_OUT"}) {
+            MqttInboundMessage terminal = parser.parse(
+                "bomi/v1/robot/robot-01/results",
+                followResult(scenarioId, "cmd-follow-start",
+                    "\"outcome\": \"" + outcome + "\", \"resultCode\": \"STOPPED\", "
+                        + "\"reasonCode\": \"PERSON_LOST\", \"message\": \"lost\""),
+                1,
+                false);
+            assertThat(terminal.payload().path("outcome").asText()).isEqualTo(outcome);
+        }
+
+        for (String reasonCode : new String[] {
+            "PERSON_LOST",
+            "COMMAND_EXPIRED",
+            "EXECUTION_TIMEOUT",
+            "SAFETY_STOP",
+            "INTERNAL_ERROR"
+        }) {
+            assertThat(parser.parse(
+                "bomi/v1/robot/robot-01/results",
+                followResult(scenarioId, "cmd-follow-start",
+                    "\"outcome\": \"FAILED\", \"resultCode\": \"STOPPED\", "
+                        + "\"reasonCode\": \"" + reasonCode + "\""),
+                1,
+                false).payload().path("reasonCode").asText()).isEqualTo(reasonCode);
+        }
+
+        assertThat(parser.parse(
+            "bomi/v1/robot/robot-01/results",
+            followResult(scenarioId, "cmd-follow-stop",
+                "\"outcome\": \"SUCCEEDED\", \"resultCode\": \"UNCHANGED\", "
+                    + "\"reasonCode\": null"),
+            1,
+            false).payload().path("resultCode").asText()).isEqualTo("UNCHANGED");
+    }
+
+    @Test
+    void rejectsInvalidFollowResultContract() {
+        UUID scenarioId = UUID.randomUUID();
+        for (String invalidPayload : new String[] {
+            "\"outcome\": \"DONE\", \"resultCode\": \"STARTED\", \"reasonCode\": null",
+            "\"outcome\": \"SUCCEEDED\", \"resultCode\": \"RUNNING\", \"reasonCode\": null",
+            "\"outcome\": \"SUCCEEDED\", \"resultCode\": \"STARTED\", "
+                + "\"reasonCode\": \"INTERNAL_ERROR\"",
+            "\"outcome\": \"FAILED\", \"resultCode\": \"STOPPED\", \"reasonCode\": null",
+            "\"outcome\": \"FAILED\", \"resultCode\": \"STOPPED\", "
+                + "\"reasonCode\": \"UNKNOWN_FAILURE\"",
+            "\"outcome\": \"FAILED\", \"resultCode\": \"STOPPED\", "
+                + "\"reasonCode\": \"PERSON_LOST\", \"message\": 123",
+            "\"outcome\": \"FAILED\", \"resultCode\": \"STOPPED\", "
+                + "\"reasonCode\": \"PERSON_LOST\", \"boundingBox\": []"
+        }) {
+            assertThatThrownBy(() -> parser.parse(
+                "bomi/v1/robot/robot-01/results",
+                followResult(scenarioId, "cmd-follow", invalidPayload),
+                1,
+                false))
+                .isInstanceOf(MqttContractViolationException.class);
+        }
+
+        String validPayload = "\"outcome\": \"SUCCEEDED\", "
+            + "\"resultCode\": \"STOPPED\", \"reasonCode\": null";
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-01/results",
+            followResultWithTopLevel("\"commandId\": \"cmd-follow\"", validPayload),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("scenarioId");
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-01/results",
+            followResultWithTopLevel("\"scenarioId\": \"" + scenarioId + "\"", validPayload),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("commandId");
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-01/results",
+            followResultWithTopLevel(
+                "\"scenarioId\": \"not-a-uuid\", \"commandId\": \"cmd-follow\"",
+                validPayload),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("scenarioId");
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-02/results",
+            followResult(scenarioId, "cmd-follow", validPayload),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("does not match");
+    }
+
+    @Test
     void rejectsInvalidResultAndConversationReasonRules() {
         String invalidResult = """
             {
@@ -227,5 +541,84 @@ class MqttInboundMessageParserTest {
                 "bomi/v1/iot/door-sensor-01/events", payload, 1, false).type())
                 .isEqualTo(type);
         }
+    }
+
+    @Test
+    void rejectsNavigationReasonOutsideTheAsyncApiEnum() {
+        String invalidResult = """
+            {
+              "eventId": "evt-nav-reason-invalid",
+              "commandId": "cmd-nav-01",
+              "scenarioId": "%s",
+              "robotId": "robot-01",
+              "type": "NAVIGATION_RESULT",
+              "occurredAt": "2026-08-05T10:00:01+09:00",
+              "payload": {
+                "outcome": "FAILED",
+                "resultCode": "NOT_ARRIVED",
+                "reasonCode": "FREE_FORM_FAILURE"
+              }
+            }
+            """.formatted(UUID.randomUUID());
+
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-01/results", invalidResult, 1, false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("Unsupported NAVIGATION_RESULT reasonCode");
+    }
+
+    private static String wakeWordEvent(String extraTopLevelField, String payloadFields) {
+        String extra = extraTopLevelField == null ? "" : extraTopLevelField + ",";
+        return """
+            {
+              "eventId": "evt-wake-01",
+              "type": "WAKE_WORD_DETECTED",
+              "occurredAt": "2026-08-05T10:30:00+09:00",
+              "robotId": "robot-01",
+              %s
+              "payload": {%s}
+            }
+            """.formatted(extra, payloadFields);
+    }
+
+    private static String walkRequested(String extraTopLevelField, String payloadFields) {
+        String extra = extraTopLevelField == null ? "" : extraTopLevelField + ",";
+        return """
+            {
+              "eventId": "evt-walk-01",
+              "type": "WALK_REQUESTED",
+              "occurredAt": "2026-08-05T16:00:00+09:00",
+              "robotId": "robot-01",
+              %s
+              "payload": {%s}
+            }
+            """.formatted(extra, payloadFields);
+    }
+
+    private static String followResult(
+        UUID scenarioId,
+        String commandId,
+        String payloadFields
+    ) {
+        return followResultWithTopLevel(
+            "\"scenarioId\": \"" + scenarioId + "\", "
+                + "\"commandId\": \"" + commandId + "\"",
+            payloadFields);
+    }
+
+    private static String followResultWithTopLevel(
+        String correlationFields,
+        String payloadFields
+    ) {
+        return """
+            {
+              "eventId": "evt-follow-result-01",
+              %s,
+              "type": "FOLLOW_RESULT",
+              "occurredAt": "2026-08-05T16:00:03+09:00",
+              "robotId": "robot-01",
+              "payload": {%s}
+            }
+            """.formatted(correlationFields, payloadFields);
     }
 }

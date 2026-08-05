@@ -40,6 +40,9 @@ EXPECTED_COLUMNS = {
         "personalization_consent_status", "health_data_consent_status",
         "schedule_consent_status", "guardian_sharing_consent_status",
         "status", "created_at", "updated_at",
+        "quiet_hours_start", "quiet_hours_end", "home_latitude",
+        "home_longitude", "birth_date", "wake_time", "sleep_time",
+        "chronic_pain_area", "preferred_hospital",
     ],
     "care_relationship": [
         "id", "senior_id", "guardian_id", "priority", "status", "connected_at",
@@ -48,8 +51,10 @@ EXPECTED_COLUMNS = {
         "care_management_permission_granted_by_user_id",
     ],
     "robot": [
-        "id", "senior_id", "current_mode", "ambient_temperature_c",
-        "ambient_humidity_percent", "ambient_observed_at", "is_active",
+        "id", "senior_id", "device_id", "current_mode",
+        "ambient_temperature_c", "ambient_humidity_percent",
+        "ambient_observed_at", "is_active", "occupancy_status", "occupancy_observed_at",
+        "door_node_heartbeat_at",
     ],
     "onboarding_session": [
         "id", "senior_id", "robot_id", "question_set_version",
@@ -64,21 +69,31 @@ EXPECTED_COLUMNS = {
     ],
     "scenario": [
         "id", "senior_id", "robot_id", "external_event_id", "scenario_type",
-        "final_status",
+        "final_status", "conversation_request", "active_navigation_command_id",
+        "active_navigation_target", "trigger_context", "completion_result_code",
+        "completion_reason_code", "follow_start_command_id",
+        "follow_stop_command_id", "follow_start_requested_at",
+        "following_started_at", "follow_stop_requested_at",
+        "last_follow_result_event_id", "last_follow_command_id",
+        "last_follow_result_code", "last_follow_reason_code",
+        "last_follow_result_at", "created_at", "updated_at",
     ],
     "conversation": [
         "id", "senior_id", "scenario_id", "status", "started_at",
         "ended_at", "raw_messages_expires_at",
+        "sealed", "start_command_id", "ai_started_at", "end_outcome",
+        "reason_code",
     ],
     "conversation_message": [
         "id", "conversation_id", "sequence_no", "role", "content",
         "occurred_at", "created_at",
+        "trigger_type", "priority", "orientation_question",
     ],
     "conversation_summary": [
         "id", "senior_id", "conversation_id", "summary_type",
         "period_started_at", "period_ended_at", "content",
         "source_message_count", "generated_at", "superseded_by_id",
-        "embedding",
+        "embedding_status", "embedding_synced_at", "embedding_model",
     ],
     "fact_candidate": [
         "id", "senior_id", "source_type", "onboarding_answer_id",
@@ -97,15 +112,41 @@ EXPECTED_COLUMNS = {
     "memory": [
         "id", "senior_id", "source_conversation_id", "superseded_by_id",
         "memory_type", "content", "verification_status", "lifecycle_status",
-        "visibility", "embedding", "source_summary_id", "source_candidate_id",
-        "keywords", "importance", "first_observed_at", "last_confirmed_at",
-        "last_used_at",
+        "visibility", "embedding_status", "embedding_synced_at",
+        "embedding_model", "source_summary_id", "source_candidate_id", "keywords",
+        "importance", "first_observed_at", "last_confirmed_at", "last_used_at",
     ],
     "care_record": [
         "id", "senior_id", "parent_record_id", "scenario_id",
         "source_conversation_id", "source_message_id", "recipient_guardian_id",
         "created_by_user_id", "record_type", "status", "details", "recurrence",
         "source_candidate_id",
+        "notification_tier", "occurred_at",
+    ],
+    "occupancy_event": [
+        "id", "senior_id", "robot_id", "direction", "source",
+        "resulting_occupancy", "occurred_at", "reported_at", "created_at",
+    ],
+    "daily_activity_metric": [
+        "id", "senior_id", "metric_date", "medication_taken_count",
+        "medication_scheduled_count", "meal_count", "water_intake_count",
+        "sleep_minutes", "mood_score", "senior_utterance_count",
+        "robot_utterance_count", "outing_count", "created_at", "updated_at",
+        "orientation_question_repeat_count", "summary_sent_at",
+    ],
+    "known_person": [
+        "id", "senior_id", "guardian_user_id", "display_name", "relationship",
+        "is_deceased", "deceased_note", "lives_with", "contact_frequency",
+        "last_mentioned_at", "created_at", "updated_at",
+    ],
+    "wake_word_trigger_receipt": [
+        "event_id", "robot_device_id", "occurred_at", "keyword", "confidence",
+        "disposition", "scenario_id", "created_at",
+    ],
+    "walk_request_receipt": [
+        "id", "ingress", "request_id", "robot_device_id", "action", "source",
+        "conversation_id", "occurred_at", "disposition", "scenario_id",
+        "scenario_status", "created_at",
     ],
 }
 EXPECTED_HEADERS = {
@@ -229,8 +270,8 @@ def main() -> int:
     }
     if "02_컬럼정의" in tables_by_sheet:
         headers, column_rows = tables_by_sheet["02_컬럼정의"]
-        if len(column_rows) != 151:
-            fail(errors, f"컬럼 수가 151이 아닙니다: {len(column_rows)}")
+        if len(column_rows) != 253:
+            fail(errors, f"컬럼 수가 253이 아닙니다: {len(column_rows)}")
         actual_by_table: dict[str, list[str]] = {name: [] for name in EXPECTED_COLUMNS}
         seen_pairs: list[str] = []
         required_description_indexes = [headers.index(name) for name in ["무엇을 저장하는가", "언제 어떻게 쓰는가", "주의할 점", "예시"]]
@@ -278,7 +319,10 @@ def main() -> int:
         if duplicate_values(names):
             fail(errors, f"중복 제약조건 이름이 있습니다: {sorted(duplicate_values(names))}")
         pk_targets = {row[2] for row in constraint_rows if row[1] == "PK"}
-        expected_pk_targets = {f"{table}.id" for table in EXPECTED_COLUMNS}
+        expected_pk_targets = {
+            f"{table}.{'event_id' if table == 'wake_word_trigger_receipt' else 'id'}"
+            for table in EXPECTED_COLUMNS
+        }
         if pk_targets != expected_pk_targets:
             fail(errors, f"PK 정의가 다릅니다: {sorted(pk_targets)}")
 
@@ -292,6 +336,8 @@ def main() -> int:
             "fact_candidate.confirmed_value",
             "care_record.details",
             "care_record.recurrence",
+            "scenario.conversation_request",
+            "scenario.trigger_context",
         }
         if targets != expected:
             fail(errors, f"JSONB 대상이 다릅니다: {sorted(targets)}")
@@ -317,7 +363,41 @@ def main() -> int:
         required_codes = {
             "app_user.user_type": {"SENIOR", "GUARDIAN"},
             "robot.current_mode": {"IDLE", "SCENARIO_ACTIVE", "REST_GUARD", "SAFE_STOP"},
-            "scenario.scenario_type": {"HOMECOMING", "FALL_RESPONSE", "MANUAL_INTERACTION"},
+            "scenario.scenario_type": {
+                "HOMECOMING", "WELLNESS_CHECK", "MEDICATION_REMINDER",
+                "WAKE_WORD_CALL", "WALK", "FALL_RESPONSE", "MANUAL_INTERACTION",
+            },
+            "scenario.final_status": {
+                "RECEIVED", "NAVIGATING", "STARTING_FOLLOW", "FOLLOWING",
+                "STOPPING_FOLLOW", "MOVING_TO_ENTRANCE",
+                "CHECKING_INTERACTION", "CONVERSING", "RETURN_DECISION",
+                "RETURNING_TO_DEFAULT", "COMPLETED", "FAILED", "CANCELLED",
+                "TIMED_OUT",
+            },
+            "wake_word_trigger_receipt.disposition": {
+                "RECEIVED", "ACCEPTED", "REJECTED_UNKNOWN_ROBOT",
+                "REJECTED_INACTIVE_ROBOT", "REJECTED_UNASSIGNED_ROBOT",
+                "REJECTED_SAFE_STOP", "REJECTED_ACTIVE_SCENARIO",
+                "REJECTED_BUSY_MODE",
+            },
+            "walk_request_receipt.ingress": {"MQTT", "GUARDIAN_REST"},
+            "walk_request_receipt.action": {"START", "STOP"},
+            "walk_request_receipt.source": {"VOICE", "APP"},
+            "walk_request_receipt.disposition": {
+                "RECEIVED", "ACCEPTED", "NO_OP_ALREADY_STOPPING",
+                "REJECTED_NO_ACTIVE_WALK", "REJECTED_UNKNOWN_ROBOT",
+                "REJECTED_INACTIVE_ROBOT", "REJECTED_UNASSIGNED_ROBOT",
+                "REJECTED_SAFE_STOP", "REJECTED_REST_GUARD",
+                "REJECTED_ACTIVE_SCENARIO", "REJECTED_BUSY_MODE",
+                "REJECTED_REQUEST_ID_REUSED", "REJECTED_MQTT_UNAVAILABLE",
+            },
+            "scenario.last_follow_result_code": {
+                "STARTED", "STOPPED", "UNCHANGED",
+            },
+            "scenario.last_follow_reason_code": {
+                "PERSON_LOST", "COMMAND_EXPIRED", "EXECUTION_TIMEOUT",
+                "SAFETY_STOP", "INTERNAL_ERROR",
+            },
             "conversation_message.role": {"SENIOR", "ROBOT"},
             "conversation_summary.summary_type": {"CONVERSATION", "DAILY"},
             "onboarding_session.started_channel": {"APP", "ROBOT"},
@@ -376,8 +456,19 @@ def main() -> int:
     if "08_연계매핑" in tables_by_sheet:
         _, rows = tables_by_sheet["08_연계매핑"]
         mapping_text = "\n".join("\t".join(row) for row in rows)
-        if "robot.id" not in mapping_text or "scenario.external_event_id" not in mapping_text:
-            fail(errors, "robotId와 시작 eventId의 DB 매핑이 없습니다.")
+        robot_id_rows = [row for row in rows if row[0] == "robotId"]
+        if len(robot_id_rows) != 1 or robot_id_rows[0][3] != "robot.device_id":
+            fail(errors, "robotId는 정확히 robot.device_id에 매핑되어야 합니다.")
+        if "scenario.external_event_id" not in mapping_text:
+            fail(errors, "시작 eventId의 DB 매핑이 없습니다.")
+        for required in [
+            "walk_request_receipt.request_id",
+            "scenario.follow_start_command_id",
+            "scenario.follow_stop_command_id",
+            "scenario.last_follow_result_event_id",
+        ]:
+            if required not in mapping_text:
+                fail(errors, f"산책 계약의 DB 매핑이 없습니다: {required}")
         for stale in [
             "robot.serial_number", "client_event_id", "materialization_key",
             "conversation.messages",
@@ -401,6 +492,7 @@ def main() -> int:
 
     if "02_컬럼정의" in tables_by_sheet:
         _, column_rows = tables_by_sheet["02_컬럼정의"]
+        row_by_column = {f"{row[0]}.{row[2]}": row for row in column_rows}
         key_by_column = {f"{row[0]}.{row[2]}": row[6] for row in column_rows}
         for logical_column in [
             "fact_candidate.target_entity_id",
@@ -413,8 +505,86 @@ def main() -> int:
             "fact_candidate.source_message_id",
             "care_record.source_message_id",
         ]:
-            if key_by_column.get(message_fk) != "FK":
-                fail(errors, f"메시지 근거가 물리 FK가 아닙니다: {message_fk}")
+            if key_by_column.get(message_fk) != "논리 참조":
+                fail(errors, f"메시지 근거가 논리 참조가 아닙니다: {message_fk}")
+        physical_shape = {
+            "app_user.conversation_preferences": ("JSONB", "Y"),
+            "care_relationship.connected_at": ("TIMESTAMPTZ", "Y"),
+            "onboarding_session.question_set_version": ("VARCHAR(50)", "N"),
+            "onboarding_session.started_channel": ("VARCHAR(30)", "Y"),
+            "onboarding_answer.answer_value": ("JSONB", "N"),
+            "onboarding_answer.answered_channel": ("VARCHAR(30)", "Y"),
+            "onboarding_answer.respondent_user_id": ("UUID", "N"),
+            "onboarding_answer.answered_at": ("TIMESTAMPTZ", "N"),
+            "onboarding_answer.updated_at": ("TIMESTAMPTZ", "N"),
+            "conversation.started_at": ("TIMESTAMPTZ", "N"),
+            "fact_candidate.missing_fields": ("VARCHAR(255)[]", "Y"),
+            "memory.visibility": ("VARCHAR(30)", "Y"),
+            "memory.keywords": ("VARCHAR(255)[]", "N"),
+            "memory.importance": ("SMALLINT", "N"),
+            "memory.first_observed_at": ("TIMESTAMPTZ", "N"),
+        }
+        for column, expected_shape in physical_shape.items():
+            row = row_by_column.get(column)
+            actual_shape = None if row is None else (row[4], row[5])
+            if actual_shape != expected_shape:
+                fail(errors, f"Flyway 타입/필수 여부가 다릅니다: {column}={actual_shape}")
+        reference_columns = [
+            f"{row[0]}.{row[2]}" for row in column_rows if row[7]
+        ]
+        bad_reference_columns = [
+            column for column in reference_columns
+            if key_by_column.get(column) != "논리 참조"
+        ]
+        if bad_reference_columns:
+            fail(errors, f"참조 컬럼이 논리 참조로 표시되지 않았습니다: {bad_reference_columns}")
+        physical_fk_columns = [
+            column for column, key in key_by_column.items()
+            if key in {"FK", "SELF FK"}
+        ]
+        if physical_fk_columns:
+            fail(errors, f"V1~V16에 없는 물리 FK 표기가 있습니다: {physical_fk_columns}")
+
+    if "03_관계_제약조건" in tables_by_sheet:
+        _, constraint_rows = tables_by_sheet["03_관계_제약조건"]
+        false_fk_rows = [
+            row[0] for row in constraint_rows
+            if row[1] in {"FK", "FK 삭제 정책"} or row[5] == "DB FK"
+        ]
+        if false_fk_rows:
+            fail(errors, f"V1~V16에 없는 물리 FK 제약 표기가 있습니다: {false_fk_rows}")
+
+        migration_dir = DOCS_DIR.parent / "backend" / "src" / "main" / "resources" / "db" / "migration"
+        migration_text = "\n".join(
+            path.read_text(encoding="utf-8") for path in migration_dir.glob("V*.sql")
+        )
+        migration_text = re.sub(r"--.*?$", "", migration_text, flags=re.MULTILINE)
+        physical_names = set(re.findall(
+            r"\bCONSTRAINT\s+([a-zA-Z0-9_]+)", migration_text, re.IGNORECASE
+        ))
+        physical_names.update(re.findall(
+            r"\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+([a-zA-Z0-9_]+)",
+            migration_text,
+            re.IGNORECASE,
+        ))
+        documented_physical = {
+            row[0] for row in constraint_rows
+            if re.search(r"\bDB (?:CHECK|UNIQUE(?: INDEX)?)\b", row[5])
+            and "없음" not in row[5]
+            and "후보" not in row[5]
+        }
+        unknown_physical = sorted(documented_physical - physical_names)
+        if unknown_physical:
+            fail(errors, f"Flyway에 없는 DB 제약을 문서가 주장합니다: {unknown_physical}")
+        required_v14 = {
+            "ck_scenario_conversation_request_object",
+            "uq_scenario_active_navigation_command",
+            "uq_conversation_scenario",
+            "uq_conversation_start_command",
+        }
+        documented_names = {row[0] for row in constraint_rows}
+        if not required_v14.issubset(documented_names):
+            fail(errors, f"V14 실제 제약 문서가 누락됐습니다: {sorted(required_v14 - documented_names)}")
 
     erd_path = DATABASE_DIR / "mvp-erd.md"
     if not erd_path.exists():
@@ -503,7 +673,8 @@ def main() -> int:
                 # S15P11E102-261: 개인차가 있어야 하는 값 세 가지(기상·취침 시각,
                 # 만성 통증 부위, 단골 병원)를 온보딩으로 묻는다.
                 "WAKE_TIME", "SLEEP_TIME", "CHRONIC_PAIN_AREA",
-                "PREFERRED_HOSPITAL",
+                "PREFERRED_HOSPITAL", "FAVORITE_FOOD", "FAVORITE_SONG",
+                "FORMER_OCCUPATION", "HOMETOWN",
             }
             if set(question_codes) != required_codes:
                 fail(errors, f"질문 코드 목록이 다릅니다: {sorted(question_codes)}")
@@ -516,7 +687,7 @@ def main() -> int:
         "연락 불가": ["unreachable_reason", "contact_attempt_count"],
         "민감정보 확인": ["SENSITIVE_INFORMATION_CONFIRMATION", "confirmed_value"],
         "중복 반영 방지": ["source_candidate_id", "materialized_at"],
-        "Raw 삭제 안전": ["ON DELETE SET NULL", "보존기간"],
+        "Raw 삭제 안전": ["물리 FK 없음", "보존기간"],
     }
     policy_text = workbook_text + "\n" + contract_text
     if question_set_path.exists():
@@ -567,8 +738,8 @@ def main() -> int:
 
     print("컬럼정의서 검증 완료")
     print("- 시트 10개")
-    print("- 물리 테이블 12개")
-    print("- 컬럼 151개")
+    print("- 물리 테이블 17개")
+    print("- 컬럼 253개")
     print("- 목적형 CSV 스냅샷 9개")
     print("- Jira·승인·입력목록·검증결과 시트 없음")
     print("- 컬럼별 의미·사용 맥락·주의·예시 누락 및 동일 문장 반복 없음")

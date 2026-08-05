@@ -1,3 +1,3 @@
 ﻿대상 컬럼,검색 목적,원문,차원,생성 시점,검색 제외 조건,절대 임베딩하지 않는 정보,비고
-Qdrant conversation_summary 컬렉션,관련 대화·일간 요약 의미 검색,conversation_summary.content,4096,요약 생성·재생성 후 비동기 배치(턴 경로 밖),superseded_by_id가 있는 구버전,Raw 전문·다른 시니어 내용,"pgvector 미사용(4096차원은 인덱스 상한 초과). 코사인 HNSW. 부기는 conversation_summary.embedding_status/synced_at/model. S15P11E102-218"
-Qdrant memory 컬렉션,허용된 장기 기억의 의미 유사 검색,memory.content,4096,확정 기억 생성 후 비동기 배치(턴 경로 밖),ACTIVE 아님 또는 REJECTED,삭제된 원문·건강정보 전문,"keywords와 혼합. 동일 모델만 사용(모델이 다르면 벡터 공간이 달라 유사도가 무의미). hit는 순위만 바꾸고 행을 추가하지 못함 — Postgres 재검증이 권위. S15P11E102-218"
+conversation_summary.embedding,관련 대화·일간 요약 의미 검색,conversation_summary.content,TBD,요약 생성·재생성 후,superseded_by_id가 있는 구버전,Raw 전문·다른 시니어 내용,모델·차원 확정 전 인덱스 미정
+memory.embedding,허용된 장기 기억의 의미 유사 검색,memory.content,TBD,확정 기억 생성 후,ACTIVE 아님 또는 REJECTED,삭제된 원문·건강정보 전문,keywords와 혼합 검색하고 동일 모델만 사용

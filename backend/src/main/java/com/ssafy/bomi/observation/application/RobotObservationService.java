@@ -51,7 +51,7 @@ public class RobotObservationService {
     /** Robot reported a rest-state change: record it and toggle REST_GUARD. */
     @Transactional
     public void recordRestState(String robotDeviceId, JsonNode body) {
-        Robot robot = robotRepository.findByDeviceId(robotDeviceId).orElse(null);
+        Robot robot = robotRepository.findByDeviceIdForUpdate(robotDeviceId).orElse(null);
         if (robot == null) {
             log.warn("Rest state for unknown robot; ignoring: deviceId={}", robotDeviceId);
             return;
@@ -95,10 +95,16 @@ public class RobotObservationService {
         JsonNode comfortNode = payload.get(ObservationContract.COMFORT_KEY);
         String comfort = (comfortNode != null && comfortNode.isTextual()) ? comfortNode.textValue() : null;
 
-        robotRepository.findBySeniorId(seniorId).ifPresent(robot -> {
-            robot.recordAmbient(temperature, humidity, observedAt == null ? OffsetDateTime.now() : observedAt);
-            robotRepository.save(robot);
-        });
+        OffsetDateTime effectiveObservedAt = observedAt == null
+            ? OffsetDateTime.now()
+            : observedAt;
+        UUID robotId = robotRepository.findIdBySeniorId(seniorId).orElse(null);
+        if (robotId == null) {
+            log.warn("No robot for senior {}; ambient reading recorded as an event only", seniorId);
+        } else {
+            robotRepository.updateAmbientSnapshotById(
+                robotId, temperature, humidity, effectiveObservedAt);
+        }
 
         Map<String, Object> details = new HashMap<>();
         if (temperature != null) {
@@ -113,13 +119,14 @@ public class RobotObservationService {
         CareRecord record = CareRecord.create(seniorId, RECORD_ENVIRONMENT_OBSERVATION, details);
         // 센서가 실은 관측 시각이 우선이다. 도착 시각으로 적으면 MQTT 가 밀린 만큼
         // 측정값이 미래로 이동한다.
-        record.occurredAt(observedAt == null ? OffsetDateTime.now() : observedAt);
+        record.occurredAt(effectiveObservedAt);
         careRecordRepository.save(record);
     }
 
     /** RESTING → REST_GUARD; AWAKE clears REST_GUARD back to IDLE (other modes untouched). */
     private void applyRestMode(Robot robot, String restState) {
-        if (ObservationContract.REST_STATE_RESTING.equals(restState)) {
+        if (ObservationContract.REST_STATE_RESTING.equals(restState)
+            && robot.getCurrentMode() == RobotMode.IDLE) {
             robot.changeMode(RobotMode.REST_GUARD);
         } else if (ObservationContract.REST_STATE_AWAKE.equals(restState)
             && robot.getCurrentMode() == RobotMode.REST_GUARD) {

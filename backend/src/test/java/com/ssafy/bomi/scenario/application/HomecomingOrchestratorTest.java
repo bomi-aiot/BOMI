@@ -27,6 +27,8 @@ import com.ssafy.bomi.scenario.domain.Scenario;
 import com.ssafy.bomi.scenario.domain.ScenarioStatus;
 import com.ssafy.bomi.scenario.domain.ScenarioType;
 import com.ssafy.bomi.scenario.repository.ScenarioRepository;
+import com.ssafy.bomi.user.domain.AppUser;
+import com.ssafy.bomi.user.repository.AppUserRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -48,6 +50,7 @@ class HomecomingOrchestratorTest {
     private static final String DEFAULT_COMMAND_ID = "navigate-default";
 
     private final ScenarioRepository scenarioRepository = mock(ScenarioRepository.class);
+    private final AppUserRepository appUserRepository = mock(AppUserRepository.class);
     private final ConversationRepository conversationRepository = mock(ConversationRepository.class);
     private final RobotRepository robotRepository = mock(RobotRepository.class);
     private final RobotCommandPublisher commandPublisher = mock(RobotCommandPublisher.class);
@@ -73,8 +76,10 @@ class HomecomingOrchestratorTest {
             commandPublisher,
             conversationGateway,
             properties,
-            new ScenarioStartGuard(scenarioRepository),
+            new ScenarioStartGuard(scenarioRepository, appUserRepository),
             clock);
+        when(appUserRepository.findByIdForUpdate(any()))
+            .thenReturn(Optional.of(mock(AppUser.class)));
         when(scenarioRepository.save(any(Scenario.class))).thenAnswer(invocation -> {
             Scenario scenario = invocation.getArgument(0);
             if (scenario.getId() == null) {

@@ -14,6 +14,7 @@ import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import lombok.AccessLevel;
@@ -35,15 +36,12 @@ import org.hibernate.type.SqlTypes;
  *
  * <p>{@code finalStatus} keeps the <b>current</b> coarse status throughout the
  * flow (the column name is kept for compatibility; see {@link ScenarioStatus}).
- * Only allowed transitions succeed — see {@link #ALLOWED_TRANSITIONS} and
+ * Only allowed transitions succeed — see {@link #ALLOWED_TRANSITIONS_BY_TYPE} and
  * {@link #transitionTo(ScenarioStatus)}.</p>
  *
- * <p><b>Scope note (this sprint):</b> the transition map below encodes the
- * {@code HOMECOMING} happy path plus "any active state → terminal". This is one
- * shared rule set for all types; {@code FALL_RESPONSE} / {@code MANUAL_INTERACTION}
- * paths are added on top of the same map in a follow-up sprint. Robot mode
- * co-transition is intentionally out of scope here and handled by the robot
- * status/observation ticket.</p>
+ * <p>Conversation-driven types keep the existing homecoming path. The wake-word
+ * call has its own short path ({@code RECEIVED -> NAVIGATING -> COMPLETED}) so an
+ * arrival can never accidentally start an AI conversation or a return command.</p>
  */
 @Entity
 @Table(name = "scenario")
@@ -51,9 +49,9 @@ import org.hibernate.type.SqlTypes;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Scenario {
 
-    /** Shared transition rules: from-status → allowed next statuses. */
-    private static final Map<ScenarioStatus, Set<ScenarioStatus>> ALLOWED_TRANSITIONS =
-        buildAllowedTransitions();
+    /** Scenario type → from-status → allowed next statuses. */
+    private static final Map<ScenarioType, Map<ScenarioStatus, Set<ScenarioStatus>>>
+        ALLOWED_TRANSITIONS_BY_TYPE = buildAllowedTransitionsByType();
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -92,6 +90,52 @@ public class Scenario {
 
     @Column(name = "active_navigation_target", length = 30)
     private String activeNavigationTarget;
+
+    /** Minimal structured trigger metadata; never contains raw audio or full STT text. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "trigger_context")
+    private Map<String, Object> triggerContext;
+
+    /** Terminal Robot result code used by scenario history and diagnostics. */
+    @Column(name = "completion_result_code", length = 50)
+    private String completionResultCode;
+
+    /** Stable terminal reason code; human prose belongs in logs, not this field. */
+    @Column(name = "completion_reason_code", length = 100)
+    private String completionReasonCode;
+
+    /** WALK 전용 FOLLOW_START 상관관계. STARTED 뒤에도 산책 종료까지 보존한다. */
+    @Column(name = "follow_start_command_id", length = 64)
+    private String followStartCommandId;
+
+    /** WALK 전용 FOLLOW_STOP 상관관계. START 명령과 절대 공유하지 않는다. */
+    @Column(name = "follow_stop_command_id", length = 64)
+    private String followStopCommandId;
+
+    @Column(name = "follow_start_requested_at")
+    private OffsetDateTime followStartRequestedAt;
+
+    @Column(name = "following_started_at")
+    private OffsetDateTime followingStartedAt;
+
+    @Column(name = "follow_stop_requested_at")
+    private OffsetDateTime followStopRequestedAt;
+
+    /** 마지막으로 상태에 반영한 FOLLOW_RESULT의 최소 구조화 이력. */
+    @Column(name = "last_follow_result_event_id", length = 64)
+    private String lastFollowResultEventId;
+
+    @Column(name = "last_follow_command_id", length = 64)
+    private String lastFollowCommandId;
+
+    @Column(name = "last_follow_result_code", length = 50)
+    private String lastFollowResultCode;
+
+    @Column(name = "last_follow_reason_code", length = 100)
+    private String lastFollowReasonCode;
+
+    @Column(name = "last_follow_result_at")
+    private OffsetDateTime lastFollowResultAt;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -163,7 +207,20 @@ public class Scenario {
         return conversationRequest == null ? null : Map.copyOf(conversationRequest);
     }
 
-    /** Stores command correlation before the command is committed to the MQTT outbox. */
+    /** Stores the smallest useful trigger snapshot for non-conversation scenarios. */
+    public void recordTriggerContext(Map<String, Object> context) {
+        if (context == null) {
+            this.triggerContext = Map.of();
+            return;
+        }
+        this.triggerContext = new LinkedHashMap<>(context);
+    }
+
+    public Map<String, Object> getTriggerContext() {
+        return triggerContext == null ? null : Map.copyOf(triggerContext);
+    }
+
+    /** Stores command correlation before the after-commit MQTT publish is registered. */
     public void expectNavigationResult(String commandId, String target) {
         if (activeNavigationCommandId != null) {
             throw new IllegalStateException(
@@ -186,13 +243,16 @@ public class Scenario {
     // --- State machine -------------------------------------------------------
 
     /**
-     * Moves to {@code next} if the transition is allowed by the shared rule set,
+     * Moves to {@code next} if the transition is allowed by this scenario type,
      * otherwise throws {@link IllegalStateException}. This is the single
      * enforcement point; the intent methods below delegate here.
      */
     public void transitionTo(ScenarioStatus next) {
         requireNonNull(next, "next");
-        Set<ScenarioStatus> allowed = ALLOWED_TRANSITIONS.getOrDefault(finalStatus, Set.of());
+        Map<ScenarioStatus, Set<ScenarioStatus>> transitions =
+            ALLOWED_TRANSITIONS_BY_TYPE.getOrDefault(
+                scenarioType, ALLOWED_TRANSITIONS_BY_TYPE.get(ScenarioType.HOMECOMING));
+        Set<ScenarioStatus> allowed = transitions.getOrDefault(finalStatus, Set.of());
         if (!allowed.contains(next)) {
             throw new IllegalStateException(
                 "Illegal scenario transition: " + finalStatus + " -> " + next);
@@ -203,6 +263,101 @@ public class Scenario {
     // Intent methods for the HOMECOMING happy path (readability for orchestration).
     public void beginMovingToEntrance() {
         transitionTo(ScenarioStatus.MOVING_TO_ENTRANCE);
+    }
+
+    /** Starts the wake-word call's one-way movement to the senior. */
+    public void beginNavigation() {
+        transitionTo(ScenarioStatus.NAVIGATING);
+    }
+
+    /** Stores and starts the WALK FOLLOW_START command lifecycle. */
+    public void beginFollowStart(String commandId, OffsetDateTime requestedAt) {
+        requireWalk();
+        if (followStartCommandId != null) {
+            throw new IllegalStateException("WALK already has a FOLLOW_START command: " + id);
+        }
+        transitionTo(ScenarioStatus.STARTING_FOLLOW);
+        this.followStartCommandId = requireText(commandId, "commandId", 64);
+        this.followStartRequestedAt = requireNonNull(requestedAt, "requestedAt");
+    }
+
+    /** Applies STARTED/UNCHANGED and records when Backend confirmed FOLLOWING. */
+    public void confirmFollowing(
+        String eventId,
+        String commandId,
+        String resultCode,
+        String reasonCode,
+        OffsetDateTime resultOccurredAt,
+        OffsetDateTime confirmedAt
+    ) {
+        requireWalk();
+        transitionTo(ScenarioStatus.FOLLOWING);
+        recordFollowResult(eventId, commandId, resultCode, reasonCode, resultOccurredAt);
+        this.followingStartedAt = requireNonNull(confirmedAt, "confirmedAt");
+    }
+
+    /**
+     * Records the START acknowledgement that arrives after a STOP was requested. The state stays
+     * STOPPING_FOLLOW; the acknowledgement is only the causal proof needed to publish the
+     * already-persisted FOLLOW_STOP without risking STOP-before-START command reordering.
+     */
+    public void confirmFollowStartWhileStopping(
+        String eventId,
+        String commandId,
+        String resultCode,
+        String reasonCode,
+        OffsetDateTime resultOccurredAt,
+        OffsetDateTime confirmedAt
+    ) {
+        requireWalk();
+        if (finalStatus != ScenarioStatus.STOPPING_FOLLOW) {
+            throw new IllegalStateException(
+                "Deferred FOLLOW_START acknowledgement requires STOPPING_FOLLOW: " + id);
+        }
+        if (!Objects.equals(commandId, followStartCommandId)) {
+            throw new IllegalArgumentException(
+                "Deferred FOLLOW_START commandId does not match WALK start command");
+        }
+        if (followStopCommandId == null) {
+            throw new IllegalStateException("STOPPING_FOLLOW requires a FOLLOW_STOP command: " + id);
+        }
+        if (followingStartedAt != null) {
+            throw new IllegalStateException("WALK start acknowledgement is already recorded: " + id);
+        }
+        recordFollowResult(eventId, commandId, resultCode, reasonCode, resultOccurredAt);
+        this.followingStartedAt = requireNonNull(confirmedAt, "confirmedAt");
+    }
+
+    /** Stores a distinct FOLLOW_STOP command and enters STOPPING_FOLLOW exactly once. */
+    public void beginFollowStop(String commandId, OffsetDateTime requestedAt) {
+        requireWalk();
+        if (followStopCommandId != null) {
+            throw new IllegalStateException("WALK already has a FOLLOW_STOP command: " + id);
+        }
+        String validatedCommandId = requireText(commandId, "commandId", 64);
+        if (validatedCommandId.equals(followStartCommandId)) {
+            throw new IllegalArgumentException(
+                "FOLLOW_STOP commandId must differ from FOLLOW_START commandId");
+        }
+        transitionTo(ScenarioStatus.STOPPING_FOLLOW);
+        this.followStopCommandId = validatedCommandId;
+        this.followStopRequestedAt = requireNonNull(requestedAt, "requestedAt");
+    }
+
+    /** Records only stable FOLLOW_RESULT fields, never frames/tracks/raw speech. */
+    public void recordFollowResult(
+        String eventId,
+        String commandId,
+        String resultCode,
+        String reasonCode,
+        OffsetDateTime occurredAt
+    ) {
+        requireWalk();
+        this.lastFollowResultEventId = requireText(eventId, "eventId", 64);
+        this.lastFollowCommandId = requireText(commandId, "commandId", 64);
+        this.lastFollowResultCode = normalizeCode(resultCode, "resultCode", 50);
+        this.lastFollowReasonCode = normalizeCode(reasonCode, "reasonCode", 100);
+        this.lastFollowResultAt = requireNonNull(occurredAt, "occurredAt");
     }
 
     public void checkInteraction() {
@@ -222,31 +377,60 @@ public class Scenario {
     }
 
     public void complete() {
-        transitionTo(ScenarioStatus.COMPLETED);
-        clearNavigationCorrelation();
+        complete(null, null);
+    }
+
+    public void complete(String resultCode, String reasonCode) {
+        finish(ScenarioStatus.COMPLETED, resultCode, reasonCode);
     }
 
     // Terminal exits available from any active state.
     public void fail() {
-        transitionTo(ScenarioStatus.FAILED);
-        clearNavigationCorrelation();
+        fail(null, null);
+    }
+
+    public void fail(String resultCode, String reasonCode) {
+        finish(ScenarioStatus.FAILED, resultCode, reasonCode);
     }
 
     public void cancel() {
-        transitionTo(ScenarioStatus.CANCELLED);
-        clearNavigationCorrelation();
+        cancel(null, null);
+    }
+
+    public void cancel(String resultCode, String reasonCode) {
+        finish(ScenarioStatus.CANCELLED, resultCode, reasonCode);
     }
 
     public void timeOut() {
-        transitionTo(ScenarioStatus.TIMED_OUT);
-        clearNavigationCorrelation();
+        timeOut(null, null);
+    }
+
+    public void timeOut(String resultCode, String reasonCode) {
+        finish(ScenarioStatus.TIMED_OUT, resultCode, reasonCode);
     }
 
     public boolean isTerminated() {
         return finalStatus.isTerminal();
     }
 
-    private static Map<ScenarioStatus, Set<ScenarioStatus>> buildAllowedTransitions() {
+    private static Map<ScenarioType, Map<ScenarioStatus, Set<ScenarioStatus>>>
+        buildAllowedTransitionsByType() {
+        Map<ScenarioStatus, Set<ScenarioStatus>> conversation =
+            buildConversationTransitions();
+        Map<ScenarioStatus, Set<ScenarioStatus>> wakeWord =
+            buildWakeWordCallTransitions();
+        Map<ScenarioStatus, Set<ScenarioStatus>> walk = buildWalkTransitions();
+        Map<ScenarioType, Map<ScenarioStatus, Set<ScenarioStatus>>> byType =
+            new EnumMap<>(ScenarioType.class);
+        for (ScenarioType type : ScenarioType.values()) {
+            byType.put(type, conversation);
+        }
+        byType.put(ScenarioType.WAKE_WORD_CALL, wakeWord);
+        byType.put(ScenarioType.WALK, walk);
+        return Map.copyOf(byType);
+    }
+
+    private static Map<ScenarioStatus, Set<ScenarioStatus>> buildConversationTransitions() {
         // Terminal statuses reachable from every active (non-terminal) status.
         Set<ScenarioStatus> terminals = EnumSet.of(
             ScenarioStatus.FAILED, ScenarioStatus.CANCELLED, ScenarioStatus.TIMED_OUT);
@@ -261,6 +445,43 @@ public class Scenario {
         putTransition(map, ScenarioStatus.RETURN_DECISION, ScenarioStatus.RETURNING_TO_DEFAULT, terminals);
         putTransition(map, ScenarioStatus.RETURNING_TO_DEFAULT, ScenarioStatus.COMPLETED, terminals);
         // Terminal statuses admit no outgoing transitions.
+        map.put(ScenarioStatus.COMPLETED, Set.of());
+        map.put(ScenarioStatus.FAILED, Set.of());
+        map.put(ScenarioStatus.CANCELLED, Set.of());
+        map.put(ScenarioStatus.TIMED_OUT, Set.of());
+        return map;
+    }
+
+    private static Map<ScenarioStatus, Set<ScenarioStatus>> buildWakeWordCallTransitions() {
+        Set<ScenarioStatus> exceptionalTerminals = EnumSet.of(
+            ScenarioStatus.FAILED, ScenarioStatus.CANCELLED, ScenarioStatus.TIMED_OUT);
+        Map<ScenarioStatus, Set<ScenarioStatus>> map = new EnumMap<>(ScenarioStatus.class);
+        putTransition(map, ScenarioStatus.RECEIVED, ScenarioStatus.NAVIGATING,
+            exceptionalTerminals);
+        putTransition(map, ScenarioStatus.NAVIGATING, ScenarioStatus.COMPLETED,
+            exceptionalTerminals);
+        map.put(ScenarioStatus.COMPLETED, Set.of());
+        map.put(ScenarioStatus.FAILED, Set.of());
+        map.put(ScenarioStatus.CANCELLED, Set.of());
+        map.put(ScenarioStatus.TIMED_OUT, Set.of());
+        return map;
+    }
+
+    private static Map<ScenarioStatus, Set<ScenarioStatus>> buildWalkTransitions() {
+        Set<ScenarioStatus> exceptionalTerminals = EnumSet.of(
+            ScenarioStatus.FAILED, ScenarioStatus.CANCELLED, ScenarioStatus.TIMED_OUT);
+        Map<ScenarioStatus, Set<ScenarioStatus>> map = new EnumMap<>(ScenarioStatus.class);
+        putTransition(map, ScenarioStatus.RECEIVED, ScenarioStatus.STARTING_FOLLOW,
+            exceptionalTerminals);
+        putTransition(map, ScenarioStatus.STARTING_FOLLOW, ScenarioStatus.FOLLOWING,
+            exceptionalTerminals);
+        map.get(ScenarioStatus.STARTING_FOLLOW).add(ScenarioStatus.STOPPING_FOLLOW);
+        map.get(ScenarioStatus.STARTING_FOLLOW).add(ScenarioStatus.COMPLETED);
+        putTransition(map, ScenarioStatus.FOLLOWING, ScenarioStatus.STOPPING_FOLLOW,
+            exceptionalTerminals);
+        map.get(ScenarioStatus.FOLLOWING).add(ScenarioStatus.COMPLETED);
+        putTransition(map, ScenarioStatus.STOPPING_FOLLOW, ScenarioStatus.COMPLETED,
+            exceptionalTerminals);
         map.put(ScenarioStatus.COMPLETED, Set.of());
         map.put(ScenarioStatus.FAILED, Set.of());
         map.put(ScenarioStatus.CANCELLED, Set.of());
@@ -311,8 +532,40 @@ public class Scenario {
         return copied;
     }
 
+    private void finish(
+        ScenarioStatus terminalStatus,
+        String resultCode,
+        String reasonCode
+    ) {
+        transitionTo(terminalStatus);
+        this.completionResultCode = normalizeCode(resultCode, "resultCode", 50);
+        this.completionReasonCode = normalizeCode(reasonCode, "reasonCode", 100);
+        clearNavigationCorrelation();
+    }
+
+    private static String normalizeCode(String value, String field, int maxLength) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.trim();
+        if (normalized.isEmpty()) {
+            throw new IllegalArgumentException(field + " must not be blank");
+        }
+        if (normalized.length() > maxLength) {
+            throw new IllegalArgumentException(
+                field + " must not exceed " + maxLength + " characters");
+        }
+        return normalized;
+    }
+
     private void clearNavigationCorrelation() {
         this.activeNavigationCommandId = null;
         this.activeNavigationTarget = null;
+    }
+
+    private void requireWalk() {
+        if (scenarioType != ScenarioType.WALK) {
+            throw new IllegalStateException("FOLLOW state is only valid for WALK scenarios: " + id);
+        }
     }
 }
