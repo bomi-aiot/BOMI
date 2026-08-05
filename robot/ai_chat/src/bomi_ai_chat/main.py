@@ -195,19 +195,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     # 붙으면 매 대화 시작 전에 "보미야"를 기다린다(pipeline.run 참고).
     pipeline.wake = _build_wakeword(settings)
 
-    def _semantic_weather(text: str) -> bool:
-        # 무거운 임베딩 라우터는 실제 판정 시점에만 불러온다.
+    def _weather_intent(text: str) -> bool:
+        # 그래프 경로와 같은 값싼 "주제 + 조회 의도" 규칙을 공유한다.
         from bomi_ai_chat.llm.router import is_weather_query
 
         return is_weather_query(text)
 
-    pipeline._detect_weather = _semantic_weather
+    pipeline._detect_weather = _weather_intent
 
-    # 임베딩 의도 판정 모델을 '수음 시작 전에' 미리 로드(warm-up)한다.
-    # 이렇게 안 하면 첫 대화 도중(수음 뒤) 모델이 로드되면서 응답이 크게
-    # 지연된다. 아래 호출이 router 모듈을 import시켜 모델을 미리 올려둔다.
-    logging.getLogger("bomi_ai_chat.main").info("의도 판정 모델 로딩(warm-up)...")
-    _semantic_weather("워밍업")
+    logging.getLogger("bomi_ai_chat.main").info("의도 판정 규칙 준비...")
+    _weather_intent("워밍업")
 
     if args.once:
         result = pipeline.run_once()
@@ -236,9 +233,8 @@ def _run_graph_runtime(settings: Settings, audio_in, audio_out, *, once: bool) -
         settings, audio_out=audio_out, start_background=not once)
     logger.info("conversation runtime ready (senior=%s)", runtime.senior_id)
 
-    # 의도 판정 모델을 미리 올린다. 이게 없으면 '첫' 의료·날씨 질문이 들어온
-    # 순간에 로딩이 시작돼, 어르신이 36초를 기다린다(233 실기 실측).
-    # 레거시 경로에는 있었는데 그래프 경로에만 빠져 있었다.
+    # 배포 전환 중 기존 호출 순서를 유지하며 공용 결정 규칙의 import만 확인한다.
+    # 이 훅은 모델을 로드하거나 네트워크를 사용하지 않는다.
     bootstrap.warm_up_intent_router()
 
     # 마이크 빔을 로봇 정면으로 고정한다 (S15P11E102-333).

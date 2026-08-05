@@ -1,11 +1,11 @@
 # robot/ai_chat/src/bomi_ai_chat/llm/router.py
-"""임베딩 유사도 기반 medical_lookup 판단 (단일 API 체제)."""
+"""의료·날씨 조회 의도를 값싼 결정 규칙으로 판정한다."""
 
-from sentence_transformers import SentenceTransformer, util
+from __future__ import annotations
 
 
-def _load_model() -> SentenceTransformer:
-    """임베딩 모델을 '로컬 캐시 우선'으로 올린다.
+def _load_legacy_model():
+    """제거한 임베딩 라우터를 오프라인 비교 평가할 때만 로드한다.
 
     무엇을 하는가
         먼저 local_files_only=True 로 시도해 디스크 캐시만 읽는다. 캐시가 없을 때
@@ -18,18 +18,18 @@ def _load_model() -> SentenceTransformer:
         오프라인일 때가 바로 이 판정이 로컬이어서 살아남아야 하는 순간이다
         (CLAUDE.md §18). 캐시 우선이면 두 경우 모두 네트워크를 아예 안 탄다.
 
-    누가 호출하는가
-        모듈 import 시 한 번. 워밍업(bootstrap.warm_up_intent_router)이 대화
-        시작 전에 이 import 를 미리 일으킨다.
+    운영 런타임은 이 함수를 호출하지 않는다. evals/evaluate_router.py의
+    --legacy-model 옵션만 사용하며 sentence-transformers도 선택 의존성이다.
     """
+    from sentence_transformers import SentenceTransformer
+
     try:
         return SentenceTransformer("jhgan/ko-sroberta-multitask", local_files_only=True)
     except Exception:  # noqa: BLE001 - 캐시가 없으면 첫 설치이므로 내려받는다
         return SentenceTransformer("jhgan/ko-sroberta-multitask")
 
 
-_model = _load_model()
-
+# 제거한 모델을 같은 조건으로 재평가하기 위한 예시 스냅샷이다.
 MEDICAL_EXAMPLES = [
     "타이레놀 먹어도 되나요", "이 약 노인이 먹어도 되나",
     "이 약이랑 저 약 같이 먹어도 되나요", "약 같이 먹어도 괜찮은지 봐줘",
@@ -53,24 +53,43 @@ MEDICAL_EXAMPLES = [
     "대현동 정형외과", "서면 이비인후과",
 ]
 
-_medical_embeddings = _model.encode(MEDICAL_EXAMPLES, convert_to_tensor=True)
-
 THRESHOLD = 0.6
+
+_MEDICAL_TOPICS = (
+    "병원", "약국", "응급실", "의원", "진료", "처방", "부작용", "복용",
+    "정형외과", "이비인후과", "내과", "치과", "안과", "피부과", "소아과",
+    "타이레놀", "게보린", "아스피린", "마데카솔", "겔포스", "혈압약", "감기약",
+    "기침약", "당뇨약", "소화제", "보청기",
+)
+_MEDICAL_REQUESTS = (
+    "어디", "찾아", "알려", "어느", "어떤", "전화번호", "먹어도", "같이 먹",
+    "어떻게", "가야", "가도", "있을까", "있는 곳", "안전", "확인", "봐줘",
+    "문의", "상담", "아픈데", "아파", "통증", "복용법", "문 여", "살 수",
+    "얼마나 걸려", "근처", "주말에도", "일까",
+)
+_BARE_SPECIALTIES = (
+    "정형외과", "이비인후과", "내과", "치과", "안과", "피부과", "소아과",
+)
 
 
 def is_medical_query(text: str) -> bool:
     """의료(병원/약국/의약품) 관련 질문인지 판단한다."""
-    text_emb = _model.encode(text, convert_to_tensor=True)
-    max_sim = util.cos_sim(text_emb, _medical_embeddings).max().item()
-    return max_sim >= THRESHOLD
+    normalized = (text or "").strip().replace("약속", "")
+    if not normalized:
+        return False
+    if normalized in _BARE_SPECIALTIES:
+        return True
+    has_topic = any(marker in normalized for marker in _MEDICAL_TOPICS)
+    has_request = any(marker in normalized for marker in _MEDICAL_REQUESTS)
+    return has_topic and has_request
 
 
 
 # ---------------------------------------------------------------------------
 # 날씨 의도 판단
 # ---------------------------------------------------------------------------
-# 사용자가 '날씨'를 물었는지 판단한다. 정확한 단어("날씨")를 찾는 대신,
-# 문장의 '의미'가 아래 예시들과 비슷한지로 판단한다.
+# 아래 예시는 제거한 SentenceTransformer 라우터를 같은 조건으로 재평가하기 위해
+# 남긴 스냅샷이다. 운영 판정은 _WEATHER_TOPICS/_WEATHER_REQUESTS만 사용한다.
 WEATHER_EXAMPLES = [
     "오늘 날씨 어때", "오늘 날씨 알려줘", "지금 날씨 어때", "내일 날씨 어때",
     "서울 날씨 알려줘", "부산 날씨 어때", "오늘 부산 날씨 어때",
@@ -79,13 +98,25 @@ WEATHER_EXAMPLES = [
     "밖에 추워?", "오늘 더워?", "기온 몇 도야", "오늘 하늘 어때",
 ]
 
-_weather_embeddings = _model.encode(WEATHER_EXAMPLES, convert_to_tensor=True)
-
 WEATHER_THRESHOLD = 0.7
+
+_WEATHER_TOPICS = (
+    "날씨", "비가", "비 와", "비 오", "비 소식", "우산", "기온", "추워", "더워", "더운",
+    "눈이", "눈 와", "바람", "습도", "하늘", "햇볕", "선선", "얼겠", "겉옷",
+    "빨래", "장화", "소풍",
+)
+_WEATHER_REQUESTS = (
+    "알려", "어때", "올까", "쌓일까", "필요", "챙겨", "괜찮", "봐줘", "궁금",
+    "몇 도", "많이 불어", "높아", "내려가", "열어도", "없어", "와", "추워",
+    "더워", "더운지", "맑을까", "얼겠", "강하면",
+)
 
 
 def is_weather_query(text: str) -> bool:
-    """날씨 관련 질문인지 (문장 의미 기준으로) 판단한다."""
-    text_emb = _model.encode(text, convert_to_tensor=True)
-    max_sim = util.cos_sim(text_emb, _weather_embeddings).max().item()
-    return max_sim >= WEATHER_THRESHOLD
+    """날씨 주제와 조회 의도가 함께 있는지 판정한다."""
+    normalized = (text or "").strip()
+    if not normalized:
+        return False
+    has_topic = any(marker in normalized for marker in _WEATHER_TOPICS)
+    has_request = any(marker in normalized for marker in _WEATHER_REQUESTS)
+    return has_topic and has_request

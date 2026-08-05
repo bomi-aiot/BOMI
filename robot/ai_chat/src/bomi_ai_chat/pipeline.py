@@ -39,7 +39,7 @@ LOOP_FAILURE_DELAY_SECONDS = 1.0
 
 
 def _default_medical_query_detector(text: str) -> bool:
-    """무거운 임베딩 라우터를 실제 판별 시점까지 지연 로딩한다."""
+    """공용 의료 조회 규칙을 사용한다."""
 
     from bomi_ai_chat.llm.router import is_medical_query
 
@@ -87,8 +87,7 @@ class ConversationPipeline:
         self._is_medical_query = (
             medical_query_detector or _default_medical_query_detector
         )
-        # 날씨 의도 판정기. 기본은 가벼운 키워드 검사(테스트 격리 유지).
-        # 실제 실행(main)에서는 임베딩 기반 is_weather_query를 주입한다.
+        # 날씨 의도 판정기. 기본은 최소 키워드 검사이며 main은 공용 결정 규칙을 주입한다.
         self._detect_weather = (
             weather_query_detector or (lambda text: "날씨" in text)
         )

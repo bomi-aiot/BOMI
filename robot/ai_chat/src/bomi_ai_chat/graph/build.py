@@ -452,11 +452,11 @@ def build_graph(checkpoint_path: str | None = None):
 
     # 백엔드 명령은 게이트를 건너뛰고 곧바로 파이프라인에 올라탄다.
     # 이유는 이 파일 상단 주석 참고. 정제기(§14)는 여전히 통과한다.
-    g.add_edge("backend_command", "context_read")
+    g.add_edge("backend_command", "classify_intent")
 
     # 능동: 말하거나, 침묵한다. END 분기가 이 설계의 핵심이다.
     g.add_conditional_edges(
-        "proactive_gate", route_gate, {"context_read": "context_read", END: END}
+        "proactive_gate", route_gate, {"context_read": "classify_intent", END: END}
     )
 
     # 반응: 맞장구면 응답 없이 턴을 끝낸다.
@@ -476,16 +476,20 @@ def build_graph(checkpoint_path: str | None = None):
             # 확인 질문도 문맥 조회와 LLM 을 건너뛴다. "가슴이 아파" 직후에 로봇이
             # 무슨 말을 할지가 네트워크 상태에 달려서는 안 된다.
             "safety_confirm": "safety_confirm",
-            "context_read": "context_read",
+            "context_read": "classify_intent",
         },
     )
     g.add_edge("escalation", "response_shaper")
     g.add_edge("safety_confirm", "response_shaper")
 
     # ── 공통 파이프라인 ──────────────────────────────────────────────────────
-    g.add_edge("context_read", "classify_intent")
+    # 분류가 문맥 조회보다 먼저다. 백엔드 문서 코퍼스는 info 턴에서만 요청하는데,
+    # 예전 순서(context_read -> classify_intent)에서는 반응형 발화의 intent 가 아직
+    # 비어 있어 "복지제도 알려줘"조차 includeDocuments=false 로 전송됐다.
+    # 분류는 로컬 규칙/로컬 라우터뿐이라 네트워크 왕복을 추가하지 않는다.
+    g.add_edge("classify_intent", "context_read")
     g.add_conditional_edges(
-        "classify_intent",
+        "context_read",
         context.route_intent,
         {f"handle_{n}": f"handle_{n}" for n in INTENTS},
     )

@@ -98,3 +98,17 @@ def test_emit_runs_before_memory_write(tmp_path):
 
     targets = {e.target for e in graph.edges if e.source == "memory_write"}
     assert END in targets or "__end__" in targets
+
+
+def test_intent_is_classified_before_context_read(tmp_path):
+    """정보 질문의 문서 요청 여부가 정해진 뒤 백엔드 문맥을 조회한다.
+
+    예전 순서에서는 반응형 턴의 intent 가 비어 있어 "복지제도 알려줘"도
+    includeDocuments=false 로 전송됐다. 이 테스트는 노드 단위 테스트가 놓치는
+    실제 그래프 순서를 고정한다.
+    """
+    app = build_graph(checkpoint_path=str(tmp_path / "checkpoint.sqlite"))
+    edges = {(edge.source, edge.target) for edge in app.get_graph().edges}
+
+    assert ("classify_intent", "context_read") in edges
+    assert ("context_read", "classify_intent") not in edges

@@ -210,8 +210,15 @@ def test_backchannel_when_robot_is_silent_is_a_normal_turn(frozen_clock):
 # ── 완료 조건 3: 진짜 끼어들기 → 중단 + 재큐 ───────────────────────────────
 
 
-def test_real_interruption_cancels_playback_and_requeues_remainder(frozen_clock):
-    """(완료 조건 3) 재생이 멈추고, 말하지 못한 나머지가 큐로 돌아간다."""
+def test_playback_that_already_finished_is_not_an_interruption(frozen_clock):
+    """재생이 다 끝난 뒤의 발화는 끼어들기가 아니라 평범한 다음 턴이다.
+
+    (원래 이름은 real_interruption_cancels_playback_and_requeues_remainder 였는데,
+    감사 결함 B1 수정으로 이 시나리오의 올바른 의미가 '끼어들기 아님'이 되면서
+    이름도 바로잡았다. 진짜 끼어들기+재큐는 아래
+    test_remainder_keeps_original_priority_and_is_marked_resumed 와
+    tests/test_conversation_session.py 가 검증한다.)
+    """
     frozen_clock(start=1_000.0)
     sink = RecordingSink()
     player = SentencePlayer(sink.synthesize, sink.play)
@@ -225,7 +232,9 @@ def test_real_interruption_cancels_playback_and_requeues_remainder(frozen_clock)
     })
     output.TTS_HANDLES[SENIOR].wait(2)  # 재생이 끝난 상태를 만든다
 
-    # 재생이 끝났어도 핸들에게 물어보면 나머지가 0 이라는 정확한 답이 나온다.
+    # 재생이 이미 끝났으면 이것은 끼어들기가 아니라 평범한 다음 턴이다.
+    # (감사 결함 B1 수정 — 예전에는 state 의 낡은 speaking=True 만 보고
+    #  끼어들기로 처리했다. 지금은 핸들의 생사가 권위다.)
     result = ingress.note_interaction({
         "senior_id": SENIOR,
         "speaking": True,
@@ -234,8 +243,10 @@ def test_real_interruption_cancels_playback_and_requeues_remainder(frozen_clock)
     })
 
     assert result["speaking"] is False
-    # 전부 말했으므로 재큐할 것이 없다.
-    assert result["interrupted_remainder"] is None
+    # 끼어들기가 아니므로 재큐할 나머지도 만들지 않는다.
+    assert result.get("interrupted_remainder") is None
+    # 끝난 핸들은 정리된다.
+    assert SENIOR not in output.TTS_HANDLES
 
 
 def test_remainder_keeps_original_priority_and_is_marked_resumed():
@@ -349,7 +360,16 @@ def test_failed_synthesis_does_not_count_as_spoken():
 
 
 class _StubHandle:
-    """진행 상황을 직접 정해줄 수 있는 재생 핸들 대역."""
+    """진행 상황을 직접 정해줄 수 있는 재생 핸들 대역.
+
+    실제 SpeechPlayback 의 계약을 그대로 따라야 한다 — is_done 이 빠져 있으면
+    note_interaction 의 '재생이 이미 끝났는가' 확인(감사 결함 B1 수정)에서
+    AttributeError 가 난다. 대역이 실제 인터페이스에서 조용히 벗어나는 것이
+    이 저장소의 최빈 실패 유형이다(PROGRESS.md §2.0).
+    """
+
+    # 이 대역은 '재생 중'을 흉내낸다. 끝난 재생을 흉내내려면 True 로 바꾼다.
+    is_done = False
 
     def __init__(self, spoken: int, sentences: list[str]):
         self.sentences = sentences

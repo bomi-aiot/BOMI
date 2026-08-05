@@ -64,6 +64,7 @@ from bomi_ai_chat.prompts import (
     build_prompt,
 )
 from bomi_ai_chat.state import ConvState
+from bomi_ai_chat.turn_timer import current_stage
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,12 @@ def set_contract_clients(onboarding=None, clarification=None) -> None:
     _CLARIFICATION_CLIENT = clarification
 
 
+def _timed_generate(prompt: str) -> str:
+    """대화 그래프의 모든 생성 호출을 한 단계명으로 계측한다."""
+    with current_stage("llm"):
+        return _llm().generate(prompt)
+
+
 # 네트워크가 죽었을 때 내놓을 말.
 #
 # 왜 침묵이 아닌가
@@ -159,6 +166,7 @@ def _generate(state: ConvState, *, fallback: str = _FALLBACK_RESPONSE) -> str:
             speech_origin=state.get("speech_origin", ""),
             recent_phrasings=state.get("recent_phrasings"),
             is_medical=bool(state.get("is_medical_query")),
+            retrieval_status=state.get("retrieval_status"),
         )
         # 참고 자료가 실제로 이 프롬프트에 실렸는지 확인할 방법이 없었다 —
         # context_read 가 문서를 찾아도, 그게 build_prompt 를 거쳐 실제로
@@ -171,7 +179,7 @@ def _generate(state: ConvState, *, fallback: str = _FALLBACK_RESPONSE) -> str:
             len((state.get("ctx") or {}).get("documents") or []),
             "참고 자료" in prompt,
         )
-        return _llm().generate(prompt)
+        return _timed_generate(prompt)
     except Exception:  # noqa: BLE001 - 생성 실패가 턴을 죽이면 안 된다
         logger.warning("generation failed; falling back to a clarifying reply", exc_info=True)
         return fallback
@@ -924,7 +932,7 @@ def _field_question(field: str, fact_type: str, reason: str) -> str:
     prompt = build_field_question_prompt(field, fact_type=fact_type, hint=hint)
 
     try:
-        question = (_llm().generate(prompt) or "").strip()
+        question = (_timed_generate(prompt) or "").strip()
     except Exception:  # noqa: BLE001 - 생성 실패가 턴을 죽이면 안 된다
         logger.warning("field question generation failed", exc_info=True)
         return _REASK
@@ -971,7 +979,7 @@ def _extract_value(fields: list[str], utterance: str) -> dict | None:
         return {"consentStatus": "GRANTED" if verdict else "DENIED"}
 
     try:
-        raw = _llm().generate(build_extraction_prompt(fields, utterance))
+        raw = _timed_generate(build_extraction_prompt(fields, utterance))
     except Exception:  # noqa: BLE001 - 추출 실패가 턴을 죽이면 안 된다
         logger.warning("answer extraction failed", exc_info=True)
         return None
