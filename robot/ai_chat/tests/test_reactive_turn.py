@@ -188,6 +188,18 @@ def test_default_intent_is_companion_not_info():
     assert context_node.classify_intent({"user_input": "음"}) == {"intent": "companion"}
 
 
+def test_facility_marker_does_not_override_schedule():
+    """"병원 예약" 같은 일정 처리 표현은 여전히 schedule로 간다.
+
+    병원/약국 질문 자체는 더 이상 별도 "medical" 인텐트로 분류하지 않는다
+    (S15P11E102-311 채택 — context_read 가 미리 조회해 "참고 자료"로 넘기고
+    info 인텐트가 답한다). 다만 "병원 예약"처럼 조회가 아니라 일정 '처리'를
+    뜻하는 표현은 여전히 _SCHEDULE_MARKERS 가 먼저 잡아야 한다.
+    """
+    assert context_node.classify_intent(
+        {"user_input": "다음 주에 병원 예약 있어"}) == {"intent": "schedule"}
+
+
 # ── 핸들러: 턴당 생성 호출 1회 ─────────────────────────────────────────────
 
 
@@ -230,6 +242,13 @@ def test_generation_failure_degrades_instead_of_raising():
 
     assert result["response"]
     assert "다시" in result["response"]
+
+
+# 병원·약국·의약품 DB 조회는 더 이상 별도 handle_medical 노드가 없다
+# (S15P11E102-311 채택). context_read._lookup_medical_documents 가
+# llm/medical_flow.handle_medical_query 를 직접 불러 "참고 자료"로 넘기고,
+# handle_info 가 답한다 — 관련 회귀는 test_turn_end_to_end.py 의
+# "날씨·의료 조회" 절(그래프 전체를 태워서 확인)에 있다.
 
 
 # ── 출력 정제 ──────────────────────────────────────────────────────────────

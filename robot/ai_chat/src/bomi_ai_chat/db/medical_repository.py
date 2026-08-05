@@ -185,13 +185,25 @@ def find_hospitals(name=None, region=None, department=None, limit=5):
     실재할 수 있어(예: '서울대효병원') 잘못된 시설을 확신 있게 안내할
     위험이 크다. 위치 정보 오안내는 실제 안전 문제로 이어질 수 있어,
     정확/부분 일치가 없으면 "찾을 수 없음"으로 정직하게 답하는 쪽을 택한다.
+
+    다만 name 비교 시 공백은 무시한다(양쪽 다). "남경 의원"으로 저장된 곳을
+    로봇이 그대로 말해줬는데, 어르신이 되물을 때 STT/도구 호출 인자 추출
+    과정에서 "남경의원"(공백 없이)으로 넘어오면 ILIKE 부분 문자열 매칭이
+    실패해 방금 알려준 곳을 로봇 스스로 "못 찾겠다"고 답하는 문제가 실제로
+    있었다. 이건 오타 보정(위 문단)과는 다른 문제다 — 이름 자체는 똑같고
+    공백 유무만 다르므로, 엄격도를 낮추는 게 아니라 STT 잡음을 걷어내는
+    것이다(find_drug_info 의 공백 제거 비교와 같은 이유, 같은 방식).
     """
     limit = _bounded_limit(limit)
     query = "SELECT DISTINCT yadm_nm, addr, cl_cd_nm FROM hospital WHERE 1=1"
     params = []
     if name:
-        query += " AND yadm_nm ILIKE %s ESCAPE E'\\\\'"
-        params.append(f"%{_escape_ilike(name)}%")
+        normalized_name = "".join(name.split())
+        query += (
+            " AND regexp_replace(yadm_nm, '\\s+', '', 'g') "
+            "ILIKE %s ESCAPE E'\\\\'"
+        )
+        params.append(f"%{_escape_ilike(normalized_name)}%")
     if region:
         condition, region_params = _multi_token_ilike("addr", region)
         query += f" AND ({condition})"
@@ -216,13 +228,18 @@ def find_pharmacies(name=None, region=None, limit=5):
     """
     region: 여러 단어(예: '부산 서면')가 들어올 수 있어 토큰별로 나눠 매칭한다.
     name에는 자모 유사도 보정을 적용하지 않는다 (이유는 find_hospitals 참고).
+    name 비교 시 공백은 무시한다 (이유·방식도 find_hospitals 와 동일).
     """
     limit = _bounded_limit(limit)
     query = "SELECT yadm_nm, addr, telno FROM pharmacy WHERE 1=1"
     params = []
     if name:
-        query += " AND yadm_nm ILIKE %s ESCAPE E'\\\\'"
-        params.append(f"%{_escape_ilike(name)}%")
+        normalized_name = "".join(name.split())
+        query += (
+            " AND regexp_replace(yadm_nm, '\\s+', '', 'g') "
+            "ILIKE %s ESCAPE E'\\\\'"
+        )
+        params.append(f"%{_escape_ilike(normalized_name)}%")
     if region:
         condition, region_params = _multi_token_ilike("addr", region)
         query += f" AND ({condition})"

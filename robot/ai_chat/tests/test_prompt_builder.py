@@ -106,6 +106,29 @@ def test_documents_only_for_info_intent(ctx):
     assert "참고 자료" not in companion
 
 
+def test_medical_stance_appears_only_when_the_turn_looked_up_medical_facts(ctx):
+    """(회귀) 참고 자료가 있는데도 안 쓰던 사고 — 의료 조회 턴에만 지시를 붙인다.
+
+    실측: "남경의원, 누엘의원, 가덕한의원"이 참고 자료에 정확히 있었는데도,
+    system.md 의 "한 번에 한 가지만" 규칙과 부딪혀 "찾아드릴게요"로만 답한 사고가
+    있었다. medical_stance.md 는 그 충돌을 "2~3개까지는 나열 가능"으로 풀어준다.
+
+    날씨 등 다른 info 조회에는 이 지시가 붙으면 안 된다 — "2~3개만 안내"는 병원
+    목록에나 맞는 말이라 관련 없는 지시로 프롬프트를 채우게 된다.
+    """
+    medical = build_prompt(ctx, "info", "부산 강서구 정형외과 찾아줘", is_medical=True)
+    weather_like = build_prompt(ctx, "info", "노인맞춤돌봄서비스가 뭐야", is_medical=False)
+    companion = build_prompt(ctx, "companion", "요즘 어때요", is_medical=True)
+
+    assert "병원·약국·의약품 안내 방식" in medical
+    assert "2~3개" in medical
+    assert "병원·약국·의약품 안내 방식" not in weather_like
+    # companion 은 애초에 참고 자료 섹션이 없으므로 is_medical=True 여도 안 붙는다
+    # (핸들러 호출부는 실제로 info 일 때만 is_medical_query 를 채우지만, 이 함수
+    # 자체의 방어도 확인해 둔다).
+    assert "병원·약국·의약품 안내 방식" not in companion
+
+
 def test_cached_context_adds_a_do_not_assert_warning(ctx):
     """캐시를 썼으면 단정적 표현을 막는 문구가 들어가야 한다.
 
