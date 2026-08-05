@@ -45,6 +45,9 @@ _DEFAULTS: dict[str, Any] = {
     "door_open_since": 0.0,
     # 안전 확인 질문의 마감 시각. 0 이면 대기 중인 확인이 없다 (schema.py 참고).
     "safety_check_until": 0.0,
+    # 지금 열려 있는 대화의 id. None 이면 열린 대화가 없다. 스케줄러가 그래프
+    # checkpoint 없이 "지금 이 대화"를 읽는 자리다 (S15P11E102-306, schema.py 참고).
+    "conversation_id": None,
 }
 
 # 외부에서 갱신할 수 있는 필드. 오타가 조용히 무시되지 않도록 화이트리스트로 둔다.

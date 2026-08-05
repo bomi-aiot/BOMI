@@ -10,10 +10,22 @@ from bomi_ai_chat.backend_client.context_client import (
 )
 from bomi_ai_chat.backend_client.conversation_client import BackendConversationClient
 from bomi_ai_chat.backend_client.door_client import BackendDoorClient
+from bomi_ai_chat.backend_client.fact_client import (
+    BackendFactClient,
+    FactSubmissionError,
+)
+from bomi_ai_chat.backend_client.session import (
+    SHARED_SECRET_HEADER,
+    build_backend_session,
+)
 
 __all__ = [
+    "SHARED_SECRET_HEADER",
     "BackendContextClient",
     "BackendConversationClient",
     "BackendDoorClient",
+    "BackendFactClient",
     "ContextResult",
+    "FactSubmissionError",
+    "build_backend_session",
 ]

@@ -119,6 +119,38 @@ def _build_audio_adapters(
     return LaptopMicInput(settings), LaptopSpeakerOutput(settings)
 
 
+def _build_wakeword(settings: Settings):
+    """설정이 켜져 있으면 WakeWordDetector 를 만들어 warm-up 까지 하고 돌려준다.
+
+    레거시 경로와 그래프 경로가 같은 방식으로 웨이크워드를 붙이도록 공용화한다.
+    WAKEWORD_ENABLED=false 면 None 을 돌려준다(웨이크워드 없이 동작).
+
+    warm-up 을 여기서 하는 이유
+        첫 "보미야" 감지가 느려지지 않게 모델을 미리 로드한다(의도 판정 warm-up 과
+        같은 이유).
+    """
+    if not settings.wakeword_enabled:
+        return None
+
+    from bomi_ai_chat import policy
+    from bomi_ai_chat.audio_io.wakeword import WakeWordDetector
+
+    wake = WakeWordDetector(
+        model_path=settings.wakeword_model_path,
+        # 마이크 장치/채널은 캡처와 동일하게 맞춘다(같은 ReSpeaker 왼쪽 채널).
+        device=settings.audio_input_device,
+        channels=settings.audio_channels,
+        target_sample_rate=settings.audio_sample_rate,
+        threshold=policy.WAKEWORD_THRESHOLD,
+        window=policy.WAKEWORD_WINDOW,
+        min_hits=policy.WAKEWORD_MIN_HITS,
+        frame_samples=policy.WAKEWORD_FRAME_SAMPLES,
+    )
+    logging.getLogger("bomi_ai_chat.main").info("웨이크워드 모델 로딩(warm-up)...")
+    wake.warm_up()
+    return wake
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
@@ -158,6 +190,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     from bomi_ai_chat.audio_io.beam_control import BeamController
 
     pipeline.beam = BeamController()
+
+    # 웨이크워드('보미야') 감지기. 설정에서 켜져 있을 때만 붙는다(없으면 None).
+    # 붙으면 매 대화 시작 전에 "보미야"를 기다린다(pipeline.run 참고).
+    pipeline.wake = _build_wakeword(settings)
 
     def _semantic_weather(text: str) -> bool:
         # 무거운 임베딩 라우터는 실제 판정 시점에만 불러온다.
@@ -200,9 +236,15 @@ def _run_graph_runtime(settings: Settings, audio_in, audio_out, *, once: bool) -
         settings, audio_out=audio_out, start_background=not once)
     logger.info("conversation runtime ready (senior=%s)", runtime.senior_id)
 
+    # 웨이크워드('보미야')를 그래프 경로에도 붙인다 -> 웨이크워드 + 기억이 함께 동작.
+    # --once(한 턴 점검)에서는 상시 청취가 무의미하므로 붙이지 않는다(레거시 --once 와 동일).
+    wake = None if once else _build_wakeword(settings)
+
     try:
         turns = bootstrap.run_conversation_loop(
-            runtime, audio_in, settings, max_turns=1 if once else None)
+            runtime, audio_in, settings,
+            max_turns=1 if once else None,
+            wake=wake, audio_out=audio_out)
     finally:
         # --once 일 때만 재생이 끝나기를 기다린다 (S15P11E102-233).
         #

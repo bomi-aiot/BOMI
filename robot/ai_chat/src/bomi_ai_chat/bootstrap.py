@@ -46,6 +46,9 @@ class Runtime:
     senior_id: str
     scheduler: Any = None
     door_subscriber: Any = None
+    # 재생기(재생 상태를 표시)와 대화 루프(재생 끝날 때까지 대기)가 공유하는 에코 가드.
+    # 응답 재생 중에 다음 리슨을 열지 않기 위한 근거(is_playing)를 여기서 읽는다.
+    echo_guard: Any = None
 
     def shutdown(self, *, wait_for_speech_sec: float = 0.0) -> None:
         """백그라운드 스레드를 정리한다. 실패해도 종료를 막지 않는다.
@@ -123,12 +126,18 @@ def build_runtime(
     settings = settings or get_settings()
     senior_id = _resolve_senior_id(settings)
 
+    # 에코 가드 하나를 만들어 재생기와 대화 루프가 '같은 인스턴스'를 공유하게 한다.
+    # 재생기는 재생 시작/끝을 여기 표시하고, 대화 루프는 is_playing 을 읽어 재생이 끝날
+    # 때까지 리슨을 미룬다(barge-in 없이 에코 겹침 방지).
+    from bomi_ai_chat.audio.echo_guard import EchoGuard
+    echo_guard = EchoGuard()
+
     app = _compile_graph()
-    _wire_player(settings, audio_out)
+    _wire_player(settings, audio_out, echo_guard)
     _wire_backend_clients()
     _restore_runtime_state(app, senior_id)
 
-    runtime = Runtime(app=app, senior_id=senior_id)
+    runtime = Runtime(app=app, senior_id=senior_id, echo_guard=echo_guard)
     if start_background:
         runtime.scheduler = _start_scheduler(senior_id, app)
         runtime.door_subscriber = _start_door_subscriber(senior_id, app, settings)
@@ -160,15 +169,14 @@ def _compile_graph():
     return build_graph()
 
 
-def _wire_player(settings: Settings, audio_out) -> None:
+def _wire_player(settings: Settings, audio_out, echo_guard) -> None:
     """emit 이 쓸 재생기를 붙인다. TTS 와 오디오 출력은 기존 것을 그대로 쓴다.
 
-    에코 가드를 함께 넣는 이유
-        스피커와 마이크가 한 몸통에 있어서 로봇의 목소리가 마이크로 되돌아온다.
-        가드가 없으면 로봇이 자기 말에 자기가 멈추고, 그러면 이후 모든 게이트 버그
-        리포트가 실제로는 에코다 (CLAUDE.md §13).
+    에코 가드를 밖에서 받는 이유
+        재생기는 재생 시작/끝을 이 가드에 표시하고, 대화 루프는 같은 가드의 is_playing
+        을 읽어 재생이 끝날 때까지 리슨을 미룬다. 그러려면 둘이 '같은 인스턴스'를 써야
+        하므로, build_runtime 이 만들어 여기로 넘긴다(예전엔 여기서 새로 만들었다).
     """
-    from bomi_ai_chat.audio.echo_guard import EchoGuard
     from bomi_ai_chat.audio.playback import SentencePlayer
     from bomi_ai_chat.graph import output
     from bomi_ai_chat.tts.client import TTSClient
@@ -182,7 +190,7 @@ def _wire_player(settings: Settings, audio_out) -> None:
     output.set_player(SentencePlayer(
         synthesize=tts.synthesize,
         play=audio_out.play,
-        echo_guard=EchoGuard(),
+        echo_guard=echo_guard,
     ))
 
 
@@ -285,69 +293,204 @@ def run_conversation_loop(
     settings: Settings | None = None,
     *,
     max_turns: int | None = None,
+    wake=None,
+    audio_out=None,
 ) -> int:
-    """캡처 -> STT -> 그래프 를 반복한다.
+    """캡처 -> STT -> 그래프 를 반복한다. (웨이크워드가 있으면 대화 단위로 묶는다.)
 
     ★ 옛 ConversationPipeline 과 무엇이 다른가
         저쪽은 LLM 을 직접 부르고 응답을 바로 재생한다. 여기는 그래프에 태운다 —
         그래서 트리아지가 생성보다 위에 있고, 능동 발화가 게이트를 거치고, 모든
-        출력이 정제기를 통과한다.
+        출력이 정제기를 통과한다. 기억(context_read/memory_write)도 run_user_turn 안이다.
+
+    웨이크워드 (wake 가 주어지면)
+        매 발화가 아니라 '대화 단위'로 동작한다: "보미야"를 기다렸다가, "저를
+        부르셨나요?"로 먼저 응답하고, 그 대화 안에서는 재호출 없이 여러 발화를 이어
+        처리한다. 15초 무응답 또는 마무리 언급이면 대화를 끝내고 다시 "보미야"를
+        기다린다. wake 가 None 이면 예전처럼 매 발화를 그냥 처리한다(팀원 기본 동작).
+
+    호출 응답은 왜 audio_out 으로 직접 재생하나
+        그래프의 응답 출력(emit)은 barge-in 위해 논블로킹이다. "저를 부르셨나요?"를
+        그걸로 내보내면 인사와 녹음이 겹친다. 그래서 audio_out.play 로 '블로킹' 재생해
+        인사가 끝난 뒤에 듣기 시작한다.
 
     누가 호출하는가
         main.py. 테스트는 max_turns 로 횟수를 묶는다.
 
-    반환값
-        처리한 턴 수.
-
     주의사항
         - 한 턴의 실패가 루프를 죽이지 않는다. run_user_turn 이 이미 예외를 삼키지만,
-          캡처와 STT 는 그 밖이라 여기서 감싼다. 로봇이 멈추면 어르신은 고장 난
-          기계 앞에 남는다.
-        - 재생 완료를 기다리지 않는다. 기다리면 barge-in 이 원리적으로 불가능해진다
-          (CLAUDE.md §13).
+          캡처와 STT 는 그 밖이라 여기서 감싼다.
+        - 대화 턴 응답 재생은 기다리지 않는다(barge-in 유지). 다만 그로 인해 다음
+          리슨이 로봇 목소리를 잡는 에코 겹침은 실기에서 EchoGuard 를 캡처에 연결해
+          다룬다(현재는 미연결 — docs/hardware 확인 항목).
     """
     from bomi_ai_chat.graph.turn import run_user_turn
     from bomi_ai_chat.stt.client import STTClient
 
     settings = settings or get_settings()
     stt = STTClient(settings)
+
+    # 호출 응답("저를 부르셨나요?") 재생용 TTS. 웨이크워드 + 출력이 있을 때만 만든다.
+    tts = None
+    if wake is not None and audio_out is not None:
+        from bomi_ai_chat.tts.client import TTSClient
+        tts = TTSClient(settings)
+
     turns = 0
     logger.info("conversation loop started (graph path)")
 
     while max_turns is None or turns < max_turns:
         try:
-            text, duration = _listen(audio_in, stt)
+            if wake is not None:
+                # "보미야" 대기. 대기 중 Ctrl+C = 프로그램 종료(아래 except 로 나감).
+                wake.wait_for_wake()
+                _speak_ack(tts, audio_out)          # "저를 부르셨나요?" (블로킹)
+                turns = _run_graph_conversation(runtime, audio_in, stt, turns, max_turns)
+            else:
+                # 웨이크워드 없음(팀원 기본): 매 발화를 그냥 처리한다.
+                text, duration, _ = _listen(audio_in, stt)
+                if not text:
+                    continue
+                run_user_turn(
+                    runtime.app, runtime.senior_id, text, duration_sec=duration
+                )
+                turns += 1
         except KeyboardInterrupt:
             logger.info("conversation loop stopped by user after %d turns", turns)
             break
         except Exception:  # noqa: BLE001 - 한 번의 수음 실패가 루프를 죽이면 안 된다
-            logger.exception("could not capture or transcribe; waiting for the next turn")
+            logger.exception("turn failed; continuing")
             continue
 
+    return turns
+
+
+def _speak_ack(tts, audio_out) -> None:
+    """호출 응답("저를 부르셨나요?")을 블로킹으로 재생한다(없으면 조용히 넘어감).
+
+    실패해도 대화를 막지 않는다 — 인사는 곁가지다. 재생이 블로킹이므로 이 함수가
+    끝난 뒤에 녹음이 시작된다.
+    """
+    if tts is None or audio_out is None:
+        return
+    from bomi_ai_chat import conversation_control
+
+    try:
+        audio_out.play(tts.synthesize(conversation_control.WAKE_ACK_MESSAGE))
+    except Exception:  # noqa: BLE001 - 호출 응답 실패가 대화를 막으면 안 된다
+        logger.exception("failed to speak wake ack")
+
+
+def _run_graph_conversation(runtime, audio_in, stt, turns: int, max_turns) -> int:
+    """'보미야'로 시작된 하나의 대화를 여러 발화로 이어간다(그래프 경로).
+
+    종료 (세 가지)
+        1) 무응답: 단일 15초 리슨(_listen 의 onset 타임아웃)으로 발화 시작을 기다린다.
+           없으면 로봇은 아무 말도 하지 않고 조용히 대화를 끝낸다.
+        2) 마무리 언급: is_farewell 이면 그 발화를 그래프로 처리(응답)한 뒤 끝낸다.
+        3) Ctrl+C: 대화만 끝내고 바깥 루프가 다시 "보미야"를 기다린다(프로그램 종료 아님).
+
+    각 발화는 run_user_turn 으로 그래프에 태운다 -> context_read(기억 조회) +
+    memory_write(대화 저장)가 여기서 돈다.
+    """
+    from bomi_ai_chat import conversation_control, policy
+    from bomi_ai_chat.graph.turn import run_user_turn
+
+    print("[대화 시작] 말씀하세요. ('보미야' 다시 부를 필요 없음)")
+    while max_turns is None or turns < max_turns:
+        try:
+            text, duration, no_speech = _listen(
+                audio_in, stt,
+                onset_timeout_seconds=policy.CONVERSATION_IDLE_TIMEOUT_SEC,
+            )
+        except KeyboardInterrupt:
+            print("[대화 종료] 다시 '보미야'로 부르면 새 대화를 시작합니다.")
+            break
+
+        if no_speech:
+            logger.info(
+                "conversation ended: no speech within %ss",
+                policy.CONVERSATION_IDLE_TIMEOUT_SEC,
+            )
+            print("[대화 종료] 무응답으로 종료. 다시 '보미야'로 부르면 새 대화.")
+            break
+
         if not text:
-            # 조용한 구간이거나 인식되지 않았다. 되묻지 않는다 — 아무 말도 안 한
-            # 사람에게 "네?"라고 하는 로봇은 성가시다.
+            # 발화는 있었으나 못 알아들었다. 되묻지 않고 다음 리슨으로 넘어간다.
             continue
 
         run_user_turn(runtime.app, runtime.senior_id, text, duration_sec=duration)
         turns += 1
 
+        # 응답 재생이 끝날 때까지 기다린다(의도적으로 barge-in 없음). 안 기다리면 재생
+        # 중에 다음 리슨이 열려 마이크가 로봇 자기 목소리를 사용자 발화로 수음한다.
+        _wait_for_playback(runtime.echo_guard)
+
+        if conversation_control.is_farewell(text):
+            logger.info("conversation ended: farewell detected")
+            print("[대화 종료] 마무리 언급 감지. 다시 '보미야'로 부르면 새 대화.")
+            break
+
     return turns
 
 
-def _listen(audio_in, stt) -> tuple[str, float]:
-    """한 번 수음해서 텍스트와 길이를 돌려준다.
+def _wait_for_playback(echo_guard, poll_sec: float = 0.05, max_wait_sec: float = 30.0) -> None:
+    """로봇 응답 재생이 끝날 때까지(echo_guard.is_playing == False) 기다린다.
+
+    왜 필요한가
+        그래프 응답은 논블로킹으로 재생된다. 웨이크워드 대화에서는 barge-in 을 빼기로
+        했으므로, 재생이 끝난 뒤에 다음 리슨을 연다. 이렇게 안 하면 재생 중에 마이크가
+        열려 로봇 자기 목소리를 사용자 발화로 수음한다(에코 겹침).
+
+    is_playing 은 재생 스레드(SpeechPlayback)가 시작/끝에 갱신한다. run_user_turn 이
+    반환할 때는 이미 표시가 켜져 있으므로(재생 스레드 시작 '전에' 표시함) 경합이 없다.
+    응답이 없던 턴이면 is_playing 이 False 라 즉시 반환한다.
+
+    안전장치
+        재생 스레드가 어떤 이유로 상태를 안 내려도 무한히 막히지 않게 max_wait_sec 상한.
+        echo_guard 가 없으면(재생기 미연결) 즉시 반환한다.
+
+    확장 지점
+        barge-in 이 다시 필요해지면 이 대기를 없애고 EchoGuard 를 '캡처'에 연결하는
+        방식으로 바꾼다(재생 중엔 입력 무시/문턱↑). 지금은 상태 공유만 해두면 그 확장이
+        수월하다.
+    """
+    if echo_guard is None:
+        return
+    import time
+
+    waited = 0.0
+    while echo_guard.is_playing and waited < max_wait_sec:
+        time.sleep(poll_sec)
+        waited += poll_sec
+
+
+def _listen(
+    audio_in, stt, onset_timeout_seconds: float | None = None
+) -> tuple[str, float, bool]:
+    """한 번 수음해서 (텍스트, 길이, 무응답여부)를 돌려준다.
 
     길이를 함께 돌려주는 이유
         맞장구("응")와 진짜 끼어들기를 구분하는 데 필요하다. 텍스트만으로는
         부족하다 — "네"는 질문에 대한 진짜 대답일 수도 있다 (CLAUDE.md §13).
+
+    onset_timeout_seconds (단일 리슨)
+        값을 주면 capture 가 '발화 시작'을 그 시간까지 기다린다. 그 안에 아무 말도
+        없으면 capture 가 빈 바이트를 주고, 여기서 no_speech=True 로 알린다. 대화
+        세션의 '무응답 종료'가 이걸 쓴다. None 이면 기존 동작(첫 순간부터 녹음).
+
+    반환값
+        (text, duration, no_speech)
+        - no_speech=True : onset 타임아웃 동안 발화 자체가 없었다(무응답).
+        - text="" & no_speech=False : 발화는 있었으나 STT 가 못 알아들었다.
     """
     from bomi_ai_chat.clock import clock
 
     started = clock.now()
-    audio = audio_in.capture()
+    audio = audio_in.capture(onset_timeout_seconds=onset_timeout_seconds)
     if not isinstance(audio, bytes) or not audio:
-        return "", 0.0
+        # capture 가 빈 바이트 -> onset 모드면 '무응답', 일반 모드면 그냥 빈 수음.
+        return "", 0.0, onset_timeout_seconds is not None
 
     text = (stt.transcribe(audio) or "").strip()
-    return text, max(0.0, clock.now() - started)
+    return text, max(0.0, clock.now() - started), False

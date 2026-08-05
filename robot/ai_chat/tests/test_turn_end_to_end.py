@@ -15,6 +15,7 @@
 
 import pytest
 
+from bomi_ai_chat import policy
 from bomi_ai_chat.backend_client import ContextResult
 from bomi_ai_chat.graph import build, handlers, output
 from bomi_ai_chat.graph import context as context_node
@@ -32,9 +33,14 @@ class FakeContextClient:
         self.ctx = ctx if ctx is not None else {"profile": {"preferredName": "순자님"}}
         self.is_cached = is_cached
         self.calls = 0
+        # 이번 턴이 fetch_context 에 실어 보낸 conversation_id 를 순서대로 기록한다.
+        # S15P11E102-306 의 완료 조건("2턴째부터 conversation_id 가 실린다")을
+        # 검증하는 유일한 창구다.
+        self.received_conversation_ids: list[str | None] = []
 
     def fetch_context(self, senior_id, **kwargs):
         self.calls += 1
+        self.received_conversation_ids.append(kwargs.get("conversation_id"))
         return ContextResult(ctx=self.ctx, is_cached=self.is_cached)
 
 
@@ -83,14 +89,33 @@ class FakeConversationClient:
 
     순서를 보존하는 것이 중요하다 — 서버가 올라온 순서로 순번을 매기므로,
     로봇이 로봇 발화를 먼저 올리면 기록상 로봇이 먼저 말한 것이 된다.
+
+    ★ 서버와 같은 계약을 흉내낸다 (S15P11E102-306)
+        conversation_id 가 None 으로 들어오면 "새 대화"로 보고 새 id 를 발급한다.
+        값이 이미 있으면 그대로 에코한다 — 실제 서버가 하는 일과 같다.
+
+        예전 대역은 호출마다 무조건 "conversation-1"을 돌려줬다. 그러면 turn.py 가
+        매 턴 conversation_id=None 을 무조건 흘려보내는 결함이 있어도 겉보기 대화는
+        계속 이어지는 것처럼 보여서, 테스트가 그 결함을 가리는 함정이었다. 여기서
+        같은 함정을 다시 만들지 않는다.
     """
 
     def __init__(self):
         self.turns = []
+        self._next_conversation_id = 1
+        self._next_message_id = 1
 
     def record_turn(self, senior_id, **fields):
         self.turns.append({"seniorId": senior_id, **fields})
-        return fields.get("conversation_id") or "conversation-1"
+
+        conversation_id = fields.get("conversation_id")
+        if conversation_id is None:
+            conversation_id = f"conversation-{self._next_conversation_id}"
+            self._next_conversation_id += 1
+
+        message_id = f"message-{self._next_message_id}"
+        self._next_message_id += 1
+        return conversation_id, message_id
 
 
 @pytest.fixture
@@ -197,3 +222,300 @@ def test_state_persists_across_turns(wired):
 
     # messages 는 add_messages 로 누적된다. 두 번째 턴에서 첫 턴의 흔적이 보여야 한다.
     assert second.get("last_user_interaction_at") is not None
+
+
+# ── 대화 연속성 (S15P11E102-306) ────────────────────────────────────────────
+#
+# graph/turn.py 가 conversation_id 를 매 턴 무조건 None 으로 덮어써서, 실런타임에서는
+# 모든 발화가 새 conversation 행을 만들던 결함의 회귀 테스트. 아래 네 개가 티켓의
+# 완료 조건과 1:1 로 대응한다.
+
+
+def test_three_turns_stay_in_one_conversation(wired):
+    """(완료 조건) 3턴을 돌려도 서버가 발급한 대화는 하나이고,
+    2턴째 SENIOR 행의 conversation_id 는 비어 있지 않다."""
+    app, _client, _llm, _player = wired
+
+    run_user_turn(app, SENIOR, "안녕하세요")
+    second = run_user_turn(app, SENIOR, "오늘 뭐 했어")
+    run_user_turn(app, SENIOR, "졸리다")
+
+    conversations = build._conversation_client()
+    # 대역이 "새 대화"로 판단해 실제로 새 id 를 발급한 횟수. 세 턴이 한 대화로
+    # 이어졌다면 이 값은 정확히 1 이어야 한다(첫 턴에서 딱 한 번).
+    assert conversations._next_conversation_id - 1 == 1
+
+    senior_rows = [turn for turn in conversations.turns if turn["role"] == "SENIOR"]
+    assert len(senior_rows) == 3
+    assert senior_rows[1]["conversation_id"] is not None, (
+        "2턴째부터는 1턴째가 받은 conversation_id 를 실어 보내야 한다"
+    )
+    assert second["conversation_id"] == senior_rows[1]["conversation_id"]
+
+
+def test_fetch_context_carries_conversation_id_from_the_second_turn(wired):
+    """(완료 조건) fetch_context 가 2턴째부터 null 이 아닌 conversation_id 를 싣는다."""
+    app, client, _llm, _player = wired
+
+    run_user_turn(app, SENIOR, "안녕하세요")
+    run_user_turn(app, SENIOR, "오늘 뭐 했어")
+
+    assert client.received_conversation_ids[0] is None, "첫 턴은 아직 대화가 없다"
+    assert client.received_conversation_ids[1] is not None
+
+
+def test_idle_gap_past_the_boundary_opens_a_new_conversation(wired, frozen_clock):
+    """(완료 조건) 유휴 임계값을 넘긴 뒤의 발화는 새 대화로 연다 (압축 시계로 검증)."""
+    app, _client, _llm, _player = wired
+    sim = frozen_clock(start=1_700_000_000.0)
+
+    first = run_user_turn(app, SENIOR, "안녕하세요")
+    assert first["conversation_id"]
+
+    sim.advance(policy.CONVERSATION_BOUNDARY_IDLE_SEC + 1)
+
+    second = run_user_turn(app, SENIOR, "오랜만이에요")
+
+    assert second["conversation_id"] != first["conversation_id"]
+
+
+def test_idle_gap_under_the_boundary_keeps_the_same_conversation(wired, frozen_clock):
+    """대비 사례: 임계값 '밑'이면 그대로 이어 붙어야 한다."""
+    app, _client, _llm, _player = wired
+    sim = frozen_clock(start=1_700_000_000.0)
+
+    first = run_user_turn(app, SENIOR, "안녕하세요")
+    sim.advance(policy.CONVERSATION_BOUNDARY_IDLE_SEC - 1)
+    second = run_user_turn(app, SENIOR, "밥은 먹었어")
+
+    assert second["conversation_id"] == first["conversation_id"]
+
+
+def test_record_turn_returns_a_message_id_for_the_senior_row(wired):
+    """(완료 조건) record_turn 이 messageId 를 돌려주고 state 에 남는다.
+
+    255 번의 fact_candidate 추출이 FactCandidate.fromConversationMessage 의
+    sourceMessageId 로 이 값을 요구한다.
+    """
+    app, _client, _llm, _player = wired
+
+    state = run_user_turn(app, SENIOR, "무릎이 아파")
+
+    assert state["last_message_id"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 사실 추출 큐잉 (S15P11E102-255)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_a_memorable_utterance_queues_one_extraction_job_without_extra_llm_calls(wired):
+    """(완료 조건) "요즘 손자가 자주 놀러 와요" 뒤 큐에 1행, 생성 호출은 여전히 1회.
+
+    큐잉(graph/build.py._enqueue_extraction)은 LLM 을 부르지 않는다 — 실제
+    추출은 jobs/ticks.extraction_flush 가 턴 밖에서 한다(CLAUDE.md §16).
+    """
+    from bomi_ai_chat.localstore import extraction
+
+    app, _client, llm, _player = wired
+
+    run_user_turn(app, SENIOR, "요즘 손자가 자주 놀러 와요")
+
+    assert llm.calls == 1
+    assert extraction.pending_count(SENIOR) == 1
+    assert extraction.pending()[0]["content"] == "요즘 손자가 자주 놀러 와요"
+
+
+def test_a_short_backchannel_like_reply_does_not_queue_an_extraction_job(wired):
+    from bomi_ai_chat.localstore import extraction
+
+    app, _client, _llm, _player = wired
+
+    run_user_turn(app, SENIOR, "네")
+
+    assert extraction.pending_count(SENIOR) == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# emit 이 memory_write 의 블로킹 호출보다 먼저 일어난다 (S15P11E102-255)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class OrderTrackingConversationClient(FakeConversationClient):
+    """record_turn 호출 순서를 공유 리스트에 남기는 대역."""
+
+    def __init__(self, events: list[str]):
+        super().__init__()
+        self._events = events
+
+    def record_turn(self, senior_id, **fields):
+        self._events.append(f"record:{fields.get('role')}")
+        return super().record_turn(senior_id, **fields)
+
+
+class OrderTrackingPlayer(FakePlayer):
+    """speak_async 호출 순서를 공유 리스트에 남기는 대역."""
+
+    def __init__(self, events: list[str]):
+        super().__init__()
+        self._events = events
+
+    def speak_async(self, sentences):
+        self._events.append("speak")
+        return super().speak_async(sentences)
+
+
+def test_speaking_starts_before_the_blocking_conversation_record_call(
+    monkeypatch, tmp_path,
+):
+    """(완료 조건) 재생 시작이 대화 적재(블로킹 HTTP)보다 먼저 일어난다.
+
+    순서가 뒤집혀 있으면 T1 확인 응답조차 record_turn 의 HTTP 왕복을 다 기다린
+    뒤에야 말하기 시작한다 — 응급 응답이 통계성 기록 뒤에 줄을 서는 것과 같다
+    (graph/build.py 의 엣지 재배선 참고).
+    """
+    monkeypatch.setenv("LOCALSTORE_DIR", str(tmp_path / "localstore"))
+    db.close_all()
+
+    events: list[str] = []
+    client = FakeContextClient()
+    llm = FakeLLM()
+    player = OrderTrackingPlayer(events)
+    conversations = OrderTrackingConversationClient(events)
+    context_node.set_client(client)
+    handlers.set_llm(llm)
+    output.set_player(player)
+    build.set_conversation_client(conversations)
+
+    app = build_graph(checkpoint_path=str(tmp_path / "checkpoint.sqlite"))
+    try:
+        run_user_turn(app, SENIOR, "무릎이 아파")
+    finally:
+        context_node.set_client(None)
+        handlers.set_llm(None)
+        output.set_player(None)
+        build.set_conversation_client(None)
+        db.close_all()
+
+    assert "speak" in events
+    assert events.index("speak") < events.index("record:ROBOT")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 날씨·의료 조회 — context_read 에서 그래프를 태워 확인한다 (S15P11E102-311)
+#
+# 이 절만 build_prompt() 를 직접 부르지 않고 app.invoke 로 전체 그래프를
+# 돌린다. 완료 조건이 "그래프를 태워서" 확인하라고 명시했다 — context_read 가
+# 채운 ctx["documents"] 가 실제로 handle_info -> build_prompt 까지 살아서
+# 도착하는지는 노드 하나만 불러서는 보증할 수 없기 때문이다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class FakeWeather:
+    """weather/client.WeatherClient 대역. 도시별 조회 결과나 실패를 흉내낸다."""
+
+    def __init__(self, forecast=None, error=None):
+        self.forecast = forecast or {"기온": "20", "하늘상태": "1"}
+        self.error = error
+        self.calls: list[str] = []
+
+    def get_forecast(self, city):
+        self.calls.append(city)
+        if self.error:
+            raise self.error
+        return self.forecast
+
+
+def test_weather_question_makes_exactly_one_generation_call(wired):
+    """(완료 조건) 날씨 질문 1턴에서 생성 LLM 호출이 1회로 유지된다.
+
+    조회(기상청 API) 자체는 LLM 호출이 아니다. handle_info._generate() 가
+    부르는 한 번이 이 턴의 유일한 생성 호출이어야 한다(CLAUDE.md §16).
+    """
+    app, _client, llm, _player = wired
+    weather = FakeWeather({"기온": "22", "하늘상태": "1"})
+    context_node.set_weather_client(weather)
+    try:
+        run_user_turn(app, SENIOR, "오늘 서울 날씨 어때")
+    finally:
+        context_node.set_weather_client(None)
+
+    assert weather.calls == ["서울"]
+    assert llm.calls == 1, "조회가 늘어도 생성 호출은 여전히 1회여야 한다"
+
+
+def test_weather_question_renders_reference_material_in_the_prompt(wired):
+    """(완료 조건) 날씨 질문의 프롬프트에 '참고 자료' 섹션이 실제로 렌더된다.
+
+    build_prompt() 를 직접 부르는 것이 아니라 app.invoke 로 그래프를 태워
+    확인한다 — context_read 가 채운 문서가 handle_info 까지 실제로 전달되는지
+    보려면 그 경로 전체가 살아 있어야 한다.
+    """
+    app, _client, llm, _player = wired
+    context_node.set_weather_client(FakeWeather({"기온": "22", "하늘상태": "1"}))
+    try:
+        run_user_turn(app, SENIOR, "오늘 서울 날씨 어때")
+    finally:
+        context_node.set_weather_client(None)
+
+    assert "참고 자료" in llm.prompts[0]
+    assert "서울" in llm.prompts[0]
+    assert "22" in llm.prompts[0]
+
+
+def test_weather_lookup_failure_leads_to_an_honest_reply_not_fabrication(wired):
+    """(완료 조건) 조회 실패는 지어내지 않고 솔직히 답하도록 지시한다."""
+    app, _client, llm, _player = wired
+    context_node.set_weather_client(FakeWeather(error=RuntimeError("기상청 다운")))
+    try:
+        state = run_user_turn(app, SENIOR, "오늘 서울 날씨 어때")
+    finally:
+        context_node.set_weather_client(None)
+
+    # 턴이 죽지 않고 끝까지 간다 — 예외가 새어나가 침묵하는 것이 아니라
+    # 대체 응답을 말한다.
+    assert state["final_utterance"]
+    assert llm.calls == 1
+    assert "확인이 어렵다" in llm.prompts[0] or "지어내지" in llm.prompts[0]
+
+
+def test_medical_question_renders_reference_material_through_the_graph(
+    wired, monkeypatch,
+):
+    """(완료 조건) 의료 질문의 프롬프트에도 '참고 자료' 섹션이 실제로 렌더된다.
+
+    실제 llm/router.py 는 SentenceTransformer 를 로딩하므로(§16), 이 테스트는
+    context_node._is_medical 을 직접 대역으로 바꿔 무거운 모델 로딩을 피한다.
+    """
+    app, _client, llm, _player = wired
+
+    monkeypatch.setattr(context_node, "_is_medical", lambda text: True)
+    monkeypatch.setattr(
+        context_node, "handle_medical_query",
+        lambda text: "서울대병원은 종로구에 있습니다.")
+
+    run_user_turn(app, SENIOR, "근처 병원 어디야")
+
+    assert llm.calls == 1, "의료 조회(function-calling)가 있어도 응답 생성은 1회다"
+    assert "참고 자료" in llm.prompts[0]
+    assert "서울대병원" in llm.prompts[0]
+
+
+def test_medical_lookup_failure_leads_to_an_honest_reply_not_fabrication(
+    wired, monkeypatch,
+):
+    """(완료 조건) 의료 조회 실패도 예외를 던지지 않고 솔직히 답한다."""
+    app, _client, llm, _player = wired
+
+    monkeypatch.setattr(context_node, "_is_medical", lambda text: True)
+
+    def boom(text):
+        raise RuntimeError("gemini down")
+
+    monkeypatch.setattr(context_node, "handle_medical_query", boom)
+
+    state = run_user_turn(app, SENIOR, "근처 병원 어디야")
+
+    assert state["final_utterance"]
+    assert llm.calls == 1
+    assert "확인이 어렵다" in llm.prompts[0] or "지어내지" in llm.prompts[0]

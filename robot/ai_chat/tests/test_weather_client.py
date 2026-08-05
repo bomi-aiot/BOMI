@@ -3,7 +3,7 @@
 import pytest
 
 from bomi_ai_chat.http import InvalidResponseError
-from bomi_ai_chat.weather.client import WeatherClient
+from bomi_ai_chat.weather.client import WeatherClient, extract_city
 from tests.http_fakes import StubResponse, StubSession
 
 
@@ -76,3 +76,20 @@ def test_weather_missing_item_list_is_invalid(settings_factory):
 
     with pytest.raises(InvalidResponseError, match="item list"):
         client.get_forecast("서울")
+
+
+# ── 도시 추출 (S15P11E102-311) ───────────────────────────────────────────────
+#
+# 원래 pipeline.py(legacy 경로)의 ConversationPipeline._extract_city 메서드
+# 안에만 있었다. 그래프 경로(graph/context.py)도 같은 판정이 필요해져서 여기로
+# 옮겼다 — 두 경로가 이 함수 하나를 import 해서 쓴다(복사하지 않는다).
+
+
+def test_extract_city_finds_a_supported_city_mentioned_in_the_text():
+    assert extract_city("오늘 서울 날씨 어때") == "서울"
+    assert extract_city("부산 날씨 알려줘") == "부산"
+
+
+def test_extract_city_returns_none_when_no_supported_city_is_mentioned():
+    assert extract_city("오늘 날씨 어때") is None
+    assert extract_city("") is None

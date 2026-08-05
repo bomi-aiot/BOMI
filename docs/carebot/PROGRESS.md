@@ -5,6 +5,11 @@
 >
 > **갱신 시점**: 티켓 하나를 푸시할 때마다. 그리고 결정이 바뀌거나 새 위험이 드러날 때.
 > **마지막 갱신**: 233 문서 개정 직후 (2026-08-05)
+>
+> **이 문서가 한 번 거짓말을 했습니다.** 08-02 이후 커밋 다섯 개(263·212·233×3)가
+> 이 문서를 갱신하지 않고 들어갔고, 그동안 §1 표는 233 을 "미실시"로 적고 있었습니다.
+> 실제로는 실기를 착수해 여섯 건을 찾아 고친 뒤였습니다. 297 에서 바로잡았습니다.
+> 갱신을 빠뜨리면 다음 사람은 없는 문서가 아니라 **틀린 문서**를 읽습니다.
 
 ## 함께 보는 문서
 
@@ -32,22 +37,41 @@
 | 209 | 온보딩·재질의 | 완료 | 통과 | **미실시** | 푸시됨 |
 | 210 | 트리아지·T1 | 완료 | 통과 | **미실시** | 푸시됨 |
 | 211 | T2 요약·보호자 채널 | 완료 | 통과 | **미실시** | 푸시됨 (BE/AI 각각) |
-| 212 | 회귀 세트·튜닝 | **절반 완료** | 통과 (신규 45건) | **미실시** | 푸시됨 |
-| **218** | **Qdrant 벡터 스토어** | **미착수** | — | — | — |
+| 212 | 회귀 세트·튜닝 | **절반 완료** | 통과 (신규 45건) | **미실시** | ai-develop (305 로 리베이스) |
+| **218** | **Qdrant 벡터 스토어·임베딩** | 완료 | 통과 (+ 실서버 Qdrant 7건, 실 API 1건) | **미실시** | 푸시됨 (BE/AI 각각) |
 | **226** | **BE 현관 방향 판정·인사 결정** | 완료 | 통과 | **미실시** | 푸시됨 |
 | **227** | **BE 온보딩·재질의 계약 API** | 완료 | 통과 | 해당 없음 | be-develop |
-| **230** | **BE care_record 시각 컬럼** | **미착수** | — | — | — |
+| **230** | **BE care_record 시각 컬럼** | 완료 | 통과 (실 PostgreSQL 백필 8건) | 해당 없음 | be-develop 머지됨 |
 | **232** | **런타임 배선** | 완료 | 통과 | **미실시** | 푸시됨 |
-| **233** | **실기 통합 점검** | 문서 3종 + 상태 도구 준비됨 | 통과 | **미실시 (0~11 전부)** | — |
-| **263** | **정서 핸들러·T3 지연** | 완료 | 통과 (신규 20건) | **미실시** | 푸시됨 |
+| **233** | **실기 통합 점검** | 체크리스트 + 준비단계 수정 6건, **문서 3종 + 상태 도구** | 통과 | **부분 실시** (준비단계만, 본검사 0~11 미완) | 푸시됨 |
+| **263** | **정서 핸들러·T3 지연** | 완료 | 통과 (신규 20건) | **미실시** | **ai-develop** |
+| **296** | **작업 규칙 자동화 커밋** | 완료 | 해당 없음 | 해당 없음 | ai-develop |
+| **297** | **인계 전 문서 정합** | 완료 | 해당 없음 | 해당 없음 | ai-develop |
+| **299** | **테스트 게이트 복구 (222 낙진)** | 완료 | 통과 (`454 passed`) | 해당 없음 | ai-develop |
+| **307** | **로봇 채널 인증 헤더 배선** | 완료 | 통과 | **미실시** | 푸시됨 |
+| **311** | **날씨·의료 조회를 그래프에 잇는다** | 완료 | 통과 (`470 passed`) | **미실시** | 푸시됨 |
+| **319** | **테스트 게이트 복구 (298 낙진)** | 완료 | 통과 (`454 passed`) | 해당 없음 | 푸시됨 |
 
 **212 를 "절반 완료"로 적은 이유.** 티켓 제목이 "회귀 세트 **및** 임계치 실측 튜닝"입니다. 회귀 세트는 만들었고, **실측 튜닝은 하지 않았습니다** — 실제 어르신도, 실기 하드웨어도 없이 측정한 숫자는 측정이 아닙니다. 자세한 것은 §2.8.
 
-218·226·227·230·232·233 은 원래 계획에 없던 신설 티켓입니다. 사유는 §3.
+**212·233 은 305 에서 `ai-develop` 에 올라왔습니다.** 그전까지는 각자의 브랜치에만 있었고, 두 티켓을 그냥 머지하면 `graph/gate.py` 를 포함해 169줄이 충돌했습니다. 리베이스로 올려서 `.py` 충돌 0건으로 끝냈습니다. 자세한 것은 §3.10.
+
+218·226·227·230·232·233·263·296·297 은 원래 계획에 없던 신설 티켓입니다. 사유는 §3.
 
 **209 는 227 이 선행이었습니다.** 227(서버 계약 API)을 먼저 만들고 209(로봇 대화)를 붙였습니다. 227 이 `be-develop` 에 머지되기 전까지 실제 호출 검증은 불가능합니다 — 지금은 대역으로만 검증했습니다.
 
-**자동 검증 현황**: 로봇 434건 통과 / 백엔드 178건 통과, 둘 다 lint 통과.
+**자동 검증 현황** (2026-08-04 측정):
+
+| 대상 | lint | 테스트 |
+|---|---|---|
+| `ai-develop` + 305(212·233 반영) | `All checks passed` | `504 passed in 11.44s` |
+| `ai-develop` (305 이전, 299 까지) | `All checks passed` | `454 passed in 16.70s` |
+| `ai-develop` (299 이전, 222 머지 후) | `All checks passed` | 🔴 완주 불가 — §2.0 참고 |
+| 백엔드 | 통과 | 178건 (232 시점 측정, AI 라인에서는 재측정 불가) |
+
+**212·233 은 305 에서 `ai-develop` 에 리베이스로 올라왔습니다.** 그대로 머지했다면 `graph/gate.py` 를 포함해 5개 파일 169줄이 충돌했을 것을, 212 를 먼저 리베이스하고 233 의 자체 3커밋만 `--onto` 로 옮겨서 `.py` 충돌 0건·문서/설정 충돌만 102줄로 줄였습니다.
+
+**233 브랜치에 있던 263 중복 커밋(`bcdd8af`)은 리베이스 중 `--skip` 으로 버렸습니다.** `ai-develop` 에는 이미 `9fd1dfa` 로 263 이 들어 있었으므로, `--skip` 하지 않았다면 이력에 두 번 남을 뻔했습니다. `git log --oneline --grep="S15P11E102-263" origin/ai-develop` 결과가 1건인 것으로 확인했습니다.
 
 ---
 
@@ -55,7 +79,71 @@
 
 읽는 순서대로 중요합니다.
 
-### 2.1 실기에서 한 번도 돌려본 적이 없습니다 (232 로 전제조건 해소, 233 체크리스트 준비됨)
+### 2.0 해소됨 — `ai-develop` 의 테스트가 다시 초록입니다 (299)
+
+297 이 발견하고 **299 가 고쳤습니다.** 고치기 전에는 이랬습니다.
+
+```
+tests/test_pipeline.py  ->  13 failed, 6 passed, 1 deselected in 2.73s
+tests/test_pipeline.py::test_loop_stops_cleanly_on_keyboard_interrupt  ->  응답 없음(무한 대기)
+```
+
+299 이후:
+
+```
+venv/Scripts/pytest.exe -q -m "not integration and not manual"  ->  454 passed in 16.70s
+venv/Scripts/ruff.exe check src tests                           ->  All checks passed!
+```
+
+**원인은 222 의 낙진 네 갈래였고, 전부 테스트 대역 쪽이었습니다.**
+
+| # | 무엇이 깨졌나 | 왜 |
+|---|---|---|
+| 1 | `test_pipeline.py` 13건 + 무한 대기 | `SequenceAudioInput.capture()` 가 `onset_timeout_seconds` 를 안 받음 |
+| 2 | `test_medical_pipeline_safety.py` 1건 | 같은 이유로 `StubAudioInput.capture()` 도 시그니처 불일치 |
+| 3 | `test_main.py` 5건 | `WAKEWORD_ENABLED` 기본값이 `True` 라 단위 테스트가 `openwakeword` 를 import·다운로드하려 함 |
+| 4 | `test_project_contract.py` 1건 | `.env.example` 이 `WAKEWORD_ENABLED`·`WAKEWORD_MODEL_PATH` 를 문서화하지 않음 |
+
+**무한 대기의 정체가 이 사건의 교훈입니다.** `_run_once_inner` 는 capture 실패를
+`except Exception` 으로 삼키고 루프를 계속 돕니다(단계 하나가 실패해도 로봇이 멈추면
+안 되기 때문에 옳은 설계입니다). 그런데 대역의 시그니처가 어긋나자 매 호출이 그
+자리에서 `TypeError` 로 죽어 **결과를 하나도 소비하지 못한 채 영원히 돌았습니다.**
+`pre-push-gate.sh` 가 300초 타임아웃까지 매달렸고, 증상이 "실패"가 아니라 "안 끝남"
+이라 원인을 게이트나 자기 코드에서 찾게 만들었습니다.
+
+→ 재발 방지로 대역에 `AudioSequenceExhausted(BaseException)` 를 넣었습니다.
+`Exception` 이 아니라 `BaseException` 인 것이 핵심입니다 — 파이프라인의 관용이
+무한 반복으로 바뀌기 전에 pytest 가 잡습니다.
+
+**같은 유형이 298 에서 다시 나왔습니다 (319 가 고쳤습니다).** 299 의 재발 방지 장치는
+`pipeline.py` 가 쓰는 대역에만 들어갔습니다. 298 이 `bootstrap.py` 의 `capture()` 호출에
+`onset_timeout_seconds` 인자를 추가했을 때, `tests/test_bootstrap.py` 의
+`ScriptedAudioIn`·`FlakyAudio` 두 대역은 이 변경을 받지 않아 똑같이 매 호출이
+`TypeError` 로 죽고 `test_the_loop_puts_each_utterance_through_the_graph` 가 무한
+대기에 빠졌습니다. 319 에서 두 대역 모두 `onset_timeout_seconds=None` 을 받아
+무시하도록 시그니처만 맞췄습니다 — `BaseException` 재발 방지 장치는 `pipeline.py`
+전용 설계라 이 파일에는 옮기지 않았습니다.
+
+**세 번째로 같은 유형이 나왔습니다 (309 가 고쳤습니다).** 이번에는 오디오가 아니라
+대화 적재 쪽이었습니다. 306 이 `record_turn` 의 반환을 단일 문자열에서
+`(conversationId, messageId)` 튜플로 넓혔는데, 212 가 만든
+`tests/test_naturalness_replay.py` 의 `NullConversationClient` 는 여전히 문자열
+하나를 돌려줬습니다. 그래서 `build.py._record_turn` 의 튜플 언패킹이
+`ValueError: too many values to unpack` 으로 죽고, `memory_write` 노드가 터지면서
+**자연스러움과 아무 상관 없는 이유로** 회귀 세트 2건이 빨간불이 됐습니다
+(`test_the_sentence_limit_is_a_policy_dial_not_a_literal`,
+`test_scenario[09b-emotional-turn-keeps-the-prohibitions]`). 대역을 계약에 맞춰
+`("conversation-1", "message-1")` 로 고쳐 `540 passed` 로 돌아왔습니다.
+
+**교훈 (세 번 반복된 것)**: 대역이 실제 인터페이스에서 조용히 벗어나는 것이 이
+저장소에서 가장 자주 재발하는 실패입니다 — 222·298·306 세 번 모두 **프로덕션
+호출부만 바뀌고 테스트 대역이 안 따라갔습니다.** 인터페이스(시그니처든 반환형이든)를
+바꾸는 티켓은 그것을 구현한 **모든** 대역을 같은 커밋에서 확인해야 합니다
+(`grep -rn "def capture(" tests/`, `grep -rn "def record_turn" tests/`). 증상이
+매번 엉뚱한 곳에서 나타나는 것이 이 실패의 특징입니다 — 무한 대기로, 혹은
+"자연스러움 테스트 실패"로.
+
+### 2.1 실기를 아직 끝까지 돌려보지 못했습니다 (232 로 전제조건 해소, 233 준비단계 통과)
 
 > **232 전까지는 더 나빴습니다.** 200~211 에서 만든 것이 **실행 경로에 하나도 연결돼
 > 있지 않았습니다.** `main.py` 가 띄우는 것은 200번 이전의 `ConversationPipeline`
@@ -65,7 +153,32 @@
 
 이제 **실기에서 확인할 것이 생겼습니다.** → 233
 
-Jetson, 마이크, 스피커, 실제 STT/LLM/TTS API 중 **어느 것도 확인하지 않았습니다.** 모든 검증은 대역(fake)을 쓴 자동 테스트입니다.
+#### 08-03 에 실제로 책상에 앉았고, 준비 단계에서만 여섯 건이 나왔습니다
+
+체크리스트(`FIELD-TEST-233.md`)의 0.1 부터 돌리자 **점검 대상이 아니라 "돌려 보기" 자체가 막혔습니다.** 여섯 건 모두 `36f8201` 에서 고쳤습니다.
+
+| # | 무엇이 막혔나 | 왜 자동 테스트가 못 잡았나 |
+|---|---|---|
+| 1 | 노트북에서 없는 USB 마이크(`reSpeaker`)를 요구하며 기동 거부 | 214 가 하드웨어 기본값을 모드와 무관하게 걸었습니다 |
+| 2 | 로그는 완벽한데 **스피커만 조용함** — `--once` 가 재생 스레드(daemon)를 죽임 | 원리적으로 무음인데 증상이 "무음"이라 오디오·키를 먼저 의심하게 됩니다 |
+| 3 | 잭이 비어 있어도 PortAudio 는 정상으로 열고 정상으로 재생을 마침 | 로그로는 영원히 알 수 없습니다. 귀로만 확인됩니다 |
+| 4 | **STT 가 문장을 잘라 먹음** — `AUDIO_SILENCE_THRESHOLD=300` 인데 발화 청크가 대부분 300 미만 | "ASR 이 나쁘다"로 오진하기 딱 좋습니다. ASR 문제가 아니었습니다 |
+| 5 | 테스트가 개발자의 **실제 저장소**에 쓰고 있었음 (`runtime_state` 오염) | `conftest` 가 `LOCALSTORE_DIR` 을 지우기만 해서 기본값으로 떨어졌습니다 |
+| 6 | 체크리스트 명령이 PowerShell 로 적혀 Git Bash 에서 안 돌았음 | 점검하러 갔는데 점검 도구부터 고쳐야 했습니다 |
+
+**4번이 가장 큽니다.** 임계치 하나가 어긋나 있으면 그 위의 모든 판정(트리아지 표현 목록, 동의 판정, 지남력 표지, 맞장구)이 **잘린 텍스트**를 받습니다. 실측 도구 두 개(`tests/manual/mic_level_check.py`, `speaker_probe.py`)를 이때 만들었습니다.
+
+#### 그래서 지금 정확히 어디까지 왔나
+
+| 범위 | 상태 |
+|---|---|
+| 0. 준비 (환경·장치·에코 설정) | **통과** — 위 6건을 고치고 나서 |
+| A. 기본 왕복 | **부분** — 한 바퀴는 돌았고, 지연 측정과 녹취는 남았습니다 |
+| B~G (에코 실측·게이트·사다리·트리아지·온보딩·현관·의미검색) | **미실시** |
+| `FIELD-TEST-233.md` 의 분류표 3개 (즉시수정 / 별도티켓 / 하드웨어한계) | **비어 있습니다** |
+| `SELF_HARM_MARKERS_REVIEWED` | **여전히 False** |
+
+Jetson, 실제 어르신 발화, 원거리 마이크, 실기 임계치는 **아직 확인되지 않았습니다.** B~G 의 검증은 여전히 전부 대역(fake)을 쓴 자동 테스트입니다.
 
 #### 점검 도구는 갖춰졌습니다 (문서 3종 + 상태 도구)
 
@@ -84,7 +197,7 @@ Jetson, 마이크, 스피커, 실제 STT/LLM/TTS API 중 **어느 것도 확인�
 | # | 무엇 | 왜 조용한가 |
 |---|---|---|
 | 1 | `ai-develop` 은 로그가 전부 꺼져 있음 (`main.py` 의 `basicConfig` 주석 처리, `-v` 없음) | 로봇은 정상적으로 대답합니다. 안 보이는 것은 판정 근거뿐입니다. **이 브랜치(`b7d81c2`)에서 고쳤고, 그래서 점검은 이 브랜치에서만 가능합니다** |
-| 2 | `handle_info` 가 날씨·병원을 **실제로 조회하지 않음** | 본문이 `return {"response": _generate(state)}` 한 줄입니다. 같은 파일 docstring 은 조회한다고 적혀 있어 **문서가 코드보다 앞서 있습니다.** LLM 이 자연스러운 문장으로 기온을 지어내므로 점검자가 ✅ 를 찍기 쉽습니다 → 5-3 스텝으로 고정 |
+| 2 | **날씨는 도시명이 있을 때만 실제로 조회됨** (311 로 배선은 끝남) | `context_read._lookup_weather_documents` 가 `extract_city()` 로 도시를 못 뽑으면 조회를 아예 건너뜁니다. 그런데 어르신은 `"대전 몇 도야"` 가 아니라 **`"오늘 몇 도야"` 라고 말합니다** — 즉 실사용에서 더 흔한 쪽이 조회가 안 되는 쪽이고, 그때 LLM 이 자연스러운 문장으로 기온을 지어냅니다. 집 주소를 기본 도시로 쓸지가 미결 → 5-3 스텝으로 고정 |
 | 3 | 잘못된 API 경로가 **200 + HTML** 을 돌려줌 | nginx 가 `/api/` 만 백엔드로 보내고 나머지는 프론트로 넘깁니다. 상태 코드로 판정하면 전부 초록입니다. `/actuator` 도 일부러 404 라 헬스체크에 못 씁니다 → 0-6 스텝으로 고정 |
 
 문서 오류도 하나 바로잡았습니다: 대화 저장점(checkpoint)이 `checkpoint.sqlite` 라는 별도
@@ -110,10 +223,12 @@ Jetson, 마이크, 스피커, 실제 STT/LLM/TTS API 중 **어느 것도 확인�
 
 **트리아지는 이제 동작합니다**(210). 이전의 "항상 `False`" 상태는 해소됐고, `NOT IMPLEMENTED` 경고도 사라졌습니다.
 
-남은 위험은 하나입니다. `policy.SELF_HARM_MARKERS` 는 **보수적인 출발점**이며 HANDOFF §7 이 요구한 사람의 검토를 아직 받지 않았습니다.
+남은 위험은 하나입니다. `policy.SELF_HARM_MARKERS` 는 **보수적인 출발점**이며, 이 목록을
+즉흥적으로 만들지 말고 사람이 검토해야 한다는 요구(유래는 §8 부록)를 아직 만족하지
+못했습니다.
 
 ```
-self-harm marker list has not been human-reviewed yet (HANDOFF §7).
+self-harm marker list has not been human-reviewed yet (docs/carebot/PROGRESS.md §2.2).
 Detection is active but conservative; review the list in policy.py before
 deploying to a real senior.
 ```
@@ -142,15 +257,19 @@ deploying to a real senior.
 
 게이트에 `not_before` 연기 확인을 추가했습니다. **이 확인이 없으면 지연은 장식입니다** — 큐에 넣은 제안은 다음 틱에 바로 후보가 되기 때문입니다. 폐기가 아니라 연기인 것이 중요합니다(아직 이른 것을 폐기하면 영영 사라집니다).
 
+**253 에서 갱신됨.** 여기서 말하는 "45분 뒤 제안 큐에 넣습니다"는 더 이상 정확하지 않습니다 — 253 이후로는 정서 발화 한 번이 아니라 누적 신호가 문턱을 넘겼을 때만 큐잉하고, 어르신의 "응"/"아니" 답도 실제로 판정합니다. §6의 253 절 참고.
+
 미검증: 실기. "외로워"는 시연에서 누구든 가장 먼저 시도할 발화이므로 233 에서 우선 확인 대상입니다.
 
-### 2.4 의미 검색이 동작하지 않습니다
+### 2.4 의미 검색은 만들어졌으나 아직 꺼져 있습니다 (218)
 
-기억 검색이 **키워드 겹침 × 중요도 × 최근성**으로만 순위를 매깁니다. 한국어 조사 때문에 "무릎이"와 "무릎"이 매칭되지 않습니다.
+218 에서 Qdrant 와 Upstage 임베딩을 붙였습니다. 실서버 Qdrant 로 4096차원 코사인 HNSW 컬렉션 생성과 저장→검색 왕복을, 실제 Upstage API 로 passage/query 가 같은 벡터 공간을 쓰는 것을 확인했습니다.
 
-즉 지금은 **"이어짐"(CLAUDE.md §17.2)이 거의 작동하지 않습니다.** 어제 무릎 얘기를 오늘 참조하는 그 기능입니다.
+**그런데 기본값이 꺼짐입니다.** 임베딩 API 가 과금되고 잔액이 프로토타입 시연까지 감당해야 하므로, `EMBEDDING_ENABLED` 와 `EMBEDDING_SYNC_ENABLED` 를 명시적으로 켜야 동작합니다. 켜지지 않은 동안은 여전히 **키워드 겹침 × 중요도 × 최근성**으로만 순위를 매기고, 한국어 조사 때문에 "무릎이"와 "무릎"이 매칭되지 않습니다.
 
-응답에 `availability.semanticSearch: false` 로 표시되므로 조용히 나빠지지는 않습니다. → 218
+즉 **"이어짐"(CLAUDE.md §17.2)은 스위치를 켜기 전까지 여전히 거의 작동하지 않습니다.** 응답의 `availability.semanticSearch` 가 그 사실을 그대로 알려줍니다 — 조용히 나빠지지는 않습니다.
+
+배포 시 필요한 것: EC2 시크릿에 `UPSTAGE_API_KEY`(현재 없음), `QDRANT_DATA_DIR`, `QDRANT_API_KEY`.
 
 ### 2.5 백엔드 API 에 인증이 없습니다
 
@@ -218,9 +337,13 @@ deploying to a real senior.
 | `vector` | 16,000 | **2,000** |
 | `halfvec` | 16,000 | **4,000** |
 
-Upstage 임베딩은 **4096차원**이라 `halfvec` 으로도 인덱스가 불가능하고, 남는 선택지는 인덱스 없는 순차 스캔뿐이었습니다. 한국어 품질 때문에 모델을 포기할 수 없다는 판단(사용자 결정)에 따라 저장소를 바꿉니다.
+Upstage 임베딩은 **4096차원**이라 `halfvec` 으로도 인덱스가 불가능하고, 남는 선택지는 인덱스 없는 순차 스캔뿐이었습니다. 한국어 품질 때문에 모델을 포기할 수 없다는 판단(사용자 결정)에 따라 저장소를 바꿨습니다.
 
 201 에는 대신 재색인 단서가 되는 부기 컬럼(`embedding_status` 등)을 남겼습니다.
+
+**218 에서 종결되었습니다.** Qdrant 컨테이너, `VectorStore` 포트·어댑터, Upstage 클라이언트, 비동기 재색인 잡이 들어갔습니다. pgvector 는 이미지에만 남고 확장은 켜지 않으며, `FlywayMigrationValidationTest.pgvectorIsNotUsed` 가 그것을 능동적으로 검증합니다.
+
+핵심 설계 하나: **벡터 스토어의 hit 는 순위만 바꾸고 행을 추가하지 못합니다.** Qdrant payload 는 색인 시점 사본이라 임의로 낡을 수 있어서, 공개범위가 바뀐 기억이 그 사본을 근거로 보호자에게 새어나가면 안 됩니다. 회귀 6건으로 고정했습니다(색인 후 PRIVATE 이 된 기억, SUPERSEDED, REJECTED, 다른 어르신, 삭제된 행).
 
 ### 3.2 트리아지 스텁을 예외 → `False` (210 에서 해소)
 
@@ -352,7 +475,7 @@ Upstage 임베딩은 **4096차원**이라 `halfvec` 으로도 인덱스가 불�
 
 ### 5.2 스프린트 종료와 티켓 이월
 
-HANDOFF §3 기준 활성 스프린트가 2026-08-02 종료 예정이었습니다. 200~212 는 몇 주치 작업이므로 이월 처리가 필요합니다.
+착수 시점 활성 스프린트가 2026-08-02 종료 예정이었습니다(경위는 §8 부록). 200~212 는 몇 주치 작업이므로 이월 처리가 필요합니다.
 
 ---
 
@@ -374,7 +497,7 @@ V2~V5 추가, V1 무수정. **빈 PostgreSQL 에서 V1~V5 순차 실행 후 Hibe
 
 - T4 = `PRIVATE` 로 확정 (컬럼정의서가 "시니어 전용"으로 정의 → 값 추가 불필요)
 - `NotificationTier` 에 T4 를 **일부러 두지 않음** (T4 는 알림이 생기지 않는 상태)
-- 미반영: `mvp-erd.md`·컬럼정의서 xlsx 갱신 → 218 로 미룸
+- 218 에서 반영: `mvp-erd.md` §12a(벡터 스토어), `flyway-guide.md` FAQ, `vector-fields.csv`. 컬럼정의서 **xlsx 본체는 여전히 미반영** — V2 의 `notification_tier` 부터 밀려 있어 한 칸만 맞추면 더 헷갈립니다. 별도 정리 필요
 
 ### 202 — 로컬 저장소·발신 큐 ✅ (실기 미실시)
 
@@ -395,7 +518,7 @@ V2~V5 추가, V1 무수정. **빈 PostgreSQL 에서 V1~V5 순차 실행 후 Hibe
 | top-k 3~10 조절 | ✅ (범위 밖은 clamp) |
 | 문맥 과적재 방지 | ✅ |
 
-미구현: 의미 검색(218), 문서 코퍼스, **인증**, 한국어 형태소 분석
+미구현: 문서 코퍼스, **인증**, 한국어 형태소 분석. 의미 검색은 218 에서 구현되었으나 기본값이 꺼짐입니다(§2.4)
 
 ### 204 — 반응형 1왕복 ⚠️
 
@@ -613,6 +736,238 @@ CLAUDE.md 가 경고한 **`_is_absence_expected` 함정**을 처리했습니다.
 
 ---
 
+### 306 — 대화 연속성 결함 수정 ✅ (실기 미실시, 백엔드 실제 messageId 필드 미검증)
+
+**무엇이 깨져 있었는가.** `graph/turn.py` 가 매 턴 `"conversation_id": conversation_id` 를
+무조건 입력에 실었는데, 실런타임 호출부(`bootstrap.py`)는 이 인자를 넘기지 않아 값이
+항상 `None` 이었습니다. `state.py` 의 `conversation_id` 에는 reducer 가 없어(기본
+LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 턴 덮어썼습니다.
+백엔드는 `conversationId=null` 을 "새 대화"로 해석하므로, 실제로는 **발화마다 새
+`conversation` 행이 생기고 있었습니다** — "최근 대화" 문맥 조립이 항상 비어 있던
+근본 원인입니다. 테스트 대역 둘(`FakeConversationClient`, `RecordingConversationClient`)
+이 호출마다 무조건 `"conversation-1"` 을 돌려줘서, 이 결함이 있어도 테스트는 계속
+초록이었습니다.
+
+| 완료 조건 | 결과 |
+|---|---|
+| 3턴 실행 후 발급된 대화가 1개, 2턴째 SENIOR 행의 conversation_id 가 null 아님 | ✅ |
+| fetch_context 가 2턴째부터 conversation_id 를 싣는다 | ✅ |
+| 유휴 임계값(`policy.CONVERSATION_BOUNDARY_IDLE_SEC`, 30분)을 넘기면 새 대화로 연다 (SimClock 검증) | ✅ |
+| record_turn 이 messageId 를 돌려주고 state(`last_message_id`)에 남는다 | ✅ (대역·실제 클라이언트 파싱 모두 테스트, 백엔드가 실제로 그 필드를 채우는지는 255 선행 필요) |
+| 전 테스트 초록 | ✅ `462 passed in 17.62s` |
+
+**고친 것 다섯 가지.**
+
+1. `graph/turn.py` — `conversation_id` 를 조건부로만 입력에 넣습니다. 값이 없으면 키
+   자체를 빼서 LangGraph 가 체크포인트 값을 그대로 보존하게 합니다.
+2. `graph/ingress.note_interaction` — 새 헬퍼 `_conversation_boundary` 가 마지막
+   상호작용과 지금 사이의 간격을 재서, `policy.CONVERSATION_BOUNDARY_IDLE_SEC`(30분,
+   조정 방향 주석 포함)를 넘으면 `conversation_id` 를 명시적으로 `None` 으로 되돌려
+   새 대화를 엽니다. `door_event`·`backend_command`·능동 발화 경로는 이 로직을 타지
+   않으므로(트리거가 다름) 결함도 없고 동작도 그대로입니다 — 회귀 확인 완료.
+3. `backend_client/conversation_client.py` 와 `graph/build.py._record_turn` —
+   반환을 `conversationId` 단일 값에서 `(conversationId, messageId)` 로 넓혔습니다.
+   `messageId` 는 '어르신 발화' 행에 대해서만 `state.last_message_id`(state.py 에 신설)
+   로 남습니다 — 255 번(fact_candidate 추출)의 `sourceMessageId` 가 이 값을 요구합니다.
+4. `jobs/scheduler.py` — `contract_tick` 에 conversation_id 를 등록 시점이 아니라
+   **매 틱마다** 새로 읽어 넘기는 `_contract_tick_job` 래퍼를 추가했습니다. 스케줄러는
+   그래프 checkpoint 를 못 보므로 `localstore/runtime`(신설 컬럼 `conversation_id`)을
+   읽습니다 — `memory_write` 가 `last_spoke_at` 을 찍는 자리에서 같이 찍습니다.
+5. 테스트 대역 두 개를 서버와 같은 계약으로 바꿨습니다 — `conversation_id` 가
+   `None` 이면 새 id 를 발급하고 카운터를 올리고, 아니면 그대로 에코합니다. 예전
+   대역(무조건 `"conversation-1"`)은 이 결함이 있어도 초록으로 보이는 함정이었습니다.
+
+**의도적으로 판단한 것.** `CONVERSATION_BOUNDARY_IDLE_SEC` 이름을 티켓 예시
+(`CONVERSATION_IDLE_TIMEOUT_SEC`)와 다르게 지었습니다 — 그 이름은 이미
+웨이크워드 '리슨 세션'을 얼마 만에 끊을지(15초)에 쓰이고 있어서, 같은 이름을 다른
+의미로 재사용하면 값을 덮어써 리슨 세션 타임아웃이 30분으로 바뀌는 사고가 납니다.
+값은 30분으로 잡았습니다 — 화장실 다녀오는 정도의 공백은 이어 붙이되, 자리를
+비웠다 한참 뒤에 돌아온 것은 새 대화로 봅니다. 실측 튜닝 전의 추정값입니다.
+
+**새로 드러난 것.** 이 브랜치가 `ai-develop`(298 반영 후)에서 갈라진 뒤, 별개의
+결함(298 이 `bootstrap.py` 의 `capture()` 호출에 `onset_timeout_seconds` 를 추가했지만
+`tests/test_bootstrap.py` 의 대역 둘은 그 인자를 안 받아 테스트가 무한 대기에
+빠지는 문제)이 발견되어 **S15P11E102-319** 로 분리되었고, 그 수정이 게이트를
+초록으로 만들기 위해 이 브랜치에도 반영되어 있습니다. 306 의 범위 밖입니다.
+
+### 307 — 로봇 채널 인증 헤더 배선 ⚠️ (로봇 쪽만, 백엔드 통합 미검증)
+
+브랜치 둘로 나눠 진행 중입니다. 로봇(이 저장소, `307-ai` 워크트리)과 백엔드(`307-be`, 별도 워크트리·`be-develop`)가 각자 작업한 뒤 함께 리뷰합니다. 이 절은 로봇 쪽만 다룹니다.
+
+| 완료 조건 | 결과 |
+|---|---|
+| 로봇 네 클라이언트(문맥/계약/대화이벤트/현관이벤트)가 모두 공유 시크릿 헤더를 실어 보낸다 | ✅ |
+| 401/403 이 캐시 폴백·조용한 실패와 구분되는 경고 로그로 남는다 | ✅ (단위 테스트로 재현) |
+| 다른 실패 사유(네트워크 끊김 등)까지 전부 시끄러워지지는 않는다 | ✅ |
+| 실제 백엔드 필터를 대상으로 401 을 맞아본다 | ❌ **UNVERIFIED — be-develop 의 307 쪽이 아직 이 워크트리에 없음** |
+
+핵심 결정: **헤더를 클라이언트 넷이 각자 얹지 않고, 세션을 만드는 곳(`backend_client/session.py`) 한 곳에서만 얹었습니다.** 이름 오타나 갱신 누락이 생길 자리를 넷에서 하나로 줄입니다. 기존 기본값은 `session or requests`(모듈 자체를 세션처럼 씀) 였는데, 이번에 `session or build_backend_session(settings)`(진짜 `requests.Session`)로 바꿔 커넥션 재사용이 덤으로 따라옵니다.
+
+**401 은 클라이언트마다 다른 방식으로 드러납니다.** `context_client` 는 여전히 캐시로 내려가고(계약을 바꾸지 않습니다), `contract_client` 는 여전히 `BackendUnavailable` 을 올리고, `conversation_client`·`door_client` 는 여전히 그 턴을 포기합니다 — 다만 넷 모두 그 전에 "AUTH FAILURE" 로 시작하는 별도 경고를 남겨, 배포 때 시크릿을 안 맞춘 실수가 흔한 오프라인 동작처럼 조용히 지나가지 않게 했습니다.
+
+**미검증 사항**:
+
+- `.env.example`(robot/ai_chat) 에 `BACKEND_SHARED_SECRET` 을 추가했지만, 실제 배포 정의(docker-compose 등)에 변수를 통과시키고 실행 중인 컨테이너 안에서 값이 도달하는지 확인하는 것은 이 워크트리 범위 밖입니다.
+- 헤더 이름 `X-Robot-Shared-Secret` 이 백엔드와 실제로 합의된 이름인지, 그리고 실제 401 응답 형태가 여기서 가정한 것과 같은지는 be-develop 의 307 PR 과 교차 확인이 필요합니다 — 이 워크트리에는 그 필터가 없어 mock 백엔드로만 검증했습니다.
+### 311 — 날씨·의료 조회를 그래프에 잇는다 ✅ (실기 미실시)
+
+| 완료 조건 | 결과 |
+|---|---|
+| 날씨 질문 1턴에서 생성 LLM 호출 1회 유지 | ✅ (`test_weather_question_makes_exactly_one_generation_call`) |
+| 날씨·의료 질문의 프롬프트에 "참고 자료" 렌더 (그래프를 태워서) | ✅ (`test_turn_end_to_end.py`, `app.invoke` 경유) |
+| 의료 판정이 한 턴에 한 번만 수행 | ✅ (`test_medical_determination_is_reused_by_classify_intent_in_the_same_turn`) |
+| 조회 실패 시 지어내지 않고 되묻거나 솔직히 답함 | ✅ 날씨·의료 각각 고정 |
+| legacy 경로(`pipeline.py`)의 기존 동작 불변 | ✅ 기존 테스트 그대로 통과 |
+
+**문제**: `llm/medical_flow.py`(병원·약국·의약품 function-calling)와 `weather/` 클라이언트가 legacy 경로(`pipeline.py`, `--legacy`) 전용이었습니다. `classify_intent` 는 의료·날씨 질문을 정확히 `info` 로 분류하지만, `handle_info` 는 조회 능력이 없어 근거 없는 LLM 생성 한 번으로 끝났습니다 — "근처 병원 어디야"에 그럴듯하지만 지어낸 답이 나갔습니다.
+
+**설계 판단 — 조회를 어느 노드에 둘 것인가.** `medical_flow.handle_medical_query` 는 자체적으로 Gemini function-calling 왕복을 합니다. 이것을 `handle_info` 안에서 그대로 부르면 §23(핸들러 직접 I/O 금지)을 깨고, 핸들러가 스스로 "말할지 여부"가 아니라 "무엇을 조회할지"까지 정하게 됩니다. 그래서 조회 자체를 **`context_read`**(`graph/context.py`)로 올렸습니다 — 이미 문맥을 조립하는 노드이고, `ctx["documents"]` 는 `prompts/builder.py` 가 `info` 인텐트에서 "참고 자료"로 이미 렌더하는 슬롯이라 빌더 시그니처를 바꿀 필요가 없었습니다. `handle_info` 는 여전히 `_generate()` 한 번만 부르는 얇은 핸들러로 남습니다.
+
+**두 번째 판단 — 반응형 턴은 이 시점에 아직 `intent` 가 없다.** 그래프 순서는 `context_read -> classify_intent` 입니다. 어르신이 먼저 말한 턴은 `context_read` 가 돌 때 `intent` 가 비어 있어, "info 일 때만 조회"라는 규칙을 그대로 쓸 수 없었습니다. 그래서 `context_read` 안에 정서·일정 표지만 먼저 거르는 값싼 사전 판정을 두고, 의료 힌트 표지(병원·약국·진료과·상비약 브랜드명)가 있을 때만 의료 라우터(`llm/router.py`, 로컬 SentenceTransformer)를 부르도록 좁혔습니다. 처음에는 힌트 없이 매 턴 라우터를 불렀는데, "내 약 뭐야" 같은 **기존** e2e 테스트 문구가 걸려 실제 모델을 로딩하려 하면서 테스트가 300초 넘게 멈췄습니다 — 힌트 표지 게이트로 좁혀 해결했고, 힌트에 바른 "약"을 넣지 않은 이유도 같습니다("내 약 뭐야"는 `ctx.careRecords` 로 이미 답할 수 있는 정확 조회 질문이지, 병원·약국 검색이 아닙니다).
+
+**세 번째 판단 — 라우터를 두 번 안 부르게.** `context_read` 가 의료 라우터를 부른 결과를 `state["is_medical_query"]` 에 남기고, `classify_intent` 는(자기 판정에서 그 값이 필요하면) 그것을 재사용합니다. `context_read` 는 이 값을 '읽지' 않습니다 — 이 노드가 매 턴 가장 먼저 돌기 때문에, 이 시점의 값은 지난 턴의 낡은 값이라 캐시로 믿으면 지난 발화의 의료 판정이 이번 발화에 새어듭니다. 그래서 매번 명시적으로 (재계산했으면 bool, 안 했으면 `None` 으로) 덮어써서 낡은 값이 새지 않게 했습니다.
+
+**도시 추출 통합**: `pipeline.py`(legacy)에 메서드로만 있던 도시 추출을 `weather/client.py::extract_city` 로 옮기고, `pipeline.py` 는 그 함수를 호출하도록 바꿨습니다. 두 경로가 같은 구현 하나를 씁니다.
+
+**조회 실패 처리**: 날씨(기상청 API)·의료(Gemini function-calling) 조회가 예외를 던지면, 결과 없이 넘어가는 대신 "지금 확인할 수 없다, 지어내지 말고 솔직히 답하거나 되물어라"는 지시문을 "참고 자료" 문서로 만들어 넣습니다. 도시를 특정 못 한 날씨 질문(예: "오늘 날씨 어때")은 조회 '실패'가 아니라 정보 부족이라 이 처리 대상이 아닙니다 — legacy 경로와 동일합니다.
+
+**부수적으로 고친 것 (범위 밖, 별도 세션이 처리)**: `tests/test_bootstrap.py` 의 `ScriptedAudioIn.capture()`/`FlakyAudio.capture()` 가 `onset_timeout_seconds` 를 받지 않아 전체 테스트 스위트가 무한 대기에 빠지는 **선행 버그**를 발견했습니다(298 이후 `bootstrap.py` 가 그 인자로 호출하도록 바뀌었는데 테스트 대역이 안 따라감 — 299 가 고친 것과 같은 종류입니다). 이 티켓 범위 밖이라 별도 세션이 **S15P11E102-319** 로 고쳤습니다.
+
+**미검증**: 실기(Jetson, 실제 기상청/Gemini API 왕복). 자동 테스트는 전부 대역입니다.
+
+### 294 — CI 파이프라인이 없는 경로를 보는 문제 수정 ✅ (일부 미결)
+
+| 완료 조건 | 결과 |
+|---|---|
+| `ci/Jenkinsfile.ai` 가 `robot/ai_chat` 확인, 경로 없으면 `error`(UNSTABLE 아님) | ✅ |
+| `scripts/ci/verify-ai.sh` 가 `robot/ai_chat` 에서 `ruff check src tests` + 마커 제외 `pytest` 실행 | ✅ |
+| 통과 로그에 실제 건수·소요 시간 | ✅ `540 passed in 14.87s`(로컬 venv), ruff `All checks passed!` |
+| `ci/README.md`·`verify-ai.sh` 에 `ai/` 전제 미잔존, `pre-push-gate.sh:14-17` 주석이 새 사실과 일치 | ✅ |
+| 고의로 깨뜨린 커밋이 파이프라인을 실패시키는 것을 실제 Jenkins 로 확인 | ❌ **미실시 — `ai-main` 에 `robot/ai_chat` 이 아직 릴리스되지 않아 불가능(선행 조건)** |
+
+**손댄 파일 4개**: `ci/Jenkinsfile.ai`(`fileExists('ai')` → `fileExists('robot/ai_chat')`, `unstable(...)` → `error(...)`), `scripts/ci/verify-ai.sh`(경로 `ai` → `robot/ai_chat`, `ruff check src tests` 신규 추가, pytest 에 `-m "not integration and not manual"` 추가), `ci/README.md`(향후 생성/`UNSTABLE` 문단을 실제 경로/`실패`로 교체), `.claude/hooks/pre-push-gate.sh`(14~17행 주석 — "verify-ai.sh 가 존재하지 않는 ai/ 를 가리켜 죽는다"는 낡은 전제를 "경로는 고쳤지만 도커 빌드가 분 단위라 push 직전 게이트로는 여전히 부적합하다"로 정정).
+
+**의도적으로 범위에서 뺀 것 (티켓 본문이 명시)**: 작업 내용 5번(트리거 브랜치를 `ai-main` 외에 `develop` 대상까지 넓힐지)과 6번(pip 캐시 전략, torch 의존성 timeout 대응)은 사람이 결정할 사항이라 이 워크트리에서 건드리지 않았습니다. 둘 다 `Jenkinsfile.ai`/`verify-ai.sh` 를 추가로 고쳐야 하는 미결 항목으로 남습니다.
+
+**Jenkinsfile.ai 를 코드로 직접 실행해 검증하지 못한 이유**: Jenkins 서버 자체가 이 워크트리에서 접근 불가합니다. `fileExists('robot/ai_chat')`/`error(...)` 분기는 Groovy 문법을 읽고 고쳤을 뿐 Jenkins 파서로 돌려보지 않았습니다 — **UNVERIFIED**.
+
+
+### 256 — 표현 다양성 배선 ✅ (실기 미실시)
+
+| 완료 조건 | 결과 |
+|---|---|
+| 같은 종류의 능동 알림을 두 번 내보내면, 두 번째 프롬프트에 "표현 반복 피하기" 섹션과 첫 발화 문장이 들어 있다 | ✅ (`test_naturalness_replay.py` 시나리오 `08-varies-its-phrasing`, `proactive` 경로로 그래프 전체를 태움) |
+| 반응형 턴, 특히 능동 턴 직후의 반응형 턴 프롬프트에는 그 섹션이 절대 나타나지 않는다 | ✅ (`graph/context.py._lookup_recent_phrasings` 가 `trigger_type` 을 가드로 씀) |
+| 식사 권유와 수분 권유는 서로 다른 키로 분리되고, 같은 끼니(아침/점심/저녁)는 같은 키로 묶인다 | ✅ (`test_phrasing.py::test_meal_and_water_get_different_keys`, `test_same_meal_slot_shares_a_key_across_days`) |
+| 침묵 프로브와 T3 동의 질문은 기록·조회 대상에서 빠진다 | ✅ (`policy.RECENT_PHRASING_EXCLUDED_ORIGIN_PREFIXES`, `test_phrasing.py::test_silence_probe_is_excluded`·`test_t3_consent_question_is_excluded`) |
+| 보관 기간 만료, 재시작, 개수 상한 초과를 각각 검증 | ✅ (`test_phrasing.py::test_retention_expiry`·`test_survives_restart`·`test_max_rows_per_key_caps_storage`) |
+| 기록 과정에서 예외가 발생해도 로봇은 침묵하지 않고 발화를 끝까지 마친다 | ✅ (`graph/build.py._record_phrasing` 이 예외를 삼키고 경고 로그만 남김. `memory_write` 의 다른 실패 처리와 같은 자리) |
+| 새로 추가한 policy 상수를 실제로 읽는 운영 코드가 존재한다 | ✅ (`RECENT_PHRASING_RETENTION_DAYS`·`RECENT_PHRASING_MAX_ROWS_PER_KEY`·`RECENT_PHRASING_EXCLUDED_ORIGIN_PREFIXES` 모두 `localstore/phrasings.py`·`graph/phrasing.py` 가 읽음) |
+| 백엔드·Flyway 변경 없음, 로봇 테스트 전체·lint 통과 | ✅ (554 passed, ruff 0 오류) |
+
+**문제**: 프롬프트 빌더(`prompts/builder.py._format_recent_phrasings`)와 `state.py` 의 `recent_phrasings` 필드는 이미 있었지만, 그 값을 실제로 채우는 코드가 레포 어디에도 없었습니다 — "표현 반복 피하기" 섹션이 한 번도 프롬프트에 실린 적이 없었습니다. `tests/test_naturalness_replay.py._run_with_phrasings` 의 docstring 은 "게이트가 넣는 값"이라고 적혀 있었지만, 실제로는 `graph/gate.py` 의 반환 dict 에 그 키가 없었습니다 — 우회 테스트 헬퍼가 배선이 없다는 사실을 가려온 것입니다.
+
+**설계 판단 — 어디서 기록하고 어디서 조회할 것인가.** 기록은 `graph/build.py.memory_write` 가 발화가 최종 확정된 직후(`response_shaper` 다음) 담당하고, 조회는 `graph/context.py.context_read` 가 담당합니다. 둘 다 새 순수 함수 `graph/phrasing.phrasing_key(origin, intent)` 를 공유해서 같은 규칙으로 키를 만듭니다 — 한쪽만 고치면 저장은 되는데 조회가 안 되는(또는 그 반대) 조용한 어긋남을 막기 위해서입니다.
+
+**설계 판단 — 왜 `trigger_type` 가드가 핵심인가.** `speech_origin`·`intent` 는 체크포인트되는 `ConvState` 필드라 reducer 가 없습니다(기본 LastValue 채널). 능동 턴이 `"silence_ladder:1"` 을 남기면, 아무도 지우지 않는 한 바로 다음 반응형 턴(어르신이 말을 건 턴)에도 그 값이 그대로 남아 있습니다. 그래서 기록·조회 양쪽 모두 `state.get("trigger_type") in ("proactive", "backend_command")` 를 먼저 확인합니다 — 이 값은 매 턴 `route_ingress` 가 명시적으로 세우므로 새지 않습니다. 이 가드가 없었다면 "능동 턴 직후의 반응형 턴에 섹션이 새지 않는다"는 완료 조건을 지킬 수 없었습니다.
+
+**설계 판단 — 왜 침묵 프로브와 T3 동의 질문을 빼는가.** `policy.RECENT_PHRASING_EXCLUDED_ORIGIN_PREFIXES = ("silence_ladder", "t3_consent")` 로 origin 접두사 매칭을 합니다. 침묵 프로브는 생존 확인이 목적이라 매번 다른 문구가 오히려 "새 질문"으로 들려 혼란을 줍니다. T3 동의 질문은 애초에 `handlers.py` 에서 origin 자체가 콜론 뒤에 고정된 한국어 문장이라(id 가 아니라 문장), 다양화할 대상이 없습니다 — 티켓 원안은 "id 가 붙어 키가 늘어난다"를 이유로 들었지만 실제로는 문구가 고정이라는 것이 이유이고, 접두사 매칭으로 결과는 동일합니다.
+
+**설계 판단 — 정책 상수를 어디에 둘 것인가.** `RECENT_PHRASING_LOOKBACK`(프롬프트에 몇 개를 보여줄지)은 이미 있었고, 새로 `RECENT_PHRASING_RETENTION_DAYS`(보관 기간)와 `RECENT_PHRASING_MAX_ROWS_PER_KEY`(저장소 상한)를 추가했습니다. 둘을 분리한 이유는 "프롬프트에 몇 개를 보여줄까"와 "저장소에 몇 개까지 쌓아 둘까"가 다른 질문이기 때문입니다 — 보관 기간 안이어도 매일 같은 알림이 쌓이면 무한정 자라므로 별도 상한이 필요합니다(§18 microSD 쓰기 절감).
+
+**테스트 우회 제거.** `tests/test_naturalness_replay.py` 의 `_run_with_phrasings` (핸들러를 직접 부르는 우회)를 없애고, `_run_proactive_turn` 으로 바꿔 `jobs/ticks._invoke_proactive` 와 같은 모양으로 `trigger_type="proactive"` 로 그래프 전체(게이트 → `context_read` → `handle_companion` → `response_shaper` → `memory_write`)를 태우도록 시나리오 08 을 다시 썼습니다. `repeatTurns: 2` 로 같은 제안을 두 번 흘려서, 두 번째 프롬프트에 첫 번째 발화가 실제로 실려 오는지 봅니다.
+
+**미검증**: 실기(Jetson, 실제 스케줄러 틱이 사흘에 걸쳐 같은 알림을 몇 번 내는지). 자동 테스트는 압축 시계와 대역 LLM 으로 확인했습니다.
+
+### 253 — 정서 동의 지연 완성 (T3 답변 판정·누적 문턱·봉인) ✅ (실기 미실시)
+
+| 완료 조건 | 결과 |
+|---|---|
+| "외로워" 류 발화에 로봇이 항상 응답한다 (263 유지, 회귀 없음) | ✅ (`test_emotional_handler.py`, 21 passed) |
+| LLM 실패·프롬프트 템플릿 부재 모두 핸들러 밖으로 예외가 안 새고 정서 전용 폴백이 나간다 | ✅ (`test_a_generation_failure_uses_the_emotional_fallback_not_the_generic_one`, `test_a_missing_prompt_template_still_answers_on_the_emotional_path`) |
+| 고백한 그 턴에서는 동의 질문이 나오지 않는다 | ✅ (263 부터 유지, `test_the_consent_question_is_not_asked_in_the_same_turn`) |
+| 한 번의 정서 발화로는 동의 요청이 안 생기고, 누적 문턱을 넘겼을 때만 정확히 한 건 생긴다 | ✅ (`test_a_single_emotional_utterance_does_not_queue_a_consent_question`, `test_the_consent_question_is_queued_once_the_threshold_is_crossed`) |
+| "우리끼리 얘기"가 섞인 턴은 봉인되고, 그 대화로는 동의 요청이 안 만들어진다 | ✅ (`test_t3_consent.py` §2, `emotion.is_conversation_sealed`) |
+| 침묵 사다리 진행 중·안전 확인 대기·occupancy AWAY 면 동의 질문을 안 올린다 | ✅ (`test_the_tick_does_not_ask_while_the_silence_ladder_is_running` 등 3건) |
+| "아니"에는 보호자 알림이 0건, DECLINED 로 확정되며 다시 안 묻는다 | ✅ (`test_declined_answer_sends_nothing_and_does_not_reask`) |
+| "응"에는 보호자 알림이 정확히 1건, payload 에 발화 원문이 없다 | ✅ (`test_granted_answer_enqueues_exactly_one_t3_with_no_raw_text`, `test_the_outbox_payload_never_contains_the_utterance`) |
+| 동의 질문 턴·답 판정 턴 모두 생성 호출 0회 | ✅ (`test_asking_the_question_speaks_the_seed_without_calling_the_llm`, `test_granted_answer_...` 의 `_llm().calls == 0`) |
+| 새 틱(`consent_tick`)이 실기 스케줄러와 압축 시계 경로 양쪽에 등록돼 있다 | ✅ (`test_consent_tick_is_registered_in_the_scheduler`, `test_consent_tick_runs_inside_run_all_ticks_once`) |
+| 재시작해도 누적 신호와 대기 중인 요청이 이어진다 | ✅ (`test_signals_and_a_pending_request_survive_a_restart`, `db.close_all()` 로 재부팅 흉내) |
+| (BE 라인 별도 작업) 상위 동의 없는 어르신에게는 질문 자체를 안 만든다 | ⏸️ 범위 밖 — `ConversationContextResponse.SeniorProfile` 에 `guardianSharingConsent` 가 없어 로봇이 상위 동의 여부를 볼 수 없다. BE 티켓 필요 |
+| 로봇 테스트 전체·lint 통과 | ✅ (579 passed, ruff 0 오류) |
+
+**무엇이 바뀌었는가.** 263 은 정서 발화 한 번마다 즉시 동의 질문을 45분 뒤로 예약했습니다. 253 은 그 즉시-큐잉을 걷어내고, `localstore/emotion.py`(신규)에 발화 원문 없이 신호만 누적하다가 `jobs/ticks.consent_tick`(신규)이 주기적으로 문턱(`policy.T3_CONSENT_SIGNAL_THRESHOLD`, 기본 3)을 넘겼는지·자연스러운 창인지(사다리 0, 안전 확인 없음, occupancy != AWAY)·봉인 여부를 확인해서 질문을 큐에 넣습니다.
+
+**두 번째 결함: 질문을 던지고도 답을 못 알아들었다.** 45분 뒤 동의 질문이 나가도 "응"/"아니"가 그냥 평범한 대화로 흘러갔습니다 — 보호자 알림이 영원히 0건이었던 이유입니다. `ConvState.pending_consent`(신규, `pending_contract` 와 같은 패턴)로 "방금 로봇이 던진 동의 질문의 request_id"를 다음 턴까지 들고 다니고, `handlers._resolve_consent_answer` 가 `contract_dialogue.read_affirmation` 으로 규칙 판정합니다. `localstore/consent.py`(신규)의 `consent_request` 표가 PENDING/GRANTED/DECLINED 생애주기를 갖습니다.
+
+**설계 판단 — 왜 질문·답변 턴 모두 LLM 을 안 쓰는가.** 263 코드는 동의 질문도 `_generate()`(LLM)로 다시 썼습니다. 253 은 온보딩 계약 문장과 같은 원칙을 적용해, 이긴 제안의 `seed`(= `consent_tick` 이 확정한 문장)를 그대로 말합니다 — 나중에 "정말 무엇을 물었는가"가 매번 달라지면 안 되기 때문입니다.
+
+**설계 판단 — `pending_consent` 를 `classify_intent` 어디서 확인하는가.** `state.get("intent")` 가 이미 채워져 있으면 곧바로 반환하는 기존 첫 줄보다 **먼저** 확인합니다. `intent` 는 reducer 가 없는 채널이라 질문을 던진 능동 턴의 `intent="emotional"` 이 checkpoint 에 남을 수 있고, 그 우연에 기대면 질문과 답 사이에 다른 능동 발화(예: 복약 알림)가 끼는 순간 라우팅이 조용히 어긋납니다.
+
+**남은 결함도 고쳤다: `_generate` 의 `build_prompt` 호출이 try 밖에 있었다.** 템플릿 파일이 없으면 `FileNotFoundError` 가 핸들러를 그대로 뚫고 나가던 것을, 생성 호출과 같은 try 안으로 옮겼습니다. 정서 턴 전용 폴백(`_EMOTIONAL_FALLBACK`)도 신설했습니다 — 일반 폴백("다시 한 번 말씀해 주시겠어요?")은 방금 마음을 꺼낸 사람에게 최악의 문장이기 때문입니다.
+
+**세 번째 결함: 온보딩 대기 중 정서 표현이 필드값 후보로 삼켜졌다.** `_pending_contract_intent` 는 의문형일 때만 양보했고, "외로워"는 의문형이 아니라서 여전히 온보딩 필드값 추출 대상으로 넘어갔습니다. 정서 표지가 있으면 같은 이유로 양보하도록 예외를 추가했습니다.
+
+**킬스위치 둘.** `policy.T3_CONSENT_ENABLED`(코드 상수, 기본 켜짐)와 `config.py` 의 `T3_CONSENT_ENABLED` 환경변수(운영 비상구)를 `consent_tick` 이 모두 확인합니다. 둘 중 하나만 꺼져도 질문을 올리지 않습니다 — 실기에서 이상 신고가 들어와도 재배포 없이 그날 안에 끌 수 있어야 하기 때문입니다.
+
+**범위 밖으로 명시.** 완료 조건의 마지막 항목(상위 동의 없는 어르신에게 질문 자체를 안 만드는 것)은 백엔드가 `guardianSharingConsent` 를 대화 문맥에 실어줘야 로봇이 판단할 수 있습니다. AI 워크트리에서 `backend/` 를 건드리지 않는다는 CLAUDE.md §25 원칙에 따라 별도 BE 티켓으로 남겼습니다.
+
+미검증: 실기(Jetson) 전체. `emotion.is_conversation_sealed`·`consent_tick` 의 자연스러운 창 판정은 자동 테스트로만 확인했고, 실제 발화 리듬에서 문턱(3회)이 적절한지는 실사용 데이터로 튜닝해야 합니다.
+
+### 255 — 사실 추출 큐 (로봇 절반) ✅ (BE 절반은 별도 티켓, 실기 미실시)
+
+| 완료 조건 | 결과 |
+|---|---|
+| "요즘 손자가 자주 놀러 와요" 발화 뒤 큐에 대기 행 1건, 그 턴의 생성 호출은 여전히 1회 | ✅ (`test_turn_end_to_end.py::test_a_memorable_utterance_queues_one_extraction_job_without_extra_llm_calls`) |
+| 큐를 비우면 사실 후보 1행·기억 1행이 생기고, "본인만 보기·자동 저장"으로 표시된다 | ⏸️ 백엔드 책임(255-be). 로봇 쪽은 `fact-candidates` 로 제출까지만 검증(`test_extraction_flush.py`) |
+| "이제 아침 약 안 먹어" 류는 자동 저장 안 되고 보호자 확인 대기로 남는다 | ⏸️ 백엔드의 위험도 분류(factType→targetDomain 화이트리스트) 책임. 로봇은 factType 을 붙여 그대로 실어 보낼 뿐 판정하지 않음 |
+| 동의 거부·회피 대상·허용 목록 밖 내용은 저장되지 않는다 | ⏸️ 동의·회피 목록은 백엔드 책임. 로봇 쪽 "회피"는 계약 대화 진행 중 스킵·봉인된 대화 스킵으로 한정(§ 아래) |
+| "본인만 보기" 기억이 보호자 화면에 노출되지 않고, 응급 응답이 저장 작업을 기다리지 않는다 | 앞절 백엔드 책임 / 뒷절 ✅ (`test_graph_build.py::test_emit_runs_before_memory_write`, `test_turn_end_to_end.py::test_speaking_starts_before_the_blocking_conversation_record_call`) |
+| 마이그레이션 검증 테스트 통과 | 해당 없음(로봇 절반에는 마이그레이션이 없음) |
+| 로봇 테스트 전체·lint 통과 | ✅ (`620 passed`, ruff 0 오류) |
+
+**무엇을 만들었는가.** `localstore/extraction.py`(신규) + `schema.py` 의 `extraction_job` 표(conversation_id/source_message_id nullable, content, preceding_robot_utterance, extracted)가 큐다. `graph/build.py.memory_write` 가 `_enqueue_extraction` 으로 반응형 턴마다(스킵 조건을 다 통과하면) LLM 없이 한 행만 남기고, `jobs/ticks.extraction_flush`(신규, `EXTRACTION_FLUSH_INTERVAL_SEC` = 계약 틱과 같은 10분 주기)가 턴 밖에서 이 행을 읽어 `prompts.build_memory_extraction_prompt`(신규 템플릿 `memory_extract.md`, `contract_extract.md` 의 금지 규칙을 계승)로 생성 호출을 한 뒤, `backend_client/fact_client.py`(신규)의 `BackendFactClient.submit_fact_candidates` 로 `POST /api/v1/robot/fact-candidates` 에 제출합니다.
+
+**일곱 번째 스킵 조건 — 티켓에 없던 것을 추가했습니다.** 티켓 본문은 여섯 가지(킬스위치·능동턴·T1·onboarding/clarification·6자 미만·봉인)만 요구했지만, 서버의 `FactCandidate.fromConversationMessage` 가 `sourceMessageId` 를 `requireNonNull` 로 강제한다는 티켓 자신의 각주를 따라, **메시지 id 를 서버가 못 돌려준 턴은 애초에 큐잉하지 않습니다**(`graph/build.py._enqueue_extraction`). 이 표에는 재시도 횟수 컬럼이 없어서, id 없이 큐잉하면 그 행은 매 flush 마다 조용히 같은 400 을 반복해서 받습니다 — outbox 처럼 `GAVE_UP` 으로 포기할 수단도 없습니다. 발화량 지표가 유실돼도 되는 것과 같은 판단(`_record_turn` 의 `(None, None)` 경로)으로, 이 손실을 감수하는 편을 택했습니다.
+
+**엣지 재배선 — `response_shaper → emit → memory_write → END`.** 티켓이 지정한 대로, 기존 `response_shaper → memory_write → emit` 순서를 뒤집었습니다. `memory_write` 는 `conversation_client.record_turn` 을 블로킹 HTTP 로 부르는데(`backend_timeout_seconds` 만큼, 기본값 기준 최대 몇 초), 이게 `emit`(비블로킹 TTS 시작) 앞에 있으면 T1 확인 응답조차 재생 시작 전에 그 호출을 기다립니다. `test_graph_build.py::test_emit_runs_before_memory_write` 로 배선 자체를, `test_turn_end_to_end.py::test_speaking_starts_before_the_blocking_conversation_record_call` 로 실제 호출 순서(재생 시작이 `record_turn` 보다 먼저)를 검증했습니다.
+
+**킬스위치 둘 — T3 패턴 그대로.** `policy.EXTRACTION_ENABLED`(코드 상수, 기본 켜짐) + `config.py` 의 `EXTRACTION_ENABLED` 환경변수(운영 비상구). `_enqueue_extraction` 과 `extraction_flush` 둘 다 확인하고, 하나라도 꺼지면 아무것도 하지 않습니다. `.env.example` 에도 추가했습니다(`test_project_contract.py::test_env_example_covers_every_runtime_setting` 가 문서·코드 불일치를 잡아냈습니다).
+
+**백엔드 계약과 교차 확인이 필요합니다 — 미검증.** `POST /api/v1/robot/fact-candidates` 의 정확한 요청·응답 필드명은 255-be 쪽 구현이 이 시점에 확정돼 있지 않아, CLAUDE.md §12 의 계약 형태(`seniorId`/`conversationId`/`sourceMessageId`)를 따라 합리적으로 추정했습니다(`{"seniorId", "conversationId", "sourceMessageId", "facts": [{"factType", "content"}]}`). `factType` 값 목록(FAMILY/HOBBY/DAILY_LIFE/HEALTH/OTHER)도 백엔드의 `factType→targetDomain` 화이트리스트와 이름이 맞는지 확인되지 않았습니다. 255-be 가 먼저 배포돼야 하고(티켓 본문의 "배포 순서는 백엔드 → 로봇" 경고), 배포 후 실제 계약과 맞춰야 합니다.
+
+**253 의 `is_conversation_sealed` 스텁을 그대로 소비했습니다.** `emotion.is_conversation_sealed` 는 253 시점 그대로이고(하드 블로커 아님, 티켓 본문의 명시적 지시), 이 값이 어긋나 있으면 "봉인된 대화에서 큐 미적재" 조건은 실질 검증되지 않습니다 — 253 의 PROGRESS 절과 같은 미검증 범위입니다.
+
+미검증: 실기(Jetson) 전체. 실제 백엔드 엔드포인트에 대고 제출해 본 적이 없고, LLM 이 실제로 무엇을 "기억할 만하다"고 고르는지도 대역 LLM 으로만 확인했습니다.
+
+### 295 — 기여 문서 정합 ✅ (문서 전용, 코드 변경 없음)
+
+| 완료 조건 | 결과 |
+|---|---|
+| `CONTRIBUTING.md` 를 처음 읽는 사람이 올바른 브랜치를 만들 수 있음 | ✅ 라인별 4갈래 구조로 교체 |
+| 예시 브랜치 이름이 원격에 실제로 존재하는 서식과 일치 | ✅ 경로형/슬러그형 실측 분포(78:49)를 라인별로 그대로 기술, 통일하지 않음 |
+| 단일 `develop` 을 전제하는 문장이 남아 있지 않음 | ✅ §1~§15 전체 치환 |
+| 라인 간 untracked 현상이 문서에 설명됨 | ✅ §2 신규 절 추가 |
+| GitHub 과 GitLab 이 혼용되어 있지 않음 | ✅ clone 주소·MR 용어 전부 GitLab 기준으로 치환, `.github/PULL_REQUEST_TEMPLATE.md` 는 죽은 파일이라고 §6.1 에 명시(이전 여부는 범위 밖) |
+| `CLAUDE.md` §25 와의 권위 관계가 문서상 명확 | ✅ 문서 머리에 한 줄 선언 |
+
+**무엇을 고쳤나**: `CONTRIBUTING.md`(456줄) 절반 이상을 다시 썼습니다 — 전면 재작성이 아니라
+정정입니다. 커밋 위생, 리뷰 예절, 체크리스트의 취지처럼 사실과 어긋나지 않는 서술은 그대로
+남기고, 단일 `develop` 전제·GitHub 용어·`type: 요약` 커밋 형식만 실제(라인 4갈래, GitLab MR,
+`[영역](카테고리) S15P11E102-<n> 제목 — 부제`)로 교체했습니다. §10(로봇 최소 테스트)에는
+`ruff`/`pytest` 두 줄과 `.claude/hooks/pre-push-gate.sh` 가 이를 강제로 검사한다는 사실을
+추가했습니다.
+
+**의도적으로 통일하지 않은 것**: 브랜치 이름 서식(경로형 vs 한글슬러그형)은 라인마다 실제
+관행이 다릅니다(FE·ROBOT·INFRA 는 경로형만, AI 는 슬러그형 우세 30:13, BE 는 경로형 우세
+33:19). 통일하려면 `pre-push-gate.sh` 의 라인 파싱과 `ticket` 스킬도 함께 고쳐야 해서 범위가
+커지므로, 이 티켓에서는 분포를 있는 그대로 문서화만 했습니다.
+
+**미검증**: 없음 — 순수 문서 변경이라 코드 게이트(ruff/pytest) 대상이 아닙니다.
+
+---
+
 ## 7. 갱신 이력
 
 | 시점 | 내용 |
@@ -623,7 +978,74 @@ CLAUDE.md 가 경고한 **`_is_absence_expected` 함정**을 처리했습니다.
 | 208 푸시 후 | 208 추가. **§3.5 인사 판정이 백엔드로 이동(226 신설)**, §3.6 로컬 스키마 마이그레이션. §2.6 로봇→백엔드 쓰기 경로 부재(227 신설, 209 막힘), **§2.7 침묵 사다리가 실기에서 돌지 않던 결함 발견·수정**. 209~212 티켓 본문 교차검증 반영 |
 | 211 푸시 후 | 211 추가(BE/AI 두 브랜치). §2.6 의 쓰기 경로 공백 둘이 메워짐. **care_record 에 시각 컬럼이 없는 것을 발견해 230 신설** — 배치 스케줄 전에 필요. 일간 배치 미배선을 공백으로 기록 |
 | 210 푸시 후 | 210 추가. **§2.2 를 '트리아지가 꺼져 있다' → '자해 목록이 미검토'로 갱신**(판별기는 동작한다). §3.8 통증을 부위로 가르는 판단. 기존 테스트가 "무릎이 아파" 오탐을, 신규 테스트가 자해 목록 공백을 잡아 수정 |
+| 218 푸시 후 | **Qdrant 벡터 스토어.** 4096차원이 pgvector 인덱스 상한을 넘어 못 하던 의미 검색을 외부 스토어로 옮겼습니다. 실서버 Qdrant 와 실제 Upstage API 로 검증했습니다. 과금 때문에 기본값은 꺼짐. 230 도 함께 머지됨 |
 | 232 푸시 후 | **런타임 배선.** 200~211 이 실행 경로에 하나도 연결돼 있지 않던 것을 발견하고 연결했다. main.py 가 그래프를 띄우고, 스케줄러·현관 구독·재생기·보호자 채널이 붙고, 재부팅 상태가 복원된다. --legacy 로 되돌릴 수 있다 |
 | 226 푸시 후 | 226(BE) 현관 방향 판정·인사 결정. 인사가 이동을 기다리던 결함 수정 |
 | 227·209 푸시 후 | 227(서버 계약 API)과 209(로봇 계약 대화) 추가. §2.6 을 '절반 채워짐'으로 갱신. §3.7 계약 판정의 LLM 경계. **확인 판정 오탐 2건과 발화 결함 2건을 테스트·워크스루가 잡아 수정.** 온보딩 답변 누적 누락을 227 브랜치에 수정 커밋으로 반영 |
-| 233 문서 개정 (2026-08-05) | 실기 점검 문서를 **본문(읽기 전용) / 결과지 / 대조표** 셋으로 나누고 상태 도구 `probe.py` 를 추가. 스텝마다 함수 호출 순서·DB 접근 지점·API 방향을 표로 명시. 판정을 **일치 / 불일치 / 확인 못함** 3택으로 바꿈. 문서를 쓰는 동안 코드에서 3건 발견(로그 꺼짐·날씨 미배선·SPA fallback 200) — §2.1 참고. **실기는 여전히 0~11 전부 미실시** |
+| 307(AI) 푸시 후 | 307 로봇 쪽 추가. 네 클라이언트가 공유 세션 하나(`backend_client/session.py`)에서 인증 헤더를 얹도록 배선. 401/403 을 캐시 폴백·조용한 실패와 구분되는 "AUTH FAILURE" 경고로 표시. 백엔드 서블릿 필터(be-develop, 307)는 별도 워크트리라 실통합은 UNVERIFIED |
+| 311 푸시 후 | **날씨·의료 조회를 그래프에 연결.** `context_read` 가 조회를 맡고 `ctx["documents"]` 로 "참고 자료"를 채워, `handle_info` 는 그대로 얇게 남김(§16 생성 호출 1회, §23 핸들러 직접 I/O 금지 유지). 반응형 턴은 `classify_intent` 전이라 의료 힌트 표지로 좁힌 사전 판정을 도입, 라우터 판정을 `state["is_medical_query"]` 로 캐시해 두 번 안 부르게 함. 도시 추출을 `weather/client.py` 로 옮겨 legacy·그래프 경로가 공유. 테스트 도중 **선행 버그**(`test_bootstrap.py` 의 오디오 대역이 `onset_timeout_seconds` 를 안 받아 전체 스위트가 무한 대기)를 발견 — 범위 밖이라 별도 세션이 S15P11E102-319 로 분리 처리 |
+| 256 푸시 후 | **표현 다양성 배선.** 있던 자리(프롬프트 빌더, `state.recent_phrasings`, `RECENT_PHRASING_LOOKBACK`)를 채우는 코드가 없어 조용히 꺼져 있던 것을 배선했다. `graph/phrasing.phrasing_key`(순수 함수), `localstore/phrasings.py`(기록/조회/정리), `spoken_phrasing` 표를 신설했다. `memory_write`가 기록, `context_read`가 조회하며 `trigger_type` 가드로 반응형 턴에 새지 않게 했다. 침묵 프로브·T3 동의 질문은 `policy.RECENT_PHRASING_EXCLUDED_ORIGIN_PREFIXES` 로 제외. `test_naturalness_replay.py`의 우회 헬퍼(`_run_with_phrasings`)를 걷어내고 시나리오 08 이 실제 게이트 경로를 타도록 다시 썼다. |
+| 253 푸시 후 | **정서 동의 지연 완성.** 263 의 즉시-큐잉을 걷어내고 누적 문턱(`localstore/emotion.py`, `jobs/ticks.consent_tick`)으로 바꿨다. `ConvState.pending_consent` + `localstore/consent.py` 로 "응"/"아니" 답을 규칙 판정하고 GRANTED 만 outbox 로 보낸다. "우리끼리 얘기" 봉인, 두 개의 킬스위치, `_generate` 의 `build_prompt` try 누락 수정, 온보딩 대기 중 정서 표현이 필드값으로 삼켜지던 결함도 함께 고쳤다. 상위 동의 확인은 BE 별도 티켓으로 남김 |
+| 294 푸시 후 | **CI 파이프라인이 존재하지 않는 `ai/` 를 보던 문제 수정.** `Jenkinsfile.ai`·`verify-ai.sh` 가 실제 경로 `robot/ai_chat` 을 보게 정정하고, 경로 없을 때 보류(`unstable`)가 아니라 실패(`error`)하도록 바꿨다. `verify-ai.sh` 에 없던 `ruff check` 를 신규 추가하고 pytest 에 마커 제외를 넣었다. `ci/README.md`·`pre-push-gate.sh` 주석의 낡은 `ai/` 전제를 정정했다. 트리거 브랜치 확장(develop 대상)과 pip 캐시 전략은 사람 결정 사항으로 미결 남김. 실제 Jenkins 실패 증명은 `ai-main` 릴리스 이후 선행 조건 |
+| 295 푸시 후 | **`CONTRIBUTING.md` 를 라인 4갈래 구조로 정정.** 단일 `develop` 전제·GitHub 용어·`type: 요약` 커밋 형식을 실제 관행(ai/be/fe/robot-develop, GitLab MR, `[영역](카테고리) S15P11E102-<n>`)으로 치환. "한 라인 체크아웃 시 다른 라인 소스가 untracked 로 보이는 것이 정상"이라는 신규 절 추가. 브랜치 서식(경로형/슬러그형)은 라인별 실측 분포를 그대로 두고 통일하지 않음. 코드 변경 없는 순수 문서 티켓 |
+| 309 푸시 후 | **검증 문서 4종 + CLAUDE.md §20 정합.** `VERIFICATION.md` §3 에서 이미 머지된 263·226·218·227·232 를 참조하던 항목을 걷어냈다(263/232/226/227 은 표에서 삭제, 218 은 "완료됐지만 기본값이 꺼짐"으로 정정). §0 에 백엔드 명령이 `be-develop` 전용이라는 전제를 추가하고 각 백엔드 절에 표시를 붙였다. 존재하지 않던 테스트 이름(`test_sim_clock_compresses_a_day_into_ten_seconds`)을 실제 이름으로 고쳤다. `V1~V5` 하드코딩을 `FlywayMigrationValidationTest` 자기참조로 바꿨다. `READING-ORDER.md` 에 `mvp-erd.md` 가 `be-develop` 전용이라는 것, `bootstrap.py` 와 232 이후 신규 모듈들을 추가했다. `CLAUDE.md` §20 의 "아직 없음" 구분선을 지우고 실제 트리로 승격했다. 저장소 루트의 일회성 인계 문서를 지우고 6곳의 참조를 `docs/carebot/PROGRESS.md §2.2` 로 옮겼다(스프린트 경위·선행조건 순서·자해 목록 검토 요구사항의 유래는 §8 로 보존). |
+| 255 푸시 후 | **사실 추출 큐 (로봇 절반).** `localstore/extraction.py` + `extraction_job` 표를 신설해 `memory_write` 가 반응형 턴마다(스킵 조건 7가지를 통과하면) LLM 없이 큐잉만 하고, `jobs/ticks.extraction_flush`(신규 틱, 양쪽 스케줄러 경로에 등록)가 턴 밖에서 생성 호출로 사실을 뽑아 `backend_client/fact_client.py`(신규, 실패 시 예외를 올려 conversation_client 와 반대 방향)로 제출한다. 티켓의 여섯 스킵 조건에 "서버가 메시지 id 를 못 돌려준 턴은 큐잉하지 않는다"를 추가로 넣었다(재시도 횟수 컬럼이 없어 영구 실패 행이 조용히 쌓이는 것을 막기 위해). `response_shaper → memory_write → emit` 이던 엣지를 `response_shaper → emit → memory_write` 로 재배선해, 블로킹 대화 적재 호출이 TTS 시작을 더 이상 막지 않게 했다. 백엔드 `POST /api/v1/robot/fact-candidates` 의 정확한 페이로드는 255-be 미확정 상태에서 추정했다 — 교차 확인 필요. |
+| 255 계약 정합 푸시 후 | **추정했던 페이로드가 실제 서버 계약과 달랐던 것을 바로잡음.** 255-be(위험도 분류)가 확정되면서 두 가지 어긋남이 드러났다. (1) 서버는 요청 하나당 후보 **한 건**을 만드는데 로봇은 `facts` 배열을 묶어 보내고 있었다 — 첫 건 외에는 서버에 도달조차 못 하는 구조였다. (2) 서버가 요구하는 필수 필드 여덟 개 중 `targetDomain`·`operation`·`proposedValue`·`riskLevel` 네 개가 아예 빠져 있어 bean validation 이 전부 400 으로 거절할 상태였다. `backend_client/fact_contract.py`(신규)에 추출 프롬프트 어휘(FAMILY/HOBBY/DAILY_LIFE/HEALTH/OTHER) → 서버 계약 변환표를 두고, `fact_client` 가 사실마다 한 번씩 POST 하도록 고쳤다. **HEALTH 만 CARE_RECORD 로 보낸다** — MEMORY 로 새면 서버의 `FactRiskPolicy` 가 "안전한 사실"로 보고 확인 없이 저장하기 때문이다. 목록 밖 factType 은 버리지 않고 OTHER 기억으로 떨어뜨린다(분류를 놓치는 것보다 내용을 잃는 것이 더 큰 손해). |
+| 233 문서 개정 (2026-08-05) | 실기 점검 문서를 **본문(읽기 전용) / 결과지 / 대조표** 셋으로 나누고 상태 도구 `probe.py` 를 추가. 스텝마다 함수 호출 순서·DB 접근 지점(로컬/서버, 표·칼럼 단위)·API 방향을 표로 명시. 판정을 **일치 / 불일치 / 확인 못함** 3택으로 바꿔, 못 본 것을 "일치"로 적는 사고를 막았다. `ai-develop` 머지 과정에서 5-3(날씨) 스텝의 "미배선" 전제가 **311 로 이미 해소된 것을 확인해 정정**했다. **실기 본검사 0~11 은 여전히 미실시** |
+
+---
+
+## 8. 부록 — 폐기된 인계 문서에서 옮긴 기록 (309)
+
+저장소 루트에는 2026-07-31 착수 시점에 쓴 일회성 인계 문서가 있었고, 297 이 "낡았다"는
+경고를 붙인 뒤 309 에서 지웠습니다. 파일 대부분은 지금 `CLAUDE.md`·이 문서·
+`READING-ORDER.md`·`CONCEPTS.md` 로 흡수됐지만, 다른 곳에 남아 있지 않던 기록 세
+가지만 여기로 옮깁니다.
+
+### 8.1 스프린트 경위
+
+프로젝트 `S15P11E102`, 이슈 유형 `스토리`. 티켓 **S15P11E102-200 ~ 212**(13개)는 원래
+활성 스프린트 **`[3주차] 로봇 자율 주행과 개인화 대화`**(id 51397)에 전부 들어 있었고,
+이 스프린트는 **2026-08-02 00:00 KST 종료 예정**이었습니다. 13개는 몇 주치 작업이라
+스프린트를 그대로 닫으면 전부 다음으로 넘어가는 상황이었고, 그래서 이월 처리가
+필요했습니다(§5.2).
+
+### 8.2 200~212 선행조건 순서
+
+착수 당시 세운 의존 순서입니다. 실제 진행은 이 순서를 대체로 따랐고, 이유가 코드에
+흩어져 있는 두 가지만 짚어둡니다 — **205 가 206 보다 먼저인 이유**: 스피커와 마이크가
+한 몸통이라 TTS 출력이 마이크로 되돌아옵니다. 에코를 안 잡고 능동 발화를 테스트하면
+모든 버그 리포트가 실제로는 에코이고 게이트 버그로 오진하게 됩니다. **210 을 마지막에
+둔 이유**: 207·208 까지 오면 `occupancy`·`rest_state` 가 오탐을 이미 걷어낸 상태라
+트리아지 임계치를 훨씬 좋은 조건에서 잡을 수 있습니다.
+
+| 티켓 | 선행 조건 |
+| --- | --- |
+| 200 | — |
+| 201 | — (200 과 병렬) |
+| 202 | 200 |
+| 203 | 201 |
+| 204 | 202 + 203 |
+| 205 | 204 |
+| 206 | **205 필수** |
+| 207 | 206 |
+| 208 | 206 |
+| 209 | 203 + 204 |
+| 210 | 207 + 208 |
+| 211 | 208 |
+| 212 | 마지막 |
+
+### 8.3 자해 목록 검토 요구사항의 유래
+
+착수 전 설계 대화에서 코드 스켈레톤을 넘길 때, `triage._is_self_harm` 은 **일부러**
+`NotImplementedError` 로 남겨진 네 개의 "함정" 함수 중 하나였습니다(나머지 셋은
+`gate.is_quiet_hours`, `jobs.ticks._is_absence_expected`, `triage._is_emergency`). 각
+함정의 docstring 에 "주의사항"을 구현 전에 반드시 읽으라는 지시가 있었고,
+`triage._is_self_harm` 의 주의사항은 정확히 이것이었습니다.
+
+> 표현 목록을 즉흥적으로 만들지 말 것. 사람이 검토.
+
+즉 **"보수적인 출발점을 채우되, 배포 전 사람의 검토를 반드시 받는다"** 는 지금
+§2.2 의 규칙은 사후에 추가된 절차가 아니라, 애초에 이 함수를 설계한 사람이 명시적으로
+요구한 것입니다. 210 에서 실제 판별기를 구현하며 그 요구를 코드로 옮겼습니다
+(`policy.SELF_HARM_MARKERS_REVIEWED`, 런타임 경고).

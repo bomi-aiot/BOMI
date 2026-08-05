@@ -95,7 +95,7 @@ Therefore, in this repo:
 | **VAD** | Voice Activity Detection. Cheap local "is someone talking right now?". Silero VAD. |
 | **Wake word** | Local trigger phrase detector, so we are not streaming everything. openWakeWord. |
 | **Embedding** | A list of numbers representing a text's *meaning*. Similar meaning → similar numbers. |
-| **Vector search** | Finding stored texts whose meaning is closest to a query. Runs in Postgres via pgvector, **on the backend**. |
+| **Vector search** | Finding stored texts whose meaning is closest to a query. Runs **on the backend**, against Qdrant — not in Postgres. Upstage embeddings are 4096-dimensional and pgvector 0.8.5 indexes at most 2,000 (`vector`) / 4,000 (`halfvec`), so an index there is impossible (S15P11E102-218). |
 | **RAG** | Retrieval-Augmented Generation. Instead of hoping the LLM knows something, we retrieve relevant text first and paste it into the prompt. That is all it is. |
 | **LangGraph node** | Just a Python function: takes the state dict, returns a dict merged into the state. |
 | **LangGraph edge** | "After A, go to B." A **conditional edge** picks the next node at runtime. Returning the `END` sentinel stops the turn. |
@@ -146,7 +146,7 @@ Three deployable units, three different machines, three lifecycles.
 | --- | --- | --- |
 | **Robot runtime** (`robot/ai_chat/`) | Jetson Orin Nano 8GB | Python, LangGraph, audio, timing, gating, safety escalation decisions |
 | **Entrance node** (`iot/raspberry-pi/`) | Raspberry Pi at the front door | In/out direction detection, heartbeat |
-| **Backend + guardian app** | server | Spring Boot, PostgreSQL + pgvector, Flyway, the whole ERD, guardian API |
+| **Backend + guardian app** | server | Spring Boot, PostgreSQL (no pgvector), Qdrant for semantic search, Flyway, the whole ERD, guardian API |
 
 ### Database ownership — this decision shapes everything
 
@@ -363,9 +363,43 @@ it breaks correctness. Most memory is *pushed* into the prompt every turn; only 
 
 | Data | ERD home | Notes |
 | --- | --- | --- |
-| Long-term personal facts | `memory` (`content`, `keywords`, `embedding`, `importance`) | The raw material for natural conversation. Retrieval **must** combine similarity with recency and importance, or a knee complaint from six months ago outranks yesterday's. The ERD already specifies this. |
+| Long-term personal facts | `memory` (`content`, `keywords`, `importance`) in Postgres; the vector lives in Qdrant | The raw material for natural conversation. Retrieval **must** combine similarity with recency and importance, or a knee complaint from six months ago outranks yesterday's. There is no `embedding` column — see the boxed rule below. |
 | Compressed conversation context | `conversation_summary` (`CONVERSATION`, `DAILY`) | Context compression, not fact storage. |
 | Welfare programs, FAQs | reference document corpus (to build) | Long prose worth chunking. |
+
+### The vector store is a derived index. Postgres is the authority. (S15P11E102-218)
+
+There is no `embedding` column in `memory` or `conversation_summary`, and there will not be one.
+Vectors live in Qdrant (`qdrant/qdrant:v1.18.3`), two collections, 4096-dimensional cosine HNSW.
+Postgres keeps three bookkeeping columns instead (V5): `embedding_status`,
+`embedding_synced_at`, `embedding_model`.
+
+**The retrieval order is a privacy boundary, not an optimisation.**
+
+```text
+Qdrant (senior_id filter + similarity) -> candidate ids
+  -> Postgres re-verification
+     (lifecycle_status=ACTIVE, verification_status!=REJECTED, visibility allowed)
+  -> similarity x importance x recency -> top 3-10
+```
+
+A hit from the store **can only change the ranking of rows Postgres already returned. It can never
+add one.** The payload in Qdrant is a copy taken at indexing time and can be arbitrarily stale: a
+memory indexed while it was shared keeps that payload after the senior changes their mind. If a hit
+could add a row, that withdrawn memory would reappear on the guardian's screen. Re-verifying is not
+wasted work; it is the defence.
+
+Two consequences worth stating plainly:
+
+- **Losing the Qdrant volume is recoverable** — the bookkeeping columns say what to re-embed. So it
+  is deliberately **not backed up**; restoring an old snapshot would revive stale payloads.
+- **Query and passage models must stay paired** (`embedding-query` / `embedding-passage`). Mixing
+  them throws nothing. Search just returns slightly worse neighbours forever, and nothing in the
+  system can tell you it happened.
+
+**The embedding API is metered and the project balance is small.** Storing is embedded once (that is
+what the bookkeeping columns make checkable), the sync job has a per-run call cap, and both the
+model and the job are off unless switched on.
 
 ### Everyday information is not all RAG
 
@@ -919,13 +953,17 @@ original design specified — adopt it as-is (§8).
 
 ### Decide now
 
-- **Embedding model and dimension.** Currently TBD, but a `VECTOR` column needs its dimension in the
-  DDL, so it blocks. Upstage is chosen for Korean quality; confirm the dimension against the
-  pgvector index limit in the pinned version. If it exceeds the limit, we lose the index and fall
-  back to a full scan (likely survivable at our scale — measure).
-- **pgvector enablement.** `memory.embedding` and `conversation_summary.embedding` exist in the ERD
-  but were excluded from `V1__init.sql` because the entities are unmapped. A migration with
-  `CREATE EXTENSION vector;` plus the columns and index is an open work item.
+- ~~**Embedding model and dimension.**~~ **Settled (S15P11E102-218).** Upstage
+  `solar-embedding-1-large` outputs **4096 dimensions**. pgvector 0.8.5 indexes at most 2,000
+  (`vector`) / 4,000 (`halfvec`), so 4096 cannot be indexed at all — the only remaining option there
+  was a sequential scan. Korean quality made the model non-negotiable, so semantic search moved to
+  Qdrant.
+- ~~**pgvector enablement.**~~ **Cancelled (S15P11E102-218). Do not add a
+  `CREATE EXTENSION vector;` migration.** The Postgres image is still `pgvector/pgvector` (changing
+  a running database image is riskier than leaving an unused extension binary in it), but the
+  extension is never enabled and `FlywayMigrationValidationTest.pgvectorIsNotUsed` actively asserts
+  its absence. Enabling it would create a second search path, and that one has no index.
+  `memory.embedding` / `conversation_summary.embedding` were replaced by the V5 bookkeeping columns.
 
 ### Flyway rules (schema changes)
 
@@ -951,13 +989,15 @@ process, not a request/response service.
 ```
 S15P11E102/
 ├── CLAUDE.md                       <- this file
-├── HANDOFF.md                      <- one-off handover for the runtime work
 ├── docs/
-│   ├── database/                   <- ERD, question set, Flyway guide (AUTHORITATIVE for schema)
+│   ├── database/                   <- ERD, question set, Flyway guide (be-develop only —
+│   │                                   mvp-erd.md does not exist on this line, §24)
 │   ├── architecture/, scenario/, mqtt/, api/, hardware/
 │   └── design/care-bot-design.md   <- long-form runtime rationale (Korean)
 │
-├── backend/                        <- Spring Boot, Flyway, the ERD, guardian API
+├── backend/                        <- Spring Boot, Flyway, the ERD, guardian API. On this
+│                                       (ai-develop) line this is a shell (HealthController
+│                                       only) — the real backend lives on be-develop
 ├── frontend/
 │
 ├── robot/                          <- UNIT 1: on the Jetson
@@ -971,6 +1011,11 @@ S15P11E102/
 │           ├── policy.py           <- every tuning dial: priority matrix, cooldowns, TTLs, top-k
 │           ├── config.py           <- environment variables only (keys, hosts, devices)
 │           ├── state.py            <- ConvState schema + SpeechProposal
+│           ├── bootstrap.py        <- wires the compiled graph, checkpointer, scheduler, door
+│           │                          subscriber and player into one runnable Runtime (232)
+│           ├── turn_timer.py       <- per-turn latency measurement against the ~2s budget (§16)
+│           ├── conversation_control.py <- wake/end-of-turn rules shared by the legacy
+│           │                          pipeline and the graph runtime
 │           ├── graph/
 │           │   ├── build.py        <- StateGraph wiring ONLY, no business logic
 │           │   ├── ingress.py      <- note_interaction, route_ingress, back-channel routing
@@ -978,20 +1023,31 @@ S15P11E102/
 │           │   ├── triage.py       <- safety_triage, escalation
 │           │   ├── context.py      <- context_read, classify_intent, route_intent
 │           │   ├── handlers.py     <- info, companion, schedule, emotional,
-│           │   │                      greeting, onboarding, clarification
+│           │   │                      greeting, onboarding, clarification (all implemented, 263)
+│           │   ├── contract_dialogue.py <- what onboarding/clarification never hand to the
+│           │   │                      LLM: consent yes/no, readback confirmation (§12, 227)
+│           │   ├── turn.py         <- runs one reactive turn end to end, drives turn_timer
 │           │   └── output.py       <- response_shaper, emit
-│           ├── jobs/ticks.py       <- silence_tick, door_watch_tick, daily_summary_job,
-│           │                          outbox_flush
-│           ├── audio_io/           <- laptop/robot adapters, sounddevice backend, beam control
+│           ├── jobs/
+│           │   ├── ticks.py        <- silence_tick, door_watch_tick, daily_summary_job,
+│           │   │                      outbox_flush
+│           │   └── scheduler.py    <- build_scheduler(); started by bootstrap.py (232)
+│           ├── audio/              <- echo/barge-in judgement: echo_guard, vad, playback.
+│           │                          Not audio_io/ — that is device I/O, this is the decision
+│           ├── audio_io/           <- laptop/robot adapters, sounddevice backend, beam
+│           │                          control, wakeword
+│           ├── contracts/          <- wire-format schemas shared across machines (door events)
 │           ├── llm/                <- Gemini client, medical flow, embedding router (EXISTS)
 │           ├── stt/, tts/, weather/, db/   <- external clients (EXIST — delegate, do not rewrite)
-│           ├── pipeline.py         <- input loop driver: capture -> STT -> app.invoke
+│           ├── pipeline.py         <- legacy STT -> LLM -> TTS driver, `--legacy` flag only;
+│           │                          does not go through the graph (232)
 │           ├── http.py, main.py, __main__.py
-│           │
-│           │   ── not created yet; each arrives with its ticket ──
-│           ├── localstore/         <- SQLite: proposals, ladder, occupancy, checkpointer, outbox (202)
-│           ├── notify/             <- guardian adapter, swap the channel here (202 iface -> 211)
-│           ├── backend_client/     <- context assembly, fact_candidate, care_record, consent (204)
+│           ├── localstore/         <- SQLite: proposals, ladder, occupancy, checkpointer,
+│           │                          outbox, audio cache, context cache, daily dump (202)
+│           ├── notify/             <- guardian adapter: base, logging (default), backend
+│           │                          notifier — swap the channel here (202 iface -> 211)
+│           ├── backend_client/     <- context assembly, contract dialogue, conversation
+│           │                          logging, door events (204, 227, 211, 208)
 │           ├── prompts/            <- templates as files, versioned, never inline strings (204)
 │           └── door/               <- entrance-node client, occupancy rules, heartbeat watch (208)
 │
@@ -1211,7 +1267,7 @@ and writing it that way is what lets someone else trust the parts that *are* fin
 | --- | --- |
 | `memory.visibility` has a "never share" (T4) value? | Check the Excel code dictionary. If absent it must be added (§19). |
 | T3 consent queue location | `care_record` with a pending status, or a dedicated table (§19). |
-| Embedding model dimension vs pgvector index limit | Blocks the vector migration (§19). |
+| ~~Embedding model dimension vs pgvector index limit~~ | **Closed (S15P11E102-218).** 4096 dims exceeds pgvector's index ceiling; semantic search runs on Qdrant instead (§8, §19). |
 | Daily activity metrics: `care_record` type or dedicated table | Affects the T2 summary query (§19). |
 | Occupancy: boolean vs person count | Depends on sensor accuracy; drives visitor handling (§11). |
 | Direction timing window for the two-sensor derivation | How long after a door-open an inside motion still counts as an entry. Empirical (§11). |
@@ -1225,3 +1281,144 @@ and writing it that way is what lets someone else trust the parts that *are* fin
 | Battery runtime under continuous operation | Measure; it constrains tick frequency (§18). |
 | Cognitive-stimulation content (quizzes, games) | Not designed yet. |
 | Reference document corpus for welfare-program RAG | Source and chunking not decided (§8). |
+
+---
+
+## 25–29. Working agreement (process, not design)
+
+> **Why these are numbered 25+ and not inserted where they thematically belong.** Code and
+> docs across this repo cite sections by number — 38 references to §11, 28 to §9, 26 to §13.
+> Renumbering would silently invalidate hundreds of pointers. **Never renumber §1–§24.** New
+> material goes at the end.
+
+Sections §1–§24 describe *what we are building*. §25–§29 describe *how we work on it*. They
+were extracted from a review of 13 sessions (2026-07-31 → 08-03) in which the same four
+mistakes recurred, and each one is now backed by automation so it cannot depend on memory:
+
+| Enforced by | Lives in | Covers |
+| --- | --- | --- |
+| `PostToolUse` hook | `.claude/hooks/ruff-touched-file.sh` | ruff on every Python file you edit (§26) |
+| `PreToolUse` hook | `.claude/hooks/pre-push-gate.sh` | blocks `git push` when ruff/pytest are red (§26) |
+| Skills | `.claude/skills/` | `branch-preflight` `ticket` `parallel-tickets` `mr-body` `jira-safe-edit` `verify-evidence` `trace-readonly` `deploy-verify` `explain-ticket` |
+
+---
+
+## 25. Branch and git state
+
+The repo has **four parallel lines**, not one `develop`. A checkout of one line shows the
+other lines' sources as untracked — that is normal, not a deletion.
+
+```text
+main
+├── ai-main     ← ai-develop     ← S15P11E102-<n>-ai-<한글슬러그>
+├── be-main     ← be-develop     ← S15P11E102-<n>-be-<한글슬러그>
+├── fe-main     ← fe-develop     ← S15P11E102-<n>-fe-<한글슬러그>
+└── robot-main  ← robot-develop  ← robot/feat/S15P11E102-<n>-<slug>
+```
+
+- **Before planning, ticketing, or implementing, run `git fetch --all --prune`** and check
+  what is already merged into the relevant `<line>-develop`. Never assume branch state from
+  memory or from earlier in the session. Check commits **and** search the code — a feature
+  can land under a different ticket's commits.
+- **Work one ticket per branch, sequentially.** Do not create worktrees or start a second
+  ticket branch without explicit approval.
+- **If the target path does not belong to the checked-out line, do not edit it.** Write the
+  cause, design, and completion conditions into a ticket and let the user switch lines.
+- `CONTRIBUTING.md` still describes `feat/*` off a single `develop`. That is **not** what is
+  deployed; follow the real branches above and fix the doc when someone owns it.
+
+Failure this prevents: tickets 230, 218, and the emotional handler were already merged while
+being planned as if they were not. The session was halted with "꼬일거같음" and one
+implementation was thrown away.
+
+## 26. Definition of done (before push / MR)
+
+- **All tests pass AND `ruff check` is green.** Never push with a red gate, even when the
+  failures look pre-existing. **A pre-existing failure in a file you touched is yours.** If
+  it is genuinely unrelated and large, stop and ask — do not push and do not rationalize.
+
+  ```bash
+  cd robot/ai_chat
+  venv/Scripts/ruff.exe check src tests
+  venv/Scripts/pytest.exe -q -m "not integration and not manual"
+  ```
+
+  `integration` and `manual` exist as markers for hardware-, credential-, or external-API-
+  dependent tests, and a laptop without a microphone must not block a push (§18). **As of
+  this writing no test under `tests/` actually carries either marker** — `pytest
+  --collect-only -m "integration or manual"` collects zero items — so today the `-m` flag
+  itself filters nothing. The isolation that actually keeps a default run hardware- and
+  network-free is two other mechanisms: `pyproject.toml`'s `norecursedirs = ["manual"]` keeps
+  the operator-run smoke scripts under `tests/manual/` out of collection entirely, and
+  `tests/conftest.py`'s autouse `block_external_http` fixture raises immediately if any
+  non-`integration`/`manual` test attempts a real HTTP request. Keep the `-m` flag anyway —
+  it is the forward-compatible convention for the day a real pytest-based integration test
+  gets marked — but do not describe it as doing work it is not doing today.
+
+- **Verify config and deploy changes end to end, against reality rather than files.**
+  - For web endpoints, confirm the **response body and content-type**, not the status code.
+    A SPA fallback returns 200 with `index.html`; that is how a broken docs deploy was once
+    reported as successful.
+  - For env/compose changes, read the variable **inside the running container**. Writing it
+    into `.env` is not the same as it reaching the process — `${VAR:default}` in
+    `application.yml` silently wins when compose does not pass the name through. This broke
+    production once (S15P11E102-218).
+  - For nginx, determine which config the **running container actually mounts**; do not guess
+    a host path. File edited ≠ reloaded ≠ in effect.
+
+- **MR bodies follow the team's six-section template** (`mr-body` skill). The
+  「테스트 내용」 section carries real numbers (`504 passed in 14.38s`), never "로컬 테스트 완료".
+- **Verify the MR link resolves before sharing it**: `git ls-remote --heads origin <branch>`.
+- **Update `docs/carebot/PROGRESS.md` in the same push** (§22a). This is part of finishing,
+  not paperwork afterwards.
+- **Never describe something as done when it is only implemented.** "Logic verified, hardware
+  unverified" is the honest shape of most of this work. Mark anything you did not actually
+  run as `UNVERIFIED` rather than guessing.
+
+## 27. Jira and ticket editing
+
+Ticket bodies are Korean, and this is where encoding bugs keep landing.
+
+- **Never write Jira text via unicode escape sequences (`\uXXXX`). Always send raw UTF-8.**
+- **After any create/update, re-read the issue and confirm the Korean renders correctly
+  before reporting done.** Three separate sessions shipped mangled text; the surviving
+  evidence is `꼬일거같음` → `易질거같음` and `쉽게 다시설명바람` → `쒬게 다시설명바람`.
+- Write ticket bodies in **존댓말** ("~합니다"), including short table cells and completion
+  -condition checklist items. Set the tone in the first draft; converting afterwards misses
+  the table cells.
+- Title: `[영역](카테고리) 제목 — 부제`. 영역 ∈ {`AI`, `BE`, `AI+BE`, `ROBOT`, `HW`};
+  카테고리 is one lowercase word (`infra` `api` `jobs` `rag` `schema` `dialogue` `prompt`
+  `memory` `test`). The ticket number does not go in the title — Jira already prefixes it.
+- Body sections, in order: `## 무엇이 문제인가` → `## 왜 지금인가` → `## 작업 내용` →
+  `## 완료 조건` → optional → `## 참고` (always last, one line). **`## 왜 지금인가` is where
+  this team records what breaks *silently* without the work** — omit it and half the ticket
+  is gone.
+- **2,500–5,000 characters.** Detailed implementation plans belong in `docs/carebot/`, not in
+  the ticket.
+- Before creating a ticket, read a recent one (e.g. S15P11E102-232) to match the format, and
+  check whether the ticket already exists — if it does, comment instead of duplicating.
+- Commit subjects are a different format and are not templated:
+  `[영역](카테고리) S15P11E102-<n> 제목 — 부제`.
+
+## 28. Scope discipline
+
+- **Do not introduce new services, servers, or frameworks unless the ticket asks for it.**
+  Propose first, implement after approval. An unwanted FastAPI server was once scoped into a
+  documentation ticket.
+- **Before claiming a file, doc, or directory does not exist, search for it** with Grep/Glob
+  across the repo *and* the other lines' worktrees. Two separate claims of "this doesn't
+  exist" were self-corrected minutes later.
+- **Do not renumber §1–§24** (see the preamble above).
+- When you find a real problem outside the ticket's scope, record it — do not silently widen
+  the change, and do not silently drop it either.
+
+## 29. Response style
+
+- **Default to short: conclusion first, then a few bullets.** Expand only when asked.
+- **When explaining merged tickets or features, use the two-pass format** — (1) plain-language
+  쉬운 설명 built on an analogy, with no code; then (2) a code-level walkthrough in the same
+  order with a comment on every meaningful line. Verify AS-IS claims against the pre-change
+  code before asserting them. The `explain-ticket` skill holds the full format.
+- **Report with evidence, not adjectives.** Claim | command | real output. See §26.
+- Comments and docstrings in code stay Korean (§21). Chat responses follow the user's
+  language; identifiers and log messages stay English.

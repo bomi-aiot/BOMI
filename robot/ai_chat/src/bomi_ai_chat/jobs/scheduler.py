@@ -26,6 +26,7 @@ import logging
 
 from bomi_ai_chat import policy
 from bomi_ai_chat.jobs import ticks
+from bomi_ai_chat.localstore import runtime as runtime_store
 from bomi_ai_chat.notify import BackendGuardianNotifier
 
 logger = logging.getLogger(__name__)
@@ -100,12 +101,40 @@ def build_scheduler(senior_id: str, app=None):
         max_instances=1,
     )
     scheduler.add_job(
-        _guard(ticks.contract_tick, senior_id),
+        # ticks.contract_tick 을 바로 넘기지 않는다 — 아래 _contract_tick_job 참고.
+        # add_job 에 넘긴 인자는 '등록 시점'에 고정되므로, senior_id 를 바로 넘기는 건
+        # 괜찮아도(바뀌지 않는다) conversation_id 를 등록 시점에 넘기면 그 뒤로 열리는
+        # 새 대화를 영원히 못 본다 (S15P11E102-306).
+        _guard(_contract_tick_job, senior_id),
         "interval",
         # 침묵 틱보다 훨씬 뜸하다. 계약 대화는 급하지 않고, 매 분 백엔드에
         # "물을 것 있나요"를 묻는 것은 네트워크와 배터리 낭비다.
         seconds=policy.CONTRACT_TICK_INTERVAL_SEC,
         id="contract_tick",
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        # T3 동의 질문도 급하지 않다 — contract_tick 과 같은 주기를 쓴다
+        # (S15P11E102-253). conversation_id 문제는 없다 — consent_tick 은
+        # runtime_store 에서 '지금' 값을 직접 읽는다(contract_tick 과 달리
+        # 인자로 받지 않는다).
+        _guard(ticks.consent_tick, senior_id),
+        "interval",
+        seconds=policy.CONTRACT_TICK_INTERVAL_SEC,
+        id="consent_tick",
+        coalesce=True,
+        max_instances=1,
+    )
+    scheduler.add_job(
+        # 사실 추출도 급하지 않다 (S15P11E102-255). 어제 나눈 이야기가 오늘
+        # 기억이 되어도 문제 없고, 이 틱마다 LLM 호출이 최대
+        # policy.EXTRACTION_FLUSH_BATCH_SIZE 번 붙으므로 침묵 틱(60초)만큼
+        # 자주 돌릴 이유가 없다.
+        _guard(ticks.extraction_flush, senior_id),
+        "interval",
+        seconds=policy.EXTRACTION_FLUSH_INTERVAL_SEC,
+        id="extraction_flush",
         coalesce=True,
         max_instances=1,
     )
@@ -116,6 +145,29 @@ def build_scheduler(senior_id: str, app=None):
         policy.OUTBOX_FLUSH_INTERVAL_SEC,
     )
     return scheduler
+
+
+def _contract_tick_job(senior_id: str) -> None:
+    """contract_tick 을 부르되, '지금' 열려 있는 대화 id 를 매 호출마다 새로 읽는다.
+
+    왜 등록 시점에 한 번만 넘기면 안 되는가  (S15P11E102-306)
+        scheduler.add_job 에 넘기는 함수 인자는 등록 시점에 고정된다. 대화는
+        시간이 흐르며 열리고 닫히므로(policy.CONVERSATION_BOUNDARY_IDLE_SEC), 등록
+        시점의 conversation_id 를 그대로 굳히면 그 뒤에 새로 열린 대화에는 "한
+        대화에 활성 후보 하나" 규칙(CLAUDE.md §12)이 영영 적용되지 않는다.
+
+    왜 그래프 checkpoint 가 아니라 runtime_store 를 읽는가
+        스케줄러는 별도 스레드에서 돌고 그래프 state 를 직접 볼 수 없다.
+        graph/ingress._conversation_boundary 와 graph/build.memory_write 가 매 턴
+        conversation_id 를 runtime_store 에도 찍어 둔다(last_spoke_at 과 같은 이유,
+        build.py 참고) — 여기서는 그 사본을 읽는다.
+
+    누가 호출하는가
+        build_scheduler 가 등록한 contract_tick 작업, 그리고 run_all_ticks_once
+        (압축 시계 경로).
+    """
+    conversation_id = runtime_store.load(senior_id).get("conversation_id")
+    ticks.contract_tick(senior_id, conversation_id=conversation_id)
 
 
 def _guard(func, *args):
@@ -152,7 +204,9 @@ def run_all_ticks_once(senior_id: str, app=None) -> None:
             run_all_ticks_once("senior-1")
     """
     _guard(ticks.schedule_tick, senior_id)()
-    _guard(ticks.contract_tick, senior_id)()
+    _guard(_contract_tick_job, senior_id)()
+    _guard(ticks.consent_tick, senior_id)()
+    _guard(ticks.extraction_flush, senior_id)()
     for tick in (ticks.silence_tick, ticks.door_watch_tick):
         _guard(tick, senior_id, app)()
     _guard(ticks.outbox_flush)()

@@ -101,7 +101,23 @@ class ConvState(TypedDict, total=False):
     senior_id: str
     # 지금 진행 중인 대화. 최근 Raw 메시지를 어느 대화에서 가져올지 정한다.
     # 새 대화의 첫 턴에서는 None 이고, 그러면 최근 메시지가 비어서 온다.
+    #
+    # reducer 가 없다(기본 LastValue 채널) — 이 필드를 다루는 모든 코드가 지켜야
+    # 하는 규칙 하나: 정말로 값을 바꾸고 싶을 때만 이 키를 반환한다. 안 그러면
+    # 그래프를 부르는 쪽이 실수로 None 을 넣기만 해도 체크포인트 값이 지워진다
+    # (S15P11E102-306, graph/turn.py 의 조건부 입력 참고).
     conversation_id: str | None
+    # 방금 서버에 올라간 '어르신 발화' 행의 메시지 id.
+    #
+    # 왜 필요한가  (S15P11E102-306, 이후 255 번이 이 값을 쓴다)
+    #   백엔드의 FactCandidate.fromConversationMessage 는 sourceMessageId 를
+    #   requireNonNull 로 강제한다. 대화에서 사실을 추출하려면 "어느 메시지에서
+    #   나왔는지"가 있어야 하고, 그 근원이 여기다.
+    #
+    # 로봇 혼잣말(능동 발화)에는 이 값이 없다 — 어르신이 실제로 한 말에만 의미가
+    # 있다. memory_write 가 SENIOR 행을 올릴 때만 갱신하고, 그 외에는 이전 값을
+    # 그대로 들고 간다(반환하지 않으면 LastValue 채널이 보존한다).
+    last_message_id: str | None
     # 이 로봇의 id. 온보딩 세션을 '로봇에서' 시작할 때 서버가 요구한다
     # (앱에서 시작한 세션은 robot_id 가 없어도 된다).
     robot_id: str | None
@@ -194,6 +210,23 @@ class ConvState(TypedDict, total=False):
     #   묻는다 (CLAUDE.md §17.3 — 아는 걸 다시 묻는 순간 몰입이 깨진다).
     pending_contract: dict | None
 
+    # 로봇이 방금 던진 'T3 동의 질문'과 그 요청의 id (S15P11E102-253).
+    #
+    #   {"request_id": int, "asked_at": float}
+    #
+    # pending_contract 와 같은 이유로 존재한다 — 다음 턴의 "응"/"아니"가 이
+    # 질문에 대한 답인지 판단하는 근거이며, 없으면 그 대답이 그냥 잡담으로
+    # 흘러가고 보호자 알림은 영원히 나가지 않는다(이 티켓이 고치는 바로 그
+    # 실패). request_id 는 localstore.consent 표의 행을 가리키고, 답이 오면
+    # 그 행을 GRANTED/DECLINED 로 확정한다.
+    #
+    # 왜 하나의 dict 로 onboarding/clarification 과 합치지 않는가
+    #   pending_contract 는 "계약을 백엔드가 강제한다"는 전제를 깔고 있고
+    #   (CLAUDE.md §12), 필드 목록·세션 id 같은 계약 전용 모양을 갖는다. T3
+    #   동의는 계약이 아니라 로봇이 스스로 판단해 여쭤보는 것이라 전제가 다르다.
+    #   같은 dict 로 섞으면 "이게 계약인가 아닌가"를 매번 kind 로 되물어야 한다.
+    pending_consent: dict | None
+
     # ── 백엔드에서 온 컨텍스트 (§5, §8) ──
     #
     # mvp-erd.md §9 규칙에 따라 서버에서 조립된다. 프로필, 선호, 오늘 상태,
@@ -206,7 +239,34 @@ class ConvState(TypedDict, total=False):
     # 이번 턴에 요청할 기억 개수. 비어 있으면 policy.MEMORY_TOP_K 를 쓴다.
     # 성능 저하 모드가 이 값을 낮춰 넣는다(policy.DEGRADATION_ORDER 첫 단계).
     memory_top_k: int
+    # 의료(병원·약국·의약품) 라우터 판정 결과 캐시 (S15P11E102-311).
+    #
+    # context_read 가 날씨·의료 조회 여부를 정하려면 classify_intent 가 돌기 전에
+    # 같은 판정이 미리 필요하다. 그때 라우터(local SentenceTransformer 추론)를
+    # 부른 결과를 여기 남겨서, classify_intent 가 다시 그 라우터를 부르지 않게
+    # 한다. context_read 는 이 턴에 판정했으면 매번 명시적으로 True/False 를
+    # 쓰고, 판정하지 않은 턴에는 None 을 써서 지난 턴의 값이 새는 것을 막는다
+    # (state 는 어르신별로 checkpoint 되어 턴을 넘어 살아남기 때문이다).
+    is_medical_query: bool | None
     # 같은 종류의 알림에서 최근에 쓴 표현. 프롬프트에 넘겨 반복을 막는다(§17.8).
+    #
+    # 누가 채우는가 (S15P11E102-256)
+    #   context_read(graph/context.py) 가 localstore.phrasings.recent 로 조회해
+    #   채운다. 능동/명령 턴(trigger_type in "proactive"/"backend_command")에서만
+    #   채우고, 반응형 턴에는 항상 빈 리스트를 명시적으로 돌려준다 — 안 그러면
+    #   지난 능동 턴의 값이 checkpoint 에 남아 다음 반응형 턴까지 샌다(이 필드도
+    #   reducer 가 없는 LastValue 채널이다).
+    #
+    #   누가 읽는가
+    #   handlers._generate 가 build_prompt(recent_phrasings=...) 로 그대로
+    #   넘기고, prompts/builder.py._format_recent_phrasings 가 "표현 반복 피하기"
+    #   섹션으로 렌더한다.
+    #
+    #   누가 쓰는가(다음 턴을 위해)
+    #   graph/build.py.memory_write 가 발화가 확정된 직후
+    #   localstore.phrasings.record 로 저장한다. 이 필드 자체에는 쓰지 않는다 —
+    #   그 저장은 다음 턴의 context_read 조회를 위한 것이지, 이번 턴의 state 를
+    #   위한 것이 아니다.
     recent_phrasings: list[str]
 
     # ── 출력 (§14) ──

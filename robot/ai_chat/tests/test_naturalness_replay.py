@@ -95,7 +95,11 @@ class CollectingPlayer:
 
 class NullConversationClient:
     def record_turn(self, senior_id, **fields):
-        return "conversation-1"
+        # (conversationId, messageId) 튜플 계약은 S15P11E102-306 이 세웠다.
+        # 단일 문자열을 돌려주면 build.py._record_turn 의 튜플 언패킹이
+        # "too many values to unpack" 으로 죽는다 — 그러면 memory_write 가
+        # 터지고, 정작 이 파일이 재려는 '자연스러움'과 무관한 이유로 실패한다.
+        return "conversation-1", "message-1"
 
 
 DEFAULT_REPLY = "그러셨어요. 좀 더 말씀해 주시겠어요?"
@@ -127,13 +131,13 @@ def replay(scenario, tmp_path):
         app = build_graph(checkpoint_path=str(tmp_path / "checkpoint.sqlite"))
         states = []
         repeats = scenario.get("repeatTurns", 1)
+        proactive = scenario.get("proactive")
         for _ in range(repeats):
-            for utterance in scenario["turns"]:
-                states.append(run_user_turn(
-                    app, SENIOR, utterance,
-                    # 표현 반복 회피는 상태로 들어간다. 시나리오가 지정하면 실어 준다.
-                ) if not scenario.get("recentPhrasings") else _run_with_phrasings(
-                    app, utterance, scenario["recentPhrasings"]))
+            if proactive:
+                states.append(_run_proactive_turn(app, proactive))
+            else:
+                for utterance in scenario["turns"]:
+                    states.append(run_user_turn(app, SENIOR, utterance))
         return llm.prompts, states
     finally:
         context_node.set_client(None)
@@ -144,21 +148,33 @@ def replay(scenario, tmp_path):
         assert monkey_dir or True  # noqa: PT018 - tmp_path 사용을 명시적으로 남긴다
 
 
-def _run_with_phrasings(app, utterance, phrasings):
-    """recent_phrasings 를 실은 턴.
+def _run_proactive_turn(app, proactive: dict) -> dict:
+    """능동 제안 하나를 실제 게이트에 태운다 (S15P11E102-256).
 
-    run_user_turn 은 이 값을 받지 않는다. 능동 턴에서 게이트가 넣는 값이기 때문이다.
-    여기서는 §17.8 을 확인하는 것이 목적이므로 핸들러를 직접 부른다 — 그래프 전체를
-    돌리는 것보다 검증 대상이 좁고 분명하다.
+    무엇을 하는가
+        jobs/ticks._invoke_proactive 와 같은 모양으로 trigger_type "proactive" 로
+        그래프를 직접 부른다. proactive_gate 는 state["proposals"] 를 읽으므로
+        localstore 에 미리 큐잉할 필요가 없다(graph/gate.py 참고).
+
+    왜 이전에는 핸들러를 직접 불렀는가, 그리고 왜 이제 안 그러는가
+        recent_phrasings 는 능동 턴에서 게이트 다음 context_read 가 채우는 값이다
+        (graph/context.py._lookup_recent_phrasings). 예전에는 그 조회 코드가
+        없었으므로 handle_companion 을 직접 불러 state 에 값을 수동으로 심어야
+        했다. 배선이 끝난 지금 그 우회는 "이미 되어 있다"는 잘못된 인상을 남긴다
+        — 실제로는 게이트가 그 값을 넣지 않았다(옛 docstring이 틀렸던 지점).
+        이제는 그래프 전체(게이트 -> context_read -> handle_companion ->
+        response_shaper -> memory_write)를 태워서 실제 배선을 검증한다.
     """
-    state = {
-        "senior_id": SENIOR,
-        "ctx": {},
-        "intent": "companion",
-        "user_input": utterance,
-        "recent_phrasings": phrasings,
+    proposal = {
+        "intent": proactive.get("intent", "companion"),
+        "priority": proactive.get("priority", "high"),
+        "seed": proactive.get("seed", ""),
+        "origin": proactive.get("origin", ""),
     }
-    return {**state, **handlers.handle_companion(state)}
+    return app.invoke(
+        {"trigger_type": "proactive", "senior_id": SENIOR, "proposals": [proposal]},
+        {"configurable": {"thread_id": SENIOR}},
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

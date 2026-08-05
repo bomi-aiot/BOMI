@@ -77,3 +77,24 @@ def test_thread_config_uses_senior_id():
     에스컬레이션을 억제한다. 안전 시스템에서 이것은 조용한 실패다.
     """
     assert thread("senior-42") == {"configurable": {"thread_id": "senior-42"}}
+
+
+def test_emit_runs_before_memory_write(tmp_path):
+    """(완료 조건, S15P11E102-255) emit 이 memory_write 보다 먼저다.
+
+    memory_write 는 conversation_client.record_turn 을 블로킹 HTTP 로 부른다.
+    emit 이 그 뒤에 있으면 T1 확인 응답조차 재생을 시작하기 전에 그 호출을
+    기다린다 — 그래서 순서가 response_shaper -> emit -> memory_write -> END 여야
+    한다(반대가 아니다).
+    """
+    app = build_graph(checkpoint_path=str(tmp_path / "checkpoint.sqlite"))
+    graph = app.get_graph()
+    edges = {(e.source, e.target) for e in graph.edges}
+
+    assert ("response_shaper", "emit") in edges
+    assert ("emit", "memory_write") in edges
+    assert ("response_shaper", "memory_write") not in edges
+    assert ("memory_write", "emit") not in edges
+
+    targets = {e.target for e in graph.edges if e.source == "memory_write"}
+    assert END in targets or "__end__" in targets

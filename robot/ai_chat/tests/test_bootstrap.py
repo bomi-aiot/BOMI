@@ -69,7 +69,10 @@ class ScriptedAudioIn:
     def __init__(self, *chunks):
         self.chunks = list(chunks)
 
-    def capture(self):
+    def capture(self, onset_timeout_seconds=None):
+        # bootstrap.py 가 capture(onset_timeout_seconds=...) 로 호출한다(298).
+        # 이 인자를 받지 않으면 매 호출이 TypeError 로 죽고, 그 예외를 삼키며
+        # 도는 루프가 chunks 를 하나도 소비하지 못한 채 영원히 돈다(299 와 같은 유형).
         if not self.chunks:
             raise KeyboardInterrupt
         return self.chunks.pop(0)
@@ -217,7 +220,7 @@ def test_a_capture_failure_does_not_kill_the_loop(monkeypatch, settings_factory,
         def __init__(self):
             self.calls = 0
 
-        def capture(self):
+        def capture(self, onset_timeout_seconds=None):
             self.calls += 1
             if self.calls == 1:
                 raise OSError("device busy")

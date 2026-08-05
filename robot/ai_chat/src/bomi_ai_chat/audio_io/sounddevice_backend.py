@@ -46,6 +46,41 @@ def _resolve_input_device(device: AudioDevice) -> AudioDevice:
     return matches[0][0]
 
 
+def _resolve_output_device(device: AudioDevice) -> AudioDevice:
+    """device가 '이름(문자열)'이면 그 이름을 포함하는 '출력' 장치를 찾아 인덱스로 바꾼다.
+
+    _resolve_input_device 의 출력판. USB를 다시 꽂아 인덱스가 바뀌어도 매번 이름으로
+    다시 찾으므로 항상 올바른 스피커를 잡는다. 정수 인덱스나 None이면 그대로 둔다.
+
+    핵심은 max_output_channels > 0 인 장치만 후보로 본다는 것이다. 같은 이름이 입력·
+    출력 양쪽으로 잡히는 장치(예: reSpeaker)에서, 이 필터가 없으면 출력이 0채널인
+    입력 항목을 골라 "Invalid number of channels" 로 재생이 실패한다.
+
+    같은 이름이 여러 호스트 API(MME/DirectSound/WASAPI/WDM-KS)로 잡히면 'MME'를
+    우선한다(Windows 기본 출력 경로로 무난). 없으면 첫 출력 매칭을 쓴다.
+    """
+    if not isinstance(device, str):
+        return device
+
+    name_hint = device.lower()
+    matches = []
+    for idx, dev in enumerate(sd.query_devices()):
+        if dev["max_output_channels"] > 0 and name_hint in dev["name"].lower():
+            hostapi = sd.query_hostapis(dev["hostapi"])["name"]
+            matches.append((idx, hostapi))
+
+    if not matches:
+        raise RuntimeError(
+            f"이름에 '{device}'가 들어간 출력 장치를 찾을 수 없습니다. "
+            "tests/list_audio_devices.py로 장치 이름을 확인하세요."
+        )
+
+    for idx, hostapi in matches:
+        if "mme" in hostapi.lower():
+            return idx
+    return matches[0][0]
+
+
 def _resample_int16(mono: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
     """선형 보간으로 모노 int16 신호의 샘플레이트를 변환한다.
 
@@ -84,9 +119,16 @@ class SoundDeviceAudioInput(AudioInput):
         self.silence_limit_seconds = silence_limit_seconds
         self.max_seconds = max_seconds
 
-    def capture(self) -> bytes:
-        print("[녹음 시작] 말씀해주세요...")
+    def capture(self, onset_timeout_seconds: float | None = None) -> bytes:
+        """마이크에서 한 발화를 녹음해 WAV 바이트로 반환한다.
 
+        onset_timeout_seconds (None 이면 기존 동작)
+            '단일 리슨' 모드. 발화가 '시작'되기를 이 시간(초)까지 기다린다. 그 안에 아무
+            말도 시작되지 않으면 b"" 를 반환한다(무응답). 발화가 시작되면 그때부터
+            녹음해, 말이 끝나고 침묵이 이어지면 종료한다. 대화 세션의 '무응답 15초
+            종료'가 이 모드를 쓴다 — 한 번의 리슨으로 처리하므로 STT 헛호출이나 잦은
+            스트림 재열기가 없다.
+        """
         # 일부 장치(예: ReSpeaker + Windows DirectSound)는 blocking read로 열면
         # 계속 0(무음)만 반환한다. 그래서 스트림을 한 번만 열고 콜백으로 청크를
         # 받는 방식으로 캡처한다. 또한 장치의 네이티브 샘플레이트로 녹음한 뒤
@@ -108,6 +150,12 @@ class SoundDeviceAudioInput(AudioInput):
             math.ceil(self.silence_limit_seconds / self.chunk_seconds),
         )
         max_chunks = max(1, math.ceil(self.max_seconds / self.chunk_seconds))
+        # 발화 시작을 몇 청크까지 기다릴지(단일 리슨 모드에서만). None 이면 대기 없음.
+        onset_chunk_limit = (
+            max(1, math.ceil(onset_timeout_seconds / self.chunk_seconds))
+            if onset_timeout_seconds is not None
+            else None
+        )
 
         chunk_queue: queue.Queue = queue.Queue()
 
@@ -118,6 +166,16 @@ class SoundDeviceAudioInput(AudioInput):
 
         frames = []
         silence_chunks = 0
+        # onset = '발화가 시작되었는가'. 타임아웃이 없으면 처음부터 시작된 것으로 취급해
+        # 기존 동작(첫 순간부터 녹음)을 유지한다.
+        onset = onset_chunk_limit is None
+        waited_chunks = 0
+
+        if onset:
+            print("[녹음 시작] 말씀해주세요...")
+        else:
+            print("[대기] 말씀을 기다립니다...")
+
         with sd.InputStream(
             samplerate=capture_sr,
             channels=self.channels,
@@ -126,27 +184,44 @@ class SoundDeviceAudioInput(AudioInput):
             blocksize=chunk_frame_count,
             callback=_callback,
         ):
-            for _ in range(max_chunks):
+            while True:
                 # timeout을 둬야 Ctrl+C(KeyboardInterrupt)에 반응할 수 있다.
                 # timeout 없는 blocking get은 Windows에서 Ctrl+C를 못 받아 멈춘다.
                 try:
                     chunk = chunk_queue.get(timeout=1.0)
                 except queue.Empty:
                     continue  # 잠깐 안 와도 루프를 돌며 인터럽트를 받을 수 있게 함
-                frames.append(chunk)
 
                 # 2채널 이상이면 왼쪽(채널 0)으로 볼륨 판단.
                 # ReSpeaker는 채널 0이 하드웨어 처리된(빔포밍/AEC) 신호다.
                 channel0 = chunk[:, 0] if chunk.ndim > 1 else chunk
                 volume = np.abs(channel0.astype(np.int32)).mean()
-                print(f"volume: {volume:.1f}")
 
+                if not onset:
+                    # 발화 시작 대기 중: 소리가 문턱을 넘으면 그때부터 녹음을 시작한다.
+                    # 시작 전 침묵은 버린다(누적하지 않는다).
+                    if volume >= self.silence_threshold:
+                        onset = True
+                        frames.append(chunk)
+                        silence_chunks = 0
+                    else:
+                        waited_chunks += 1
+                        if waited_chunks >= onset_chunk_limit:
+                            print("[녹음 종료] 발화 없음")
+                            return b""  # 무응답: 빈 바이트로 알린다
+                    continue
+
+                # 발화 시작 이후: 누적하며 뒤따르는 침묵으로 종료를 판단한다.
+                frames.append(chunk)
+                print(f"volume: {volume:.1f}")
                 if volume < self.silence_threshold:
                     silence_chunks += 1
                 else:
                     silence_chunks = 0
 
                 if silence_chunks >= silence_chunk_limit:
+                    break
+                if len(frames) >= max_chunks:  # 발화가 너무 길면 상한에서 끊는다
                     break
 
         print("[녹음 종료]")
@@ -187,8 +262,12 @@ class SoundDeviceAudioOutput(AudioOutput):
             if channels > 1:
                 data = data.reshape(-1, channels)
 
+        # 이름으로 지정한 경우 현재 인덱스로 변환(재연결로 번호가 바뀌어도 자동 대응).
+        # 입력 캡처가 _resolve_input_device 로 하는 것과 대칭이다.
+        device = _resolve_output_device(self.device)
+
         try:
-            sd.play(data, samplerate=sample_rate, device=self.device)
+            sd.play(data, samplerate=sample_rate, device=device)
             sd.wait()
         finally:
             sd.stop()
