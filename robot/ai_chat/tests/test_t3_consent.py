@@ -10,6 +10,7 @@
     6. 새 틱이 스케줄러 양쪽(add_job, run_all_ticks_once)에 등록돼 있다.
     7. 재시작을 넘어 누적 신호와 미뤄 둔 질문이 이어진다.
     8. 킬스위치(정책 상수 + 환경변수) 둘 중 하나만 꺼져도 질문이 올라가지 않는다.
+    9. 상위 동의(guardianSharingConsentGranted)가 없으면 질문 자체를 안 만든다.
 
 참고
     CLAUDE.md §8(확인은 규칙으로), §9(T1~T4), §16(생성 호출 예산)
@@ -23,7 +24,7 @@ from bomi_ai_chat.graph import handlers
 from bomi_ai_chat.jobs import scheduler as scheduler_module
 from bomi_ai_chat.jobs import ticks
 from bomi_ai_chat.localstore import consent as consent_store
-from bomi_ai_chat.localstore import db, emotion, outbox
+from bomi_ai_chat.localstore import context_cache, db, emotion, outbox
 from bomi_ai_chat.localstore import proposals as proposal_store
 from bomi_ai_chat.localstore import runtime as runtime_store
 
@@ -38,6 +39,21 @@ def isolated_localstore(monkeypatch, tmp_path):
     yield
     db.close_all()
     handlers.set_llm(None)
+
+
+@pytest.fixture(autouse=True)
+def guardian_sharing_granted(isolated_localstore):
+    """상위 동의가 있는 어르신을 기본값으로 둔다 (S15P11E102-253).
+
+    왜 autouse 인가
+        이 파일의 기존 테스트는 전부 "그 밖의 조건"(문턱, 봉인, 자연스러운 창,
+        킬스위치)을 검증한다. 상위 동의 게이트가 새로 생기면서 그 테스트들이
+        전부 "동의가 없어서 0"으로 통과해 버리면, 정작 검증하려던 조건이
+        무력화된 것을 아무도 모른다 — 초록불이 공백을 가리는 상황이다.
+        그래서 기본값을 '동의함'으로 두고, 동의 없는 경우는 아래 §9 에서
+        명시적으로 덮어써서 따로 검증한다.
+    """
+    context_cache.save(SENIOR, {"profile": {"guardianSharingConsentGranted": True}})
 
 
 class RecordingLLM:
@@ -352,3 +368,58 @@ def test_the_env_kill_switch_blocks_the_tick(frozen_clock, monkeypatch):
         assert proposal_store.pending(SENIOR) == []
     finally:
         clear_settings_cache()
+
+
+# ── 9. 상위 동의 (S15P11E102-253 완료 조건의 마지막 항목) ──────────────────────
+
+
+def _cross_the_threshold() -> None:
+    """다른 조건은 전부 통과시킨 채 상위 동의만 남긴다."""
+    handlers.set_llm(RecordingLLM())
+    for _ in range(policy.T3_CONSENT_SIGNAL_THRESHOLD):
+        handlers.handle_emotional(emotional_state("외로워"))
+
+
+def test_no_question_when_guardian_sharing_consent_is_denied(frozen_clock):
+    """DENIED 인 어르신에게는 질문 자체가 만들어지지 않는다."""
+    frozen_clock(start=1_700_000_000.0)
+    context_cache.save(SENIOR, {"profile": {"guardianSharingConsentGranted": False}})
+    _cross_the_threshold()
+
+    assert ticks.consent_tick(SENIOR) == 0
+    assert proposal_store.pending(SENIOR) == []
+
+
+def test_no_question_when_the_profile_never_carried_the_field(frozen_clock):
+    """필드가 아예 없는 구버전 응답도 '동의 아님'으로 본다 — 모르면 묻지 않는다."""
+    frozen_clock(start=1_700_000_000.0)
+    context_cache.save(SENIOR, {"profile": {"name": "김순자"}})
+    _cross_the_threshold()
+
+    assert ticks.consent_tick(SENIOR) == 0
+    assert proposal_store.pending(SENIOR) == []
+
+
+def test_no_question_when_there_is_no_cached_context_at_all(frozen_clock):
+    """한 번도 문맥을 못 받은 상태(캐시 없음)에서도 묻지 않는다."""
+    frozen_clock(start=1_700_000_000.0)
+    db.close_all()  # autouse 픽스처가 심어 둔 캐시를 비운다
+
+    import shutil
+
+    from bomi_ai_chat.config import get_settings
+
+    shutil.rmtree(get_settings().localstore_dir, ignore_errors=True)
+    _cross_the_threshold()
+
+    assert ticks.consent_tick(SENIOR) == 0
+    assert proposal_store.pending(SENIOR) == []
+
+
+def test_the_question_is_queued_once_consent_is_granted(frozen_clock):
+    """상위 동의가 있으면(그리고 나머지 조건도 통과하면) 정확히 한 건 올라간다."""
+    frozen_clock(start=1_700_000_000.0)
+    _cross_the_threshold()
+
+    assert ticks.consent_tick(SENIOR) == 1
+    assert len(proposal_store.pending(SENIOR)) == 1
