@@ -192,6 +192,39 @@ def test_medical_determination_is_reused_by_classify_intent_in_the_same_turn(
     assert calls == ["근처 약국 어디야"], "classify_intent 가 라우터를 또 부르면 안 된다"
 
 
+def test_medical_hint_routes_to_info_even_without_a_question_mark_or_info_marker(
+    monkeypatch,
+):
+    """(회귀) "찾아줘"처럼 _INFO_MARKERS 에도 없고 물음표로도 안 끝나는 의료
+    질문도 참고 자료가 실제로 쓰이는 info 로 가야 한다.
+
+    실측 사고: "부산 강서구 정형외과 찾아줘."는 context_read._gather_lookup_documents
+    가 (더 넓은 _MEDICAL_HINT_MARKERS 로) 이미 의료로 판정해 DB 조회까지 마쳤는데,
+    classify_intent 의 예전 게이트(_INFO_MARKERS 매칭 또는 물음표로 끝남)를 통과
+    못 해 companion 으로 빠졌다 — 조회는 됐는데 그 결과를 아무도 안 읽었다.
+    """
+    calls: list[str] = []
+
+    def counting_router(text: str) -> bool:
+        calls.append(text)
+        return True
+
+    context_node.set_client(FakeContextClient())
+    monkeypatch.setattr(context_node, "_is_medical", counting_router)
+    monkeypatch.setattr(
+        context_node, "handle_medical_query", lambda text: "정형외과는 근처에 있습니다.")
+
+    state = _turn("부산 강서구 정형외과 찾아줘.")
+    context_out = context_node.context_read(state)
+    assert context_out["is_medical_query"] is True
+
+    merged_state = {**state, **context_out}
+    intent_out = context_node.classify_intent(merged_state)
+
+    assert intent_out == {"intent": "info"}
+    assert calls == ["부산 강서구 정형외과 찾아줘."], "라우터를 또 부르면 안 된다"
+
+
 def test_medical_hint_gate_keeps_the_router_closed_for_ordinary_chatter(monkeypatch):
     """의료 관련 표지가 전혀 없는 잡담은 라우터를 아예 부르지 않는다.
 

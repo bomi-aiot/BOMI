@@ -158,6 +158,18 @@ def _generate(state: ConvState, *, fallback: str = _FALLBACK_RESPONSE) -> str:
             ctx_is_cached=bool(state.get("ctx_is_cached")),
             speech_origin=state.get("speech_origin", ""),
             recent_phrasings=state.get("recent_phrasings"),
+            is_medical=bool(state.get("is_medical_query")),
+        )
+        # 참고 자료가 실제로 이 프롬프트에 실렸는지 확인할 방법이 없었다 —
+        # context_read 가 문서를 찾아도, 그게 build_prompt 를 거쳐 실제로
+        # "참고 자료" 섹션으로 들어갔는지는 지금까지 아무 데도 안 남았다.
+        # 답변이 근거 없이 나온 건지(문서가 비었거나 안 실렸는지) 여기서
+        # 바로 구분할 수 있어야 한다(S15P11E102-311 관련 실측 진단).
+        logger.debug(
+            "generating intent=%s documents=%d reference_material_in_prompt=%s",
+            state.get("intent"),
+            len((state.get("ctx") or {}).get("documents") or []),
+            "참고 자료" in prompt,
         )
         return _llm().generate(prompt)
     except Exception:  # noqa: BLE001 - 생성 실패가 턴을 죽이면 안 된다
