@@ -139,6 +139,7 @@ class OpenApiDocumentationTest {
             .contains("/api/v1/seniors/{seniorId}/door-events");
         assertThat(robot)
             .doesNotContain("/api/v1/guardian/")
+            .doesNotContain("/api/v1/guardian/walk-requests")
             .doesNotContain("/api/v1/memories")
             .doesNotContain("/api/v1/care-records")
             .doesNotContain("/api/v1/confirmation-requests")
@@ -151,6 +152,7 @@ class OpenApiDocumentationTest {
 
         assertThat(guardian)
             .contains("/api/v1/guardian/")
+            .contains("/api/v1/guardian/walk-requests")
             .contains("/api/v1/memories")
             .contains("/api/v1/care-records")
             .contains("/api/v1/confirmation-requests")
@@ -158,6 +160,35 @@ class OpenApiDocumentationTest {
             // S15P11E102-260: 명부(known_person) 등록·수정 화면도 가디언웹이 호출한다.
             .contains("/api/v1/known-persons");
         assertThat(guardian).doesNotContain("/api/v1/robot/");
+    }
+
+    /** Guardian WALK is a live POST operation, not merely a matching path prefix. */
+    @Test
+    void guardianWalkRequestPostIsTaggedAndAppearsOnlyInGuardianGroup() throws Exception {
+        String guardian = mockMvc.perform(get("/v3/api-docs/bomi-guardian"))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+
+        Map<String, Object> walkPath = com.jayway.jsonpath.JsonPath.read(
+            guardian, "$.paths['/api/v1/guardian/walk-requests']"
+        );
+        assertThat(walkPath).containsKey("post");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> post = (Map<String, Object>) walkPath.get("post");
+        assertThat(post.get("tags"))
+            .as("Guardian walk caller tag")
+            .isEqualTo(List.of("Guardian Walk"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> responses = (Map<String, Object>) post.get("responses");
+        assertThat(responses)
+            .as("Guardian walk 실제 HTTP 결과 계약")
+            .containsKeys("200", "202", "400", "404", "409", "503");
+
+        String robot = mockMvc.perform(get("/v3/api-docs/bomi-robot"))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+        assertThat(robot).doesNotContain("/api/v1/guardian/walk-requests");
     }
 
     /**

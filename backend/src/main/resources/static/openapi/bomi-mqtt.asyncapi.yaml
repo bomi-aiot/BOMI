@@ -424,7 +424,7 @@ components:
       summary: |
         산책 시나리오의 실시간 사람 추종을 시작합니다. 시작 판정은 Backend 가 하고,
         추종 제어 루프는 Robot 내부에서 수행합니다. 명령 payload 는 비어 있습니다.
-        v1에서는 계약만 확정하며 실제 기능 구현은 P2로 미룹니다.
+        Backend 는 commandId 와 ack timeout 을 산책 Scenario 에 보존합니다.
       contentType: application/json
       payload:
         $ref: "#/components/schemas/FollowStartCommand"
@@ -521,7 +521,7 @@ components:
         음성 또는 보호자 앱에서 산책 시작·종료 요청을 감지했을 때 발행합니다. 음성 대화
         중에 발생했다면 conversationId 를 최상위 필드에 포함합니다. Backend 가
         시나리오를 만들기 전이므로 scenarioId 와 commandId 는 포함하지 않습니다.
-        v1에서는 계약만 확정하며 실제 기능 구현은 P2로 미룹니다.
+        Voice MQTT 와 Guardian REST 는 Backend 의 같은 산책 상태 머신을 사용합니다.
       contentType: application/json
       payload:
         $ref: "#/components/schemas/WalkRequestedPayload"
@@ -799,6 +799,7 @@ components:
     # ---------- 공통 식별자 ----------
     EventId:
       type: string
+      minLength: 1
       maxLength: 64
       description: |
         논리 이벤트 식별자. 같은 사건을 재전송할 때 같은 값을 유지합니다.
@@ -807,6 +808,7 @@ components:
 
     CommandId:
       type: string
+      minLength: 1
       maxLength: 64
       description: 명령 멱등 키. 명령과 상태·결과를 연결합니다.
 
@@ -823,7 +825,8 @@ components:
     RobotId:
       type: string
       minLength: 1
-      maxLength: 128
+      maxLength: 64
+      pattern: '^[A-Za-z0-9._-]{1,64}$'
       description: Robot deviceId 이며 토픽의 {robotId} 와 같아야 합니다.
 
     OccurredAt:
@@ -1187,6 +1190,7 @@ components:
               type: string
               minLength: 1
               maxLength: 20
+              pattern: '.*\S.*'
               description: 감지를 확정한 호출어. 원본 STT 문장은 포함하지 않습니다.
             confidence:
               type: number

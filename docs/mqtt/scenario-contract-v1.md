@@ -427,7 +427,7 @@ Robot이 사람 놓침 등으로 따라가기를 자체 종료하더라도, `FOL
 | 4 | 호출 | AI가 감지한 `WAKE_WORD_DETECTED` | `NAVIGATE(LIVING_ROOM)`만 수행 | `NAVIGATION_RESULT(ARRIVED)` 수신 시 완료 |
 | 5 | 산책 | `WALK_REQUESTED` | `FOLLOW_START`, 종료 요청 시 `FOLLOW_STOP` | `FOLLOW_RESULT(STOPPED)` |
 
-위 표의 번호는 구현 우선순위이다. 산책 MQTT 계약은 v1에서 확정하지만 실제 기능 구현은 후순위로 미룬다.
+위 표의 번호는 최초 도입 우선순위이다. 산책 MQTT 계약과 Backend 기능은 현재 v1 기준으로 구현되어 있다.
 
 공통 원칙은 다음과 같다.
 
@@ -589,7 +589,7 @@ Backend는 `scenarioId`를 만든 뒤 다음 명령을 보낸다.
 
 Robot은 `FOLLOW_RESULT`의 `resultCode=STARTED`를 보낸다. 종료 요청은 `WALK_REQUESTED`의 `payload.action=STOP`으로 보내며, Backend는 같은 활성 산책 시나리오의 `scenarioId`로 `FOLLOW_STOP`을 보낸다. Robot이 `FOLLOW_RESULT`의 `resultCode=STOPPED`를 보내면 종료한다.
 
-`payload.source`는 `VOICE` 또는 `APP`을 사용한다. v1에서는 이 계약만 확정하며 산책 기능 구현은 후순위다.
+`payload.source`는 `VOICE` 또는 `APP`을 사용한다. Voice MQTT와 Guardian REST 입력은 Backend의 같은 산책 상태 머신과 영속 멱등 정책을 사용한다.
 
 ### 8.5 현관 인사
 
@@ -679,19 +679,19 @@ TRIGGERED → NAVIGATING → CONVERSING → COMPLETED
 | 영역 | 현재 상태 | v1에 필요한 변경 |
 |---|---|---|
 | 계약 문서 | draft와 여러 Robot 계약 문서에 서로 다른 필드와 상태 표현이 존재 | 이 문서를 기준으로 AsyncAPI와 보조 문서를 정렬 |
-| 수신 이벤트 타입 | 파서 허용 목록에 `WAKE_WORD_DETECTED`, `WALK_REQUESTED`, `CONVERSATION_STARTED`, `FOLLOW_RESULT`가 없음 | 각 타입 허용 및 타입별 필드 검증 추가 |
-| Robot 명령 타입 | `NAVIGATE`, `SPEAK`, `CANCEL`만 존재 | `FOLLOW_START`, `FOLLOW_STOP` 추가 |
+| 수신 이벤트 타입 | `WAKE_WORD_DETECTED`, `WALK_REQUESTED`, `FOLLOW_RESULT`, `CONVERSATION_STARTED`의 파서·타입별 검증이 구현됨 | 완료. v1 envelope와 enum을 문서 테스트로 유지 |
+| Robot 명령 타입 | `NAVIGATE`, `SPEAK`, `CANCEL`, `FOLLOW_START`, `FOLLOW_STOP`이 구현됨 | 완료. FOLLOW 명령의 빈 payload, QoS 1, retain=false를 회귀 테스트로 유지 |
 | AI 명령 | AI commands 토픽, `START_CONVERSATION` 모델과 publisher가 없음 | `bomi/v1/ai/{robotId}/commands` 발행 경로와 모델 추가 |
 | 대화 연결 | 대화 gateway가 실제 AI 명령 발행 대신 임시 동작에 가까움 | `scenarioId`와 `conversationId`를 저장하고 실제 명령 발행 |
 | 대화 종료 | 기존 handler가 `scenarioId`를 `payload`에서 읽음 | 관련 ID를 최상위에서 읽고 네 가지 대화 outcome 처리 |
 | 대화 시작 | `CONVERSATION_STARTED` 처리 없음 | 대시보드용 상태를 `CONVERSING`으로 전이 |
 | Robot 결과 | 기존 결과가 `status` 중심이며 연관 ID 위치가 혼재 | `outcome`, 타입별 `resultCode`, `reasonCode`와 최상위 ID로 통일 |
 | 발화 결과 | `SPEAK_RESULT`를 기대하는 코드가 있으나 기존 payload 형식 확인 필요 | one-way 발화 뒤에도 `SPEAK_RESULT`를 받고 `SPOKEN`/`NOT_SPOKEN`과 공통 outcome 형식으로 통일 |
-| 호출 | 전용 웨이크 워드 입력과 orchestrator가 없음 | AI의 event 입력, 중복/동시성 정책, `NAVIGATE(LIVING_ROOM)`만 수행하는 호출 시나리오 추가 |
-| 산책 | 전용 event/command/orchestrator가 없음 | 계약은 지금 반영하되 실제 구현은 후순위로 분리 |
+| 호출 | `WAKE_WORD_CALL` 전용 입력·orchestrator·결과 routing과 영속 receipt가 구현됨. Backend는 `NAVIGATE(LIVING_ROOM)`만 발행하고 `ARRIVED`에서 즉시 완료함 | 완료. 호출에서 `START_CONVERSATION`, `conversationId`, `NAVIGATE(DEFAULT)`를 추가하지 않는 책임 경계를 회귀 테스트로 유지 |
+| 산책 | Voice MQTT와 Guardian REST가 같은 `WalkOrchestrator`를 사용하며 WALK 상태, START·STOP command 상관관계, timeout, 영속 요청 receipt가 구현됨 | 완료. Robot 추종 제어와 Backend 정책·이력의 책임 경계를 회귀 테스트로 유지 |
 | 스케줄러 | 복약 스케줄러는 존재하지만 대화 시작 계약과 실행 원자성 확인 필요 | 일정 선점, 재시도 중복 방지, `START_CONVERSATION` 연결 검증 |
 | 개인 일정 | `fact_candidate` 후보와 `care_record` 물질화 흐름이 스케줄러에 연결되지 않음 | `CONFIRMED` 후 `care_record`로 `MATERIALIZED`된 기록만 scheduler 입력으로 연결 |
-| 중복 제거 | 프로세스 메모리 기반 중복 제거만 사용하면 재시작에 취약 | QoS 1 재전송과 재시작을 견디는 영속 중복 키 검토 |
+| 중복 제거 | 공통 dispatcher는 프로세스 메모리 기반이지만 호출은 `wake_word_trigger_receipt`, 산책은 `(ingress, request_id)` 범위의 `walk_request_receipt`로 수락·거절 재처리를 영속 차단함 | 다른 이벤트의 범용 영속 inbox와 명령 발행의 영속 outbox는 별도 신뢰성 과제로 남음 |
 | 대시보드 | 시나리오와 대화 상태의 단일 조회 모델이 불명확 | Backend 저장 상태를 기준으로 조회 API/이력 모델 정렬 |
 
 ---

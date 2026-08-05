@@ -4,6 +4,7 @@ import com.ssafy.bomi.robot.repository.RobotRepository;
 import com.ssafy.bomi.scenario.config.ScenarioTimeoutProperties;
 import com.ssafy.bomi.scenario.domain.Scenario;
 import com.ssafy.bomi.scenario.domain.ScenarioStatus;
+import com.ssafy.bomi.scenario.domain.ScenarioType;
 import com.ssafy.bomi.scenario.repository.ScenarioRepository;
 import java.time.Clock;
 import java.time.OffsetDateTime;
@@ -57,7 +58,7 @@ public class ScenarioTimeoutWatchdog {
         try {
             OffsetDateTime cutoff = OffsetDateTime.now(clock).minus(properties.getActiveTimeout());
             List<Scenario> stale = scenarioRepository.findByFinalStatusInAndUpdatedAtBefore(
-                ScenarioStatus.activeStatuses(), cutoff);
+                ScenarioType.WALK, ScenarioStatus.activeStatuses(), cutoff);
             for (Scenario scenario : stale) {
                 expire(scenario);
             }
@@ -73,7 +74,7 @@ public class ScenarioTimeoutWatchdog {
         }
         scenario.timeOut();
         scenarioRepository.save(scenario);
-        robotRepository.findById(scenario.getRobotId()).ifPresentOrElse(robot -> {
+        robotRepository.findByIdForUpdate(scenario.getRobotId()).ifPresentOrElse(robot -> {
             robot.changeMode(RobotModePolicy.forScenario(scenario.getFinalStatus()));
             robotRepository.save(robot);
         }, () -> log.warn("Timed-out scenario references unknown robot; mode not synced: "

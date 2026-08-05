@@ -47,4 +47,36 @@ class RobotCommandTest {
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("expiresAt");
     }
+
+    @Test
+    void followCommandsRequireAnExactlyEmptyPayload() {
+        OffsetDateTime occurredAt =
+            OffsetDateTime.parse("2026-08-05T16:00:01+09:00");
+
+        for (RobotCommandType type : new RobotCommandType[] {
+            RobotCommandType.FOLLOW_START,
+            RobotCommandType.FOLLOW_STOP
+        }) {
+            RobotCommand command = new RobotCommand(
+                "command-" + type.name().toLowerCase(),
+                UUID.randomUUID(),
+                "robot-01",
+                type,
+                occurredAt,
+                occurredAt.plusSeconds(10),
+                Map.of());
+
+            assertThat(command.payload()).isEmpty();
+            assertThatThrownBy(() -> new RobotCommand(
+                "invalid-command-" + type.name().toLowerCase(),
+                UUID.randomUUID(),
+                "robot-01",
+                type,
+                occurredAt,
+                occurredAt.plusSeconds(10),
+                Map.of("trackId", "must-not-be-sent")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("payload");
+        }
+    }
 }

@@ -1,6 +1,7 @@
 package com.ssafy.bomi.migration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import java.io.IOException;
@@ -9,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -106,7 +108,136 @@ class FlywayMigrationValidationTest {
         // 로딩 단계에서 죽어 있었기 때문에, 이 assertion 자체가 실행된 적이 없어서
         // 회귀가 드러나지 않았다.
         assertThat(applied).containsExactly(
-            "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14");
+            "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16");
+    }
+
+    @Test
+    void wakeWordMigrationAddsDurableScopedIdempotencyAndActiveInvariant() throws Exception {
+        assertThat(columnExists("scenario", "trigger_context")).isTrue();
+        assertThat(columnExists("scenario", "completion_result_code")).isTrue();
+        assertThat(columnExists("scenario", "completion_reason_code")).isTrue();
+        assertThat(columnExists("wake_word_trigger_receipt", "event_id")).isTrue();
+        assertThat(columnExists("wake_word_trigger_receipt", "disposition")).isTrue();
+        assertThat(indexExists("uq_scenario_wake_word_event")).isTrue();
+        assertThat(indexExists("uq_scenario_one_active_per_senior")).isTrue();
+        assertThat(constraintExists(
+            "wake_word_trigger_receipt", "ck_wake_word_trigger_confidence")).isTrue();
+        assertThat(constraintExists(
+            "wake_word_trigger_receipt", "ck_wake_word_trigger_resolution")).isTrue();
+        assertThat(constraintExists(
+            "scenario", "ck_scenario_wake_word_external_event")).isTrue();
+
+        UUID duplicateWakeEventSeniorA = UUID.randomUUID();
+        UUID duplicateWakeEventSeniorB = UUID.randomUUID();
+        String eventId = "wake-" + UUID.randomUUID();
+        try (Connection connection = dataSource.getConnection()) {
+            assertThatThrownBy(() -> insertScenario(
+                connection, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                null, "WAKE_WORD_CALL", "COMPLETED"))
+                .isInstanceOf(java.sql.SQLException.class);
+
+            insertScenario(connection, UUID.randomUUID(), duplicateWakeEventSeniorA,
+                UUID.randomUUID(), eventId, "WAKE_WORD_CALL", "COMPLETED");
+            assertThatThrownBy(() -> insertScenario(
+                connection, UUID.randomUUID(), duplicateWakeEventSeniorB,
+                UUID.randomUUID(), eventId, "WAKE_WORD_CALL", "COMPLETED"))
+                .isInstanceOf(java.sql.SQLException.class);
+
+            // The event index is deliberately scoped to WAKE_WORD_CALL, not global.
+            insertScenario(connection, UUID.randomUUID(), UUID.randomUUID(),
+                UUID.randomUUID(), eventId, "HOMECOMING", "COMPLETED");
+            insertScenario(connection, UUID.randomUUID(), UUID.randomUUID(),
+                UUID.randomUUID(), eventId, "HOMECOMING", "COMPLETED");
+
+            UUID sameSenior = UUID.randomUUID();
+            insertScenario(connection, UUID.randomUUID(), sameSenior,
+                UUID.randomUUID(), "active-a-" + UUID.randomUUID(),
+                "HOMECOMING", "RECEIVED");
+            assertThatThrownBy(() -> insertScenario(
+                connection, UUID.randomUUID(), sameSenior,
+                UUID.randomUUID(), "active-b-" + UUID.randomUUID(),
+                "WAKE_WORD_CALL", "NAVIGATING"))
+                .isInstanceOf(java.sql.SQLException.class);
+        }
+    }
+
+    @Test
+    void walkMigrationAddsFollowCorrelationAndIngressScopedReceipts() throws Exception {
+        assertThat(columnExists("scenario", "follow_start_command_id")).isTrue();
+        assertThat(columnExists("scenario", "follow_stop_command_id")).isTrue();
+        assertThat(columnExists("scenario", "follow_start_requested_at")).isTrue();
+        assertThat(columnExists("scenario", "following_started_at")).isTrue();
+        assertThat(columnExists("scenario", "follow_stop_requested_at")).isTrue();
+        assertThat(columnExists("scenario", "last_follow_result_event_id")).isTrue();
+        assertThat(columnExists("scenario", "last_follow_command_id")).isTrue();
+        assertThat(columnExists("scenario", "last_follow_result_code")).isTrue();
+        assertThat(columnExists("scenario", "last_follow_reason_code")).isTrue();
+        assertThat(columnExists("scenario", "last_follow_result_at")).isTrue();
+
+        assertThat(columnExists("walk_request_receipt", "id")).isTrue();
+        assertThat(columnExists("walk_request_receipt", "ingress")).isTrue();
+        assertThat(columnExists("walk_request_receipt", "request_id")).isTrue();
+        assertThat(columnExists("walk_request_receipt", "scenario_status")).isTrue();
+
+        assertThat(indexExists("ix_scenario_active_walk_robot")).isTrue();
+        assertThat(constraintExists(
+            "scenario", "ck_scenario_walk_start_correlation")).isTrue();
+        assertThat(constraintExists(
+            "scenario", "ck_scenario_follow_stop_correlation")).isTrue();
+        assertThat(constraintExists(
+            "scenario", "ck_scenario_follow_command_ids_differ")).isTrue();
+        assertThat(constraintExists(
+            "walk_request_receipt", "uq_walk_request_ingress_request")).isTrue();
+        assertThat(constraintExists(
+            "walk_request_receipt", "ck_walk_request_ingress")).isTrue();
+        assertThat(constraintExists(
+            "walk_request_receipt", "ck_walk_request_action")).isTrue();
+        assertThat(constraintExists(
+            "walk_request_receipt", "ck_walk_request_source")).isTrue();
+        assertThat(constraintExists(
+            "walk_request_receipt", "ck_walk_request_resolution")).isTrue();
+
+        String sharedRequestId = "walk-" + UUID.randomUUID();
+        try (Connection connection = dataSource.getConnection()) {
+            // The idempotency key is scoped by ingress: an MQTT event id must not make an
+            // unrelated Guardian request collide merely because the opaque text is equal.
+            insertRejectedWalkReceipt(connection, "MQTT", sharedRequestId);
+            insertRejectedWalkReceipt(connection, "GUARDIAN_REST", sharedRequestId);
+
+            assertThatThrownBy(() -> insertRejectedWalkReceipt(
+                connection, "MQTT", sharedRequestId))
+                .isInstanceOf(java.sql.SQLException.class);
+
+            assertThatThrownBy(() -> insertUnresolvedAcceptedWalkReceipt(
+                connection, "GUARDIAN_REST", "invalid-resolution-" + UUID.randomUUID()))
+                .isInstanceOf(java.sql.SQLException.class);
+
+            assertThatThrownBy(() -> insertScenario(
+                connection, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                "walk-missing-command-" + UUID.randomUUID(), "WALK", "RECEIVED"))
+                .isInstanceOf(java.sql.SQLException.class);
+
+            // A fully correlated WALK row is valid, but START and STOP command ids may
+            // never be reused as if they were one physical command.
+            insertWalkScenario(
+                connection, "walk-valid-" + UUID.randomUUID(),
+                "follow-start-" + UUID.randomUUID(), null);
+            assertThatThrownBy(() -> {
+                String reusedCommandId = "follow-reused-" + UUID.randomUUID();
+                insertWalkScenario(
+                    connection, "walk-reused-" + UUID.randomUUID(),
+                    reusedCommandId, reusedCommandId);
+            }).isInstanceOf(java.sql.SQLException.class);
+
+            // external_event_id is deliberately not globally unique. WALK durability is
+            // owned by the ingress-scoped receipt, while the older scenario types retain
+            // their existing external event semantics.
+            String externalId = "cross-type-" + UUID.randomUUID();
+            insertWalkScenario(connection, externalId,
+                "follow-start-" + UUID.randomUUID(), null);
+            insertScenario(connection, UUID.randomUUID(), UUID.randomUUID(),
+                UUID.randomUUID(), externalId, "HOMECOMING", "COMPLETED");
+        }
     }
 
     /**
@@ -182,6 +313,116 @@ class FlywayMigrationValidationTest {
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
             }
+        }
+    }
+
+    private boolean indexExists(String index) throws Exception {
+        try (Connection connection = dataSource.getConnection();
+            var ps = connection.prepareStatement(
+                "SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() "
+                    + "AND indexname = ?")) {
+            ps.setString(1, index);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private boolean constraintExists(String table, String constraint) throws Exception {
+        try (Connection connection = dataSource.getConnection();
+            var ps = connection.prepareStatement(
+                "SELECT 1 FROM information_schema.table_constraints "
+                    + "WHERE table_name = ? AND constraint_name = ?")) {
+            ps.setString(1, table);
+            ps.setString(2, constraint);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static void insertScenario(
+        Connection connection,
+        UUID id,
+        UUID seniorId,
+        UUID robotId,
+        String externalEventId,
+        String scenarioType,
+        String finalStatus
+    ) throws Exception {
+        try (var ps = connection.prepareStatement(
+            "INSERT INTO scenario "
+                + "(id, senior_id, robot_id, external_event_id, scenario_type, final_status, "
+                + "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, now(), now())")) {
+            ps.setObject(1, id);
+            ps.setObject(2, seniorId);
+            ps.setObject(3, robotId);
+            ps.setString(4, externalEventId);
+            ps.setString(5, scenarioType);
+            ps.setString(6, finalStatus);
+            ps.executeUpdate();
+        }
+    }
+
+    private static void insertWalkScenario(
+        Connection connection,
+        String externalEventId,
+        String startCommandId,
+        String stopCommandId
+    ) throws Exception {
+        try (var ps = connection.prepareStatement(
+            "INSERT INTO scenario "
+                + "(id, senior_id, robot_id, external_event_id, scenario_type, final_status, "
+                + "follow_start_command_id, follow_start_requested_at, "
+                + "follow_stop_command_id, follow_stop_requested_at, created_at, updated_at) "
+                + "VALUES (?, ?, ?, ?, 'WALK', ?, ?, now(), ?, "
+                + "CASE WHEN ? IS NULL THEN NULL ELSE now() END, now(), now())")) {
+            ps.setObject(1, UUID.randomUUID());
+            ps.setObject(2, UUID.randomUUID());
+            ps.setObject(3, UUID.randomUUID());
+            ps.setString(4, externalEventId);
+            ps.setString(5, stopCommandId == null ? "STARTING_FOLLOW" : "STOPPING_FOLLOW");
+            ps.setString(6, startCommandId);
+            ps.setString(7, stopCommandId);
+            ps.setString(8, stopCommandId);
+            ps.executeUpdate();
+        }
+    }
+
+    private static void insertRejectedWalkReceipt(
+        Connection connection,
+        String ingress,
+        String requestId
+    ) throws Exception {
+        try (var ps = connection.prepareStatement(
+            "INSERT INTO walk_request_receipt "
+                + "(id, ingress, request_id, robot_device_id, action, source, occurred_at, "
+                + "disposition, created_at) "
+                + "VALUES (?, ?, ?, ?, 'START', ?, now(), 'REJECTED_UNKNOWN_ROBOT', now())")) {
+            ps.setObject(1, UUID.randomUUID());
+            ps.setString(2, ingress);
+            ps.setString(3, requestId);
+            ps.setString(4, "bomi-AA001");
+            ps.setString(5, "MQTT".equals(ingress) ? "VOICE" : "APP");
+            ps.executeUpdate();
+        }
+    }
+
+    private static void insertUnresolvedAcceptedWalkReceipt(
+        Connection connection,
+        String ingress,
+        String requestId
+    ) throws Exception {
+        try (var ps = connection.prepareStatement(
+            "INSERT INTO walk_request_receipt "
+                + "(id, ingress, request_id, robot_device_id, action, source, occurred_at, "
+                + "disposition, scenario_id, scenario_status, created_at) "
+                + "VALUES (?, ?, ?, ?, 'START', 'APP', now(), 'ACCEPTED', NULL, NULL, now())")) {
+            ps.setObject(1, UUID.randomUUID());
+            ps.setString(2, ingress);
+            ps.setString(3, requestId);
+            ps.setString(4, "bomi-AA001");
+            ps.executeUpdate();
         }
     }
 }
