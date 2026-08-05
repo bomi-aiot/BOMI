@@ -7,6 +7,7 @@
 --   먼저 커밋됐고(03:16 vs 10:55), 그 시점에 이미 V13 까지 순서대로 있었으므로 이
 --   파일이 번호를 잘못 골랐다. 다음 빈 번호인 V14 로 옮긴다.
 
+-- Flyway V14: persist and correlate scenario-driven AI conversations.
 ALTER TABLE scenario
     ADD COLUMN conversation_request jsonb,
     ADD COLUMN active_navigation_command_id varchar(64),
