@@ -45,6 +45,11 @@ _DEFAULTS: dict[str, Any] = {
     "door_open_since": 0.0,
     # 안전 확인 질문의 마감 시각. 0 이면 대기 중인 확인이 없다 (schema.py 참고).
     "safety_check_until": 0.0,
+    # 마지막 보호자 알림의 시각과 사유. 같은 사유가 짧은 시간에 반복될 때 중복
+    # 알림을 억제하는 근거다 (graph/triage.py 의 escalation, policy 의
+    # T1_DUPLICATE_SUPPRESSION_SEC). 0 / None 이면 아직 한 번도 없었다는 뜻이다.
+    "last_escalation_at": 0.0,
+    "last_escalation_reason": None,
     # 지금 열려 있는 대화의 id. None 이면 열린 대화가 없다. 스케줄러가 그래프
     # checkpoint 없이 "지금 이 대화"를 읽는 자리다 (S15P11E102-306, schema.py 참고).
     "conversation_id": None,
