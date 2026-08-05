@@ -19,15 +19,17 @@ conversation_client 와 무엇이 다른가  ★ 먼저 읽을 것
     잘못 지우면 안 된다"는 이유다 — 근거는 다르지만 둘 다 침묵하지 않고 예외로
     알린다.
 
+한 요청에 사실 하나
+    서버의 POST /api/v1/robot/fact-candidates 는 사실 하나를 받아 후보 한 행을
+    만든다(요청 본문이 곧 FactCandidateIntakeRequest 하나다). 그래서 이 모듈은
+    사실 묶음을 받아 '사실마다 한 번씩' 호출한다. 중간에 하나가 실패하면 그
+    자리에서 예외를 올린다 — 이미 성공한 앞의 것들은 서버에 남지만, 서버가
+    (senior, source_message_id, factType) 조합으로 중복을 걸러내므로 다음
+    flush 의 재시도가 같은 사실을 두 번 만들지 않는다.
+
 참고
     CLAUDE.md §8 (사실은 fact_candidate 를 거친다), §12 (계약 실패 방식과 대비),
     S15P11E102-255 (이 API 의 서버 측 구현)
-
-    ★ 이 클라이언트가 보내는 페이로드(필드명)는 255-be 쪽 구현 시점에
-      확정되지 않은 상태에서 CLAUDE.md §12 의 계약 형태(seniorId,
-      conversationId, sourceMessageId)를 따라 합리적으로 추정했다. 실제
-      `POST /api/v1/robot/fact-candidates` 요청·응답 계약과 다르면
-      맞춰 고쳐야 한다 — MR 본문에 교차 확인이 필요하다고 남겨 둔다.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ from typing import Any
 
 import requests
 
+from bomi_ai_chat.backend_client.fact_contract import to_intake_payload
 from bomi_ai_chat.backend_client.session import build_backend_session
 from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.http import (
@@ -91,7 +94,9 @@ class BackendFactClient:
                 검증하지 않고 그대로 실어 보낸다(빈 값이면 서버가 400 으로
                 거절하고, 그 400 은 재시도해도 나아지지 않는다).
             facts: [{"factType": "FAMILY", "content": "손자가 자주 놀러 온다."}]
-                형태. 빈 리스트면 아무것도 하지 않는다 — 호출할 이유가 없다.
+                형태(추출 프롬프트의 어휘). 서버 계약으로의 변환은
+                fact_contract.to_intake_payload 가 맡는다. 빈 리스트면 아무것도
+                하지 않는다 — 호출할 이유가 없다.
 
         왜 max_attempts 를 설정값 그대로 쓰는가(conversation_client 와 다르게
         max_attempts=1 로 낮추지 않는가)
@@ -102,35 +107,35 @@ class BackendFactClient:
             return
 
         url = f"{self.base_url}/api/v1/robot/fact-candidates"
-        payload: dict[str, Any] = {
-            "seniorId": senior_id,
-            "conversationId": conversation_id,
-            "sourceMessageId": source_message_id,
-            "facts": facts,
-        }
-
-        try:
-            request_with_retry(
-                "POST",
-                url,
-                service="robot-fact-candidates",
-                timeout_seconds=self.timeout_seconds,
-                max_attempts=self.max_attempts,
-                backoff_seconds=self.backoff_seconds,
-                max_backoff_seconds=self.max_backoff_seconds,
-                session=self._session,
-                json=payload,
+        for fact in facts:
+            payload: dict[str, Any] = to_intake_payload(
+                fact,
+                senior_id=senior_id,
+                conversation_id=conversation_id,
+                source_message_id=source_message_id,
             )
-        except (ExternalServiceError, OSError) as error:
-            # 좁게 잡는다. Exception 을 통째로 잡으면 호출 인자를 틀린 프로그래밍
-            # 오류까지 "네트워크 실패"로 둔갑한다(conversation_client 와 같은 원칙).
-            if is_auth_failure(error):
-                logger.warning(
-                    "AUTH FAILURE: backend rejected the shared secret (status=%s) "
-                    "while submitting fact candidates; this is a config problem, "
-                    "not a retryable failure. Check BACKEND_SHARED_SECRET.",
-                    error.status_code,
+            try:
+                request_with_retry(
+                    "POST",
+                    url,
+                    service="robot-fact-candidates",
+                    timeout_seconds=self.timeout_seconds,
+                    max_attempts=self.max_attempts,
+                    backoff_seconds=self.backoff_seconds,
+                    max_backoff_seconds=self.max_backoff_seconds,
+                    session=self._session,
+                    json=payload,
                 )
-            raise FactSubmissionError(
-                f"fact candidate submission failed: {error}"
-            ) from error
+            except (ExternalServiceError, OSError) as error:
+                # 좁게 잡는다. Exception 을 통째로 잡으면 호출 인자를 틀린 프로그래밍
+                # 오류까지 "네트워크 실패"로 둔갑한다(conversation_client 와 같은 원칙).
+                if is_auth_failure(error):
+                    logger.warning(
+                        "AUTH FAILURE: backend rejected the shared secret (status=%s) "
+                        "while submitting fact candidates; this is a config problem, "
+                        "not a retryable failure. Check BACKEND_SHARED_SECRET.",
+                        error.status_code,
+                    )
+                raise FactSubmissionError(
+                    f"fact candidate submission failed: {error}"
+                ) from error
