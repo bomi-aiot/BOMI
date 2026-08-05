@@ -1,6 +1,7 @@
 package com.ssafy.bomi.scenario.application;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.ssafy.bomi.conversation.domain.ConversationIntent;
 import com.ssafy.bomi.mqtt.outbound.RobotCommand;
 import com.ssafy.bomi.mqtt.outbound.RobotCommandPublisher;
 import com.ssafy.bomi.mqtt.outbound.RobotCommandType;
@@ -15,6 +16,7 @@ import com.ssafy.bomi.scenario.repository.ScenarioRepository;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -110,7 +112,12 @@ public class WellnessCheckOrchestrator {
             return;
         }
 
-        Scenario scenario = Scenario.create(seniorId, robot.getId(), ScenarioType.WELLNESS_CHECK, sensorId);
+        Scenario scenario = Scenario.create(
+            seniorId, robot.getId(), ScenarioType.WELLNESS_CHECK, sensorId);
+        scenario.prepareConversation(
+            ConversationIntent.WELLNESS_CHECK,
+            DEFAULT_PROMPT,
+            conversationContext(sensorId, temperature, humidity));
         scenario.beginMovingToEntrance(); // "시나리오 목적지로 이동 중"의 범용 의미 (ScenarioType 참고)
         String navigationCommandId = UUID.randomUUID().toString();
         scenario.expectNavigationResult(
@@ -120,12 +127,10 @@ public class WellnessCheckOrchestrator {
         robot.changeMode(RobotModePolicy.forScenario(scenario.getFinalStatus()));
         robotRepository.save(robot);
 
-        // 이동과 발화를 함께 내보낸다 — 홈커밍과 같은 이유 (S15P11E102-226):
-        // 느리거나 실패한 이동이 안부 문구를 삼키면 안 된다.
+        // 대화 요청은 위에서 시나리오에 보존하고, 목적지 도착이 확인된 뒤
+        // HomecomingOrchestrator가 START_CONVERSATION으로 AI Chat에 전달한다.
         publish(navigationCommandId, scenario.getId(), robot, RobotCommandType.NAVIGATE,
             Map.of(HomecomingContract.NAV_TARGET_KEY, HomecomingContract.TARGET_LIVING_ROOM));
-        publish(UUID.randomUUID().toString(), scenario.getId(), robot, RobotCommandType.SPEAK,
-            Map.of(HomecomingContract.SPEAK_TEXT_KEY, DEFAULT_PROMPT));
 
         log.info("Wellness check started: scenarioId={}, seniorId={}, temp={}, humidity={}",
             scenario.getId(), seniorId, temperature, humidity);
@@ -138,6 +143,23 @@ public class WellnessCheckOrchestrator {
         boolean tooHumid = humidity != null
             && humidity.compareTo(wellnessProperties.getHumidityThresholdPercent()) >= 0;
         return tooHot || tooHumid;
+    }
+
+    private static Map<String, Object> conversationContext(
+        String sensorId,
+        BigDecimal temperature,
+        BigDecimal humidity
+    ) {
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("sourceId", sensorId);
+        context.put("location", HomecomingContract.TARGET_LIVING_ROOM);
+        if (temperature != null) {
+            context.put(ObservationContract.TEMPERATURE_KEY, temperature);
+        }
+        if (humidity != null) {
+            context.put(ObservationContract.HUMIDITY_KEY, humidity);
+        }
+        return context;
     }
 
     private void publish(

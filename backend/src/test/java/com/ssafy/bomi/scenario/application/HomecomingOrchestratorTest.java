@@ -36,12 +36,15 @@ import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class HomecomingOrchestratorTest {
 
     private static final String ENTRANCE_COMMAND_ID = "navigate-entrance";
+    private static final String LIVING_ROOM_COMMAND_ID = "navigate-living-room";
     private static final String DEFAULT_COMMAND_ID = "navigate-default";
 
     private final ScenarioRepository scenarioRepository = mock(ScenarioRepository.class);
@@ -149,6 +152,37 @@ class HomecomingOrchestratorTest {
         orchestrator.onRobotArrived(scenario.getId(), deviceId);
 
         assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.CHECKING_INTERACTION);
+        verify(conversationGateway).startConversation(scenario.getId());
+        verify(commandPublisher, never()).publish(any());
+    }
+
+    @ParameterizedTest
+    @EnumSource(
+        value = ScenarioType.class,
+        names = {"WELLNESS_CHECK", "MEDICATION_REMINDER"}
+    )
+    void livingRoomScenarioArrivalAlsoRequestsAi(ScenarioType scenarioType) {
+        ConversationIntent intent = scenarioType == ScenarioType.WELLNESS_CHECK
+            ? ConversationIntent.WELLNESS_CHECK
+            : ConversationIntent.MEDICATION_REMINDER;
+        Scenario scenario = Scenario.create(
+            seniorId, robotUuid, scenarioType, "external-event-01");
+        scenario.prepareConversation(
+            intent,
+            "어르신, 확인할 시간이에요.",
+            Map.of("location", "LIVING_ROOM"));
+        scenario.beginMovingToEntrance();
+        scenario.expectNavigationResult(LIVING_ROOM_COMMAND_ID, "LIVING_ROOM");
+        ReflectionTestUtils.setField(scenario, "id", UUID.randomUUID());
+        when(scenarioRepository.findByIdForUpdate(scenario.getId()))
+            .thenReturn(Optional.of(scenario));
+        when(robotRepository.findById(robotUuid)).thenReturn(Optional.of(robot()));
+
+        orchestrator.onRobotArrived(
+            scenario.getId(), deviceId, LIVING_ROOM_COMMAND_ID, false);
+
+        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.CHECKING_INTERACTION);
+        assertThat(scenario.getActiveNavigationCommandId()).isNull();
         verify(conversationGateway).startConversation(scenario.getId());
         verify(commandPublisher, never()).publish(any());
     }
