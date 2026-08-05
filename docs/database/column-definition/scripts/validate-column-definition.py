@@ -64,7 +64,9 @@ EXPECTED_COLUMNS = {
     ],
     "scenario": [
         "id", "senior_id", "robot_id", "external_event_id", "scenario_type",
-        "final_status",
+        "final_status", "conversation_request", "active_navigation_command_id",
+        "active_navigation_target", "trigger_context", "completion_result_code",
+        "completion_reason_code", "created_at", "updated_at",
     ],
     "conversation": [
         "id", "senior_id", "scenario_id", "status", "started_at",
@@ -78,7 +80,7 @@ EXPECTED_COLUMNS = {
         "id", "senior_id", "conversation_id", "summary_type",
         "period_started_at", "period_ended_at", "content",
         "source_message_count", "generated_at", "superseded_by_id",
-        "embedding",
+        "embedding_status", "embedding_synced_at", "embedding_model",
     ],
     "fact_candidate": [
         "id", "senior_id", "source_type", "onboarding_answer_id",
@@ -97,15 +99,19 @@ EXPECTED_COLUMNS = {
     "memory": [
         "id", "senior_id", "source_conversation_id", "superseded_by_id",
         "memory_type", "content", "verification_status", "lifecycle_status",
-        "visibility", "embedding", "source_summary_id", "source_candidate_id",
-        "keywords", "importance", "first_observed_at", "last_confirmed_at",
-        "last_used_at",
+        "visibility", "embedding_status", "embedding_synced_at",
+        "embedding_model", "source_summary_id", "source_candidate_id", "keywords",
+        "importance", "first_observed_at", "last_confirmed_at", "last_used_at",
     ],
     "care_record": [
         "id", "senior_id", "parent_record_id", "scenario_id",
         "source_conversation_id", "source_message_id", "recipient_guardian_id",
         "created_by_user_id", "record_type", "status", "details", "recurrence",
         "source_candidate_id",
+    ],
+    "wake_word_trigger_receipt": [
+        "event_id", "robot_device_id", "occurred_at", "keyword", "confidence",
+        "disposition", "scenario_id", "created_at",
     ],
 }
 EXPECTED_HEADERS = {
@@ -229,8 +235,8 @@ def main() -> int:
     }
     if "02_컬럼정의" in tables_by_sheet:
         headers, column_rows = tables_by_sheet["02_컬럼정의"]
-        if len(column_rows) != 151:
-            fail(errors, f"컬럼 수가 151이 아닙니다: {len(column_rows)}")
+        if len(column_rows) != 171:
+            fail(errors, f"컬럼 수가 171이 아닙니다: {len(column_rows)}")
         actual_by_table: dict[str, list[str]] = {name: [] for name in EXPECTED_COLUMNS}
         seen_pairs: list[str] = []
         required_description_indexes = [headers.index(name) for name in ["무엇을 저장하는가", "언제 어떻게 쓰는가", "주의할 점", "예시"]]
@@ -278,7 +284,10 @@ def main() -> int:
         if duplicate_values(names):
             fail(errors, f"중복 제약조건 이름이 있습니다: {sorted(duplicate_values(names))}")
         pk_targets = {row[2] for row in constraint_rows if row[1] == "PK"}
-        expected_pk_targets = {f"{table}.id" for table in EXPECTED_COLUMNS}
+        expected_pk_targets = {
+            f"{table}.{'event_id' if table == 'wake_word_trigger_receipt' else 'id'}"
+            for table in EXPECTED_COLUMNS
+        }
         if pk_targets != expected_pk_targets:
             fail(errors, f"PK 정의가 다릅니다: {sorted(pk_targets)}")
 
@@ -292,6 +301,8 @@ def main() -> int:
             "fact_candidate.confirmed_value",
             "care_record.details",
             "care_record.recurrence",
+            "scenario.conversation_request",
+            "scenario.trigger_context",
         }
         if targets != expected:
             fail(errors, f"JSONB 대상이 다릅니다: {sorted(targets)}")
@@ -317,7 +328,22 @@ def main() -> int:
         required_codes = {
             "app_user.user_type": {"SENIOR", "GUARDIAN"},
             "robot.current_mode": {"IDLE", "SCENARIO_ACTIVE", "REST_GUARD", "SAFE_STOP"},
-            "scenario.scenario_type": {"HOMECOMING", "FALL_RESPONSE", "MANUAL_INTERACTION"},
+            "scenario.scenario_type": {
+                "HOMECOMING", "WELLNESS_CHECK", "MEDICATION_REMINDER",
+                "WAKE_WORD_CALL", "FALL_RESPONSE", "MANUAL_INTERACTION",
+            },
+            "scenario.final_status": {
+                "RECEIVED", "NAVIGATING", "MOVING_TO_ENTRANCE",
+                "CHECKING_INTERACTION", "CONVERSING", "RETURN_DECISION",
+                "RETURNING_TO_DEFAULT", "COMPLETED", "FAILED", "CANCELLED",
+                "TIMED_OUT",
+            },
+            "wake_word_trigger_receipt.disposition": {
+                "RECEIVED", "ACCEPTED", "REJECTED_UNKNOWN_ROBOT",
+                "REJECTED_INACTIVE_ROBOT", "REJECTED_UNASSIGNED_ROBOT",
+                "REJECTED_SAFE_STOP", "REJECTED_ACTIVE_SCENARIO",
+                "REJECTED_BUSY_MODE",
+            },
             "conversation_message.role": {"SENIOR", "ROBOT"},
             "conversation_summary.summary_type": {"CONVERSATION", "DAILY"},
             "onboarding_session.started_channel": {"APP", "ROBOT"},
@@ -503,7 +529,8 @@ def main() -> int:
                 # S15P11E102-261: 개인차가 있어야 하는 값 세 가지(기상·취침 시각,
                 # 만성 통증 부위, 단골 병원)를 온보딩으로 묻는다.
                 "WAKE_TIME", "SLEEP_TIME", "CHRONIC_PAIN_AREA",
-                "PREFERRED_HOSPITAL",
+                "PREFERRED_HOSPITAL", "FAVORITE_FOOD", "FAVORITE_SONG",
+                "FORMER_OCCUPATION", "HOMETOWN",
             }
             if set(question_codes) != required_codes:
                 fail(errors, f"질문 코드 목록이 다릅니다: {sorted(question_codes)}")
@@ -567,8 +594,8 @@ def main() -> int:
 
     print("컬럼정의서 검증 완료")
     print("- 시트 10개")
-    print("- 물리 테이블 12개")
-    print("- 컬럼 151개")
+    print("- 물리 테이블 13개")
+    print("- 컬럼 171개")
     print("- 목적형 CSV 스냅샷 9개")
     print("- Jira·승인·입력목록·검증결과 시트 없음")
     print("- 컬럼별 의미·사용 맥락·주의·예시 누락 및 동일 문장 반복 없음")
