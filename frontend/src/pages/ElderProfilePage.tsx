@@ -48,7 +48,8 @@ function consentTone(status: ConsentStatus): 'success' | 'warning' | 'neutral' {
 // 조회 전용 화면: app_user 기반 기본 정보만 표시한다.
 // 건강정보·생년월일·성별 등은 스키마에 없어 표시하지 않으며, 편집은 제공하지 않는다.
 export function ElderProfilePage() {
-  const { elderProfile, isLoading, error, refresh } = useBomi()
+  const { elderProfile, isLoading, error, dataErrors, refresh } = useBomi()
+  const pageError = dataErrors.elderProfile ?? error
 
   if (isLoading && !elderProfile) {
     return <LoadingState label="어르신 정보를 불러오는 중입니다" rows={5} />
@@ -58,7 +59,7 @@ export function ElderProfilePage() {
     return (
       <ErrorState
         title="어르신 정보를 불러오지 못했습니다"
-        description={error ?? '잠시 후 다시 시도해 주세요.'}
+        description={pageError ?? '잠시 후 다시 시도해 주세요.'}
         onRetry={() => void refresh()}
       />
     )

@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export const APP_ROUTES = [
+  '/',
   '/dashboard',
+  '/records',
+  '/care-plan',
+  '/bomi-home',
   '/elder/profile',
   '/conversation-preferences',
   '/confirmation-requests',
@@ -37,7 +41,7 @@ const normalizePath = (path: string): string => {
 
 const getBrowserPath = (): string => {
   if (typeof window === 'undefined') {
-    return '/dashboard';
+    return '/';
   }
 
   return normalizePath(window.location.pathname);

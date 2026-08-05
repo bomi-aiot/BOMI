@@ -50,7 +50,10 @@ const undef = <T>(v: T | null | undefined): T | undefined =>
   v === null || v === undefined ? undefined : v
 
 function mapMedicationStatus(status: string): MedicationStatus {
-  return status === 'ACTIVE' ? 'ACTIVE' : 'ENDED'
+  if (status === 'ACTIVE' || status === 'PAUSED' || status === 'ENDED') {
+    return status
+  }
+  return 'UNKNOWN'
 }
 
 function mapMedicationSchedule(dto: MedicationScheduleDto): MedicationSchedule {
@@ -83,21 +86,28 @@ export function mapMedication(dto: MedicationDto): Medication {
     status: mapMedicationStatus(dto.status),
     schedules: (dto.schedules ?? []).map(mapMedicationSchedule),
     reminderEnabled: dto.reminderEnabled ?? false,
-    sourceType: 'GUARDIAN',
-    verificationStatus: 'GUARDIAN_CONFIRMED',
-    createdAt: dto.startedOn ?? '',
-    updatedAt: dto.startedOn ?? '',
+    sourceType: 'SYSTEM',
+    verificationStatus: 'UNVERIFIED',
+    createdAt: '',
+    updatedAt: '',
   }
 }
 
 export function mapMedicationResponse(dto: MedicationResponseDto): MedicationResponse {
+  const status: MedicationResponseStatus =
+    dto.status === 'CONFIRMED' ||
+    dto.status === 'NO_RESPONSE' ||
+    dto.status === 'UPCOMING' ||
+    dto.status === 'MISSED' ||
+    dto.status === 'DECLINED'
+      ? dto.status
+      : 'UNKNOWN'
   return {
     id: dto.id,
     medicationId: dto.medicationId ?? '',
     medicationScheduleId: dto.medicationScheduleId ?? '',
     scheduledAt: dto.scheduledAt,
     respondedAt: undef(dto.respondedAt),
-    status: dto.status as MedicationResponseStatus,
-    responseText: undef(dto.responseText),
+    status,
   }
 }
