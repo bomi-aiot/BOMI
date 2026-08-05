@@ -93,6 +93,38 @@ class SpeechProposal(TypedDict, total=False):
     meta: dict
 
 
+class ContextCandidate(TypedDict, total=False):
+    """현재 대화의 '중심 문맥' 후보 하나 — 값과 근거를 함께 담는다.
+
+    왜 값만 저장하지 않는가
+        "현재 지역 = 제주" 라고만 저장하면 두 가지 질문에 답할 수 없다.
+        ① 언제까지 제주인가? (여행 이야기가 끝나고도 분리수거 질문을 제주로
+        해석하면 안 된다 — 시나리오 E) ② 왜 제주인가? (틀렸을 때 고치려면
+        근거가 남아 있어야 한다). 그래서 신뢰도·출처·만료를 함께 든다.
+
+    수명 규칙은 graph/context_slots.py 가 소유한다. 이 스키마는 모양만 정한다.
+
+    필드
+        type:          LOCATION 등. 조회 파라미터로 실제 쓰이는 종류만 존재한다.
+        value:         "제주" 같은 실제 값.
+        source:        USER_EXPLICIT / PROFILE_DEFAULT — "왜 이 값인가"의 답.
+        related_topic: 이 문맥이 붙어 있는 화제(있으면). 감쇠 판정의 참고.
+        confidence:    0~1. 어르신이 직접 말했으면 1.0, 턴이 지날수록 감쇠.
+        scope:         SESSION(세션 종료·화제 전환에 소멸) / STANDING(프로필 기본값).
+        created_at / expires_at / last_used_at: 전부 clock 기준 epoch 초.
+    """
+
+    type: str
+    value: str
+    source: str
+    related_topic: str
+    confidence: float
+    scope: str
+    created_at: float
+    expires_at: float
+    last_used_at: float
+
+
 class ConvState(TypedDict, total=False):
     # ── 신원 ──
     #
@@ -316,6 +348,18 @@ class ConvState(TypedDict, total=False):
     # {"someone_speaking": bool, "ambient_sound": bool}
     audio_ctx: dict
 
+    # ── 현재 대화 문맥 (자연스러운 대화 Phase 2) ──
+    #
+    # "이번 주말에 제주도 가" 다음의 "날씨 어때?"가 제주를 잃지 않게 하는 유일한
+    # 저장소다. 값이 아니라 근거(출처·신뢰도·만료)를 함께 담는다 — ContextCandidate
+    # 참고. 수명 관리(만료·감쇠·정정·세션 리셋)는 note_interaction 이 매 반응형
+    # 턴에 graph/context_slots.update 로 수행한다.
+    #
+    # reducer 가 없는 채널이므로 conversation_id 와 같은 규칙을 지킨다: 바꾸고
+    # 싶은 턴에만 반환한다. 여기서의 상태 누수는 "지난주 제주가 오늘 분리수거를
+    # 삼키는" 사고가 된다 — 만료와 감쇠가 그 방어선이다.
+    context_candidates: list[ContextCandidate]
+
 
 def initial_state(senior_id: str) -> ConvState:
     """콜드 스타트용 기본값.
@@ -352,4 +396,5 @@ def initial_state(senior_id: str) -> ConvState:
         "audio_ctx": {},
         "ctx": {},
         "ctx_is_cached": False,
+        "context_candidates": [],
     }

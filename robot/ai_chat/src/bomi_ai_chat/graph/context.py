@@ -51,10 +51,11 @@ import re
 
 from bomi_ai_chat import degradation
 from bomi_ai_chat.backend_client import BackendContextClient
-from bomi_ai_chat.graph import contract_dialogue
+from bomi_ai_chat.clock import clock
+from bomi_ai_chat.graph import context_slots, contract_dialogue
 from bomi_ai_chat.llm.medical_flow import handle_medical_query
 from bomi_ai_chat.state import ConvState
-from bomi_ai_chat.weather.client import WeatherClient, describe_forecast, extract_city
+from bomi_ai_chat.weather.client import WeatherClient, describe_forecast
 
 logger = logging.getLogger(__name__)
 
@@ -325,7 +326,7 @@ def _gather_lookup_documents(state: ConvState) -> tuple[list[dict], bool | None]
             return _lookup_medical_documents(text), medical_flag
 
     if any(marker in text for marker in _WEATHER_MARKERS):
-        return _lookup_weather_documents(text), medical_flag
+        return _lookup_weather_documents(state, text), medical_flag
     return [], medical_flag
 
 
@@ -365,16 +366,29 @@ def _lookup_unavailable_document(topic: str) -> dict:
     return {"title": f"{topic} 조회 실패", "content": _LOOKUP_FAILURE_NOTE.format(topic=topic)}
 
 
-def _lookup_weather_documents(text: str) -> list[dict]:
+def _lookup_weather_documents(state: ConvState, text: str) -> list[dict]:
     """기상청 조회를 하고 '참고 자료' 한 건으로 감싼다.
 
-    도시를 특정 못 하면(예: "오늘 날씨 어때") 조회 자체를 시도하지 않는다.
-    legacy 경로(pipeline.py)도 같다 — 이것은 조회 '실패'가 아니라 정보 부족이라,
-    완료 조건 5번이 요구하는 "조회 실패" 처리(_LOOKUP_FAILURE_NOTE) 대상이 아니다.
+    지역은 이 우선순위로 정한다 (자연스러운 대화 Phase 2, CLAUDE.md §30)
+        1. 이번 발화에 나온 도시명 — "부산 날씨 어때?"
+        2. 살아 있는 지역 문맥 — "이번 주말에 제주도 가" 다음의 "날씨 어때?",
+           "거긴 비 와?" (시나리오 B·D·H)
+        3. 없으면 조회하지 않는다 — 모델은 참고 자료 없이 지역을 되묻는다.
+           지어내는 것보다 되묻는 것이 낫다(233 실기에서 LLM 이 없는 기온을
+           만들어 낸 것이 이 규칙이 지키는 사고다).
+
+    예전에는 1번뿐이었다. "오늘 날씨 어때?"가 영원히 조회되지 않던 이유이고,
+    3번이 남아 있는 이유는 프로필에 아직 주소가 없기 때문이다(백엔드 계약 확장
+    후 PROFILE_DEFAULT 후보가 이 빈자리를 채운다 — implementation-plan P1-A5).
     """
-    city = extract_city(text)
+    city, source = context_slots.resolve_location(
+        state.get("context_candidates"), text, clock.now())
     if not city:
         return []
+    if source != "utterance":
+        # 관측 가능성: "왜 이 지역으로 조회했는가"가 로그에 남아야 틀렸을 때
+        # 고칠 수 있다 (CONTEXT_RESOLVED 이벤트의 최소 형태).
+        logger.info("CONTEXT_RESOLVED type=LOCATION value=%s source=%s", city, source)
     try:
         forecast = _weather_client().get_forecast(city)
     except Exception:  # noqa: BLE001 - 조회 실패가 턴을 죽이면 안 된다
@@ -549,7 +563,11 @@ def _pending_consent_intent(state: ConvState, text: str) -> bool:
 # 날씨 질문의 표지. _gather_lookup_documents(아래 §311 절)가 조회 여부를 정하는
 # 데도 그대로 재사용한다 — "info 로는 분류됐는데 조회는 안 됐다" 같은 두 곳의
 # 어긋남을 막으려면 표지가 하나여야 한다.
-_WEATHER_MARKERS = ("날씨", "기온", "비 와", "비와", "추워", "더워")
+# "비는?", "거긴 덥나?" 같은 이어지는 질문(시나리오 B·H)도 잡도록 어간을 넓혔다.
+# "덥"/"춥" 은 "덥나/덥지/더워", "춥나/추워" 를 모두 덮는다. "덥석" 같은 오탐은
+# 조회 한 번이 헛돌 뿐 답변을 오염시키지 않는다(참고 자료가 비면 그만이다).
+_WEATHER_MARKERS = ("날씨", "기온", "비 와", "비와", "비는", "비 올", "비올",
+                    "우산", "추워", "더워", "덥", "춥")
 
 # 지남력·사실 질문의 표지.
 #

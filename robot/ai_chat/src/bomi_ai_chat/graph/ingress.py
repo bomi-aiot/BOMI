@@ -55,7 +55,7 @@ from langgraph.graph import END
 from bomi_ai_chat import policy
 from bomi_ai_chat.clock import clock
 from bomi_ai_chat.door import occupancy as occupancy_rules
-from bomi_ai_chat.graph import output
+from bomi_ai_chat.graph import context_slots, output
 from bomi_ai_chat.localstore import runtime as runtime_store
 from bomi_ai_chat.state import ConvState, SpeechProposal
 
@@ -200,7 +200,20 @@ def note_interaction(state: ConvState) -> dict:
     # 반드시 last_user_interaction_at 을 위에서 '덮어쓰기 전'의 값(= state 에 남아
     # 있던 지난 상호작용 시각)으로 판정해야 한다. out 은 아직 state 에 합쳐지지
     # 않았으므로 여기서 state.get(...) 을 읽는 것이 정확하다.
-    out.update(_conversation_boundary(state, now))
+    boundary = _conversation_boundary(state, now)
+    out.update(boundary)
+
+    # 현재 대화 문맥(지역 등)을 이번 발화로 갱신한다 (자연스러운 대화 Phase 2).
+    #
+    # 대화 경계를 넘었으면 SESSION 범위 문맥부터 비운다 — 30분 넘게 자리를 비웠다
+    # 돌아온 사람의 "날씨 어때?"를 아침의 제주 이야기로 해석하면 안 된다. 경계
+    # 판정과 같은 신호를 쓰는 이유: '문맥의 수명'과 '최근 대화의 수명'이 다르면
+    # 프롬프트의 최근 대화에는 없는 지역으로 조회하는 어긋남이 생긴다.
+    crossed_boundary = "conversation_id" in boundary and boundary["conversation_id"] is None
+    previous_candidates = [] if crossed_boundary else (
+        state.get("context_candidates") or [])
+    out["context_candidates"] = context_slots.update(
+        previous_candidates, state.get("user_input") or "", now)
 
     # 맞장구로 끝나는 턴에서도 먼저 저장한다. "응" 한마디도 생존 증거다.
     _persist_interaction(state, now)
