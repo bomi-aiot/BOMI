@@ -1,9 +1,10 @@
 package com.ssafy.bomi.scenario.inbound;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.ssafy.bomi.mqtt.inbound.MqttInboundMessage;
 import com.ssafy.bomi.mqtt.inbound.MqttMessageHandler;
 import com.ssafy.bomi.mqtt.topic.MqttInboundCategory;
-import com.ssafy.bomi.scenario.application.HomecomingOrchestrator;
+import com.ssafy.bomi.scenario.application.NavigationResultRouter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -23,10 +24,10 @@ public class NavigationResultHandler implements MqttMessageHandler {
     private static final Logger log = LoggerFactory.getLogger(NavigationResultHandler.class);
     private static final String TYPE_NAVIGATION_RESULT = "NAVIGATION_RESULT";
 
-    private final HomecomingOrchestrator orchestrator;
+    private final NavigationResultRouter router;
 
-    public NavigationResultHandler(HomecomingOrchestrator orchestrator) {
-        this.orchestrator = orchestrator;
+    public NavigationResultHandler(NavigationResultRouter router) {
+        this.router = router;
     }
 
     @Override
@@ -38,6 +39,8 @@ public class NavigationResultHandler implements MqttMessageHandler {
     @Override
     public void handle(MqttInboundMessage message) {
         String outcome;
+        String resultCode;
+        String reasonCode;
         String commandId = null;
         if (message.legacyContract()) {
             String status = message.payload().path("status").asText();
@@ -49,25 +52,23 @@ public class NavigationResultHandler implements MqttMessageHandler {
                 case "CANCELLED" -> "CANCELLED";
                 default -> "FAILED";
             };
+            resultCode = "ARRIVED".equals(status) ? "ARRIVED" : "NOT_ARRIVED";
+            reasonCode = null;
         } else {
             outcome = message.payload().path("outcome").asText();
+            resultCode = message.payload().path("resultCode").asText();
+            JsonNode reasonNode = message.payload().get("reasonCode");
+            reasonCode = reasonNode == null || reasonNode.isNull()
+                ? null : reasonNode.asText();
             commandId = message.requireCommandId();
         }
-
-        switch (outcome) {
-            case "SUCCEEDED" -> orchestrator.onRobotArrived(
-                message.requireScenarioId(), message.sourceId(), commandId,
-                message.legacyContract());
-            case "FAILED" -> orchestrator.onNavigationFailed(
-                message.requireScenarioId(), message.sourceId(), commandId,
-                message.legacyContract());
-            case "CANCELLED" -> orchestrator.onNavigationCancelled(
-                message.requireScenarioId(), message.sourceId(), commandId,
-                message.legacyContract());
-            case "TIMED_OUT" -> orchestrator.onNavigationTimedOut(
-                message.requireScenarioId(), message.sourceId(), commandId,
-                message.legacyContract());
-            default -> log.warn("Unexpected validated navigation outcome: {}", outcome);
-        }
+        router.route(
+            message.requireScenarioId(),
+            message.sourceId(),
+            commandId,
+            message.legacyContract(),
+            outcome,
+            resultCode,
+            reasonCode);
     }
 }

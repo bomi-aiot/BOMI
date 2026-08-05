@@ -679,7 +679,7 @@ TRIGGERED → NAVIGATING → CONVERSING → COMPLETED
 | 영역 | 현재 상태 | v1에 필요한 변경 |
 |---|---|---|
 | 계약 문서 | draft와 여러 Robot 계약 문서에 서로 다른 필드와 상태 표현이 존재 | 이 문서를 기준으로 AsyncAPI와 보조 문서를 정렬 |
-| 수신 이벤트 타입 | 파서 허용 목록에 `WAKE_WORD_DETECTED`, `WALK_REQUESTED`, `CONVERSATION_STARTED`, `FOLLOW_RESULT`가 없음 | 각 타입 허용 및 타입별 필드 검증 추가 |
+| 수신 이벤트 타입 | `WAKE_WORD_DETECTED`와 `CONVERSATION_STARTED`는 파서·타입별 검증이 구현됨. `WALK_REQUESTED`, `FOLLOW_RESULT`는 아직 없음 | 산책 구현 시 남은 두 타입 허용 및 타입별 필드 검증 추가 |
 | Robot 명령 타입 | `NAVIGATE`, `SPEAK`, `CANCEL`만 존재 | `FOLLOW_START`, `FOLLOW_STOP` 추가 |
 | AI 명령 | AI commands 토픽, `START_CONVERSATION` 모델과 publisher가 없음 | `bomi/v1/ai/{robotId}/commands` 발행 경로와 모델 추가 |
 | 대화 연결 | 대화 gateway가 실제 AI 명령 발행 대신 임시 동작에 가까움 | `scenarioId`와 `conversationId`를 저장하고 실제 명령 발행 |
@@ -687,11 +687,11 @@ TRIGGERED → NAVIGATING → CONVERSING → COMPLETED
 | 대화 시작 | `CONVERSATION_STARTED` 처리 없음 | 대시보드용 상태를 `CONVERSING`으로 전이 |
 | Robot 결과 | 기존 결과가 `status` 중심이며 연관 ID 위치가 혼재 | `outcome`, 타입별 `resultCode`, `reasonCode`와 최상위 ID로 통일 |
 | 발화 결과 | `SPEAK_RESULT`를 기대하는 코드가 있으나 기존 payload 형식 확인 필요 | one-way 발화 뒤에도 `SPEAK_RESULT`를 받고 `SPOKEN`/`NOT_SPOKEN`과 공통 outcome 형식으로 통일 |
-| 호출 | 전용 웨이크 워드 입력과 orchestrator가 없음 | AI의 event 입력, 중복/동시성 정책, `NAVIGATE(LIVING_ROOM)`만 수행하는 호출 시나리오 추가 |
+| 호출 | `WAKE_WORD_CALL` 전용 입력·orchestrator·결과 routing과 영속 receipt가 구현됨. Backend는 `NAVIGATE(LIVING_ROOM)`만 발행하고 `ARRIVED`에서 즉시 완료함 | 완료. 호출에서 `START_CONVERSATION`, `conversationId`, `NAVIGATE(DEFAULT)`를 추가하지 않는 책임 경계를 회귀 테스트로 유지 |
 | 산책 | 전용 event/command/orchestrator가 없음 | 계약은 지금 반영하되 실제 구현은 후순위로 분리 |
 | 스케줄러 | 복약 스케줄러는 존재하지만 대화 시작 계약과 실행 원자성 확인 필요 | 일정 선점, 재시도 중복 방지, `START_CONVERSATION` 연결 검증 |
 | 개인 일정 | `fact_candidate` 후보와 `care_record` 물질화 흐름이 스케줄러에 연결되지 않음 | `CONFIRMED` 후 `care_record`로 `MATERIALIZED`된 기록만 scheduler 입력으로 연결 |
-| 중복 제거 | 프로세스 메모리 기반 중복 제거만 사용하면 재시작에 취약 | QoS 1 재전송과 재시작을 견디는 영속 중복 키 검토 |
+| 중복 제거 | 공통 dispatcher는 프로세스 메모리 기반이지만 호출은 `wake_word_trigger_receipt`와 WAKE 전용 부분 유일 인덱스로 수락·거절 재처리를 영속 차단함 | 다른 이벤트의 영속 inbox와 명령 발행의 영속 outbox는 별도 신뢰성 과제로 남음 |
 | 대시보드 | 시나리오와 대화 상태의 단일 조회 모델이 불명확 | Backend 저장 상태를 기준으로 조회 API/이력 모델 정렬 |
 
 ---

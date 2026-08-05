@@ -49,4 +49,15 @@ class RobotRepositoryTest {
         assertThat(found.getAmbientTemperatureC()).isEqualByComparingTo("23.50");
         assertThat(found.getAmbientObservedAt()).isNotNull();
     }
+
+    @Test
+    void findsRobotByDeviceIdForScenarioStartLocking() {
+        Robot saved = robotRepository.saveAndFlush(
+            Robot.create(UUID.randomUUID(), "robot-lock-01"));
+        em.clear();
+
+        Robot locked = robotRepository.findByDeviceIdForUpdate("robot-lock-01").orElseThrow();
+
+        assertThat(locked.getId()).isEqualTo(saved.getId());
+    }
 }

@@ -64,7 +64,7 @@ class ScenarioTimeoutWatchdogTest {
             .thenReturn(List.of(stuck));
         Robot robot = Robot.create(seniorId, "robot-01");
         ReflectionTestUtils.setField(robot, "id", robotId);
-        when(robotRepository.findById(robotId)).thenReturn(Optional.of(robot));
+        when(robotRepository.findByIdForUpdate(robotId)).thenReturn(Optional.of(robot));
 
         watchdog().tick();
 

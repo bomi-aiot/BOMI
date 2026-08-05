@@ -73,7 +73,7 @@ public class ScenarioTimeoutWatchdog {
         }
         scenario.timeOut();
         scenarioRepository.save(scenario);
-        robotRepository.findById(scenario.getRobotId()).ifPresentOrElse(robot -> {
+        robotRepository.findByIdForUpdate(scenario.getRobotId()).ifPresentOrElse(robot -> {
             robot.changeMode(RobotModePolicy.forScenario(scenario.getFinalStatus()));
             robotRepository.save(robot);
         }, () -> log.warn("Timed-out scenario references unknown robot; mode not synced: "

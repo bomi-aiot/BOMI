@@ -13,18 +13,29 @@ import com.ssafy.bomi.scenario.application.ScenarioStartGuard.BlockReason;
 import com.ssafy.bomi.scenario.domain.ScenarioStatus;
 import com.ssafy.bomi.scenario.domain.ScenarioType;
 import com.ssafy.bomi.scenario.repository.ScenarioRepository;
+import com.ssafy.bomi.user.domain.AppUser;
+import com.ssafy.bomi.user.repository.AppUserRepository;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 
 class ScenarioStartGuardTest {
 
     private final ScenarioRepository scenarioRepository = mock(ScenarioRepository.class);
-    private final ScenarioStartGuard guard = new ScenarioStartGuard(scenarioRepository);
+    private final AppUserRepository appUserRepository = mock(AppUserRepository.class);
+    private final ScenarioStartGuard guard =
+        new ScenarioStartGuard(scenarioRepository, appUserRepository);
 
     private final UUID seniorId = UUID.randomUUID();
+
+    @BeforeEach
+    void setUp() {
+        when(appUserRepository.findByIdForUpdate(seniorId))
+            .thenReturn(Optional.of(mock(AppUser.class)));
+    }
 
     @Test
     void allowsWhenNothingActiveAndNoRecentCompletion() {
@@ -32,6 +43,17 @@ class ScenarioStartGuardTest {
             guard.check(seniorId, ScenarioType.HOMECOMING, Duration.ofMinutes(30));
 
         assertThat(blocked).isEmpty();
+    }
+
+    @Test
+    void blocksWhenAssignedSeniorRowDoesNotExist() {
+        when(appUserRepository.findByIdForUpdate(seniorId)).thenReturn(Optional.empty());
+
+        assertThat(guard.check(seniorId, ScenarioType.HOMECOMING, Duration.ZERO))
+            .contains(BlockReason.SENIOR_NOT_FOUND);
+
+        verify(scenarioRepository, never())
+            .existsBySeniorIdAndFinalStatusIn(any(), anyCollection());
     }
 
     @Test
