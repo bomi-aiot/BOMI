@@ -38,7 +38,6 @@ db/ 와 backend_client/ 의 경계  ★ 혼동 주의
 from __future__ import annotations
 
 import logging
-import re
 
 from bomi_ai_chat import policy
 from bomi_ai_chat.backend_client import BackendContextClient
@@ -204,13 +203,25 @@ def _pending_contract_intent(state: ConvState, text: str) -> str | None:
     return kind if kind in {"onboarding", "clarification"} else None
 
 
-# 지남력·사실 질문의 표지.
+# 지남력·날씨 질문의 표지 — 의료 질문과 겹치지 않는다.
 #
 # 지남력 질문("오늘 며칠이야?")이 가장 빈번한 질문 유형이고, 초기 치매에서는 더
 # 잦아진다. 매번 따뜻하게 답해야 하므로 반드시 info 로 흘러가야 한다 (CLAUDE.md §8).
 _INFO_MARKERS = (
     "몇 시", "몇시", "며칠", "무슨 요일", "무슨요일", "오늘 날짜", "지금 몇",
     "날씨", "기온", "비 와", "비와", "추워", "더워",
+)
+
+# "알려줘"/"어디야"/"뭐야"처럼 주제를 가리지 않는 표지.
+#
+# ★ 왜 _INFO_MARKERS 와 따로 두는가
+#   "병원 어디야", "이 약 뭐야", "약국 좀 알려줘"처럼 병원/약국/의약품 질문도
+#   똑같은 말투를 쓴다. 이 표지를 _INFO_MARKERS 에 같이 두면, 의료 판정기
+#   (_is_medical)를 부르기도 전에 여기서 먼저 "info"로 확정돼 버린다 — 실제로
+#   "부산에 있는 병원 알려줘"가 handle_info(일반 LLM 생성, DB 조회 없음)로 새는
+#   사고로 확인됐다. 그래서 이 표지에 걸리면 곧장 info로 보내지 않고, 먼저
+#   의료 판정기에게 물어본 뒤에 아니라고 하면 그때 info로 보낸다.
+_AMBIGUOUS_INFO_MARKERS = (
     "뭐야", "뭔가요", "알려줘", "알려주", "가르쳐", "어디야", "어디에",
 )
 
@@ -259,7 +270,37 @@ _EMOTIONAL_MARKERS = (
     "외로", "쓸쓸", "보고 싶", "보고싶", "슬퍼", "우울", "허전", "힘들어", "속상",
 )
 
-_QUESTION_SUFFIX = re.compile(r"(까요|나요|어요\?|가요|니\?|냐\?|\?)\s*$")
+# 시설 유형을 문자 그대로 담은 표지 — 결정적이라 임베딩 판정기를 부르지 않는다.
+#
+# ★ 왜 필요한가
+#   "서울대병원이 어디 있는지 알고 싶어", "행복약국 좀 찾아줘야겠어", "부산 강서구
+#   병원 찾아줘", "남경의원 더 자세히 알려줘"— 전부 실제로 companion 으로 샌 사례다.
+#   특정 기관명("남경의원", "행복약국")에는 "병원"/"약국" 같은 일반 단어가 없고
+#   문장 구조도 제각각이라, 임베딩 판정기(_is_medical)가 자주 놓친다. 반면
+#   "병원"/"의원"/"약국"/진료과 이름은 의료 시설이 아닌 문맥에 쓰이는 경우가
+#   사실상 없으므로, 문자열 포함만으로 판정해도 안전하다.
+_MEDICAL_FACILITY_MARKERS = (
+    "병원", "의원", "약국", "한의원", "치과",
+    "정형외과", "이비인후과", "안과", "소아과", "내과", "피부과", "산부인과",
+)
+
+
+def _strip_whitespace(text: str) -> str:
+    """이 표지 검사 전용 — 공백을 전부 지운 버전을 만든다.
+
+    왜 필요한가
+        STT 가 "남경의원"을 "남경의 원"처럼 단어 중간에 공백을 넣어 인식하는
+        사례가 실제로 있었다 (db/medical_repository.py 의 이름 비교에서 이미 같은
+        문제를 만나 whitespace-insensitive 비교로 고쳤다). "의원"처럼 표지 자체가
+        공백 없이 이어진 문자열이라, 원문에 공백이 끼면 부분 문자열 매칭이
+        깨져서 medical 로 잡혀야 할 발화가 조용히 companion/info 로 샌다.
+
+    주의사항
+        이 표지 검사에만 쓴다. _SCHEDULE_MARKERS("약 먹었" 등) 같은 다른 표지는
+        공백이 있어야 의미가 구분되므로, 전체 lowered 텍스트를 공백 제거 버전으로
+        바꾸면 그쪽이 깨진다.
+    """
+    return "".join(text.split())
 
 
 def _classify(text: str) -> str:
@@ -279,6 +320,21 @@ def _classify(text: str) -> str:
         정서 표지를 정보 표지보다 먼저 본다. "외로운데 오늘 며칠이야"는 날짜를
         알려주는 턴이 아니라 들어야 하는 턴이다. 정보로 처리하면 사람이 아니라
         검색창처럼 반응하게 된다.
+
+        "info"가 아니라 "medical"을 고르는 이유
+            병원/약국/의약품은 일반 잡담용 LLM이 자유롭게 답할 데이터가 아니다 —
+            주소나 약 정보를 근거 없이 지어내면 안전 문제로 이어진다(CLAUDE.md §8).
+            handle_medical 이 llm/medical_flow.py 를 거쳐 실제
+            hospital/pharmacy/drug_permit DB를 조회하는 경로로 가야 하므로,
+            handle_info(일반 생성)와 이름을 나눠 둔다.
+
+        문장이 물음표로 끝나는지는 판정 조건이 아니다
+            예전에는 "문장이 까요/나요/가요/...?로 끝나는가"를 먼저 확인하고,
+            그럴 때만 의료 판정기(_is_medical)를 불렀다. 하지만 어르신 발화는
+            "궁금하네." 처럼 평서형으로 끝나는 경우가 흔하고, STT 는 억양만으로
+            물음표를 못 살리는 경우도 많다 — 그 경우 판정기를 부르지도 못하고
+            그냥 말벗으로 빠졌었다. 그래서 문장 끝 모양과 무관하게 판정기에게
+            물어본다.
     """
     lowered = text.lower()
 
@@ -286,16 +342,32 @@ def _classify(text: str) -> str:
         return "emotional"
     if any(marker in lowered for marker in _SCHEDULE_MARKERS):
         return "schedule"
+    if any(marker in _strip_whitespace(lowered) for marker in _MEDICAL_FACILITY_MARKERS):
+        # 결정적 표지라 임베딩 판정기를 거치지 않는다 (_MEDICAL_FACILITY_MARKERS
+        # 주석 참고). "병원 예약" 같은 일정 처리 표현은 위 _SCHEDULE_MARKERS 에서
+        # 이미 걸러졌으므로 순서가 중요하다. 공백을 지우고 비교하는 이유는
+        # _strip_whitespace 주석 참고 — STT 가 "남경의원"을 "남경의 원"처럼
+        # 쪼개는 경우를 잡기 위해서다.
+        return "medical"
     if any(marker in lowered for marker in _INFO_MARKERS):
         return "info"
 
-    # 의료·위치 질문은 기존 임베딩 라우터가 이미 잘 판정한다. 재구현하지 않고
-    # 물음표로 끝나는 애매한 발화에서만 위임한다.
-    if _QUESTION_SUFFIX.search(text) and _is_medical(text):
+    if any(marker in lowered for marker in _AMBIGUOUS_INFO_MARKERS):
+        # "병원 어디야"도 "약국 좀 알려줘"도 이 표지에 걸린다. 곧장 info로 보내지
+        # 않고 먼저 의료 판정기에게 물어본다 (_AMBIGUOUS_INFO_MARKERS 주석 참고).
+        if _is_medical(text):
+            return "medical"
         return "info"
 
-    # 나머지는 전부 말벗이다. 이 제품에서 기본값이 정보 제공이 아니라 대화인 것은
-    # 의도된 선택이다. 외로움이 1번 문제이고 말벗이 본체다 (CLAUDE.md §1).
+    # 아무 표지에도 안 걸린 나머지 발화 — "정형외과", "타이레놀 있어?"처럼 표지
+    # 없이도 의료일 수 있으니 말벗으로 확정하기 전에 마지막으로 한 번 더
+    # 판정기에게 물어본다.
+    if _is_medical(text):
+        return "medical"
+
+    # 그래도 아니면 전부 말벗이다. 이 제품에서 기본값이 정보 제공이 아니라
+    # 대화인 것은 의도된 선택이다. 외로움이 1번 문제이고 말벗이 본체다
+    # (CLAUDE.md §1).
     return "companion"
 
 

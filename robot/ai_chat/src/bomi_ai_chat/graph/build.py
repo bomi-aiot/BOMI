@@ -43,10 +43,17 @@ from bomi_ai_chat.graph.gate import proactive_gate, route_gate
 from bomi_ai_chat.localstore.db import runtime_db_path
 from bomi_ai_chat.state import ConvState
 
-# 일곱 개의 핸들러 인텐트. 한 곳에 두어서 라우터 매핑과 아래의 수렴 엣지가
+# 여덟 개의 핸들러 인텐트. 한 곳에 두어서 라우터 매핑과 아래의 수렴 엣지가
 # 서로 어긋날 수 없게 한다.
+#
+# "medical"이 따로 있는 이유
+#   병원/약국/의약품 질문은 handle_info 의 일반 LLM 생성이 아니라, 실제
+#   hospital/pharmacy/drug_permit DB를 조회하는 handle_medical 로 가야 한다.
+#   같은 "info" 라벨을 계속 썼다면 handle_info 가 두 가지 서로 다른 일(자유
+#   생성 vs 정확 DB 조회)을 떠맡게 되어 나중에 또 갈라야 했을 것이다.
 INTENTS = [
     "info",
+    "medical",
     "companion",
     "schedule",
     "emotional",

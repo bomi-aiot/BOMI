@@ -90,10 +90,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigurationError as exc:
         raise SystemExit(f"설정 오류: {exc}") from None
 
-    # logging.basicConfig(
-    #     level=logging.INFO,
-    #     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    # )
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
     audio_in, audio_out = _build_audio_adapters(settings)
 

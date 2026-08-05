@@ -165,6 +165,18 @@ def note_interaction(state: ConvState) -> dict:
         "occupancy": "HOME",
         "occupancy_observed_at": now,
         "is_backchannel": False,
+        # 이번 턴에 새로 분류하도록 강제한다.
+        #
+        # ★ 이게 없으면 어르신은 대화 내내 첫 질문의 분류에 갇힌다
+        #   checkpointer 는 thread_id(=어르신 id)별로 이전 턴의 state 전체를 다음
+        #   턴에도 그대로 넘긴다. run_user_turn 은 매 턴 user_input 등 몇 개만 새로
+        #   넘기고 intent 는 안 넘기므로, 여기서 지우지 않으면 classify_intent 의
+        #   "if state.get('intent'): return {}" 가드가 지난 턴 값을 "이미 분류됨"
+        #   으로 착각해 재분류를 건너뛴다. 실제로 첫 질문이 companion 이 되고 나면
+        #   그 뒤로 뭘 물어도 계속 companion 으로만 답하는 사고로 이어졌다.
+        #   능동 턴(스케줄러/현관/backend_command)은 영향 없다 — 그쪽은 자기 노드가
+        #   이번 턴에 intent 를 새로 채워 넣는다(ingress.py 의 다른 진입점들 참고).
+        "intent": None,
     }
 
     # 맞장구로 끝나는 턴에서도 먼저 저장한다. "응" 한마디도 생존 증거다.

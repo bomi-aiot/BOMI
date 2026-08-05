@@ -1,4 +1,4 @@
-"""일곱 개의 핸들러 — '무엇을' 말할지 정하고, '말할지 여부'는 정하지 않는다.
+"""여덟 개의 핸들러 — '무엇을' 말할지 정하고, '말할지 여부'는 정하지 않는다.
 
 어디에 위치하는가
     인텐트 라우터와 response_shaper 사이. 핸들러가 실행되는 시점에는 말하기로 하는
@@ -13,19 +13,24 @@
     왜 이렇게 엄격한가: 핸들러가 자기 출력을 억제할 수 있게 되는 순간
     "로봇이 왜 조용했는가"에 대한 답이 하나가 아니게 되고, 게이트를 신뢰할 수 없게 된다.
 
-핸들러의 두 계열
-    개방형:     info, companion, schedule, emotional, greeting
-                LLM 이 자연스럽게 표현할 여지가 있다.
-    계약 주도형: onboarding, clarification
-                백엔드가 강제하는 계약이 정의한 고정 슬롯을 채운다. LLM 에게 자유를
-                거의 주지 않는다. 한 필드, 한 질문, 그 외에는 아무것도 (CLAUDE.md §12).
+핸들러의 세 계열
+    개방형:       info, companion, schedule, emotional, greeting
+                  LLM 이 자연스럽게 표현할 여지가 있다.
+    DB 정확 조회형: medical
+                  자유 생성이 아니다. LLM은 어느 도구(병원/약국/의약품)를 부를지만
+                  고르고, 실제 문장은 DB 조회 결과에서 만든다. 병원 주소나 약 정보를
+                  일반 LLM이 근거 없이 지어내면 안전 문제이기 때문이다(CLAUDE.md §8).
+    계약 주도형:   onboarding, clarification
+                  백엔드가 강제하는 계약이 정의한 고정 슬롯을 채운다. LLM 에게 자유를
+                  거의 주지 않는다. 한 필드, 한 질문, 그 외에는 아무것도 (CLAUDE.md §12).
 
 기존 모듈에 위임한다 (재구현 금지)
     이 패키지에는 이미 검증된 클라이언트들이 있다. 핸들러는 얇아야 한다.
         일반 대화        -> llm/client.py
-        의료 조회        -> llm/medical_flow.py  (function calling)
+        의료 조회        -> llm/medical_flow.py  (function calling, handle_medical 이 호출)
         날씨             -> weather/client.py
-        병원·약국·의약품  -> db/medical_repository.py  (지오/정확 조회, RAG 아님)
+        병원·약국·의약품  -> db/medical_repository.py  (medical_flow 를 통해서만 조회,
+                             지오/정확 조회이며 RAG 아님)
         의도 분류        -> llm/router.py 에 위임 (context.classify_intent 참고)
     핸들러가 하는 일은 "무엇을 말할지"를 정하고 프롬프트를 조립해 위 클라이언트를
     호출하는 것까지다. HTTP 호출이나 SQL 을 직접 쓰지 않는다.
@@ -177,6 +182,48 @@ def handle_info(state: ConvState) -> dict:
         - 한두 문장으로 답한다. 정확한 세 문단 답변은 여기서는 실패다.
     """
     return {"response": _generate(state)}
+
+
+def handle_medical(state: ConvState) -> dict:
+    """병원·약국·의약품 질문에 답한다 — 일반 생성이 아니라 실제 DB 조회다.
+
+    무엇을 하는가
+        어르신 발화를 llm/medical_flow.handle_medical_query 에 그대로 넘긴다. 그
+        안에서 Gemini function calling 이 어느 도구(find_medical_facility /
+        check_pill_info)를 부를지 고르고, db/medical_repository.py 가 실제
+        hospital/pharmacy/drug_permit 테이블을 조회해 응답 문장을 만든다.
+
+    왜 handle_info 의 _generate 를 쓰지 않는가
+        일반 LLM 에게 병원 주소나 약 정보를 자유롭게 말하게 하면 근거 없이
+        지어낼 위험이 있다 — 프로필·복약처럼 정확 조회가 필요한 데이터다
+        (CLAUDE.md §8). medical_flow 는 도구 호출 결과(DB 행)에서만 문장을
+        만들도록 시스템 프롬프트로 막아 둔다. 이 턴의 유일한 생성 호출은
+        medical_flow 내부의 Gemini 호출이며, handle_info 의 _generate 와
+        동시에 쓰지 않는다(CLAUDE.md §16, 턴당 생성 호출 1회).
+
+    누가 호출하는가   build.py, intent "medical".
+    무엇을 호출하는가  llm/medical_flow.handle_medical_query.
+    반환값            {"response": str}
+
+    주의사항
+        - medical_flow 자체가 이미 흔한 실패(DB 오류, 위치 정보 없음, 시설을
+          못 찾음 등)를 안내 문장으로 흡수한다. 여기서는 그 밖의 예상치 못한
+          예외(라이브러리 버그 등)만 잡아 침묵 대신 되묻는 문장으로 저하시킨다
+          — 어르신은 방금 말을 걸었으므로 무응답은 고장 난 기계처럼 보인다.
+        - ctx(프로필·기억)는 쓰지 않는다. 병원/약국/의약품은 어르신 개인
+          데이터가 아니라 공개 참조 데이터라서 문맥 조립이 필요 없다(§8).
+    """
+    from bomi_ai_chat.llm.medical_flow import handle_medical_query
+
+    text = state.get("user_input", "")
+    try:
+        return {"response": handle_medical_query(text)}
+    except Exception:  # noqa: BLE001 - 예상 밖 실패가 턴을 죽이면 안 된다
+        logger.warning(
+            "medical query failed; falling back to a clarifying reply",
+            exc_info=True,
+        )
+        return {"response": _FALLBACK_RESPONSE}
 
 
 def handle_companion(state: ConvState) -> dict:

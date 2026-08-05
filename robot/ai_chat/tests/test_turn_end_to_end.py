@@ -197,3 +197,21 @@ def test_state_persists_across_turns(wired):
 
     # messages 는 add_messages 로 누적된다. 두 번째 턴에서 첫 턴의 흔적이 보여야 한다.
     assert second.get("last_user_interaction_at") is not None
+
+
+def test_intent_is_reclassified_every_reactive_turn(wired):
+    """(회귀) 첫 턴의 분류가 다음 턴까지 얼어붙지 않는다.
+
+    checkpointer 는 thread_id(어르신 id)별로 이전 턴의 state 전체를 다음 턴에도
+    그대로 넘긴다. note_interaction 이 intent 를 지우지 않으면, classify_intent
+    의 "if state.get('intent'): return {}" 가드가 지난 턴 값을 "이미 분류됨"으로
+    착각해 재분류를 건너뛴다 — 실기에서 첫 질문이 companion 이 되고 나면 그 뒤로
+    뭘 물어도 계속 companion 으로만 답하는 사고로 이어졌다.
+    """
+    app, _client, _llm, _player = wired
+
+    first = run_user_turn(app, SENIOR, "그냥 이런저런 얘기나 하자")
+    assert first["intent"] == "companion"
+
+    second = run_user_turn(app, SENIOR, "요즘 너무 외로워")
+    assert second["intent"] == "emotional"
