@@ -3,10 +3,15 @@ package com.ssafy.bomi.onboarding;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.ssafy.bomi.care.domain.CareRecord;
+import com.ssafy.bomi.care.repository.CareRecordRepository;
 import com.ssafy.bomi.fact.domain.ClarificationReason;
 import com.ssafy.bomi.fact.domain.FactCandidate;
 import com.ssafy.bomi.fact.domain.FactCandidateStatus;
 import com.ssafy.bomi.fact.repository.FactCandidateRepository;
+import com.ssafy.bomi.memory.domain.Memory;
+import com.ssafy.bomi.memory.domain.MemoryType;
+import com.ssafy.bomi.memory.repository.MemoryRepository;
 import com.ssafy.bomi.onboarding.application.QuestionDefinition;
 import com.ssafy.bomi.onboarding.application.RobotOnboardingService;
 import com.ssafy.bomi.onboarding.application.RobotOnboardingService.AnswerResult;
@@ -66,6 +71,8 @@ class RobotOnboardingServiceTest {
     @Autowired private OnboardingSessionRepository sessionRepository;
     @Autowired private OnboardingAnswerRepository answerRepository;
     @Autowired private FactCandidateRepository candidateRepository;
+    @Autowired private CareRecordRepository careRecordRepository;
+    @Autowired private MemoryRepository memoryRepository;
 
     private AppUser senior;
     private final UUID robotId = UUID.randomUUID();
@@ -294,9 +301,45 @@ class RobotOnboardingServiceTest {
         assertThat(confirmed.outcome()).isEqualTo(Outcome.ACCEPTED);
         FactCandidate candidate = candidateRepository.findById(confirmed.factCandidateId())
             .orElseThrow();
-        // care_record 로 가는 쓰기 경로는 아직 없다. CONFIRMED 에 머무는 것이 정직한 상태다.
-        assertThat(candidate.getStatus()).isEqualTo(FactCandidateStatus.CONFIRMED);
-        assertThat(confirmed.materialized()).isFalse();
+        // care_record 로 가는 쓰기 경로가 이제 있다(S15P11E102-258). MATERIALIZED 까지
+        // 올라가는 것이 정직한 상태다 — CONFIRMED 에 머무르면 값이 조용히 증발한다.
+        assertThat(candidate.getStatus()).isEqualTo(FactCandidateStatus.MATERIALIZED);
+        assertThat(confirmed.materialized()).isTrue();
+
+        CareRecord record = careRecordRepository.findById(candidate.getMaterializedTargetId())
+            .orElseThrow();
+        assertThat(record.getSeniorId()).isEqualTo(senior.getId());
+        assertThat(record.getRecordType()).isEqualTo("MEDICATION");
+        assertThat(record.getDetails()).containsEntry("medicationName", "혈압약");
+        // source_candidate_id 가 채워져야 같은 candidate 의 재확정이 두 번째 행을
+        // 만들지 못한다(UNIQUE 제약, 가디언웹 경로에 있던 기존 결함).
+        assertThat(record.getSourceCandidateId()).isEqualTo(candidate.getId());
+    }
+
+    /**
+     * DAILY_ROUTINE 은 memory 로 간다 — care_record 와 다른 최종 테이블이라도 같은
+     * 공용 컴포넌트가 쓴다(S15P11E102-258).
+     */
+    @Test
+    void aConfirmedDailyRoutineReachesMemoryImmediately() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+
+        AnswerResult result = onboardingService.submitAnswer(session.getId(), "DAILY_ROUTINE",
+            Map.of("content", "아침에 산책하고 점심 먹고 텃밭을 봐요"), false, null, null);
+
+        // DAILY_ROUTINE 은 민감하지 않고 확인을 요구하지 않으므로 확정 즉시 반영된다.
+        assertThat(result.outcome()).isEqualTo(Outcome.ACCEPTED);
+        assertThat(result.materialized()).isTrue();
+        FactCandidate candidate = candidateRepository.findById(result.factCandidateId())
+            .orElseThrow();
+        assertThat(candidate.getStatus()).isEqualTo(FactCandidateStatus.MATERIALIZED);
+
+        Memory memory = memoryRepository.findById(candidate.getMaterializedTargetId()).orElseThrow();
+        assertThat(memory.getSeniorId()).isEqualTo(senior.getId());
+        assertThat(memory.getMemoryType()).isEqualTo(MemoryType.DAILY_ROUTINE);
+        assertThat(memory.getContent()).isEqualTo("아침에 산책하고 점심 먹고 텃밭을 봐요");
+        assertThat(memory.getSourceCandidateId()).isEqualTo(candidate.getId());
     }
 
     @Test
@@ -391,9 +434,11 @@ class RobotOnboardingServiceTest {
     }
 
     /**
-     * 만성 통증 부위·단골 병원은 care_record 가 아니라 app_user 로 가는 값이라서,
-     * MEDICATION(sensitive, care_record 대상, 아직 쓰기 경로 없음)과 달리 민감·확인
-     * 필수임에도 confirm=true 즉시 app_user 에 반영된다.
+     * 만성 통증 부위·단골 병원은 care_record 가 아니라 app_user 로 가는 값이다. 둘 다
+     * 확정 즉시(confirm=true) 반영되는 것은 같지만, 대상 테이블이 다르므로 각각의
+     * materialized_target_id 가 가리키는 행도 다르다(app_user 자신 vs 새로 만든
+     * care_record 행) — {@link #confirmingASensitiveValueSettlesIt} 이 MEDICATION 쪽을
+     * 확인한다.
      */
     @Test
     void aConfirmedChronicPainAreaReachesAppUserImmediately() {
