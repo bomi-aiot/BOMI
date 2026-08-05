@@ -142,7 +142,8 @@ class OpenApiDocumentationTest {
             .doesNotContain("/api/v1/memories")
             .doesNotContain("/api/v1/care-records")
             .doesNotContain("/api/v1/confirmation-requests")
-            .doesNotContain("/api/v1/elders");
+            .doesNotContain("/api/v1/elders")
+            .doesNotContain("/api/v1/known-persons");
 
         String guardian = mockMvc.perform(get("/v3/api-docs/bomi-guardian"))
             .andExpect(status().isOk())
@@ -153,7 +154,9 @@ class OpenApiDocumentationTest {
             .contains("/api/v1/memories")
             .contains("/api/v1/care-records")
             .contains("/api/v1/confirmation-requests")
-            .contains("/api/v1/elders");
+            .contains("/api/v1/elders")
+            // S15P11E102-260: 명부(known_person) 등록·수정 화면도 가디언웹이 호출한다.
+            .contains("/api/v1/known-persons");
         assertThat(guardian).doesNotContain("/api/v1/robot/");
     }
 
