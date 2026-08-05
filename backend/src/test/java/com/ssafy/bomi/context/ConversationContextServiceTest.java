@@ -481,6 +481,46 @@ class ConversationContextServiceTest {
     }
 
     /**
+     * A guardian must never receive raw utterances or summary text, even though the
+     * senior's own conversation has both (S15P11E102-254, CLAUDE.md §9 T4).
+     *
+     * <p>Unlike memories, {@code conversation_message} and {@code conversation_summary}
+     * carry no per-row visibility column — "PRIVATE unless shared" does not apply here.
+     * The only safe default is "a guardian request sees no raw content at all", so this
+     * pins {@code forGuardian} in {@code ConversationContextService.assemble} rather than
+     * relying on the memory visibility filter to somehow also cover these two fields.</p>
+     */
+    @Test
+    void guardianRequestNeverSeesRawMessagesOrSummaries() {
+        Conversation conversation = conversationRepository.save(Conversation.open(senior.getId()));
+        messageRepository.save(ConversationMessage.reactive(
+            conversation.getId(), 1, MessageRole.SENIOR, "무릎이 아파", OffsetDateTime.now()));
+        summaryRepository.save(ConversationSummary.forConversation(
+            senior.getId(), conversation.getId(),
+            OffsetDateTime.now().minusHours(1), OffsetDateTime.now(), "지금 대화 요약", 1));
+
+        UUID guardianId = appUserRepository.save(AppUser.create("GUARDIAN", "딸")).getId();
+        careRelationshipRepository.save(CareRelationship.create(
+            senior.getId(), guardianId, RelationshipPriority.SECONDARY));
+
+        ConversationContextResponse robotView = contextService.assemble(
+            senior.getId(),
+            new ConversationContextRequest("", conversation.getId(), null, null, false, null));
+        ConversationContextResponse guardianView = contextService.assemble(
+            senior.getId(),
+            new ConversationContextRequest("", conversation.getId(), null, null, false, guardianId));
+
+        // 로봇이 어르신과 말할 때는 그대로 실린다 — 대조군.
+        assertThat(robotView.recentMessages()).isNotEmpty();
+        assertThat(robotView.conversationSummary()).isEqualTo("지금 대화 요약");
+
+        // 보호자 요청은 원문·요약 어느 쪽도 받지 않는다.
+        assertThat(guardianView.recentMessages()).isEmpty();
+        assertThat(guardianView.conversationSummary()).isNull();
+        assertThat(guardianView.relevantSummaries()).isEmpty();
+    }
+
+    /**
      * A guardian with no active relationship is refused, not quietly given nothing.
      *
      * <p>An empty result would read as "nothing was shared", which hides a permission

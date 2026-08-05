@@ -1,12 +1,10 @@
 package com.ssafy.bomi.conversation.application;
 
-import com.ssafy.bomi.conversation.domain.Conversation;
 import com.ssafy.bomi.conversation.domain.ConversationMessage;
 import com.ssafy.bomi.conversation.domain.MessagePriority;
 import com.ssafy.bomi.conversation.domain.MessageRole;
 import com.ssafy.bomi.conversation.domain.MessageTriggerType;
 import com.ssafy.bomi.conversation.repository.ConversationMessageRepository;
-import com.ssafy.bomi.conversation.repository.ConversationRepository;
 import java.time.OffsetDateTime;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -32,17 +30,22 @@ import org.springframework.transaction.annotation.Transactional;
  * judgement in two places, and a server that starts analysing conversation content soon
  * does it for other purposes too (CLAUDE.md §8, §9).</p>
  *
+ * <p><b>Conversation boundaries are not decided here.</b> {@code resolveConversation} used
+ * to just open-or-reuse blindly, which is why every conversation stayed OPEN forever
+ * (S15P11E102-254). That judgement — continue, or close the old one and start a new one —
+ * now lives in {@link ConversationLifecycleService}, which this service delegates to.</p>
+ *
  * @see com.ssafy.bomi.activity.application.DailyActivityMetricService the only consumer
  */
 @Service
 public class RobotConversationService {
 
-    private final ConversationRepository conversationRepository;
+    private final ConversationLifecycleService lifecycleService;
     private final ConversationMessageRepository messageRepository;
 
-    public RobotConversationService(ConversationRepository conversationRepository,
+    public RobotConversationService(ConversationLifecycleService lifecycleService,
         ConversationMessageRepository messageRepository) {
-        this.conversationRepository = conversationRepository;
+        this.lifecycleService = lifecycleService;
         this.messageRepository = messageRepository;
     }
 
@@ -63,7 +66,8 @@ public class RobotConversationService {
         String content, OffsetDateTime occurredAt, MessageTriggerType triggerType,
         MessagePriority priority, Boolean orientationQuestion) {
 
-        UUID targetConversation = resolveConversation(seniorId, conversationId);
+        UUID targetConversation =
+            lifecycleService.openOrContinue(seniorId, conversationId, occurredAt);
         int sequenceNo = nextSequenceNo(targetConversation);
 
         ConversationMessage message = ConversationMessage.of(
@@ -72,29 +76,6 @@ public class RobotConversationService {
 
         messageRepository.save(message);
         return new RecordedTurn(targetConversation, message.getId(), sequenceNo);
-    }
-
-    /**
-     * Uses the conversation the robot named, or opens a fresh one.
-     *
-     * <p>An unknown id is an error rather than a silent new conversation. Silently opening
-     * one would scatter a single exchange across rows the context assembly can never
-     * stitch back together, and the robot would never learn that its id was wrong.</p>
-     */
-    private UUID resolveConversation(UUID seniorId, UUID conversationId) {
-        if (conversationId == null) {
-            return conversationRepository.save(Conversation.open(seniorId)).getId();
-        }
-        Conversation existing = conversationRepository.findById(conversationId)
-            .orElseThrow(() -> new IllegalArgumentException(
-                "unknown conversationId: " + conversationId));
-        if (!existing.getSeniorId().equals(seniorId)) {
-            // Appending one senior's words to another's conversation would leak them into
-            // that person's prompt context. Loud failure, never a best guess.
-            throw new IllegalArgumentException(
-                "conversation " + conversationId + " does not belong to senior " + seniorId);
-        }
-        return existing.getId();
     }
 
     private int nextSequenceNo(UUID conversationId) {
