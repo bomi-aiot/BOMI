@@ -3,7 +3,32 @@
 
 from sentence_transformers import SentenceTransformer, util
 
-_model = SentenceTransformer("jhgan/ko-sroberta-multitask")
+
+def _load_model() -> SentenceTransformer:
+    """임베딩 모델을 '로컬 캐시 우선'으로 올린다.
+
+    무엇을 하는가
+        먼저 local_files_only=True 로 시도해 디스크 캐시만 읽는다. 캐시가 없을 때
+        (기기 첫 설치)만 예외를 받아 평소처럼 내려받는다.
+
+    왜 존재하는가  ★ 233 실기에서 의료 질문 턴이 21~36초씩 걸렸다
+        sentence-transformers 는 캐시가 있어도 로드할 때마다 HF Hub 에 갱신 확인
+        요청을 보낸다. 젯슨의 느린 회선에서는 그 확인만으로 수 초가 늘어지고,
+        오프라인이면 타임아웃을 다 기다린 뒤에야 캐시로 돌아온다 — 로봇이
+        오프라인일 때가 바로 이 판정이 로컬이어서 살아남아야 하는 순간이다
+        (CLAUDE.md §18). 캐시 우선이면 두 경우 모두 네트워크를 아예 안 탄다.
+
+    누가 호출하는가
+        모듈 import 시 한 번. 워밍업(bootstrap.warm_up_intent_router)이 대화
+        시작 전에 이 import 를 미리 일으킨다.
+    """
+    try:
+        return SentenceTransformer("jhgan/ko-sroberta-multitask", local_files_only=True)
+    except Exception:  # noqa: BLE001 - 캐시가 없으면 첫 설치이므로 내려받는다
+        return SentenceTransformer("jhgan/ko-sroberta-multitask")
+
+
+_model = _load_model()
 
 MEDICAL_EXAMPLES = [
     "타이레놀 먹어도 되나요", "이 약 노인이 먹어도 되나",
