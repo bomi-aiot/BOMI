@@ -89,6 +89,10 @@ tasks.register('integrationTest', Test) {
     // 보이지 않게, 무엇이 없어서 건너뛰었는지 테스트가 직접 말한다.
     systemProperty 'bomi.test.qdrant.host', System.getenv('QDRANT_HOST') ?: ''
     systemProperty 'bomi.test.qdrant.grpcPort', System.getenv('QDRANT_GRPC_PORT') ?: '6334'
+    // AI 브랜치의 실제 Python 클라이언트를 별도 프로세스로 띄우는 교차 모듈 E2E.
+    // 둘 중 하나라도 없으면 해당 테스트가 abort하여 미실행을 통과로 위장하지 않는다.
+    systemProperty 'bomi.test.ai.python', System.getenv('BOMI_AI_PYTHON') ?: ''
+    systemProperty 'bomi.test.ai.dir', System.getenv('BOMI_AI_CHAT_DIR') ?: ''
 }
 
 // ★ 실제 Upstage API 를 호출한다. 호출 1건마다 과금된다.
