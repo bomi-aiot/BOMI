@@ -1,6 +1,7 @@
 package com.ssafy.bomi.fact.web;
 
 import com.ssafy.bomi.fact.application.ConversationFactIntakeService;
+import com.ssafy.bomi.fact.application.FactCandidateCancellationService;
 import com.ssafy.bomi.fact.domain.FactCandidate;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -31,9 +32,13 @@ import org.springframework.web.bind.annotation.RestController;
 public class RobotFactIntakeController {
 
     private final ConversationFactIntakeService service;
+    private final FactCandidateCancellationService cancellationService;
 
-    public RobotFactIntakeController(ConversationFactIntakeService service) {
+    public RobotFactIntakeController(
+            ConversationFactIntakeService service,
+            FactCandidateCancellationService cancellationService) {
         this.service = service;
+        this.cancellationService = cancellationService;
     }
 
     /** 사실 후보 하나를 받아 CAPTURED 상태로 저장하고, 저장된 id 와 status 를 돌려준다. */
@@ -53,6 +58,23 @@ public class RobotFactIntakeController {
 
         return ResponseEntity.status(HttpStatus.CREATED).body(
                 new FactCandidateIntakeResponse(saved.getId(), saved.getStatus().name()));
+    }
+
+    /**
+     * "기억하지 마" — 이 대화의 미확정 후보를 전부 닫는다 (S15P11E102-348).
+     *
+     * <p>로봇 쪽 절반({@code extraction.forget_conversation})은 아직 서버로 보내지
+     * 않은 대기 행을 지우고, 이 엔드포인트가 이미 제출된 후보를 닫는다 — 둘이
+     * 합쳐져야 "기억하지 마"가 온전히 지켜진다. 멱등하므로 로봇 재시도 큐가
+     * 중복 전송해도 안전하다. 200 + 개수 응답: 0 도 정상이다.</p>
+     */
+    @PostMapping("/cancel")
+    public ResponseEntity<FactCandidateCancelResponse> cancel(
+            @Valid @RequestBody FactCandidateCancelRequest request) {
+
+        int cancelled = cancellationService.cancelBySenior(
+                request.seniorId(), request.conversationId());
+        return ResponseEntity.ok(new FactCandidateCancelResponse(cancelled));
     }
 
     /**
