@@ -28,8 +28,8 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
  * MQTT 계약이 스펙으로 살아 있는지 확인한다.
  *
  * <p>가장 중요한 검사는 {@code everyDocumentedTopicExistsInTheMarkdownContract} 다.
- * 이 스펙과 {@code docs/mqtt/topic-convention.md} 는 같은 계약을 다루므로, 한쪽만
- * 고치면 팀은 서로 다른 두 계약서를 보게 된다.</p>
+ * 이 스펙은 최종 기준인 {@code docs/mqtt/scenario-contract-v1.md} 의 메시지 형식을
+ * 표현하므로, 한쪽만 고치면 팀은 서로 다른 두 계약서를 보게 된다.</p>
  */
 @ActiveProfiles("docs")
 @AutoConfigureMockMvc
@@ -39,11 +39,30 @@ class AsyncApiDocumentationTest {
     private static final String SPEC_RESOURCE = "static/openapi/bomi-mqtt.asyncapi.yaml";
 
     private static final List<String> TOPIC_ADDRESSES = List.of(
-        "bomi/v1/iot/{deviceId}/events",
+        "bomi/v1/iot/{sourceId}/events",
         "bomi/v1/robot/{robotId}/commands",
+        "bomi/v1/ai/{robotId}/commands",
         "bomi/v1/robot/{robotId}/events",
         "bomi/v1/robot/{robotId}/status",
         "bomi/v1/robot/{robotId}/results"
+    );
+
+    private static final List<String> SCENARIO_MESSAGES = List.of(
+        "DoorOpened",
+        "AmbientEnvironmentObserved",
+        "Navigate",
+        "Speak",
+        "FollowStart",
+        "FollowStop",
+        "StartConversation",
+        "WakeWordDetected",
+        "WalkRequested",
+        "ConversationStarted",
+        "ConversationEnded",
+        "NavigationResult",
+        "SpeakResult",
+        "CancelResult",
+        "FollowResult"
     );
 
     @Autowired
@@ -86,15 +105,36 @@ class AsyncApiDocumentationTest {
         assertThat(addresses).containsExactlyInAnyOrderElementsOf(TOPIC_ADDRESSES);
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void everyScenarioMessageHasAnExample() throws IOException {
+        Map<String, Object> components =
+            (Map<String, Object>) loadSpec().get("components");
+        Map<String, Object> messages =
+            (Map<String, Object>) components.get("messages");
+
+        for (String messageName : SCENARIO_MESSAGES) {
+            assertThat(messages)
+                .as("5개 시나리오에서 사용하는 %s 메시지가 없다", messageName)
+                .containsKey(messageName);
+
+            Map<String, Object> message =
+                (Map<String, Object>) messages.get(messageName);
+            assertThat((List<Object>) message.get("examples"))
+                .as("%s 메시지 예시가 없다", messageName)
+                .isNotEmpty();
+        }
+    }
+
     /**
      * 스펙과 마크다운 계약서가 같은 토픽을 말하는지 본다. 토픽을 하나 추가하면서
      * 한쪽만 고치면 여기서 걸린다.
      */
     @Test
     void everyDocumentedTopicExistsInTheMarkdownContract() throws IOException {
-        Path markdown = Path.of("..", "docs", "mqtt", "topic-convention.md");
+        Path markdown = Path.of("..", "docs", "mqtt", "scenario-contract-v1.md");
         assertThat(Files.exists(markdown))
-            .as("docs/mqtt/topic-convention.md — 스펙의 산문 원본")
+            .as("docs/mqtt/scenario-contract-v1.md — 시나리오 메시지 최종 기준")
             .isTrue();
 
         String contract = Files.readString(markdown, StandardCharsets.UTF_8);
@@ -159,7 +199,9 @@ class AsyncApiDocumentationTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.asyncapi").value("3.0.0"))
             .andExpect(jsonPath("$.channels.robotCommands.address")
-                .value("bomi/v1/robot/{robotId}/commands"));
+                .value("bomi/v1/robot/{robotId}/commands"))
+            .andExpect(jsonPath("$.channels.aiCommands.address")
+                .value("bomi/v1/ai/{robotId}/commands"));
     }
 
     /** 뷰어는 외부 리소스를 쓰지 않아야 한다. 운영 CSP 가 script-src 'self' 다. */

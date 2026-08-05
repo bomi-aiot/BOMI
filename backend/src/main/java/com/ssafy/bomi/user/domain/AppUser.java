@@ -9,6 +9,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.HashMap;
@@ -97,6 +98,46 @@ public class AppUser {
     @Column(name = "home_longitude", precision = 9, scale = 6)
     private BigDecimal homeLongitude;
 
+    /**
+     * 생년월일. 나이는 여기서 그때그때 계산하고 따로 저장하지 않는다(S15P11E102-259).
+     *
+     * <p>Nullable: V9 이전에 만들어진 어르신이나 아직 온보딩에서 답하지 않은 경우가
+     * 있다. 그때는 대화 문맥의 나이 줄만 조용히 빠진다 — 실패가 아니라 정직한
+     * "모른다"다(CLAUDE.md §8).</p>
+     */
+    @Column(name = "birth_date")
+    private LocalDate birthDate;
+
+    /**
+     * 평소 기상 시각(로컬, {@link #timeZone} 기준).
+     *
+     * <p>quiet_hours 와 헷갈리지 않는다 — quiet_hours 는 "말 걸면 안 되는 시간대"이고
+     * 이 값은 "이 사람이 원래 깨어 있는 시각"이다. 침묵 사다리의 루틴 베이스라인 필터가
+     * 읽을 값이며, 그 필터 자체는 아직 구현되지 않았다(S15P11E102-261 은 컬럼만
+     * 채운다). Nullable: 온보딩에서 아직 답하지 않은 어르신은 개인화 없이 지금과
+     * 동일하게 동작해야 한다.</p>
+     */
+    @Column(name = "wake_time")
+    private LocalTime wakeTime;
+
+    /** 평소 취침 시각(로컬). {@link #wakeTime} 과 용도가 같다. */
+    @Column(name = "sleep_time")
+    private LocalTime sleepTime;
+
+    /**
+     * 어르신이 밝힌 만성 통증 부위(자유 문자열, 예: "왼쪽 무릎, 허리").
+     *
+     * <p>로봇 코드에 박혀 있던 고정 목록 14개를 대체한다. <strong>응급 판정(triage)에는
+     * 절대 쓰지 않는다</strong> — "만성"이라는 말이 새로운 통증 호소를 가리면 안 된다
+     * (CLAUDE.md §10, 로봇 쪽 회귀 테스트가 별도로 고정한다).</p>
+     */
+    @Column(name = "chronic_pain_area")
+    private String chronicPainArea;
+
+    /** 어르신이 다니는 단골 병원·약국 이름(자유 문자열). 근처 병원 검색과는 별개다. */
+    @Column(name = "preferred_hospital")
+    private String preferredHospital;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "personalization_consent_status", nullable = false, length = 30)
     private ConsentStatus personalizationConsentStatus = ConsentStatus.NOT_REQUESTED;
@@ -182,6 +223,35 @@ public class AppUser {
         }
         this.quietHoursStart = start;
         this.quietHoursEnd = end;
+    }
+
+    /** Sets the birth date onboarding collected. Null is not accepted; use to clear. */
+    public void changeBirthDate(LocalDate birthDate) {
+        this.birthDate = requireNonNull(birthDate, "birthDate");
+    }
+
+    /**
+     * 기상 시각을 설정한다. birthDate 와 달리 null 을 그대로 받아들인다 — 온보딩에서
+     * 답하지 않았거나 지운 경우를 표현해야 하고, 그 상태가 "값을 모른다"는 정직한
+     * 표현이기 때문이다(CLAUDE.md §8).
+     */
+    public void changeWakeTime(LocalTime wakeTime) {
+        this.wakeTime = wakeTime;
+    }
+
+    /** 취침 시각을 설정한다. {@link #changeWakeTime} 과 동일하게 null 을 허용한다. */
+    public void changeSleepTime(LocalTime sleepTime) {
+        this.sleepTime = sleepTime;
+    }
+
+    /** 만성 통증 부위를 설정한다. null 허용 — 응답하지 않은 어르신을 표현한다. */
+    public void changeChronicPainArea(String chronicPainArea) {
+        this.chronicPainArea = chronicPainArea;
+    }
+
+    /** 단골 병원·약국 이름을 설정한다. null 허용 — 응답하지 않은 어르신을 표현한다. */
+    public void changePreferredHospital(String preferredHospital) {
+        this.preferredHospital = preferredHospital;
     }
 
     /** Sets or clears the home coordinates used for nearby clinic and pharmacy lookup. */

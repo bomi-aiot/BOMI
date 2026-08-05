@@ -12,6 +12,8 @@ import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Component
 @ConditionalOnProperty(prefix = "bomi.mqtt", name = "enabled", havingValue = "true")
@@ -44,15 +46,30 @@ public class SpringIntegrationRobotCommandPublisher implements RobotCommandPubli
             .setHeader(MqttHeaders.QOS, properties.getQos())
             .setHeader(MqttHeaders.RETAINED, false)
             .build();
+        sendAfterCommit(message, command.commandId());
+    }
 
+    private void sendAfterCommit(Message<String> message, String commandId) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()
+            && TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(
+                new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        sendNow(message, commandId);
+                    }
+                });
+            return;
+        }
+        sendNow(message, commandId);
+    }
+
+    private void sendNow(Message<String> message, String commandId) {
         boolean accepted = outboundChannel.send(
-            message,
-            properties.getCompletionTimeout().toMillis()
-        );
+            message, properties.getCompletionTimeout().toMillis());
         if (!accepted) {
             throw new IllegalStateException(
-                "MQTT outbound channel did not accept commandId=" + command.commandId()
-            );
+                "MQTT outbound channel did not accept commandId=" + commandId);
         }
     }
 

@@ -3,10 +3,15 @@ package com.ssafy.bomi.onboarding;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.ssafy.bomi.care.domain.CareRecord;
+import com.ssafy.bomi.care.repository.CareRecordRepository;
 import com.ssafy.bomi.fact.domain.ClarificationReason;
 import com.ssafy.bomi.fact.domain.FactCandidate;
 import com.ssafy.bomi.fact.domain.FactCandidateStatus;
 import com.ssafy.bomi.fact.repository.FactCandidateRepository;
+import com.ssafy.bomi.memory.domain.Memory;
+import com.ssafy.bomi.memory.domain.MemoryType;
+import com.ssafy.bomi.memory.repository.MemoryRepository;
 import com.ssafy.bomi.onboarding.application.QuestionDefinition;
 import com.ssafy.bomi.onboarding.application.RobotOnboardingService;
 import com.ssafy.bomi.onboarding.application.RobotOnboardingService.AnswerResult;
@@ -66,6 +71,8 @@ class RobotOnboardingServiceTest {
     @Autowired private OnboardingSessionRepository sessionRepository;
     @Autowired private OnboardingAnswerRepository answerRepository;
     @Autowired private FactCandidateRepository candidateRepository;
+    @Autowired private CareRecordRepository careRecordRepository;
+    @Autowired private MemoryRepository memoryRepository;
 
     private AppUser senior;
     private final UUID robotId = UUID.randomUUID();
@@ -294,9 +301,108 @@ class RobotOnboardingServiceTest {
         assertThat(confirmed.outcome()).isEqualTo(Outcome.ACCEPTED);
         FactCandidate candidate = candidateRepository.findById(confirmed.factCandidateId())
             .orElseThrow();
-        // care_record 로 가는 쓰기 경로는 아직 없다. CONFIRMED 에 머무는 것이 정직한 상태다.
-        assertThat(candidate.getStatus()).isEqualTo(FactCandidateStatus.CONFIRMED);
-        assertThat(confirmed.materialized()).isFalse();
+        // care_record 로 가는 쓰기 경로가 이제 있다(S15P11E102-258). MATERIALIZED 까지
+        // 올라가는 것이 정직한 상태다 — CONFIRMED 에 머무르면 값이 조용히 증발한다.
+        assertThat(candidate.getStatus()).isEqualTo(FactCandidateStatus.MATERIALIZED);
+        assertThat(confirmed.materialized()).isTrue();
+
+        CareRecord record = careRecordRepository.findById(candidate.getMaterializedTargetId())
+            .orElseThrow();
+        assertThat(record.getSeniorId()).isEqualTo(senior.getId());
+        assertThat(record.getRecordType()).isEqualTo("MEDICATION");
+        assertThat(record.getDetails()).containsEntry("medicationName", "혈압약");
+        // source_candidate_id 가 채워져야 같은 candidate 의 재확정이 두 번째 행을
+        // 만들지 못한다(UNIQUE 제약, 가디언웹 경로에 있던 기존 결함).
+        assertThat(record.getSourceCandidateId()).isEqualTo(candidate.getId());
+    }
+
+    /**
+     * DAILY_ROUTINE 은 memory 로 간다 — care_record 와 다른 최종 테이블이라도 같은
+     * 공용 컴포넌트가 쓴다(S15P11E102-258).
+     */
+    @Test
+    void aConfirmedDailyRoutineReachesMemoryImmediately() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+
+        AnswerResult result = onboardingService.submitAnswer(session.getId(), "DAILY_ROUTINE",
+            Map.of("content", "아침에 산책하고 점심 먹고 텃밭을 봐요"), false, null, null);
+
+        // DAILY_ROUTINE 은 민감하지 않고 확인을 요구하지 않으므로 확정 즉시 반영된다.
+        assertThat(result.outcome()).isEqualTo(Outcome.ACCEPTED);
+        assertThat(result.materialized()).isTrue();
+        FactCandidate candidate = candidateRepository.findById(result.factCandidateId())
+            .orElseThrow();
+        assertThat(candidate.getStatus()).isEqualTo(FactCandidateStatus.MATERIALIZED);
+
+        Memory memory = memoryRepository.findById(candidate.getMaterializedTargetId()).orElseThrow();
+        assertThat(memory.getSeniorId()).isEqualTo(senior.getId());
+        assertThat(memory.getMemoryType()).isEqualTo(MemoryType.DAILY_ROUTINE);
+        assertThat(memory.getContent()).isEqualTo("아침에 산책하고 점심 먹고 텃밭을 봐요");
+        assertThat(memory.getSourceCandidateId()).isEqualTo(candidate.getId());
+    }
+
+    // ── S15P11E102-262: 회상 씨앗 질문 ────────────────────────────────────────
+
+    /**
+     * DAILY_ROUTINE 과 같은 모양(memory 대상, 확인 불필요)의 새 질문이 실제로 같은
+     * 경로를 타는지 고정한다. 완료 조건: "회상 씨앗 질문에 답하면 memory 에 해당
+     * memory_type 행이 생깁니다".
+     */
+    @Test
+    void aConfirmedHometownAnswerReachesMemoryAsALifeEvent() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+
+        AnswerResult result = onboardingService.submitAnswer(session.getId(), "HOMETOWN",
+            Map.of("content", "전라남도 목포"), false, null, null);
+
+        assertThat(result.outcome()).isEqualTo(Outcome.ACCEPTED);
+        assertThat(result.materialized()).isTrue();
+        FactCandidate candidate = candidateRepository.findById(result.factCandidateId())
+            .orElseThrow();
+        Memory memory = memoryRepository.findById(candidate.getMaterializedTargetId()).orElseThrow();
+        assertThat(memory.getSeniorId()).isEqualTo(senior.getId());
+        assertThat(memory.getMemoryType()).isEqualTo(MemoryType.LIFE_EVENT);
+        assertThat(memory.getContent()).isEqualTo("전라남도 목포");
+    }
+
+    /** 같은 계약이 PREFERENCE 대상으로도 정확히 매핑되는지 확인한다. */
+    @Test
+    void aConfirmedFavoriteFoodAnswerReachesMemoryAsAPreference() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+
+        AnswerResult result = onboardingService.submitAnswer(session.getId(), "FAVORITE_FOOD",
+            Map.of("content", "된장찌개"), false, null, null);
+
+        assertThat(result.materialized()).isTrue();
+        FactCandidate candidate = candidateRepository.findById(result.factCandidateId())
+            .orElseThrow();
+        Memory memory = memoryRepository.findById(candidate.getMaterializedTargetId()).orElseThrow();
+        assertThat(memory.getMemoryType()).isEqualTo(MemoryType.PREFERENCE);
+        assertThat(memory.getContent()).isEqualTo("된장찌개");
+    }
+
+    /**
+     * 완료 조건: "답하지 않아도 온보딩이 정상적으로 끝납니다". 회상 씨앗 네 문항 중
+     * 하나도 답하지 않고 나머지 필수 동의만 처리해도, 거절 경로와 마찬가지로 예외
+     * 없이 정상적으로 끝까지 진행된다(다른 optional 질문과 동일한 기존 동작).
+     */
+    @Test
+    void onboardingProceedsWithoutErrorWhenReminiscenceSeedsAreLeftUnanswered() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        deny(session, "PERSONALIZATION_CONSENT");
+        deny(session, "HEALTH_DATA_CONSENT");
+        deny(session, "SCHEDULE_CONSENT");
+        deny(session, "GUARDIAN_SHARING_CONSENT");
+
+        // PERSONALIZATION_CONSENT 를 거절했으므로 회상 씨앗 네 문항(선행 동의 필요)은
+        // 애초에 서빙되지 않고, 나머지 거절 경로와 동일하게 정상 종료된다.
+        List<String> served = serveUntilStuck(session, 12);
+
+        assertThat(served).doesNotContain("HOMETOWN", "FORMER_OCCUPATION", "FAVORITE_FOOD", "FAVORITE_SONG");
+        assertThat(reload(session).getStatus()).isEqualTo(OnboardingSessionStatus.COMPLETED);
     }
 
     @Test
@@ -339,6 +445,93 @@ class RobotOnboardingServiceTest {
         // 어르신이 명시적으로 확인하지 않은 동의는 동의가 아니다.
         assertThat(reloadSenior().getHealthDataConsentStatus())
             .isEqualTo(ConsentStatus.NOT_REQUESTED);
+    }
+
+    // ── S15P11E102-259: 생년월일 온보딩 ──────────────────────────────────────
+
+    @Test
+    void aConfirmedBirthDateReachesAppUserImmediately() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+
+        AnswerResult result = onboardingService.submitAnswer(session.getId(), "BIRTH_DATE",
+            Map.of("birthDate", "1950-05-12"), true, null, null);
+
+        // PREFERRED_NAME 과 같은 모양의 질문이다: 민감하지 않고 확인을 요구하지
+        // 않으므로, 확정 즉시(그 자체가 '확인'이다) app_user 에 반영된다.
+        assertThat(result.outcome()).isEqualTo(Outcome.ACCEPTED);
+        assertThat(result.materialized()).isTrue();
+        assertThat(reloadSenior().getBirthDate()).isEqualTo(java.time.LocalDate.of(1950, 5, 12));
+        FactCandidate candidate = candidateRepository.findById(result.factCandidateId())
+            .orElseThrow();
+        assertThat(candidate.getStatus()).isEqualTo(FactCandidateStatus.MATERIALIZED);
+    }
+
+    // ── S15P11E102-261: 개인차가 있어야 하는 값 세 가지 ──────────────────────
+
+    @Test
+    void aConfirmedWakeTimeReachesAppUserImmediately() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+
+        AnswerResult result = onboardingService.submitAnswer(session.getId(), "WAKE_TIME",
+            Map.of("wakeTime", "06:30"), true, null, null);
+
+        // BIRTH_DATE 와 같은 모양이다: 민감하지 않고 확인을 요구하지 않으므로,
+        // 확정 즉시 app_user 에 반영된다.
+        assertThat(result.outcome()).isEqualTo(Outcome.ACCEPTED);
+        assertThat(result.materialized()).isTrue();
+        assertThat(reloadSenior().getWakeTime()).isEqualTo(java.time.LocalTime.of(6, 30));
+    }
+
+    @Test
+    void aConfirmedSleepTimeReachesAppUserImmediately() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+
+        AnswerResult result = onboardingService.submitAnswer(session.getId(), "SLEEP_TIME",
+            Map.of("sleepTime", "22:30"), true, null, null);
+
+        assertThat(result.materialized()).isTrue();
+        assertThat(reloadSenior().getSleepTime()).isEqualTo(java.time.LocalTime.of(22, 30));
+    }
+
+    /**
+     * 만성 통증 부위·단골 병원은 care_record 가 아니라 app_user 로 가는 값이다. 둘 다
+     * 확정 즉시(confirm=true) 반영되는 것은 같지만, 대상 테이블이 다르므로 각각의
+     * materialized_target_id 가 가리키는 행도 다르다(app_user 자신 vs 새로 만든
+     * care_record 행) — {@link #confirmingASensitiveValueSettlesIt} 이 MEDICATION 쪽을
+     * 확인한다.
+     */
+    @Test
+    void aConfirmedChronicPainAreaReachesAppUserImmediately() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "HEALTH_DATA_CONSENT");
+        Map<String, Object> value = Map.of("chronicPainArea", "왼쪽 무릎");
+
+        onboardingService.submitAnswer(session.getId(), "CHRONIC_PAIN_AREA", value, false, null, null);
+        AnswerResult confirmed = onboardingService.submitAnswer(
+            session.getId(), "CHRONIC_PAIN_AREA", value, true, null, null);
+
+        assertThat(confirmed.materialized()).isTrue();
+        assertThat(reloadSenior().getChronicPainArea()).isEqualTo("왼쪽 무릎");
+        FactCandidate candidate = candidateRepository.findById(confirmed.factCandidateId())
+            .orElseThrow();
+        assertThat(candidate.getStatus()).isEqualTo(FactCandidateStatus.MATERIALIZED);
+    }
+
+    @Test
+    void aConfirmedPreferredHospitalReachesAppUserImmediately() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "HEALTH_DATA_CONSENT");
+        Map<String, Object> value = Map.of("preferredHospital", "행복내과의원");
+
+        onboardingService.submitAnswer(session.getId(), "PREFERRED_HOSPITAL", value, false, null, null);
+        AnswerResult confirmed = onboardingService.submitAnswer(
+            session.getId(), "PREFERRED_HOSPITAL", value, true, null, null);
+
+        assertThat(confirmed.materialized()).isTrue();
+        assertThat(reloadSenior().getPreferredHospital()).isEqualTo("행복내과의원");
     }
 
     @Test

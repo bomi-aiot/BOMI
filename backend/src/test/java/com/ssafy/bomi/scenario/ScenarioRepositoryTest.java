@@ -2,6 +2,7 @@ package com.ssafy.bomi.scenario;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.ssafy.bomi.conversation.domain.ConversationIntent;
 import com.ssafy.bomi.scenario.domain.Scenario;
 import com.ssafy.bomi.scenario.domain.ScenarioStatus;
 import com.ssafy.bomi.scenario.domain.ScenarioType;
@@ -28,6 +29,10 @@ class ScenarioRepositoryTest {
     void persistsEnumsWithDefaultStatus() {
         Scenario scenario = Scenario.create(
             UUID.randomUUID(), UUID.randomUUID(), ScenarioType.HOMECOMING, "door-open-01");
+        scenario.prepareConversation(
+            ConversationIntent.HOMECOMING_GREETING,
+            "어서 오세요. 오늘 외출은 어떠셨어요?",
+            java.util.Map.of("sourceId", "door-open-01", "location", "ENTRANCE"));
         Scenario saved = scenarioRepository.saveAndFlush(scenario);
         em.clear();
 
@@ -35,6 +40,10 @@ class ScenarioRepositoryTest {
         assertThat(found.getScenarioType()).isEqualTo(ScenarioType.HOMECOMING);
         assertThat(found.getFinalStatus()).isEqualTo(ScenarioStatus.RECEIVED);
         assertThat(found.getExternalEventId()).isEqualTo("door-open-01");
+        assertThat(found.requirePreparedConversation().intent())
+            .isEqualTo(ConversationIntent.HOMECOMING_GREETING);
+        assertThat(found.requirePreparedConversation().triggerContext())
+            .containsEntry("location", "ENTRANCE");
     }
 
     @Test

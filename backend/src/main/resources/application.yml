@@ -44,6 +44,7 @@ springdoc:
         - /api/v1/care-records/**
         - /api/v1/confirmation-requests/**
         - /api/v1/elders/**
+        - /api/v1/known-persons/**
     - group: bomi-backend
       display-name: "[BE-All] 백엔드 전체 API"
       packages-to-scan: com.ssafy.bomi
@@ -51,19 +52,21 @@ springdoc:
     enabled: true
     path: /swagger-ui.html
     disable-swagger-default-url: true
-    # Try it out 을 켠다. 계약만 있던 시절에는 실수로 연동 API 를 때리지 않도록
-    # 비워 두었지만(S15P11E102-63), 이제 로봇·가디언웹 채널은 실제로 동작하므로
-    # 브라우저에서 바로 호출해 보는 편이 낫다.
+    # Try it out 은 읽기(GET)만 허용한다 (S15P11E102-310).
     #
-    # 주의: 이 서비스에는 인증이 없다. 배포 Swagger 에서 쓰기 메서드까지 열리므로
-    # 문서 주소를 아는 사람은 운영 데이터를 바꿀 수 있다. 발표 기간 한정으로
-    # 감수한 결정이며, 외부 공개가 길어지면 문서 경로 인증을 먼저 붙여야 한다.
+    # 이 서비스에는 인증이 없다(가디언웹 채널은 nginx 단기 완화만 걸려 있고,
+    # 로봇 채널은 별도 티켓 307 에서 공유 비밀로 막는다). 예전에는 쓰기 메서드까지
+    # 전부 열어 뒀는데(S15P11E102-63 에서 계약 검토용으로 켠 뒤 그대로 방치),
+    # 그 상태에서는 배포 문서 주소를 아는 사람이 DELETE 버튼 하나로 어르신의
+    # 복약 스케줄(`CareRecordController#deleteMedication`)을 지울 수 있었다.
+    #
+    # supportedSubmitMethods 는 springdoc 설정이 아니라 swagger-ui 자체의 표준
+    # 옵션이다(springdoc 은 이 값을 그대로 swagger-ui 초기화 스크립트에 넘긴다).
+    # 여기 없는 메서드는 오퍼레이션이 계속 문서에 나열되고 스키마도 그대로
+    # 보이지만 "Try it out" 버튼이 없어 브라우저에서 실행할 수 없다 — 문서로서의
+    # 가치는 유지하고 파괴적 실행만 막는다.
     supported-submit-methods:
       - get
-      - post
-      - put
-      - patch
-      - delete
     # group-configs 의 세 그룹은 springdoc 이 display-name 으로 자동 등록한다.
     # 여기에 다시 적으면 드롭다운에 같은 항목이 두 번 뜬다. 정적 YAML 만 적는다.
     urls:
@@ -113,6 +116,13 @@ bomi:
     # (ScenarioTimeoutWatchdog). 대화 핸드오프가 로깅 스텁이거나 이벤트가 유실돼도
     # 다음 시나리오가 영원히 막히지 않도록 하는 마지막 안전망.
     active-timeout: ${SCENARIO_ACTIVE_TIMEOUT:20m}
+  ai-conversation:
+    # START_CONVERSATION 발행 후 AI가 시작 이벤트를 보내야 하는 시간.
+    start-timeout: ${AI_CONVERSATION_START_TIMEOUT:10s}
+    # CONVERSATION_STARTED 이후 대화가 끝나야 하는 최대 시간.
+    max-duration: ${AI_CONVERSATION_MAX_DURATION:5m}
+    # 10초 제한을 지키기 위한 DB watchdog 확인 주기.
+    timeout-check-interval-millis: ${AI_CONVERSATION_TIMEOUT_CHECK_INTERVAL_MILLIS:1000}
   # 의미 검색 벡터 스토어 (S15P11E102-218).
   #
   # host 가 비면 의미 검색이 꺼진 채로 뜬다. 지원되는 상태다 — 기억 조회가
@@ -149,6 +159,35 @@ bomi:
     sync-enabled: ${EMBEDDING_SYNC_ENABLED:false}
     sync-interval-millis: ${EMBEDDING_SYNC_INTERVAL_MILLIS:300000}
 
+  # 대화 요약 생성형 LLM — Gemini, GMS 경유 (S15P11E102-254).
+  #
+  # ★ embedding 과 같은 이유로 기본값이 전부 꺼짐이다. 이것이 백엔드의 두 번째(현재로는
+  #   마지막) 과금 외부 API 다. 키만 컨테이너에 넘기고 LLM_ENABLED 를 빠뜨리면
+  #   application.yml 의 기본값(false)이 조용히 이긴다 — EMBEDDING_ENABLED 가 218 에서
+  #   실제로 겪은 바로 그 실패 모양이다. 두 값을 항상 같이 확인한다.
+  llm:
+    enabled: ${LLM_ENABLED:false}
+    api-key: ${GEMINI_API_KEY:}
+    base-url: ${LLM_BASE_URL:https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com}
+    model: ${LLM_MODEL:gemini-2.5-flash-lite}
+    timeout-millis: ${LLM_TIMEOUT_MILLIS:8000}
+    max-output-tokens: ${LLM_MAX_OUTPUT_TOKENS:220}
+    # 한 번의 스윕(요약 잡)이 부를 수 있는 호출 수 상한. 튜닝 값이 아니라 지출 상한이다.
+    max-calls-per-run: ${LLM_MAX_CALLS_PER_RUN:20}
+    max-summary-messages: ${LLM_MAX_SUMMARY_MESSAGES:60}
+    sweep-interval-millis: ${LLM_SWEEP_INTERVAL_MILLIS:300000}
+
+  # 대화 경계 판단 — 유휴시간으로 대화를 닫고 요약 대상을 만든다 (S15P11E102-254).
+  #
+  # llm 과 달리 과금 API 가 없어 기본값이 켜짐이다(ConversationLifecycleProperties
+  # 참고) — 꺼두면 이 티켓이 고치는 문제(대화가 영원히 OPEN)로 되돌아간다. 그래도
+  # 재배포 없이 조정할 수 있도록 env 로 노출한다(SCENARIO_ACTIVE_TIMEOUT 과 같은 이유).
+  conversation-lifecycle:
+    idle-timeout: ${CONVERSATION_IDLE_TIMEOUT:30m}
+    raw-retention-days: ${CONVERSATION_RAW_RETENTION_DAYS:30}
+    sweep-enabled: ${CONVERSATION_LIFECYCLE_SWEEP_ENABLED:true}
+    sweep-interval-millis: ${CONVERSATION_LIFECYCLE_SWEEP_INTERVAL_MILLIS:60000}
+
   mqtt:
     enabled: ${MQTT_ENABLED:false}
     broker-url: ${MQTT_BROKER_URL:tcp://${MQTT_BROKER_HOST:localhost}:${MQTT_BROKER_PORT:1883}}
@@ -158,3 +197,16 @@ bomi:
     qos: 1
     connection-timeout: 10s
     completion-timeout: 5s
+
+  # 로봇 채널 인증 (S15P11E102-307).
+  #
+  # 지금 이 API 들에는 인증이 전혀 없어서 익명 호출자가 어르신의 이름·복약
+  # 스케줄·회피 주제(CLAUDE.md §8)를 읽거나 가짜 T1 보호자 알림(CLAUDE.md §9)을
+  # 만들 수 있다. RobotChannelAuthFilter 가 /api/v1/robot/**, /api/v1/seniors/**
+  # 를 이 값과 비교한다.
+  #
+  # ★ 기본값은 빈 문자열이고, 비어 있으면 필터가 아무것도 막지 않는다 —
+  #   embedding 과 같은 이유다: 로컬 개발과 기존 테스트가 이 값 없이도 그대로
+  #   통과해야 한다. 배포에서 실제 값을 채우는 것은 별도 결정이다.
+  robot-channel:
+    shared-secret: ${ROBOT_SHARED_SECRET:}

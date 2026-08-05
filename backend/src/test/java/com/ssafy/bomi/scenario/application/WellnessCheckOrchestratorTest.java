@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.ssafy.bomi.conversation.domain.ConversationIntent;
 import com.ssafy.bomi.mqtt.outbound.RobotCommand;
 import com.ssafy.bomi.mqtt.outbound.RobotCommandPublisher;
 import com.ssafy.bomi.mqtt.outbound.RobotCommandType;
@@ -77,19 +78,30 @@ class WellnessCheckOrchestratorTest {
     }
 
     @Test
-    void highTemperatureStartsScenarioWithNavigateAndSpeak() {
+    void highTemperatureStoresConversationAndOnlyNavigates() {
         orchestrator.onAmbientObserved(sensorId, ambient(31.0, 50.0));
 
         ArgumentCaptor<Scenario> scenarioCaptor = ArgumentCaptor.forClass(Scenario.class);
         verify(scenarioRepository).save(scenarioCaptor.capture());
-        assertThat(scenarioCaptor.getValue().getScenarioType()).isEqualTo(ScenarioType.WELLNESS_CHECK);
+        Scenario scenario = scenarioCaptor.getValue();
+        assertThat(scenario.getScenarioType()).isEqualTo(ScenarioType.WELLNESS_CHECK);
+        assertThat(scenario.requirePreparedConversation().intent())
+            .isEqualTo(ConversationIntent.WELLNESS_CHECK);
+        assertThat(scenario.requirePreparedConversation().text())
+            .isEqualTo(WellnessCheckOrchestrator.DEFAULT_PROMPT);
+        assertThat(scenario.requirePreparedConversation().triggerContext())
+            .containsEntry("sourceId", sensorId)
+            .containsEntry("location", "LIVING_ROOM")
+            .containsEntry("temperatureC", new java.math.BigDecimal("31.0"))
+            .containsEntry("humidityPercent", new java.math.BigDecimal("50.0"));
 
         ArgumentCaptor<RobotCommand> commandCaptor = ArgumentCaptor.forClass(RobotCommand.class);
-        verify(commandPublisher, org.mockito.Mockito.times(2)).publish(commandCaptor.capture());
-        RobotCommand navigate = commandCaptor.getAllValues().get(0);
+        verify(commandPublisher).publish(commandCaptor.capture());
+        RobotCommand navigate = commandCaptor.getValue();
         assertThat(navigate.type()).isEqualTo(RobotCommandType.NAVIGATE);
         assertThat(navigate.payload()).containsEntry("target", "LIVING_ROOM");
-        assertThat(commandCaptor.getAllValues().get(1).type()).isEqualTo(RobotCommandType.SPEAK);
+        assertThat(scenario.getActiveNavigationCommandId())
+            .isEqualTo(navigate.commandId());
     }
 
     @Test
@@ -100,8 +112,30 @@ class WellnessCheckOrchestratorTest {
     }
 
     @Test
+    void temperatureAtThresholdTriggers() {
+        orchestrator.onAmbientObserved(sensorId, ambient(30.0, 50.0));
+
+        verify(scenarioRepository).save(any(Scenario.class));
+    }
+
+    @Test
+    void humidityAtThresholdTriggers() {
+        orchestrator.onAmbientObserved(sensorId, ambient(24.0, 80.0));
+
+        verify(scenarioRepository).save(any(Scenario.class));
+    }
+
+    @Test
     void normalReadingDoesNothing() {
         orchestrator.onAmbientObserved(sensorId, ambient(24.0, 50.0));
+
+        verify(scenarioRepository, never()).save(any());
+        verifyNoInteractions(commandPublisher);
+    }
+
+    @Test
+    void readingsJustBelowThresholdDoNothing() {
+        orchestrator.onAmbientObserved(sensorId, ambient(29.9, 79.9));
 
         verify(scenarioRepository, never()).save(any());
         verifyNoInteractions(commandPublisher);

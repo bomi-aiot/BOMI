@@ -7,10 +7,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ssafy.bomi.care.domain.CareRecord;
 import com.ssafy.bomi.care.repository.CareRecordRepository;
+import com.ssafy.bomi.conversation.domain.Conversation;
+import com.ssafy.bomi.conversation.domain.ConversationIntent;
+import com.ssafy.bomi.conversation.domain.ConversationOutcome;
+import com.ssafy.bomi.conversation.domain.ConversationStatus;
+import com.ssafy.bomi.conversation.repository.ConversationRepository;
 import com.ssafy.bomi.mqtt.inbound.InMemoryProcessedEventStore;
 import com.ssafy.bomi.mqtt.inbound.MqttInboundDispatcher;
 import com.ssafy.bomi.mqtt.inbound.MqttInboundMessage;
 import com.ssafy.bomi.mqtt.inbound.MqttMessageHandler;
+import com.ssafy.bomi.mqtt.outbound.AiConversationCommand;
+import com.ssafy.bomi.mqtt.outbound.AiConversationCommandPublisher;
 import com.ssafy.bomi.mqtt.outbound.RobotCommand;
 import com.ssafy.bomi.mqtt.outbound.RobotCommandPublisher;
 import com.ssafy.bomi.mqtt.outbound.RobotCommandType;
@@ -24,18 +31,25 @@ import com.ssafy.bomi.observation.inbound.RestStateChangedHandler;
 import com.ssafy.bomi.robot.domain.Robot;
 import com.ssafy.bomi.robot.domain.RobotMode;
 import com.ssafy.bomi.robot.repository.RobotRepository;
-import com.ssafy.bomi.scenario.application.ConversationGateway;
 import com.ssafy.bomi.scenario.application.HomecomingOrchestrator;
+import com.ssafy.bomi.scenario.application.MedicationReminderScheduler;
+import com.ssafy.bomi.scenario.application.MqttConversationGateway;
 import com.ssafy.bomi.scenario.application.ScenarioStartGuard;
 import com.ssafy.bomi.scenario.application.WellnessCheckOrchestrator;
+import com.ssafy.bomi.scenario.config.AiConversationProperties;
 import com.ssafy.bomi.scenario.config.HomecomingProperties;
+import com.ssafy.bomi.scenario.config.MedicationReminderProperties;
 import com.ssafy.bomi.scenario.domain.Scenario;
 import com.ssafy.bomi.scenario.domain.ScenarioStatus;
 import com.ssafy.bomi.scenario.inbound.ConversationEndedHandler;
+import com.ssafy.bomi.scenario.inbound.ConversationStartedHandler;
 import com.ssafy.bomi.scenario.inbound.DoorOpenedHandler;
 import com.ssafy.bomi.scenario.inbound.NavigationResultHandler;
 import com.ssafy.bomi.scenario.repository.ScenarioRepository;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -48,44 +62,35 @@ import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
 import org.springframework.test.context.ActiveProfiles;
 
-/**
- * End-to-end "logic" test of the homecoming flow over a real (H2) database.
- *
- * <p>Method A: no MQTT broker. Real Spring Data repositories come from
- * {@code @DataJpaTest}; the processing chain (dispatcher → idempotency → handlers
- * → orchestrator → scenario state machine → observation) is wired by hand, and
- * outbound commands are captured by a recording {@link RobotCommandPublisher}.
- * Inbound is driven by feeding {@link MqttInboundMessage}s to the dispatcher,
- * exactly as the transport layer would after parsing. The Paho transport itself
- * is covered by the MQTT skeleton's own unit tests.</p>
- */
+/** End-to-end homecoming logic over a real H2 persistence context, without a broker. */
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @ActiveProfiles("datajpa")
 class HomecomingE2eTest {
 
+    private static final String SENSOR_ID = "door-sensor-01";
+    private static final String AMBIENT_SENSOR_ID = "ambient-sensor-01";
+    private static final String DEVICE_ID = "robot-01";
+
     @Autowired ScenarioRepository scenarioRepository;
+    @Autowired ConversationRepository conversationRepository;
     @Autowired RobotRepository robotRepository;
     @Autowired CareRecordRepository careRecordRepository;
     @Autowired TestEntityManager em;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final Clock clock = Clock.fixed(
+        Instant.parse("2026-08-05T01:00:00Z"), ZoneOffset.UTC);
 
-    private static final String SENSOR_ID = "door-sensor-01";
-    private static final String AMBIENT_SENSOR_ID = "ambient-sensor-01";
-    private static final String DEVICE_ID = "robot-01";
-
-    private RecordingPublisher publisher;
-    private RecordingGateway gateway;
-    private HomecomingOrchestrator orchestrator;
+    private RecordingRobotPublisher robotPublisher;
+    private RecordingAiPublisher aiPublisher;
     private MqttInboundDispatcher dispatcher;
-
+    private MedicationReminderScheduler medicationScheduler;
     private UUID seniorId;
     private UUID robotId;
 
     @BeforeEach
     void setUp() {
-        // Seed a robot assigned to a senior, addressable by its device id.
         seniorId = UUID.randomUUID();
         Robot robot = robotRepository.saveAndFlush(Robot.create(seniorId, DEVICE_ID));
         robotId = robot.getId();
@@ -95,22 +100,44 @@ class HomecomingE2eTest {
         ObservationProperties observationProperties = new ObservationProperties();
         observationProperties.setAmbientSensorToSenior(Map.of(AMBIENT_SENSOR_ID, seniorId));
 
-        publisher = new RecordingPublisher();
-        gateway = new RecordingGateway();
-
+        robotPublisher = new RecordingRobotPublisher();
+        aiPublisher = new RecordingAiPublisher();
         ScenarioStartGuard startGuard = new ScenarioStartGuard(scenarioRepository);
-        orchestrator = new HomecomingOrchestrator(
-            scenarioRepository, robotRepository, publisher, gateway, homecomingProperties,
-            startGuard);
+        MqttConversationGateway gateway = new MqttConversationGateway(
+            scenarioRepository,
+            conversationRepository,
+            robotRepository,
+            aiPublisher,
+            new AiConversationProperties(),
+            clock);
+        HomecomingOrchestrator orchestrator = new HomecomingOrchestrator(
+            scenarioRepository,
+            conversationRepository,
+            robotRepository,
+            robotPublisher,
+            gateway,
+            homecomingProperties,
+            startGuard,
+            clock);
+
         RobotObservationService observationService = new RobotObservationService(
             robotRepository, careRecordRepository, observationProperties);
         WellnessCheckOrchestrator wellnessOrchestrator = new WellnessCheckOrchestrator(
-            scenarioRepository, robotRepository, publisher, startGuard,
+            scenarioRepository, robotRepository, robotPublisher, startGuard,
             observationProperties, new WellnessProperties());
+        medicationScheduler = new MedicationReminderScheduler(
+            careRecordRepository,
+            scenarioRepository,
+            robotRepository,
+            robotPublisher,
+            startGuard,
+            new MedicationReminderProperties(),
+            clock);
 
         List<MqttMessageHandler> handlers = List.of(
             new DoorOpenedHandler(orchestrator),
             new NavigationResultHandler(orchestrator),
+            new ConversationStartedHandler(orchestrator),
             new ConversationEndedHandler(orchestrator),
             new RestStateChangedHandler(observationService),
             new AmbientObservedHandler(observationService, wellnessOrchestrator),
@@ -119,209 +146,253 @@ class HomecomingE2eTest {
     }
 
     @Test
-    void doorOpenedRunsThroughToCompleted() {
-        // 1) Door opens → scenario created, NAVIGATE(entrance) + SPEAK, robot SCENARIO_ACTIVE.
-        //
-        //    발화가 이동과 함께 나간다 (S15P11E102-226). 예전에는 도착 뒤에 말했는데,
-        //    그러면 느리거나 실패한 이동이 인사를 삼킨다 (CLAUDE.md §11).
+    void doorOpenedRunsThroughRealAiCommandAndConversationLifecycle() {
         dispatcher.dispatch(doorOpened("door-1"));
         sync();
 
-        assertThat(publisher.commands).hasSize(2);
-        assertThat(publisher.commands.get(1).type()).isEqualTo(RobotCommandType.SPEAK);
-        RobotCommand navToEntrance = publisher.commands.get(0);
-        assertThat(navToEntrance.type()).isEqualTo(RobotCommandType.NAVIGATE);
-        assertThat(navToEntrance.robotId()).isEqualTo(DEVICE_ID);
-        assertThat(navToEntrance.payload()).containsEntry("target", "ENTRANCE");
-
-        UUID scenarioId = navToEntrance.scenarioId();
+        assertThat(robotPublisher.commands).hasSize(1);
+        RobotCommand entrance = robotPublisher.commands.get(0);
+        assertThat(entrance.type()).isEqualTo(RobotCommandType.NAVIGATE);
+        assertThat(entrance.payload()).containsEntry("target", "ENTRANCE");
+        UUID scenarioId = entrance.scenarioId();
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.MOVING_TO_ENTRANCE);
         assertThat(mode()).isEqualTo(RobotMode.SCENARIO_ACTIVE);
 
-        // 2) Robot arrives at entrance → conversation hand-off only. 인사는 이미 나갔다.
-        dispatcher.dispatch(navigationResult("nav-1", scenarioId));
+        dispatcher.dispatch(navigationResult(
+            "nav-1", scenarioId, entrance.commandId(), "SUCCEEDED"));
         sync();
 
-        assertThat(publisher.commands).hasSize(2);  // 도착이 명령을 더하지 않는다
-        assertThat(gateway.startedScenarioIds).containsExactly(scenarioId);
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.CHECKING_INTERACTION);
+        assertThat(aiPublisher.commands).hasSize(1);
+        AiConversationCommand aiCommand = aiPublisher.commands.get(0);
+        assertThat(aiCommand.scenarioId()).isEqualTo(scenarioId);
+        assertThat(aiCommand.payload().text()).isNotBlank();
+        Conversation conversation = conversationRepository.findByScenarioId(scenarioId).orElseThrow();
+        assertThat(aiCommand.conversationId()).isEqualTo(conversation.getId());
+        assertThat(conversation.getAiStartedAt()).isNull();
+
+        dispatcher.dispatch(conversationStarted(
+            "conv-start-1",
+            scenarioId,
+            conversation.getId(),
+            conversation.getStartCommandId(),
+            ConversationIntent.HOMECOMING_GREETING));
+        sync();
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.CONVERSING);
+        assertThat(conversationRepository.findById(conversation.getId()).orElseThrow()
+            .getAiStartedAt()).isNotNull();
 
-        // 3) Voice side publishes CONVERSATION_ENDED → NAVIGATE(default).
-        dispatcher.dispatch(conversationEnded("conv-1", scenarioId));
+        dispatcher.dispatch(conversationEnded(
+            "conv-end-1", scenarioId, conversation.getId(), "COMPLETED", null));
         sync();
-
-        RobotCommand navHome = publisher.commands.get(2);
-        assertThat(navHome.type()).isEqualTo(RobotCommandType.NAVIGATE);
-        assertThat(navHome.payload()).containsEntry("target", "DEFAULT");
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
+        assertThat(robotPublisher.commands).hasSize(2);
+        assertThat(robotPublisher.commands.get(1).payload()).containsEntry("target", "DEFAULT");
 
-        // 4) Robot arrives home → COMPLETED, robot back to IDLE.
-        dispatcher.dispatch(navigationResult("nav-2", scenarioId));
+        // A distinct duplicate event must also be harmless after an app restart lost eventId memory.
+        dispatcher.dispatch(conversationEnded(
+            "conv-end-2", scenarioId, conversation.getId(), "COMPLETED", null));
         sync();
+        assertThat(robotPublisher.commands).hasSize(2);
 
+        RobotCommand returnToDefault = robotPublisher.commands.get(1);
+        dispatcher.dispatch(navigationResult(
+            "nav-2", scenarioId, returnToDefault.commandId(), "SUCCEEDED"));
+        sync();
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.COMPLETED);
         assertThat(mode()).isEqualTo(RobotMode.IDLE);
-        assertThat(publisher.commands).hasSize(3);
+        Conversation ended = conversationRepository.findById(conversation.getId()).orElseThrow();
+        assertThat(ended.getStatus()).isEqualTo(ConversationStatus.COMPLETED);
+        assertThat(ended.getEndOutcome()).isEqualTo(ConversationOutcome.COMPLETED);
     }
 
     @Test
-    void duplicateDoorOpenedCreatesOnlyOneScenario() {
-        dispatcher.dispatch(doorOpened("door-1"));
-        dispatcher.dispatch(doorOpened("door-1")); // same eventId → must be skipped
+    void legacyNavigationResultStillStartsAiDuringRobotMigration() {
+        dispatcher.dispatch(doorOpened("door-legacy"));
+        sync();
+        UUID scenarioId = robotPublisher.commands.get(0).scenarioId();
+
+        dispatcher.dispatch(legacyNavigationResult("legacy-nav", scenarioId, "ARRIVED"));
+        sync();
+
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.CHECKING_INTERACTION);
+        assertThat(aiPublisher.commands).hasSize(1);
+    }
+
+    @Test
+    void duplicateDoorEventCreatesOnlyOneScenarioAndCommand() {
+        dispatcher.dispatch(doorOpened("door-duplicate"));
+        dispatcher.dispatch(doorOpened("door-duplicate"));
         sync();
 
         assertThat(scenarioRepository.findAll()).hasSize(1);
-        assertThat(publisher.commands).hasSize(2);  // 두 번째 문 열림은 무시된다
+        assertThat(robotPublisher.commands).hasSize(1);
     }
 
     @Test
-    void secondDoorOpenedDuringActiveScenarioIsSuppressedByGuard() {
-        // eventId 중복 제거와는 다른 층의 방어다. 문이 실제로 두 번 열리면(새 eventId)
-        // 멱등성 저장소는 통과하지만, 첫 시나리오가 아직 진행 중이므로
-        // ScenarioStartGuard 가 두 번째 시나리오 생성을 막아야 한다.
-        dispatcher.dispatch(doorOpened("door-1"));
-        dispatcher.dispatch(doorOpened("door-2")); // 다른 eventId, 같은 어르신
+    void navigationFailureSafeStopsBeforeConversationStarts() {
+        dispatcher.dispatch(doorOpened("door-failure"));
         sync();
+        RobotCommand entrance = robotPublisher.commands.get(0);
+        UUID scenarioId = entrance.scenarioId();
 
-        assertThat(scenarioRepository.findAll()).hasSize(1);
-        assertThat(publisher.commands).hasSize(2); // NAVIGATE + SPEAK 한 세트뿐
-    }
-
-    @Test
-    void conversationEndedIgnoredWhenNotConversing() {
-        // Door opened → scenario is MOVING_TO_ENTRANCE, not CONVERSING yet.
-        dispatcher.dispatch(doorOpened("door-1"));
-        sync();
-        UUID scenarioId = publisher.commands.get(0).scenarioId();
-
-        // A CONVERSATION_ENDED arriving now must be ignored by the status guard.
-        dispatcher.dispatch(conversationEnded("conv-early", scenarioId));
-        sync();
-
-        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.MOVING_TO_ENTRANCE);
-        assertThat(publisher.commands).hasSize(2); // 여전히 NAVIGATE(ENTRANCE) + SPEAK 뿐
-    }
-
-    @Test
-    void lateConversationEndedIgnoredAfterReturnStarted() {
-        dispatcher.dispatch(doorOpened("door-1"));
-        sync();
-        UUID scenarioId = publisher.commands.get(0).scenarioId();
-        dispatcher.dispatch(navigationResult("nav-1", scenarioId));
-        sync();
-        dispatcher.dispatch(conversationEnded("conv-1", scenarioId)); // → NAVIGATE(default)
-        sync();
-        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
-        assertThat(publisher.commands).hasSize(3);
-
-        // A late CONVERSATION_ENDED with a NEW eventId passes idempotency but the
-        // status guard ignores it (no longer CONVERSING): no extra command.
-        dispatcher.dispatch(conversationEnded("conv-2", scenarioId));
-        sync();
-        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
-        assertThat(publisher.commands).hasSize(3);
-    }
-
-    @Test
-    void navigationFailureStopsScenarioAndSafeStops() {
-        dispatcher.dispatch(doorOpened("door-1"));
-        sync();
-        UUID scenarioId = publisher.commands.get(0).scenarioId();
-
-        // Robot fails to reach the entrance → scenario FAILED, robot SAFE_STOP, no SPEAK.
-        dispatcher.dispatch(navigationResult("nav-1", scenarioId, "FAILED"));
+        dispatcher.dispatch(navigationResult(
+            "nav-failure", scenarioId, entrance.commandId(), "FAILED"));
         sync();
 
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.FAILED);
         assertThat(mode()).isEqualTo(RobotMode.SAFE_STOP);
-        assertThat(publisher.commands).hasSize(2); // NAVIGATE(ENTRANCE) + SPEAK, 그 뒤로 없음
+        assertThat(aiPublisher.commands).isEmpty();
     }
 
     @Test
-    void navigationResultWithoutStatusIsIgnoredNotTreatedAsArrival() {
-        dispatcher.dispatch(doorOpened("door-1"));
-        sync();
-        UUID scenarioId = publisher.commands.get(0).scenarioId();
-
-        // A result missing 'status' must NOT be treated as arrival: state unchanged.
-        ObjectNode body = objectMapper.createObjectNode();
-        body.putObject("payload").put("scenarioId", scenarioId.toString());
-        dispatcher.dispatch(message(
-            MqttInboundCategory.ROBOT_RESULT, "NAVIGATION_RESULT", DEVICE_ID, "nav-nostatus", body));
-        sync();
-
-        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.MOVING_TO_ENTRANCE);
-        assertThat(publisher.commands).hasSize(2);
-    }
-
-    @Test
-    void lateNavigationFailureIgnoredAfterTerminal() {
-        dispatcher.dispatch(doorOpened("door-1"));
-        sync();
-        UUID scenarioId = publisher.commands.get(0).scenarioId();
-        dispatcher.dispatch(navigationResult("nav-1", scenarioId, "FAILED"));
-        sync();
-        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.FAILED);
-
-        // A late failure with a new eventId must be ignored (already terminal).
-        dispatcher.dispatch(navigationResult("nav-2", scenarioId, "FAILED"));
-        sync();
-        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.FAILED);
-        assertThat(publisher.commands).hasSize(2);
-    }
-
-    @Test
-    void highAmbientTemperatureStartsWellnessCheck() {
-        // 임계값(30°C) 초과 관측 → 기록 + WELLNESS_CHECK 시나리오 + 거실 이동 + 안부 발화.
+    void highAmbientTemperatureRunsThroughAiConversationAndReturnsHome() {
         dispatcher.dispatch(ambientObserved("amb-1", 31.5));
         sync();
 
-        assertThat(publisher.commands).hasSize(2);
-        RobotCommand nav = publisher.commands.get(0);
-        assertThat(nav.type()).isEqualTo(RobotCommandType.NAVIGATE);
-        assertThat(nav.payload()).containsEntry("target", "LIVING_ROOM");
-        assertThat(publisher.commands.get(1).type()).isEqualTo(RobotCommandType.SPEAK);
-        assertThat(status(nav.scenarioId())).isEqualTo(ScenarioStatus.MOVING_TO_ENTRANCE);
+        assertThat(robotPublisher.commands).hasSize(1);
+        RobotCommand navigate = robotPublisher.commands.get(0);
+        assertThat(navigate.payload()).containsEntry("target", "LIVING_ROOM");
         assertThat(mode()).isEqualTo(RobotMode.SCENARIO_ACTIVE);
 
-        // 온습도는 연속 신호다: 진행 중에 또 임계값 초과가 와도 시나리오는 하나뿐.
-        dispatcher.dispatch(ambientObserved("amb-2", 32.0));
+        dispatcher.dispatch(navigationResult(
+            "amb-nav-1", navigate.scenarioId(), navigate.commandId(), "SUCCEEDED"));
         sync();
-        assertThat(scenarioRepository.findAll()).hasSize(1);
+
+        UUID scenarioId = navigate.scenarioId();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.CHECKING_INTERACTION);
+        assertThat(aiPublisher.commands).hasSize(1);
+        AiConversationCommand aiCommand = aiPublisher.commands.get(0);
+        assertThat(aiCommand.payload().intent()).isEqualTo(ConversationIntent.WELLNESS_CHECK);
+        assertThat(aiCommand.payload().triggerContext())
+            .containsEntry("location", "LIVING_ROOM");
+        assertThat(((Number) aiCommand.payload().triggerContext().get("temperatureC"))
+            .doubleValue()).isEqualTo(31.5);
+        Conversation conversation = conversationRepository.findByScenarioId(scenarioId)
+            .orElseThrow();
+
+        dispatcher.dispatch(conversationStarted(
+            "amb-conv-start-1",
+            scenarioId,
+            conversation.getId(),
+            conversation.getStartCommandId(),
+            ConversationIntent.WELLNESS_CHECK));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.CONVERSING);
+
+        dispatcher.dispatch(conversationEnded(
+            "amb-conv-end-1", scenarioId, conversation.getId(), "COMPLETED", null));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
+        assertThat(robotPublisher.commands).hasSize(2);
+        RobotCommand returnToDefault = robotPublisher.commands.get(1);
+        assertThat(returnToDefault.payload()).containsEntry("target", "DEFAULT");
+
+        dispatcher.dispatch(navigationResult(
+            "amb-nav-2",
+            scenarioId,
+            returnToDefault.commandId(),
+            "SUCCEEDED"));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.COMPLETED);
+        assertThat(mode()).isEqualTo(RobotMode.IDLE);
     }
 
     @Test
-    void normalAmbientTemperatureOnlyRecordsWithoutScenario() {
-        dispatcher.dispatch(ambientObserved("amb-3", 24.0));
+    void dueMedicationRunsThroughAiConversationAndReturnsHome() {
+        CareRecord medication = careRecordRepository.saveAndFlush(CareRecord.create(
+            seniorId,
+            "MEDICATION",
+            Map.of("medicationName", "혈압약", "reminderEnabled", true)));
+        CareRecord schedule = CareRecord.create(
+            seniorId,
+            "MEDICATION_SCHEDULE",
+            Map.of(
+                "medicationName", "혈압약",
+                "localTimes", List.of("10:00"),
+                "timeZone", "Asia/Seoul",
+                "reminderLeadMinutes", 0));
+        schedule.assignParent(medication.getId());
+        careRecordRepository.saveAndFlush(schedule);
+
+        medicationScheduler.tick();
         sync();
 
-        assertThat(publisher.commands).isEmpty();
+        assertThat(robotPublisher.commands).hasSize(1);
+        RobotCommand navigate = robotPublisher.commands.get(0);
+        assertThat(navigate.payload()).containsEntry("target", "LIVING_ROOM");
+        UUID scenarioId = navigate.scenarioId();
+
+        dispatcher.dispatch(navigationResult(
+            "med-nav-1", scenarioId, navigate.commandId(), "SUCCEEDED"));
+        sync();
+
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.CHECKING_INTERACTION);
+        assertThat(aiPublisher.commands).hasSize(1);
+        AiConversationCommand aiCommand = aiPublisher.commands.get(0);
+        assertThat(aiCommand.payload().intent())
+            .isEqualTo(ConversationIntent.MEDICATION_REMINDER);
+        assertThat(aiCommand.payload().text()).contains("혈압약");
+        assertThat(aiCommand.payload().triggerContext())
+            .containsEntry("medicationScheduleId", schedule.getId().toString())
+            .containsEntry("scheduledAt", "2026-08-05T10:00+09:00");
+        Conversation conversation = conversationRepository.findByScenarioId(scenarioId)
+            .orElseThrow();
+
+        dispatcher.dispatch(conversationStarted(
+            "med-conv-start-1",
+            scenarioId,
+            conversation.getId(),
+            conversation.getStartCommandId(),
+            ConversationIntent.MEDICATION_REMINDER));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.CONVERSING);
+
+        dispatcher.dispatch(conversationEnded(
+            "med-conv-end-1", scenarioId, conversation.getId(), "COMPLETED", null));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
+        assertThat(robotPublisher.commands).hasSize(2);
+        RobotCommand returnToDefault = robotPublisher.commands.get(1);
+        assertThat(returnToDefault.payload()).containsEntry("target", "DEFAULT");
+
+        dispatcher.dispatch(navigationResult(
+            "med-nav-2",
+            scenarioId,
+            returnToDefault.commandId(),
+            "SUCCEEDED"));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.COMPLETED);
+        assertThat(mode()).isEqualTo(RobotMode.IDLE);
+    }
+
+    @Test
+    void normalAmbientTemperatureOnlyRecordsObservation() {
+        dispatcher.dispatch(ambientObserved("amb-normal", 24.0));
+        sync();
+
+        assertThat(robotPublisher.commands).isEmpty();
         assertThat(scenarioRepository.findAll()).isEmpty();
         assertThat(careRecordRepository.findAll())
-            .anySatisfy(r -> assertThat(r.getRecordType()).isEqualTo("ENVIRONMENT_OBSERVATION"));
+            .anySatisfy(record -> assertThat(record.getRecordType())
+                .isEqualTo("ENVIRONMENT_OBSERVATION"));
     }
 
     @Test
-    void restStateChangeRecordsObservationAndEntersRestGuard() {
+    void restStateChangeStillEntersRestGuard() {
         dispatcher.dispatch(restState("rest-1", "RESTING"));
         sync();
 
         assertThat(mode()).isEqualTo(RobotMode.REST_GUARD);
-        assertThat(careRecordRepository.findAll())
-            .anySatisfy(record -> assertThat(record.getRecordType()).isEqualTo("REST_OBSERVATION"));
     }
 
-    // --- helpers -------------------------------------------------------------
-
-    /** Flush pending writes and detach so each subsequent step reloads from the DB. */
     private void sync() {
         em.flush();
         em.clear();
     }
 
     private ScenarioStatus status(UUID scenarioId) {
-        Scenario scenario = scenarioRepository.findById(scenarioId).orElseThrow();
-        return scenario.getFinalStatus();
+        return scenarioRepository.findById(scenarioId).orElseThrow().getFinalStatus();
     }
 
     private RobotMode mode() {
@@ -329,31 +400,100 @@ class HomecomingE2eTest {
     }
 
     private MqttInboundMessage message(
-        MqttInboundCategory category, String type, String sourceId, String eventId, JsonNode body) {
+        MqttInboundCategory category,
+        String type,
+        String sourceId,
+        String eventId,
+        UUID scenarioId,
+        UUID conversationId,
+        String commandId,
+        boolean legacy,
+        JsonNode body
+    ) {
         return new MqttInboundMessage(
-            category, "bomi/v1/topic", sourceId, eventId, type, OffsetDateTime.now(), 1, false, body);
+            category,
+            "bomi/v1/topic",
+            sourceId,
+            eventId,
+            type,
+            OffsetDateTime.now(clock),
+            1,
+            false,
+            scenarioId,
+            conversationId,
+            commandId,
+            legacy,
+            body);
     }
 
     private MqttInboundMessage doorOpened(String eventId) {
-        return message(MqttInboundCategory.IOT_EVENT, "DOOR_OPENED", SENSOR_ID, eventId, null);
+        return message(MqttInboundCategory.IOT_EVENT, "DOOR_OPENED", SENSOR_ID, eventId,
+            null, null, null, false, null);
     }
 
-    private MqttInboundMessage navigationResult(String eventId, UUID scenarioId) {
-        return navigationResult(eventId, scenarioId, "ARRIVED");
+    private MqttInboundMessage navigationResult(
+        String eventId,
+        UUID scenarioId,
+        String commandId,
+        String outcome
+    ) {
+        ObjectNode body = objectMapper.createObjectNode();
+        ObjectNode payload = body.putObject("payload");
+        boolean success = "SUCCEEDED".equals(outcome);
+        payload.put("outcome", outcome);
+        payload.put("resultCode", success ? "ARRIVED" : "NOT_ARRIVED");
+        if (success) {
+            payload.putNull("reasonCode");
+        } else {
+            payload.put("reasonCode", "PATH_BLOCKED");
+        }
+        return message(MqttInboundCategory.ROBOT_RESULT, "NAVIGATION_RESULT", DEVICE_ID, eventId,
+            scenarioId, null, commandId, false, body);
     }
 
-    private MqttInboundMessage navigationResult(String eventId, UUID scenarioId, String status) {
+    private MqttInboundMessage legacyNavigationResult(
+        String eventId,
+        UUID scenarioId,
+        String status
+    ) {
         ObjectNode body = objectMapper.createObjectNode();
         ObjectNode payload = body.putObject("payload");
         payload.put("scenarioId", scenarioId.toString());
         payload.put("status", status);
-        return message(MqttInboundCategory.ROBOT_RESULT, "NAVIGATION_RESULT", DEVICE_ID, eventId, body);
+        return message(MqttInboundCategory.ROBOT_RESULT, "NAVIGATION_RESULT", DEVICE_ID, eventId,
+            scenarioId, null, null, true, body);
     }
 
-    private MqttInboundMessage conversationEnded(String eventId, UUID scenarioId) {
+    private MqttInboundMessage conversationStarted(
+        String eventId,
+        UUID scenarioId,
+        UUID conversationId,
+        String commandId,
+        ConversationIntent intent
+    ) {
         ObjectNode body = objectMapper.createObjectNode();
-        body.putObject("payload").put("scenarioId", scenarioId.toString());
-        return message(MqttInboundCategory.ROBOT_EVENT, "CONVERSATION_ENDED", DEVICE_ID, eventId, body);
+        body.putObject("payload").put("intent", intent.name());
+        return message(MqttInboundCategory.ROBOT_EVENT, "CONVERSATION_STARTED", DEVICE_ID, eventId,
+            scenarioId, conversationId, commandId, false, body);
+    }
+
+    private MqttInboundMessage conversationEnded(
+        String eventId,
+        UUID scenarioId,
+        UUID conversationId,
+        String outcome,
+        String reasonCode
+    ) {
+        ObjectNode body = objectMapper.createObjectNode();
+        ObjectNode payload = body.putObject("payload");
+        payload.put("outcome", outcome);
+        if (reasonCode == null) {
+            payload.putNull("reasonCode");
+        } else {
+            payload.put("reasonCode", reasonCode);
+        }
+        return message(MqttInboundCategory.ROBOT_EVENT, "CONVERSATION_ENDED", DEVICE_ID, eventId,
+            scenarioId, conversationId, null, false, body);
     }
 
     private MqttInboundMessage ambientObserved(String eventId, double temperatureC) {
@@ -362,18 +502,17 @@ class HomecomingE2eTest {
         payload.put("temperatureC", temperatureC);
         payload.put("humidityPercent", 50.0);
         return message(MqttInboundCategory.IOT_EVENT, "AMBIENT_ENVIRONMENT_OBSERVED",
-            AMBIENT_SENSOR_ID, eventId, body);
+            AMBIENT_SENSOR_ID, eventId, null, null, null, false, body);
     }
 
     private MqttInboundMessage restState(String eventId, String state) {
         ObjectNode body = objectMapper.createObjectNode();
         body.putObject("payload").put("restState", state);
-        return message(MqttInboundCategory.ROBOT_STATUS, "REST_STATE_CHANGED", DEVICE_ID, eventId, body);
+        return message(MqttInboundCategory.ROBOT_STATUS, "REST_STATE_CHANGED", DEVICE_ID, eventId,
+            null, null, null, false, body);
     }
 
-    // --- test doubles --------------------------------------------------------
-
-    private static final class RecordingPublisher implements RobotCommandPublisher {
+    private static final class RecordingRobotPublisher implements RobotCommandPublisher {
         private final List<RobotCommand> commands = new ArrayList<>();
 
         @Override
@@ -382,12 +521,12 @@ class HomecomingE2eTest {
         }
     }
 
-    private static final class RecordingGateway implements ConversationGateway {
-        private final List<UUID> startedScenarioIds = new ArrayList<>();
+    private static final class RecordingAiPublisher implements AiConversationCommandPublisher {
+        private final List<AiConversationCommand> commands = new ArrayList<>();
 
         @Override
-        public void startConversation(UUID scenarioId, UUID seniorId) {
-            startedScenarioIds.add(scenarioId);
+        public void publish(AiConversationCommand command) {
+            commands.add(command);
         }
     }
 }

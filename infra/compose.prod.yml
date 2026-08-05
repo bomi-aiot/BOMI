@@ -127,6 +127,10 @@ services:
       # 스텁이거나 이벤트가 유실됐을 때의 마지막 안전망 — 너무 짧으면 정상적으로
       # 길어진 대화를 끊으므로, 재배포 없이 현장에서 조정 가능해야 한다.
       SCENARIO_ACTIVE_TIMEOUT: ${SCENARIO_ACTIVE_TIMEOUT:-20m}
+      # AI 시작 확인 10초, 전체 대화 5분. 시연 환경에서는 env로만 조정한다.
+      AI_CONVERSATION_START_TIMEOUT: ${AI_CONVERSATION_START_TIMEOUT:-10s}
+      AI_CONVERSATION_MAX_DURATION: ${AI_CONVERSATION_MAX_DURATION:-5m}
+      AI_CONVERSATION_TIMEOUT_CHECK_INTERVAL_MILLIS: ${AI_CONVERSATION_TIMEOUT_CHECK_INTERVAL_MILLIS:-1000}
       # 의미 검색 (S15P11E102-218). gRPC 포트다 — 공식 Java 클라이언트가 gRPC 를 쓴다.
       QDRANT_HOST: qdrant
       QDRANT_GRPC_PORT: 6334
@@ -151,6 +155,22 @@ services:
       EMBEDDING_SYNC_ENABLED: ${EMBEDDING_SYNC_ENABLED:-false}
       # 한 실행에 과금되는 호출 수의 상한. 잔액이 작으므로 재배포 없이 줄일 수 있어야 한다.
       EMBEDDING_SYNC_BATCH_SIZE: ${EMBEDDING_SYNC_BATCH_SIZE:-30}
+      # 대화 요약 생성형 LLM — Gemini, GMS 경유 (S15P11E102-254). 백엔드의 두 번째(현재
+      # 마지막) 과금 외부 API. UPSTAGE_API_KEY 가 겪은 것과 똑같은 실패 모양이다 —
+      # 키만 넘기고 LLM_ENABLED 를 빠뜨리면 application.yml 기본값(false)이 조용히 이겨
+      # 대화 요약이 영원히 생성되지 않는다. 두 줄을 항상 같이 넘긴다.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LLM_ENABLED: ${LLM_ENABLED:-false}
+      # 한 번의 요약 스윕이 부를 수 있는 호출 수 상한. 지출 상한이지 튜닝 값이 아니다.
+      LLM_MAX_CALLS_PER_RUN: ${LLM_MAX_CALLS_PER_RUN:-20}
+      # 대화 경계 유휴시간(S15P11E102-254). SCENARIO_ACTIVE_TIMEOUT 과 같은 이유로
+      # 넘긴다 — 현장에서 재배포 없이 조정 가능해야 한다.
+      CONVERSATION_IDLE_TIMEOUT: ${CONVERSATION_IDLE_TIMEOUT:-30m}
+      # 로봇 채널 인증 공유 비밀키 (S15P11E102-307). 비어 있으면 필터가 전부
+      # 통과시킨다 — 실제 값을 정하는 것은 별도 배포 결정이고 이 티켓의 범위 밖이다.
+      # 여기 넘기지 않으면 production.env 에 값을 적어도 컨테이너에 도달하지
+      # 않는다(EMBEDDING_ENABLED 가 겪은 것과 같은 실패 모양, S15P11E102-218).
+      ROBOT_SHARED_SECRET: ${ROBOT_SHARED_SECRET:-}
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:8080/actuator/health"]
       interval: 10s
@@ -244,6 +264,13 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ${CERTBOT_CONF_DIR:?CERTBOT_CONF_DIR is required}:/etc/letsencrypt:ro
       - ${CERTBOT_WEBROOT_DIR:?CERTBOT_WEBROOT_DIR is required}:/var/www/certbot:ro
+      # 가디언웹 채널 단기 접근 제어용 htpasswd 마운트 (S15P11E102-310) — 2026-08-05
+      # 임시 보류. bomi.conf 의 auth_basic 이 주석 처리되어 지금은 이 파일을 읽지
+      # 않는다. htpasswd 파일이 운영 호스트에 아직 없는 상태에서 릴리즈를 진행해야
+      # 했고, `:?` 필수 선언을 살려 두면 파일이 생기기 전까지 배포 자체가 막혀
+      # 개발 단계의 병목이 된다. 되살리려면 이 줄의 주석을 걷고 bomi.conf 의
+      # auth_basic 두 줄도 함께 되살린다 — 절차는 infra/README.md 참고.
+      # - ${NGINX_GUARDIAN_HTPASSWD_FILE:?NGINX_GUARDIAN_HTPASSWD_FILE is required}:/etc/nginx/guardian.htpasswd:ro
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--spider", "http://localhost/nginx-health"]
       interval: 10s

@@ -1,5 +1,6 @@
 package com.ssafy.bomi.scenario.domain;
 
+import com.ssafy.bomi.conversation.domain.ConversationIntent;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -11,6 +12,7 @@ import jakarta.persistence.Table;
 import java.time.OffsetDateTime;
 import java.util.EnumMap;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -18,7 +20,9 @@ import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Scenario triggered for a senior/robot (maps table {@code scenario}).
@@ -74,6 +78,21 @@ public class Scenario {
     @Column(name = "final_status", nullable = false, length = 50)
     private ScenarioStatus finalStatus = ScenarioStatus.RECEIVED;
 
+    /**
+     * AI conversation input captured before navigation. Keeping this in the scenario
+     * preserves the original greeting and trigger snapshot across a backend restart.
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "conversation_request")
+    private Map<String, Object> conversationRequest;
+
+    /** The only NAVIGATE command whose result may advance this scenario. */
+    @Column(name = "active_navigation_command_id", length = 64)
+    private String activeNavigationCommandId;
+
+    @Column(name = "active_navigation_target", length = 30)
+    private String activeNavigationTarget;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -105,6 +124,63 @@ public class Scenario {
 
     public void linkExternalEvent(String externalEventId) {
         this.externalEventId = externalEventId;
+    }
+
+    /** Stores the exact AI conversation request that must be used after navigation. */
+    public void prepareConversation(
+        ConversationIntent intent,
+        String text,
+        Map<String, Object> triggerContext
+    ) {
+        PreparedConversation prepared = new PreparedConversation(intent, text, triggerContext);
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("intent", prepared.intent().name());
+        request.put("text", prepared.text());
+        request.put("triggerContext", new LinkedHashMap<>(prepared.triggerContext()));
+        this.conversationRequest = request;
+    }
+
+    /** Returns a typed, defensive view of the conversation request stored as JSON. */
+    public PreparedConversation requirePreparedConversation() {
+        if (conversationRequest == null) {
+            throw new IllegalStateException("Scenario has no prepared conversation: " + id);
+        }
+        Object intentValue = conversationRequest.get("intent");
+        Object textValue = conversationRequest.get("text");
+        Object contextValue = conversationRequest.get("triggerContext");
+        if (!(intentValue instanceof String intentText) || !(textValue instanceof String text)) {
+            throw new IllegalStateException("Scenario conversation request is malformed: " + id);
+        }
+        Map<String, Object> context = stringObjectMap(contextValue);
+        try {
+            return new PreparedConversation(ConversationIntent.valueOf(intentText), text, context);
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalStateException("Scenario conversation request is malformed: " + id, ex);
+        }
+    }
+
+    public Map<String, Object> getConversationRequest() {
+        return conversationRequest == null ? null : Map.copyOf(conversationRequest);
+    }
+
+    /** Stores command correlation before the command is committed to the MQTT outbox. */
+    public void expectNavigationResult(String commandId, String target) {
+        if (activeNavigationCommandId != null) {
+            throw new IllegalStateException(
+                "Scenario already has an active navigation command: " + id);
+        }
+        this.activeNavigationCommandId = requireText(commandId, "commandId", 64);
+        this.activeNavigationTarget = requireText(target, "target", 30);
+    }
+
+    /** Clears the correlation only after the result was checked by the orchestrator. */
+    public void clearExpectedNavigationResult() {
+        if (activeNavigationCommandId == null || activeNavigationTarget == null) {
+            throw new IllegalStateException(
+                "Scenario has no active navigation command: " + id);
+        }
+        this.activeNavigationCommandId = null;
+        this.activeNavigationTarget = null;
     }
 
     // --- State machine -------------------------------------------------------
@@ -147,19 +223,23 @@ public class Scenario {
 
     public void complete() {
         transitionTo(ScenarioStatus.COMPLETED);
+        clearNavigationCorrelation();
     }
 
     // Terminal exits available from any active state.
     public void fail() {
         transitionTo(ScenarioStatus.FAILED);
+        clearNavigationCorrelation();
     }
 
     public void cancel() {
         transitionTo(ScenarioStatus.CANCELLED);
+        clearNavigationCorrelation();
     }
 
     public void timeOut() {
         transitionTo(ScenarioStatus.TIMED_OUT);
+        clearNavigationCorrelation();
     }
 
     public boolean isTerminated() {
@@ -176,6 +256,7 @@ public class Scenario {
         putTransition(map, ScenarioStatus.RECEIVED, ScenarioStatus.MOVING_TO_ENTRANCE, terminals);
         putTransition(map, ScenarioStatus.MOVING_TO_ENTRANCE, ScenarioStatus.CHECKING_INTERACTION, terminals);
         putTransition(map, ScenarioStatus.CHECKING_INTERACTION, ScenarioStatus.CONVERSING, terminals);
+        map.get(ScenarioStatus.CHECKING_INTERACTION).add(ScenarioStatus.RETURN_DECISION);
         putTransition(map, ScenarioStatus.CONVERSING, ScenarioStatus.RETURN_DECISION, terminals);
         putTransition(map, ScenarioStatus.RETURN_DECISION, ScenarioStatus.RETURNING_TO_DEFAULT, terminals);
         putTransition(map, ScenarioStatus.RETURNING_TO_DEFAULT, ScenarioStatus.COMPLETED, terminals);
@@ -202,5 +283,36 @@ public class Scenario {
             throw new IllegalArgumentException(field + " must not be null");
         }
         return value;
+    }
+
+    private static String requireText(String value, String field, int maxLength) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(field + " must not be blank");
+        }
+        if (value.length() > maxLength) {
+            throw new IllegalArgumentException(
+                field + " must not exceed " + maxLength + " characters");
+        }
+        return value;
+    }
+
+    private static Map<String, Object> stringObjectMap(Object value) {
+        if (!(value instanceof Map<?, ?> raw)) {
+            throw new IllegalStateException("Scenario conversation triggerContext must be an object");
+        }
+        Map<String, Object> copied = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : raw.entrySet()) {
+            if (!(entry.getKey() instanceof String key)) {
+                throw new IllegalStateException(
+                    "Scenario conversation triggerContext keys must be strings");
+            }
+            copied.put(key, entry.getValue());
+        }
+        return copied;
+    }
+
+    private void clearNavigationCorrelation() {
+        this.activeNavigationCommandId = null;
+        this.activeNavigationTarget = null;
     }
 }

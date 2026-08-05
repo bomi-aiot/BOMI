@@ -22,6 +22,8 @@ import org.springframework.stereotype.Component;
  *     memory-top-k-min: 3
  *     memory-top-k-max: 10
  *     recency-half-life-days: 30
+ *     usage-penalty-half-life-days: 1
+ *     usage-penalty-floor: 0.3
  * </pre>
  */
 @Component
@@ -73,6 +75,29 @@ public class ContextAssemblyProperties {
      * unmatched memory keeps a small baseline and importance/recency decide.</p>
      */
     private double relevanceFloor = 0.2;
+
+    /**
+     * Days after which a just-used memory's usage penalty half-recovers.
+     *
+     * <p>Separate dial from {@link #recencyHalfLifeDays} on purpose (S15P11E102-262).
+     * Recency asks "when did we last confirm this fact is true"; this asks "when did we
+     * last say this out loud". Conflating them made a just-used memory look like the
+     * <em>freshest</em> one and get picked again immediately — CLAUDE.md §17.8 exists to
+     * prevent exactly that. Lowering this makes the robot willing to repeat itself sooner;
+     * raising it makes a used memory stay suppressed longer.</p>
+     */
+    private int usagePenaltyHalfLifeDays = 1;
+
+    /**
+     * Floor applied to a memory the instant after it was used.
+     *
+     * <p>Not zero, deliberately. A senior with very few stored memories (the exact state
+     * S15P11E102-262 exists to fix — reminiscence seeds start near-empty) must still be
+     * able to hear the same memory again in the same conversation turn if it is the only
+     * relevant one; zeroing it out would make the robot go silent instead of mildly
+     * repetitive. Raising this weakens the anti-repeat effect; lowering it strengthens it.</p>
+     */
+    private double usagePenaltyFloor = 0.3;
 
     public int getMemoryTopKMin() {
         return memoryTopKMin;
@@ -152,5 +177,21 @@ public class ContextAssemblyProperties {
 
     public void setRelevanceFloor(double relevanceFloor) {
         this.relevanceFloor = relevanceFloor;
+    }
+
+    public int getUsagePenaltyHalfLifeDays() {
+        return usagePenaltyHalfLifeDays;
+    }
+
+    public void setUsagePenaltyHalfLifeDays(int usagePenaltyHalfLifeDays) {
+        this.usagePenaltyHalfLifeDays = usagePenaltyHalfLifeDays;
+    }
+
+    public double getUsagePenaltyFloor() {
+        return usagePenaltyFloor;
+    }
+
+    public void setUsagePenaltyFloor(double usagePenaltyFloor) {
+        this.usagePenaltyFloor = usagePenaltyFloor;
     }
 }

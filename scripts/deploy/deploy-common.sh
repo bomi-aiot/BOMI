@@ -102,6 +102,10 @@ initialize_deploy() {
   require_absolute_path JENKINS_HOME_DIR
   require_absolute_path CERTBOT_CONF_DIR
   require_absolute_path CERTBOT_WEBROOT_DIR
+  # 가디언웹 채널 단기 접근 제어용 htpasswd 파일 (S15P11E102-310) — 2026-08-05
+  # 임시 보류. compose.prod.yml 의 바인드 마운트 자체를 주석 처리했으므로 여기서
+  # 검증할 대상이 없다. 되살리는 절차는 infra/README.md, compose.prod.yml 참고.
+  # require_absolute_path NGINX_GUARDIAN_HTPASSWD_FILE
 }
 
 verify_container_health() {

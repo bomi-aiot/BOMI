@@ -4,8 +4,6 @@ import com.ssafy.bomi.care.domain.CareRecord;
 import com.ssafy.bomi.care.domain.CareRecordStatus;
 import com.ssafy.bomi.care.domain.NotificationTier;
 import com.ssafy.bomi.care.repository.CareRecordRepository;
-import com.ssafy.bomi.conversation.domain.ConversationSummary;
-import com.ssafy.bomi.conversation.repository.ConversationSummaryRepository;
 import com.ssafy.bomi.fact.domain.FactCandidate;
 import com.ssafy.bomi.fact.domain.FactCandidateStatus;
 import com.ssafy.bomi.fact.repository.FactCandidateRepository;
@@ -21,6 +19,7 @@ import com.ssafy.bomi.guardian.dto.DashboardResponse.RobotDto;
 import com.ssafy.bomi.guardian.dto.DashboardResponse.ScheduleDto;
 import com.ssafy.bomi.memory.domain.Memory;
 import com.ssafy.bomi.memory.domain.MemoryLifecycleStatus;
+import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
 import com.ssafy.bomi.robot.domain.Robot;
 import com.ssafy.bomi.robot.repository.RobotRepository;
@@ -33,10 +32,12 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -53,6 +54,21 @@ public class DashboardService {
     /** 로봇이 올린 보호자 알림의 기록 타입 (S15P11E102-211). */
     private static final String GUARDIAN_ALERT_TYPE = "GUARDIAN_ALERT";
 
+    /**
+     * 보호자 화면에 노출해도 되는 기억 가시성 (S15P11E102-262).
+     *
+     * <p>{@code PRIVATE} 은 일부러 뺐다 — {@link Memory#create(UUID, com.ssafy.bomi.memory.domain.MemoryType, String)}
+     * 의 기본값이 {@code PRIVATE} 이고, 그게 바로 CLAUDE.md §9 가 말하는 T4("이건
+     * 나만 알고 있을래요")를 실제로 만드는 값이다. 이 화면은 가디언 한 명을
+     * 구분하지 않는 P0 단일 대시보드라서(guardianId 없음) PRIMARY 전용 값과
+     * 전체공개 값을 나눌 근거가 없다 — 그래서 "PRIVATE 만 아니면 허용"으로 묶는다.
+     * 아직 이 어르신-보호자 여러 쌍을 구분해야 하는 시점이 되면, 요청자별로
+     * {@link com.ssafy.bomi.context.application.ConversationContextService#resolveVisibility}
+     * 가 하는 것과 같은 분기가 여기도 필요해진다.</p>
+     */
+    private static final Set<MemoryVisibility> GUARDIAN_VISIBLE_MEMORY_VISIBILITIES =
+        EnumSet.of(MemoryVisibility.SHARED_WITH_PRIMARY, MemoryVisibility.SHARED_WITH_GUARDIANS);
+
     /** 확인요청 목록에 노출할 대기 계열 상태. (P0 필드매핑 A-3) */
     private static final List<FactCandidateStatus> PENDING_STATUSES = List.of(
             FactCandidateStatus.NEEDS_CONFIRMATION,
@@ -64,7 +80,6 @@ public class DashboardService {
     private final CareRecordRepository careRecordRepository;
     private final FactCandidateRepository factCandidateRepository;
     private final MemoryRepository memoryRepository;
-    private final ConversationSummaryRepository conversationSummaryRepository;
     private final FactCandidateMapper factCandidateMapper;
 
     public DashboardService(
@@ -73,14 +88,12 @@ public class DashboardService {
             CareRecordRepository careRecordRepository,
             FactCandidateRepository factCandidateRepository,
             MemoryRepository memoryRepository,
-            ConversationSummaryRepository conversationSummaryRepository,
             FactCandidateMapper factCandidateMapper) {
         this.appUserRepository = appUserRepository;
         this.robotRepository = robotRepository;
         this.careRecordRepository = careRecordRepository;
         this.factCandidateRepository = factCandidateRepository;
         this.memoryRepository = memoryRepository;
-        this.conversationSummaryRepository = conversationSummaryRepository;
         this.factCandidateMapper = factCandidateMapper;
     }
 
@@ -249,26 +262,25 @@ public class DashboardService {
         return new MedicationProgressDto(total, confirmed, 0, upcoming, missed);
     }
 
-    // --- 최근 알게 된 것 (요약 + 기억) --------------------------------------
+    // --- 최근 알게 된 것 (기억) ----------------------------------------------
+    //
+    // 대화 요약(conversation_summary)은 여기 섞지 않는다 (S15P11E102-254, CLAUDE.md §9
+    // T4). 요약은 로봇이 "지난 대화"를 참고하기 위한 원문 압축이지, 보호자에게 읽어
+    // 주려고 만드는 것이 아니다 — memory 처럼 visibility 로 건별 공개 여부를 고르는
+    // 장치가 요약에는 없다. 예전에는 요약이 0건이라 우연히 무해했을 뿐이다: 이
+    // 티켓이 요약을 실제로 채우기 시작하면 그 우연이 사라진다.
 
     private List<ActivityDto> buildActivities(UUID seniorId) {
         record Timed(ActivityDto dto, OffsetDateTime at) {
         }
         List<Timed> merged = new ArrayList<>();
 
-        for (ConversationSummary s : conversationSummaryRepository.findTop5BySeniorIdOrderByGeneratedAtDesc(seniorId)) {
-            merged.add(new Timed(
-                    new ActivityDto(
-                            s.getId().toString(),
-                            "대화 요약",
-                            s.getContent(),
-                            iso(s.getGeneratedAt()),
-                            "AI",
-                            "NORMAL"),
-                    s.getGeneratedAt()));
-        }
-        for (Memory m : memoryRepository.findTop5BySeniorIdAndLifecycleStatusOrderByFirstObservedAtDesc(
-                seniorId, MemoryLifecycleStatus.ACTIVE)) {
+        // S15P11E102-262: 가시성 필터 없는 findTop5...는 PRIVATE 기억까지 그대로
+        // 돌려준다 — "이건 나만 알고 있을래요"라고 답한 내용이 보호자 화면에 새던
+        // 경로가 이것이었다. 씨앗이 2건뿐이던 지금까지는 우연히 조용했을 뿐이다.
+        for (Memory m : memoryRepository.findVisibleToGuardianBySeniorIdAndLifecycleStatus(
+                seniorId, MemoryLifecycleStatus.ACTIVE, GUARDIAN_VISIBLE_MEMORY_VISIBILITIES,
+                PageRequest.of(0, 5))) {
             merged.add(new Timed(
                     new ActivityDto(
                             m.getId().toString(),
