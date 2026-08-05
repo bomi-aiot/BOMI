@@ -55,19 +55,20 @@ public class QdrantMemorySearch implements MemorySemanticSearch {
     public SearchResult search(UUID seniorId, String query, int memoryLimit, int summaryLimit) {
         long startedAt = System.nanoTime();
         if (!isAvailable()) {
-            return result(List.of(), List.of(), false, "semantic_unavailable", startedAt);
+            return result(List.of(), List.of(), false, "semantic_unavailable", startedAt, 0, 0);
         }
         if (query == null || query.isBlank()) {
             // 빈 질의로 임베딩을 부르지 않는다. 과금되는 호출이고, 비교 기준이 없는 턴에서
             // 얻을 것이 없다. 호출부(loadSimilarities)도 같은 판단을 하지만, 여기서 한 번
             // 더 막는다 — 새 호출부가 생겼을 때 돈이 새는 쪽으로 기본값이 서지 않게 한다.
-            return result(List.of(), List.of(), false, "query_blank", startedAt);
+            return result(List.of(), List.of(), false, "query_blank", startedAt, 0, 0);
         }
         if (memoryLimit <= 0 && summaryLimit <= 0) {
-            return result(List.of(), List.of(), false, "no_candidates", startedAt);
+            return result(List.of(), List.of(), false, "no_candidates", startedAt, 0, 0);
         }
 
         float[] queryVector;
+        long embeddingStartedAt = System.nanoTime();
         try {
             // ★ embedQuery 다. embedPassage 를 쓰면 예외 없이 조금 더 나쁜 이웃이
             //   영원히 나오고, 그 사실을 알려주는 것이 시스템에 아무것도 없다.
@@ -76,9 +77,12 @@ public class QdrantMemorySearch implements MemorySemanticSearch {
             // 턴을 죽이지 않는다. 얕은 랭킹으로 대답하는 편이, 색인 때문에 어르신을
             // 침묵 앞에 두는 것보다 낫다.
             log.warn("could not embed the query; ranking without semantic scores", error);
-            return result(List.of(), List.of(), false, "embedding_failed", startedAt);
+            return result(List.of(), List.of(), false, "embedding_failed", startedAt,
+                elapsedMillis(embeddingStartedAt), 0);
         }
+        long embeddingLatencyMs = elapsedMillis(embeddingStartedAt);
 
+        long vectorSearchStartedAt = System.nanoTime();
         VectorSearchResult memories = memoryLimit > 0
             ? vectorStore.search(VectorCollection.MEMORY, seniorId, queryVector, memoryLimit)
             : null;
@@ -86,6 +90,7 @@ public class QdrantMemorySearch implements MemorySemanticSearch {
             ? vectorStore.search(VectorCollection.CONVERSATION_SUMMARY, seniorId, queryVector,
                 summaryLimit)
             : null;
+        long vectorSearchLatencyMs = elapsedMillis(vectorSearchStartedAt);
 
         List<SemanticHit> memoryHits = toSemanticHits(memories);
         List<SemanticHit> summaryHits = toSemanticHits(summaries);
@@ -93,7 +98,8 @@ public class QdrantMemorySearch implements MemorySemanticSearch {
         boolean summaryUsed = summaries != null && summaries.completed();
         boolean used = memoryUsed || summaryUsed;
         String fallbackReason = fallbackReason(memories, summaries);
-        return result(memoryHits, summaryHits, used, fallbackReason, startedAt);
+        return result(memoryHits, summaryHits, used, fallbackReason, startedAt,
+            embeddingLatencyMs, vectorSearchLatencyMs);
     }
 
     private List<SemanticHit> toSemanticHits(VectorSearchResult result) {
@@ -139,8 +145,14 @@ public class QdrantMemorySearch implements MemorySemanticSearch {
     }
 
     private SearchResult result(List<SemanticHit> memories, List<SemanticHit> summaries,
-        boolean used, String fallbackReason, long startedAt) {
-        long latencyMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
-        return new SearchResult(memories, summaries, used, fallbackReason, latencyMs);
+        boolean used, String fallbackReason, long startedAt, long embeddingLatencyMs,
+        long vectorSearchLatencyMs) {
+        long latencyMs = elapsedMillis(startedAt);
+        return new SearchResult(memories, summaries, used, fallbackReason, latencyMs,
+            embeddingLatencyMs, vectorSearchLatencyMs);
+    }
+
+    private long elapsedMillis(long startedAt) {
+        return TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
     }
 }

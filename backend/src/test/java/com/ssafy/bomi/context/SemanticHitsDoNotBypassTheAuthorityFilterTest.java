@@ -273,6 +273,23 @@ class SemanticHitsDoNotBypassTheAuthorityFilterTest {
     }
 
     @Test
+    @DisplayName("의역 질의도 의미 hit 가 PostgreSQL 허용 기억 안에서 순위를 바꾼다")
+    void paraphraseUsesSemanticRankingWithinTheAllowedSet() {
+        Memory walking = allowed("저녁 산책이 가장 즐겁다고 하셨다");
+        Memory television = allowed("저녁에는 뉴스를 보신다");
+        givenHits(new MemorySemanticSearch.SemanticHit(walking.getId(), 0.92),
+            new MemorySemanticSearch.SemanticHit(television.getId(), 0.15));
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest(
+                "밖에 나가서 좀 걷고 싶어", null, null, null, false, null));
+
+        assertThat(context.memories())
+            .extracting(ConversationContextResponse.MemoryItem::id)
+            .startsWith(walking.getId());
+    }
+
+    @Test
     @DisplayName("★ 다른 어르신의 요약 hit 는 PostgreSQL 후보에 추가되지 않는다")
     void ahitForSomebodyElsesSummaryAddsNothing() {
         ConversationSummary mine = saveSummary(senior.getId(), "무릎 이야기를 나눴다", 1);

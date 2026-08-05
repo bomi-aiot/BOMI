@@ -6,6 +6,7 @@ import com.ssafy.bomi.embedding.config.EmbeddingProperties;
 import com.ssafy.bomi.embedding.domain.EmbeddingStatus;
 import com.ssafy.bomi.memory.domain.Memory;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
+import com.ssafy.bomi.observability.RagMetrics;
 import com.ssafy.bomi.vector.application.VectorCollection;
 import com.ssafy.bomi.vector.application.VectorStore;
 import com.ssafy.bomi.vector.application.VectorStore.VectorWriteStatus;
@@ -14,6 +15,7 @@ import java.util.List;
 import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -74,6 +76,7 @@ public class EmbeddingSyncService {
     private final EmbeddingClient embeddingClient;
     private final VectorStore vectorStore;
     private final EmbeddingProperties properties;
+    private final RagMetrics ragMetrics;
 
     /**
      * One transaction per row, opened explicitly.
@@ -94,18 +97,32 @@ public class EmbeddingSyncService {
      */
     private final TransactionTemplate transactions;
 
+    @Autowired
     public EmbeddingSyncService(MemoryRepository memoryRepository,
         ConversationSummaryRepository summaryRepository,
         EmbeddingClient embeddingClient,
         VectorStore vectorStore,
         EmbeddingProperties properties,
-        PlatformTransactionManager transactionManager) {
+        PlatformTransactionManager transactionManager,
+        RagMetrics ragMetrics) {
         this.memoryRepository = memoryRepository;
         this.summaryRepository = summaryRepository;
         this.embeddingClient = embeddingClient;
         this.vectorStore = vectorStore;
         this.properties = properties;
         this.transactions = new TransactionTemplate(transactionManager);
+        this.ragMetrics = ragMetrics;
+    }
+
+    /** Test-friendly constructor; production wiring always supplies metrics. */
+    public EmbeddingSyncService(MemoryRepository memoryRepository,
+        ConversationSummaryRepository summaryRepository,
+        EmbeddingClient embeddingClient,
+        VectorStore vectorStore,
+        EmbeddingProperties properties,
+        PlatformTransactionManager transactionManager) {
+        this(memoryRepository, summaryRepository, embeddingClient, vectorStore, properties,
+            transactionManager, null);
     }
 
     /** What one run did. Returned so the scheduler can log it and tests can assert it. */
@@ -144,7 +161,7 @@ public class EmbeddingSyncService {
             // 없다'는 다른 사실이고, 섞으면 멀쩡한 행들이 재시도 예산을 잃는다.
             log.debug("embedding sync skipped: embedding={} vectorStore={}",
                 embeddingClient.isAvailable(), vectorStore.isAvailable());
-            return SyncReport.unavailable();
+            return record(SyncReport.unavailable());
         }
 
         PageRequest page = PageRequest.of(0, Math.max(1, properties.getSyncBatchSize()));
@@ -183,7 +200,14 @@ public class EmbeddingSyncService {
                 memories + summaries + failed + deferred,
                 properties.getSyncBatchSize());
         }
-        return new SyncReport(memories, summaries, failed, deferred, false);
+        return record(new SyncReport(memories, summaries, failed, deferred, false));
+    }
+
+    private SyncReport record(SyncReport report) {
+        if (ragMetrics != null) {
+            ragMetrics.recordEmbeddingSync(report);
+        }
+        return report;
     }
 
     /**

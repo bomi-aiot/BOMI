@@ -144,6 +144,10 @@ class QdrantMemorySearchTest {
         assertThat(result.memoryHits()).containsExactly(new SemanticHit(memoryId, 0.87));
         assertThat(result.semanticUsed()).isTrue();
         assertThat(result.fallbackReason()).isNull();
+        assertThat(result.embeddingLatencyMs()).isNotNegative();
+        assertThat(result.vectorSearchLatencyMs()).isNotNegative();
+        assertThat(result.latencyMs())
+            .isGreaterThanOrEqualTo(result.embeddingLatencyMs());
         assertThat(store.lastLimit).isEqualTo(5);
     }
 
@@ -227,6 +231,8 @@ class QdrantMemorySearchTest {
 
         assertThat(result.semanticUsed()).isFalse();
         assertThat(result.fallbackReason()).isEqualTo("embedding_failed");
+        assertThat(result.embeddingLatencyMs()).isNotNegative();
+        assertThat(result.vectorSearchLatencyMs()).isZero();
         assertThat(store.searchCount)
             .as("임베딩이 없으면 검색할 벡터도 없다")
             .isZero();

@@ -35,17 +35,26 @@ public interface MemorySemanticSearch {
      * @param semanticUsed at least one requested Qdrant collection completed its search
      * @param fallbackReason stable machine-readable degradation reason, or {@code null}
      * @param latencyMs embedding plus vector-search wall time
+     * @param embeddingLatencyMs query-embedding wall time
+     * @param vectorSearchLatencyMs all requested vector-collection searches wall time
      */
     record SearchResult(
         List<SemanticHit> memoryHits,
         List<SemanticHit> summaryHits,
         boolean semanticUsed,
         String fallbackReason,
-        long latencyMs
+        long latencyMs,
+        long embeddingLatencyMs,
+        long vectorSearchLatencyMs
     ) {
         public SearchResult {
             memoryHits = List.copyOf(memoryHits);
             summaryHits = List.copyOf(summaryHits);
+        }
+
+        public SearchResult(List<SemanticHit> memoryHits, List<SemanticHit> summaryHits,
+            boolean semanticUsed, String fallbackReason, long latencyMs) {
+            this(memoryHits, summaryHits, semanticUsed, fallbackReason, latencyMs, 0, 0);
         }
     }
 

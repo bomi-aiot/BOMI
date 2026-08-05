@@ -3,6 +3,8 @@ package com.ssafy.bomi.context;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -37,6 +39,8 @@ import com.ssafy.bomi.user.domain.AppUser;
 import com.ssafy.bomi.user.domain.ConsentStatus;
 import com.ssafy.bomi.user.repository.AppUserRepository;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -94,6 +98,7 @@ class ConversationContextServiceTest {
     @Autowired private DailyActivityMetricRepository metricRepository;
     @Autowired private KnownPersonRepository knownPersonRepository;
     @Autowired private MockMvc mockMvc;
+    @PersistenceContext private EntityManager entityManager;
 
     private AppUser senior;
 
@@ -613,6 +618,8 @@ class ConversationContextServiceTest {
         assertThat(context.retrieval().fallbackReason()).isEqualTo("semantic_unavailable");
         assertThat(context.retrieval().hitCount()).isZero();
         assertThat(context.retrieval().latencyMs()).isZero();
+        assertThat(context.retrieval().embeddingLatencyMs()).isZero();
+        assertThat(context.retrieval().vectorSearchLatencyMs()).isZero();
     }
 
     @Test
@@ -679,6 +686,27 @@ class ConversationContextServiceTest {
                 org.hamcrest.Matchers.startsWith("https://www.bokjiro.go.kr/")));
     }
 
+    @Test
+    void ragHealthAndPrometheusExposeTheSameRuntimePath() throws Exception {
+        saveMemory("복지관 산책을 좋아함", List.of("복지관", "산책"), (short) 3);
+        contextService.assemble(senior.getId(), new ConversationContextRequest(
+            "복지제도 알려줘", null, null, null, true, null));
+
+        mockMvc.perform(get("/actuator/health/rag"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("UP"))
+            .andExpect(jsonPath("$.details.semanticMode").value("keyword_fallback"))
+            .andExpect(jsonPath("$.details.documentCorpusAvailable").value(true));
+        mockMvc.perform(get("/actuator/prometheus"))
+            .andExpect(status().isOk())
+            .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                "bomi_rag_retrieval_requests_total")))
+            .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                "bomi_rag_retrieval_stage_latency")))
+            .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                "bomi_embedding_rows")));
+    }
+
     // ── 재정렬: 중요도와 최근성이 실제로 작동하는가 ──────────────────────────
 
     @Test
@@ -709,6 +737,44 @@ class ConversationContextServiceTest {
         // '아무것도 기억하지 못하는' 상태가 된다.
         assertThat(context.memories()).extracting(ConversationContextResponse.MemoryItem::id)
             .contains(unrelated.getId());
+    }
+
+    @Test
+    void koreanParticlesDoNotBreakKeywordFallback() {
+        Memory unrelated = saveMemory("손자가 다녀갔다", List.of(), (short) 3);
+        Memory related = saveMemory("무릎이 자주 아프다", List.of(), (short) 3);
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest(
+                "무릎은 오늘 어떠세요", null, 3, null, false, null));
+
+        assertThat(context.availability().semanticSearch()).isFalse();
+        assertThat(context.memories()).extracting(ConversationContextResponse.MemoryItem::id)
+            .startsWith(related.getId())
+            .contains(unrelated.getId());
+    }
+
+    @Test
+    void anOldMemoryRemainsEligibleButReceivesARecencyPenalty() {
+        Memory old = saveMemory("무릎 운동을 했다", List.of("무릎"), (short) 3);
+        Memory recent = saveMemory("무릎 찜질을 했다", List.of("무릎"), (short) 3);
+        entityManager.createNativeQuery(
+                "UPDATE memory SET first_observed_at = :observedAt WHERE id = :id")
+            .setParameter("observedAt", OffsetDateTime.now().minusDays(180))
+            .setParameter("id", old.getId())
+            .executeUpdate();
+        entityManager.flush();
+        entityManager.clear();
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("무릎", null, 3, null, false, null));
+
+        Map<UUID, Double> scores = context.memories().stream().collect(
+            java.util.stream.Collectors.toMap(
+                ConversationContextResponse.MemoryItem::id,
+                ConversationContextResponse.MemoryItem::score));
+        assertThat(scores).containsKeys(old.getId(), recent.getId());
+        assertThat(scores.get(recent.getId())).isGreaterThan(scores.get(old.getId()));
     }
 
     // ── S15P11E102-262: 최근에 쓴 기억은 감점된다 (같은 회상 반복 방지) ─────────

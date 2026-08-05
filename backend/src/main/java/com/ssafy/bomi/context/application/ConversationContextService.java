@@ -24,6 +24,7 @@ import com.ssafy.bomi.conversation.repository.ConversationSummaryRepository;
 import com.ssafy.bomi.memory.domain.Memory;
 import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
+import com.ssafy.bomi.observability.RagMetrics;
 import com.ssafy.bomi.person.domain.KnownPerson;
 import com.ssafy.bomi.person.repository.KnownPersonRepository;
 import com.ssafy.bomi.relationship.domain.CareRelationship;
@@ -119,6 +120,12 @@ public class ConversationContextService {
      */
     private static final Set<String> CONDITION_RECORD_TYPES = Set.of("HEALTH_CONDITION");
 
+    /** Common Korean case particles, longest first, used only for lexical fallback. */
+    private static final List<String> KOREAN_PARTICLES = List.of(
+        "으로부터", "에게서", "한테서", "으로써", "으로서", "에서", "에게", "한테",
+        "께서", "으로", "부터", "까지",
+        "은", "는", "이", "가", "을", "를", "의", "에", "로", "와", "과", "도", "만");
+
     private final AppUserRepository appUserRepository;
     private final CareRelationshipRepository careRelationshipRepository;
     private final DailyActivityMetricRepository dailyActivityMetricRepository;
@@ -130,6 +137,7 @@ public class ConversationContextService {
     private final MemorySemanticSearch semanticSearch;
     private final DocumentCorpusSearch documentSearch;
     private final ContextAssemblyProperties properties;
+    private final RagMetrics ragMetrics;
 
     public ConversationContextService(
         AppUserRepository appUserRepository,
@@ -142,7 +150,8 @@ public class ConversationContextService {
         KnownPersonRepository knownPersonRepository,
         MemorySemanticSearch semanticSearch,
         DocumentCorpusSearch documentSearch,
-        ContextAssemblyProperties properties
+        ContextAssemblyProperties properties,
+        RagMetrics ragMetrics
     ) {
         this.appUserRepository = appUserRepository;
         this.careRelationshipRepository = careRelationshipRepository;
@@ -155,6 +164,7 @@ public class ConversationContextService {
         this.semanticSearch = semanticSearch;
         this.documentSearch = documentSearch;
         this.properties = properties;
+        this.ragMetrics = ragMetrics;
     }
 
     /**
@@ -220,6 +230,16 @@ public class ConversationContextService {
             : selectRelevantSummaries(summaryCandidates, queryTerms,
                 semanticRetrieval.summarySimilarities());
         DocumentRetrieval documentRetrieval = loadDocuments(request, query, notes);
+        ragMetrics.recordRetrieval("semantic", semanticRetrieval.requested(),
+            semanticRetrieval.used(), semanticRetrieval.fallbackReason(),
+            semanticRetrieval.hitCount(), semanticRetrieval.latencyMs());
+        ragMetrics.recordRetrievalStage("embedding", semanticRetrieval.requested(),
+            semanticRetrieval.embeddingLatencyMs());
+        ragMetrics.recordRetrievalStage("vector_search", semanticRetrieval.requested(),
+            semanticRetrieval.vectorSearchLatencyMs());
+        ragMetrics.recordRetrieval("document", documentRetrieval.requested(),
+            documentRetrieval.used(), documentRetrieval.fallbackReason(),
+            documentRetrieval.documents().size(), documentRetrieval.latencyMs());
 
         return new ConversationContextResponse(
             buildProfile(senior),
@@ -237,6 +257,8 @@ public class ConversationContextService {
                 semanticRetrieval.fallbackReason(),
                 semanticRetrieval.hitCount(),
                 semanticRetrieval.latencyMs(),
+                semanticRetrieval.embeddingLatencyMs(),
+                semanticRetrieval.vectorSearchLatencyMs(),
                 documentRetrieval.requested(),
                 documentRetrieval.used(),
                 documentRetrieval.fallbackReason(),
@@ -576,7 +598,9 @@ public class ConversationContextService {
         boolean used,
         String fallbackReason,
         int hitCount,
-        long latencyMs
+        long latencyMs,
+        long embeddingLatencyMs,
+        long vectorSearchLatencyMs
     ) {}
 
     /** Runs one query embedding, then accepts scores only for PostgreSQL-authorized rows. */
@@ -595,7 +619,7 @@ public class ConversationContextService {
         }
         if (!semanticSearch.isAvailable()) {
             return new SemanticRetrieval(Map.of(), Map.of(), true, false,
-                "semantic_unavailable", 0, 0);
+                "semantic_unavailable", 0, 0, 0, 0);
         }
 
         int memoryLimit = memories.isEmpty() ? 0 : memoryTopK * 3;
@@ -618,11 +642,13 @@ public class ConversationContextService {
             result.semanticUsed(),
             result.fallbackReason(),
             memorySimilarities.size() + summarySimilarities.size(),
-            result.latencyMs());
+            result.latencyMs(),
+            result.embeddingLatencyMs(),
+            result.vectorSearchLatencyMs());
     }
 
     private SemanticRetrieval noSemanticRetrieval(String reason) {
-        return new SemanticRetrieval(Map.of(), Map.of(), false, false, reason, 0, 0);
+        return new SemanticRetrieval(Map.of(), Map.of(), false, false, reason, 0, 0, 0, 0);
     }
 
     private Map<UUID, Double> acceptedSimilarities(
@@ -886,11 +912,11 @@ public class ConversationContextService {
     /**
      * Splits text into comparable terms.
      *
-     * <p>Deliberately crude: lowercase, split on non-letter/digit, drop very short
-     * tokens. This is a stand-in for semantic similarity, not a Korean analyser, and
-     * pretending otherwise would hide how shallow retrieval currently is. Korean
-     * particles mean "무릎이" and "무릎" do not match here — one more reason the vector
-     * store in S15P11E102-218 matters.</p>
+     * <p>This remains a bounded fallback, not a morphological analyser. It lowercases,
+     * splits on non-letter/digit and also adds a form with common Korean case particles
+     * removed, so "무릎이" and "무릎은" share "무릎" when embeddings are unavailable.
+     * Paraphrase still belongs to semantic search; this rule only prevents the most common
+     * Korean exact-token false negative without adding another runtime dependency.</p>
      */
     private Set<String> tokenize(String text) {
         if (text == null || text.isBlank()) {
@@ -900,9 +926,31 @@ public class ConversationContextService {
         for (String token : text.toLowerCase(Locale.ROOT).split("[^\\p{L}\\p{N}]+")) {
             if (token.length() > 1) {
                 terms.add(token);
+                String stem = stripKoreanParticles(token);
+                if (stem.length() > 1) {
+                    terms.add(stem);
+                }
             }
         }
         return terms;
+    }
+
+    private String stripKoreanParticles(String token) {
+        String stripped = token;
+        for (int pass = 0; pass < 2; pass++) {
+            String before = stripped;
+            for (String particle : KOREAN_PARTICLES) {
+                int baseLength = stripped.length() - particle.length();
+                if (baseLength >= 2 && stripped.endsWith(particle)) {
+                    stripped = stripped.substring(0, baseLength);
+                    break;
+                }
+            }
+            if (stripped.equals(before)) {
+                break;
+            }
+        }
+        return stripped;
     }
 
     /** Fraction of query terms present in the candidate. 0.0 when either side is empty. */

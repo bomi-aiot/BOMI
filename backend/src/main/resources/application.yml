@@ -20,10 +20,23 @@ spring:
     # set this true so Flyway baselines the current state instead of failing.
     baseline-on-migrate: false
 management:
+  prometheus:
+    metrics:
+      export:
+        enabled: true
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics,prometheus
+  endpoint:
+    prometheus:
+      access: unrestricted
+    health:
+      show-details: always
+      status:
+        order: down,out-of-service,degraded,unknown,up
+        http-mapping:
+          degraded: 200
 
 springdoc:
   api-docs:

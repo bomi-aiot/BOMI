@@ -192,6 +192,8 @@ public record ConversationContextResponse(
         String fallbackReason,
         int hitCount,
         long latencyMs,
+        long embeddingLatencyMs,
+        long vectorSearchLatencyMs,
         boolean documentRequested,
         boolean documentUsed,
         String documentFallbackReason,

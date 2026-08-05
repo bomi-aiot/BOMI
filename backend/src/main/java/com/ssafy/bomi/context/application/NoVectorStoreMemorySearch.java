@@ -31,7 +31,7 @@ public class NoVectorStoreMemorySearch implements MemorySemanticSearch {
     @Override
     public SearchResult search(UUID seniorId, String query, int memoryLimit, int summaryLimit) {
         return new SearchResult(java.util.List.of(), java.util.List.of(), false,
-            "semantic_unavailable", 0);
+            "semantic_unavailable", 0, 0, 0);
     }
 
     @Override
