@@ -13,8 +13,8 @@ def test_package_exposes_version():
     assert bomi_ai_chat.__version__ == "0.1.0"
 
 
-def test_importing_entrypoint_does_not_load_heavy_router():
-    assert "bomi_ai_chat.llm.router" not in sys.modules
+def test_importing_entrypoint_does_not_load_optional_model_runtime():
+    assert "sentence_transformers" not in sys.modules
 
 
 def test_entrypoint_fails_before_runtime_import_when_settings_are_missing(
@@ -33,4 +33,4 @@ def test_entrypoint_fails_before_runtime_import_when_settings_are_missing(
     with pytest.raises(SystemExit, match="설정 오류:.*RTZR_CLIENT_ID"):
         main.main([])
 
-    assert "bomi_ai_chat.llm.router" not in sys.modules
+    assert "sentence_transformers" not in sys.modules

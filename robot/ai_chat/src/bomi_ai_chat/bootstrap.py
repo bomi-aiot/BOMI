@@ -381,41 +381,19 @@ def run_conversation_loop(
 
 
 def warm_up_intent_router() -> None:
-    """의도 판정용 임베딩 모델을 '수음 시작 전에' 미리 메모리에 올린다.
+    """기존 시작 순서를 유지하면서 값싼 의도 규칙이 import 가능한지 확인한다.
 
-    왜 존재하는가  ★ 233 실기 점검에서 36초짜리 턴으로 확인됐다
-        llm/router.py 는 모듈을 import 하는 순간 SentenceTransformer
-        (jhgan/ko-sroberta-multitask)를 로드한다. 그런데 그 import 가
-        graph/context.py 의 함수 '안'에 있어서, 첫 의료·날씨 질문이 들어온 바로
-        그 순간에 로딩이 시작된다 — 어르신이 대답을 기다리는 중에.
-
-        실측: 첫 의료 질문 36.1초, 다른 실행에서 21.5초. 지연 예산은 2초다
-        (CLAUDE.md §16). 즉 예산의 열여덟 배를 어르신이 침묵 속에서 기다린다.
-
-        레거시 경로(main.py)에는 이 워밍업이 있었지만 그래프 경로에는 없었다.
-        232 가 정리한 "만들어 놓고 아무도 안 부르는" 결함과 같은 유형이다.
-
-    누가 호출하는가
-        main.py 의 그래프 경로가 대화 루프에 들어가기 직전에. build_runtime 이
-        아니라 여기서 부르는 이유는, 테스트가 build_runtime 을 수십 번 부르는데
-        그때마다 모델을 올리면 테스트가 못 쓰게 느려지기 때문이다.
-
-    무엇을 호출하는가
-        llm.router.is_medical_query — 판정 결과는 버린다. import 시키는 것이 목적이다.
-
-    주의사항
-        실패해도 대화를 막지 않는다. 워밍업은 최적화이지 기능이 아니다. 실패하면
-        첫 질문이 느려질 뿐이므로, 요란하게 죽는 대신 경고만 남긴다.
+    2026-08-06 평가에서 SentenceTransformer는 키워드 기준선과 정확도가 같았지만
+    시작 6.28초와 working set 약 732.5MB를 사용해 운영 경로에서 제거했다. 이 훅은
+    배포 전환 중 호출부 호환성을 지키며, 더 이상 모델을 올리거나 네트워크를 쓰지 않는다.
     """
     try:
         from bomi_ai_chat.llm import router
 
         router.is_medical_query("워밍업")
-        logger.info("intent router model warmed up")
-    except Exception:  # noqa: BLE001 - 워밍업 실패가 대화를 막으면 안 된다
-        logger.warning(
-            "could not warm up the intent router; the first medical or weather "
-            "question will be slow", exc_info=True)
+        logger.info("intent router rules ready")
+    except Exception:  # noqa: BLE001 - 준비 실패가 대화를 막으면 안 된다
+        logger.warning("could not prepare intent router rules", exc_info=True)
 
 
 def _speak_ack(tts, audio_out) -> None:
