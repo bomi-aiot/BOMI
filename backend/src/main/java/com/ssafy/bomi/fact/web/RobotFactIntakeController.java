@@ -19,9 +19,9 @@ import org.springframework.web.bind.annotation.RestController;
  * <p>왜 별도 엔드포인트인가 — 온보딩 답변은 이미 {@code fact_candidate} 로 들어가는
  * 통로가 있지만(로봇 온보딩 계약), 자유 대화 중에 나온 사실은 그런 통로가 전혀 없었다.
  * 로봇(ai_chat 의 {@code fact_client})이 발화 하나에서 뽑아낸 후보를 여기로 보내면,
- * 서버는 그 conversationId 가 진짜 이 어르신 것인지 확인한 뒤 CAPTURED 상태로 큐에
- * 쌓는다. 위험도 분류·동의 확인·중복 억제는 이 컨트롤러의 몫이 아니다 — 큐를 비우는
- * 후속 처리가 담당한다.</p>
+ * 서버는 그 conversationId 가 진짜 이 어르신 것인지 확인한 뒤 위험도·동의·회피 대상·
+ * 중복을 판정해(전부 {@link ConversationFactIntakeService} 책임) 안전하면 곧장
+ * 실체화하고, 아니면 확인 대기로 저장한다.</p>
  */
 @RestController
 @RequestMapping("/api/v1/robot/fact-candidates")
