@@ -295,6 +295,7 @@ def run_conversation_loop(
     max_turns: int | None = None,
     wake=None,
     audio_out=None,
+    event_publisher=None,
 ) -> int:
     """캡처 -> STT -> 그래프 를 반복한다. (웨이크워드가 있으면 대화 단위로 묶는다.)
 
@@ -335,6 +336,17 @@ def run_conversation_loop(
     settings = settings or get_settings()
     stt = STTClient(settings)
 
+    # 웨이크워드 감지 MQTT 발행자 (S15P11E102-349). 백엔드의 보미야 호출
+    # 시나리오(335)가 이 신호를 기다린다. MQTT 가 꺼져 있으면 None 이고,
+    # None 이면 아래에서 조용히 건너뛴다 — 시나리오만 빠질 뿐 대화는 정상이다.
+    # 테스트는 event_publisher 인자로 가짜를 주입한다.
+    if event_publisher is None and wake is not None:
+        from bomi_ai_chat.robot_events import build_robot_event_publisher
+
+        event_publisher = build_robot_event_publisher(settings)
+        if event_publisher is not None:
+            event_publisher.start()
+
     # 호출 응답("저를 부르셨나요?") 재생용 TTS. 웨이크워드 + 출력이 있을 때만 만든다.
     tts = None
     if wake is not None and audio_out is not None:
@@ -352,6 +364,15 @@ def run_conversation_loop(
                 # (시나리오 A: 웨이크워드 이전 발화 무반응).
                 # 대기 중 Ctrl+C = 프로그램 종료(아래 except 로 나감).
                 wake.wait_for_wake()
+                # 감지 사실을 백엔드에 알린다 (S15P11E102-349). paho 의 publish 는
+                # 큐잉이라 블로킹하지 않고, 실패는 발행자가 삼킨다 — 여기서 한 번 더
+                # 감싸는 이유는 가짜 발행자(테스트)나 미래의 구현 변경이 던져도
+                # 대화 시작을 막지 않기 위해서다.
+                if event_publisher is not None:
+                    try:
+                        event_publisher.publish_wake_word()
+                    except Exception:  # noqa: BLE001 - 시나리오는 부가, 대화가 본체다
+                        logger.warning("wake-word publish failed", exc_info=True)
                 _speak_ack(tts, audio_out)          # 호출 응답 1회 (블로킹)
                 turns = _run_graph_conversation(runtime, audio_in, stt, turns, max_turns)
             else:
@@ -376,6 +397,13 @@ def run_conversation_loop(
         except Exception:  # noqa: BLE001 - 한 번의 수음 실패가 루프를 죽이면 안 된다
             logger.exception("turn failed; continuing")
             continue
+
+    # 발행자 정리. 안 하면 프로그램 종료 후에도 paho 스레드가 남는다.
+    if event_publisher is not None:
+        try:
+            event_publisher.stop()
+        except Exception:  # noqa: BLE001 - 종료 정리 실패는 무시한다
+            logger.debug("event publisher stop failed", exc_info=True)
 
     return turns
 
