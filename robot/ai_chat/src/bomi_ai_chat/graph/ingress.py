@@ -177,6 +177,22 @@ def note_interaction(state: ConvState) -> dict:
         #   능동 턴(스케줄러/현관/backend_command)은 영향 없다 — 그쪽은 자기 노드가
         #   이번 턴에 intent 를 새로 채워 넣는다(ingress.py 의 다른 진입점들 참고).
         "intent": None,
+        # 안전 판정도 이번 턴에 새로 하게 한다.
+        #
+        # ★ 이게 없으면 T1 한 번이 영원히 이어진다 — 233 실기 폭주의 남은 반쪽
+        #   safety_level 과 escalation 도 reducer 가 없는 채널이라(state.py) 지난
+        #   턴의 값이 checkpoint 로 그대로 넘어온다. safety_triage 의 첫 분기는
+        #   "T1 + escalation 이 미리 세팅돼 있으면 분류 없이 통과"인데, 여기서
+        #   지우지 않으면 그 분기가 '지난 턴의 결과'를 '이번 턴의 사전 세팅'으로
+        #   오인한다. 그 뒤로는 무슨 말을 해도 — "괜찮아요"조차 — 분류 없이 T1 로
+        #   직행하고, 재시작해도 checkpoint 가 남아 그대로다. 233 실기에서 6분간
+        #   14연속 T1 이 나가고, 재시작 직후 첫 발화까지 즉시 T1 이 된 원인이다.
+        #   침묵 사다리의 T1 은 그래프를 거치지 않고 outbox 에 직접 쓰므로
+        #   (jobs/ticks._escalate_no_response) 여기서 지워도 잃는 경로가 없다.
+        #   pending_safety_check(확인 질문 대기)는 지우지 않는다 — 그건 다음 턴의
+        #   발화가 답이 되어야 하는, 살아 있어야 할 상태다.
+        "safety_level": "none",
+        "escalation": None,
     }
 
     # 대화 경계 판정 — 이어 붙일지, 새로 열지 (S15P11E102-306).
