@@ -264,6 +264,13 @@ UNION ALL SELECT 'robot', id::text, device_id, occupancy_status
 | robot 행이 없음 | 9절 온보딩 세션 생성이 실패합니다 | 〃 |
 | 아무 행도 없음 | 점검용 세트가 지워진 것 | 〃 — **`INSERT` 를 직접 만들지 마십시오.** 시드는 be 라인이 관리합니다 |
 
+아래는 실제로 돌려서 성공을 확인한 문장입니다(233 실기 점검 중 확보). **동의 4종
+말고도 `conversation_preferences`(jsonb)·`onboarding_status`·`time_zone`·
+`status`·`created_at`·`updated_at` 여섯 칼럼도 기본값이 없는 `NOT NULL` 이라
+처음엔 이걸 빠뜨려서 `null value in column "conversation_preferences" violates
+not-null constraint` 로 실패했습니다.** `\d app_user` 결과가 이것과 다르면(새 칼럼이
+추가됐다면) 그쪽을 따르십시오 — 이 문장은 그 시점의 스냅샷입니다.
+
 ```bash
 ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"UPDATE app_user SET guardian_sharing_consent_status='GRANTED', updated_at=now() WHERE id='99999999-0000-4000-8000-000000000001';\""
 ```
