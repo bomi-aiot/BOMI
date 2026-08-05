@@ -342,6 +342,69 @@ class RobotOnboardingServiceTest {
         assertThat(memory.getSourceCandidateId()).isEqualTo(candidate.getId());
     }
 
+    // ── S15P11E102-262: 회상 씨앗 질문 ────────────────────────────────────────
+
+    /**
+     * DAILY_ROUTINE 과 같은 모양(memory 대상, 확인 불필요)의 새 질문이 실제로 같은
+     * 경로를 타는지 고정한다. 완료 조건: "회상 씨앗 질문에 답하면 memory 에 해당
+     * memory_type 행이 생깁니다".
+     */
+    @Test
+    void aConfirmedHometownAnswerReachesMemoryAsALifeEvent() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+
+        AnswerResult result = onboardingService.submitAnswer(session.getId(), "HOMETOWN",
+            Map.of("content", "전라남도 목포"), false, null, null);
+
+        assertThat(result.outcome()).isEqualTo(Outcome.ACCEPTED);
+        assertThat(result.materialized()).isTrue();
+        FactCandidate candidate = candidateRepository.findById(result.factCandidateId())
+            .orElseThrow();
+        Memory memory = memoryRepository.findById(candidate.getMaterializedTargetId()).orElseThrow();
+        assertThat(memory.getSeniorId()).isEqualTo(senior.getId());
+        assertThat(memory.getMemoryType()).isEqualTo(MemoryType.LIFE_EVENT);
+        assertThat(memory.getContent()).isEqualTo("전라남도 목포");
+    }
+
+    /** 같은 계약이 PREFERENCE 대상으로도 정확히 매핑되는지 확인한다. */
+    @Test
+    void aConfirmedFavoriteFoodAnswerReachesMemoryAsAPreference() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+
+        AnswerResult result = onboardingService.submitAnswer(session.getId(), "FAVORITE_FOOD",
+            Map.of("content", "된장찌개"), false, null, null);
+
+        assertThat(result.materialized()).isTrue();
+        FactCandidate candidate = candidateRepository.findById(result.factCandidateId())
+            .orElseThrow();
+        Memory memory = memoryRepository.findById(candidate.getMaterializedTargetId()).orElseThrow();
+        assertThat(memory.getMemoryType()).isEqualTo(MemoryType.PREFERENCE);
+        assertThat(memory.getContent()).isEqualTo("된장찌개");
+    }
+
+    /**
+     * 완료 조건: "답하지 않아도 온보딩이 정상적으로 끝납니다". 회상 씨앗 네 문항 중
+     * 하나도 답하지 않고 나머지 필수 동의만 처리해도, 거절 경로와 마찬가지로 예외
+     * 없이 정상적으로 끝까지 진행된다(다른 optional 질문과 동일한 기존 동작).
+     */
+    @Test
+    void onboardingProceedsWithoutErrorWhenReminiscenceSeedsAreLeftUnanswered() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        deny(session, "PERSONALIZATION_CONSENT");
+        deny(session, "HEALTH_DATA_CONSENT");
+        deny(session, "SCHEDULE_CONSENT");
+        deny(session, "GUARDIAN_SHARING_CONSENT");
+
+        // PERSONALIZATION_CONSENT 를 거절했으므로 회상 씨앗 네 문항(선행 동의 필요)은
+        // 애초에 서빙되지 않고, 나머지 거절 경로와 동일하게 정상 종료된다.
+        List<String> served = serveUntilStuck(session, 12);
+
+        assertThat(served).doesNotContain("HOMETOWN", "FORMER_OCCUPATION", "FAVORITE_FOOD", "FAVORITE_SONG");
+        assertThat(reload(session).getStatus()).isEqualTo(OnboardingSessionStatus.COMPLETED);
+    }
+
     @Test
     void reAnsweringUpdatesTheSameCandidateInsteadOfAddingOne() {
         OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);

@@ -159,10 +159,15 @@ public class ConversationContextService {
     /**
      * Builds the six-part context for one senior and one turn.
      *
+     * <p>Not {@code readOnly} (S15P11E102-262). Selecting memories now also stamps
+     * {@code last_used_at} on the chosen rows via a bulk update — real PostgreSQL rejects
+     * a write inside a connection marked read-only, so a read-only annotation here would
+     * make every assembly call fail the moment usage tracking runs, not just look wasteful.</p>
+     *
      * @throws IllegalArgumentException if the senior does not exist, or if a guardian was
      *     named but has no active relationship with that senior
      */
-    @Transactional(readOnly = true)
+    @Transactional
     public ConversationContextResponse assemble(UUID seniorId, ConversationContextRequest request) {
         AppUser senior = appUserRepository.findById(seniorId)
             .orElseThrow(() -> new IllegalArgumentException("senior not found: " + seniorId));
@@ -475,10 +480,18 @@ public class ConversationContextService {
         Map<UUID, Double> similarities = loadSimilarities(seniorId, query, topK);
 
         OffsetDateTime now = OffsetDateTime.now();
-        return retrievable.stream()
+        List<ScoredMemory> selected = retrievable.stream()
             .map(memory -> new ScoredMemory(memory, score(memory, queryTerms, similarities, now)))
             .sorted(Comparator.comparingDouble(ScoredMemory::score).reversed())
             .limit(topK)
+            .toList();
+
+        // S15P11E102-262: 이번 턴에 실제로 골라 보낸 기억만 '방금 썼다'로 남긴다.
+        // score() 계산은 이 갱신 이전 상태(직전 last_used_at)를 이미 다 읽었으므로,
+        // 여기서 갱신해도 이번 선택 결과에는 영향이 없다 — 다음 턴부터 반영된다.
+        markMemoriesUsed(selected, now);
+
+        return selected.stream()
             .map(scored -> new MemoryItem(
                 scored.memory().getId(),
                 scored.memory().getMemoryType().name(),
@@ -491,6 +504,26 @@ public class ConversationContextService {
     }
 
     private record ScoredMemory(Memory memory, double score) {}
+
+    /**
+     * Stamps {@code last_used_at} on every memory this turn actually surfaced.
+     *
+     * <p>왜 존재하는가 — {@link Memory#markUsed()} 는 온보딩(258) 이전부터 있었지만
+     * 호출자가 하나도 없었다. 호출자가 없으면 "최근에 쓴 기억은 감점" 규칙이 있어도
+     * 무엇이 최근에 쓰였는지 알 방법이 없어 규칙 자체가 죽은 코드였다. 회상 씨앗처럼
+     * 기억이 몇 개 안 되는 초기 상태일수록 반복 방지가 실제로 작동해야 한다
+     * (CLAUDE.md §17.8).</p>
+     *
+     * <p>벌크 UPDATE 하나로 처리한다 — 엔티티를 하나씩 로드해 저장하면 topK 개수만큼
+     * SELECT 가 늘어나는데, 이 갱신은 컬럼 하나 말고는 아무것도 바꾸지 않는다.</p>
+     */
+    private void markMemoriesUsed(List<ScoredMemory> selected, OffsetDateTime now) {
+        if (selected.isEmpty()) {
+            return;
+        }
+        List<UUID> ids = selected.stream().map(scored -> scored.memory().getId()).toList();
+        memoryRepository.markUsed(ids, now);
+    }
 
     /** Similarity scores by memory id, or empty when semantic search cannot run. */
     private Map<UUID, Double> loadSimilarities(UUID seniorId, String query, int topK) {
@@ -514,7 +547,7 @@ public class ConversationContextService {
     }
 
     /**
-     * similarity × importance × recency.
+     * similarity × importance × recency × usage penalty.
      *
      * <p>Multiplied rather than added so a memory has to be at least somewhat good on
      * every axis. Adding would let a very old but very important memory dominate every
@@ -536,7 +569,7 @@ public class ConversationContextService {
         short importance = memory.getImportance() == null ? (short) 3 : memory.getImportance();
         double importanceWeight = importance / 5.0;
 
-        return relevance * importanceWeight * recencyWeight(memory, now);
+        return relevance * importanceWeight * recencyWeight(memory, now) * usagePenaltyWeight(memory, now);
     }
 
     private double keywordRelevance(Set<String> queryTerms, Memory memory) {
@@ -553,14 +586,18 @@ public class ConversationContextService {
     }
 
     /**
-     * Exponential decay on the most recent confirmation or use.
+     * Exponential decay on how long ago this fact was last known to be true.
      *
-     * <p>Uses {@code lastConfirmedAt} or {@code lastUsedAt} rather than creation time:
-     * what matters is when we last knew this to be true, not when it was first written.</p>
+     * <p>Uses {@code lastConfirmedAt} or {@code firstObservedAt} — deliberately <b>not</b>
+     * {@code lastUsedAt} (S15P11E102-262). What matters here is when we last knew this to
+     * be true, not when we last said it out loud; "used recently" is a completely
+     * different signal, handled by {@link #usagePenaltyWeight}. Mixing the two into one
+     * {@code latest()} used to make a just-spoken memory look like the freshest fact in
+     * the store and get selected again immediately — the opposite of "recently used is
+     * penalized" that CLAUDE.md §17.8 requires.</p>
      */
     private double recencyWeight(Memory memory, OffsetDateTime now) {
-        OffsetDateTime reference = latest(
-            memory.getLastConfirmedAt(), memory.getLastUsedAt(), memory.getFirstObservedAt());
+        OffsetDateTime reference = latest(memory.getLastConfirmedAt(), memory.getFirstObservedAt());
         if (reference == null) {
             // 시각 정보가 아예 없으면 최근성으로 벌점을 주지 않는다. 벌점을 주면
             // 온보딩으로 들어온 오래된 사실이 전부 밀려난다.
@@ -568,6 +605,32 @@ public class ConversationContextService {
         }
         long days = Math.max(0, ChronoUnit.DAYS.between(reference, now));
         return Math.pow(0.5, (double) days / properties.getRecencyHalfLifeDays());
+    }
+
+    /**
+     * Temporarily discounts a memory that was surfaced very recently.
+     *
+     * <p>왜 recencyWeight 와 분리된 함수인가 — recencyWeight 는 "이 사실이 여전히
+     * 맞다고 마지막으로 확인한 게 언제인가"(정보의 신선도)를 답하고, 이 함수는 "이
+     * 기억을 마지막으로 대화에 실제로 꺼낸 게 언제인가"(반복 방지)를 답한다. 이
+     * 둘을 하나의 값으로 합치면(예전 코드처럼 {@code latest()} 안에
+     * {@code lastUsedAt} 을 같이 넣으면) 방금 쓴 기억이 가장 최근 시각을 갖게 되어
+     * 오히려 다음 턴에 <em>더</em> 잘 뽑힌다 — 262 티켓이 고치는 결함이 정확히
+     * 이것이다.</p>
+     *
+     * <p>한 번도 쓰인 적 없는 기억은 감점하지 않는다({@code lastUsedAt == null} →
+     * 1.0). 벌점을 주면 아직 한 번도 꺼내지 않은 회상 씨앗이 영원히 선택되지
+     * 않는다.</p>
+     */
+    private double usagePenaltyWeight(Memory memory, OffsetDateTime now) {
+        OffsetDateTime lastUsedAt = memory.getLastUsedAt();
+        if (lastUsedAt == null) {
+            return 1.0;
+        }
+        long days = Math.max(0, ChronoUnit.DAYS.between(lastUsedAt, now));
+        double recovered = 1.0 - Math.pow(0.5, (double) days / properties.getUsagePenaltyHalfLifeDays());
+        double floor = properties.getUsagePenaltyFloor();
+        return floor + (1.0 - floor) * recovered;
     }
 
     private OffsetDateTime latest(OffsetDateTime... candidates) {
