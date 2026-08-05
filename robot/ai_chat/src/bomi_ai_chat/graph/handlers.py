@@ -14,18 +14,20 @@
     "로봇이 왜 조용했는가"에 대한 답이 하나가 아니게 되고, 게이트를 신뢰할 수 없게 된다.
 
 핸들러의 두 계열
-    개방형:     info, companion, schedule, emotional, greeting
-                LLM 이 자연스럽게 표현할 여지가 있다.
-    계약 주도형: onboarding, clarification
-                백엔드가 강제하는 계약이 정의한 고정 슬롯을 채운다. LLM 에게 자유를
-                거의 주지 않는다. 한 필드, 한 질문, 그 외에는 아무것도 (CLAUDE.md §12).
+    개방형:       info, companion, schedule, emotional, greeting
+                  LLM 이 자연스럽게 표현할 여지가 있다. 병원·약국·의약품·날씨
+                  조회(S15P11E102-311)는 이 핸들러들이 직접 하지 않는다 —
+                  context_read 가 미리 조회해 ctx["documents"]("참고 자료")로
+                  넘기고, info 핸들러의 _generate() 가 그것을 참고해 답한다.
+                  실제 조회는 llm/medical_flow.py·weather/client.py 에 위임한다
+                  (graph/context.py 의 _gather_lookup_documents 참고).
+    계약 주도형:   onboarding, clarification
+                  백엔드가 강제하는 계약이 정의한 고정 슬롯을 채운다. LLM 에게 자유를
+                  거의 주지 않는다. 한 필드, 한 질문, 그 외에는 아무것도 (CLAUDE.md §12).
 
 기존 모듈에 위임한다 (재구현 금지)
     이 패키지에는 이미 검증된 클라이언트들이 있다. 핸들러는 얇아야 한다.
         일반 대화        -> llm/client.py
-        의료 조회        -> llm/medical_flow.py  (function calling)
-        날씨             -> weather/client.py
-        병원·약국·의약품  -> db/medical_repository.py  (지오/정확 조회, RAG 아님)
         의도 분류        -> llm/router.py 에 위임 (context.classify_intent 참고)
     핸들러가 하는 일은 "무엇을 말할지"를 정하고 프롬프트를 조립해 위 클라이언트를
     호출하는 것까지다. HTTP 호출이나 SQL 을 직접 쓰지 않는다.
@@ -156,6 +158,18 @@ def _generate(state: ConvState, *, fallback: str = _FALLBACK_RESPONSE) -> str:
             ctx_is_cached=bool(state.get("ctx_is_cached")),
             speech_origin=state.get("speech_origin", ""),
             recent_phrasings=state.get("recent_phrasings"),
+            is_medical=bool(state.get("is_medical_query")),
+        )
+        # 참고 자료가 실제로 이 프롬프트에 실렸는지 확인할 방법이 없었다 —
+        # context_read 가 문서를 찾아도, 그게 build_prompt 를 거쳐 실제로
+        # "참고 자료" 섹션으로 들어갔는지는 지금까지 아무 데도 안 남았다.
+        # 답변이 근거 없이 나온 건지(문서가 비었거나 안 실렸는지) 여기서
+        # 바로 구분할 수 있어야 한다(S15P11E102-311 관련 실측 진단).
+        logger.debug(
+            "generating intent=%s documents=%d reference_material_in_prompt=%s",
+            state.get("intent"),
+            len((state.get("ctx") or {}).get("documents") or []),
+            "참고 자료" in prompt,
         )
         return _llm().generate(prompt)
     except Exception:  # noqa: BLE001 - 생성 실패가 턴을 죽이면 안 된다

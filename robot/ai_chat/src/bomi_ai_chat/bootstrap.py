@@ -493,4 +493,11 @@ def _listen(
         return "", 0.0, onset_timeout_seconds is not None
 
     text = (stt.transcribe(audio) or "").strip()
+
+    # STT 가 실제로 뭐라고 알아들었는지 콘솔에 남긴다. pipeline.py(구 경로)는
+    # 이미 이걸 찍었는데, 그래프 경로(이 함수)는 안 찍고 있었다. 그래서 인텐트
+    # 분류가 왜 그렇게 나왔는지(classify_intent 는 이 텍스트를 그대로 받는다)
+    # 어르신이 실제로 뭐라 말했는지 모른 채로 추측만 하게 됐다.
+    print(f"[STT] 인식된 텍스트: {text or '(인식 실패)'}")
+
     return text, max(0.0, clock.now() - started), False
