@@ -317,6 +317,32 @@ public class FactCandidate {
         this.status = FactCandidateStatus.REJECTED;
     }
 
+    /**
+     * 어르신 본인의 요청("기억하지 마")으로 후보를 닫는다 (S15P11E102-348).
+     *
+     * <p>미확정 단계({@link #isCancellableBySenior()})에서만 허용한다.
+     * {@code CONFIRMED}/{@code MATERIALIZED} 는 이미 사실로 반영됐거나 반영 직전이라
+     * 이 경로로 지우면 "지웠다"는 약속과 실제가 어긋난다 — 그쪽 되돌리기는 보호자
+     * 화면의 몫으로 남긴다(티켓 미결 사항). 시각은 {@code updated_at}
+     * (@UpdateTimestamp)이 자동으로 남는다.</p>
+     */
+    public void cancelBySenior() {
+        if (!isCancellableBySenior()) {
+            throw new IllegalStateException(
+                "only an unconfirmed candidate can be cancelled by the senior (status="
+                    + this.status + ")");
+        }
+        this.status = FactCandidateStatus.CANCELLED_BY_SENIOR;
+    }
+
+    /** 어르신 요청 취소가 허용되는 미확정 단계인가. 서비스의 대상 선별과 같은 기준이다. */
+    public boolean isCancellableBySenior() {
+        return this.status == FactCandidateStatus.CAPTURED
+            || this.status == FactCandidateStatus.NEEDS_CLARIFICATION
+            || this.status == FactCandidateStatus.NEEDS_CONFIRMATION
+            || this.status == FactCandidateStatus.COORDINATION_REQUIRED;
+    }
+
     public void expire(OffsetDateTime expiresAt) {
         this.status = FactCandidateStatus.EXPIRED;
         this.expiresAt = expiresAt;
