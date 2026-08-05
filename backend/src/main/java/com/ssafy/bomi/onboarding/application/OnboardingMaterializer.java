@@ -3,6 +3,7 @@ package com.ssafy.bomi.onboarding.application;
 import com.ssafy.bomi.user.domain.AppUser;
 import com.ssafy.bomi.user.domain.ConsentStatus;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.format.DateTimeParseException;
 import java.util.Map;
 import java.util.Optional;
@@ -81,6 +82,22 @@ public class OnboardingMaterializer {
                 senior.changeBirthDate(birthDateOf(confirmedValue));
                 yield true;
             }
+            case "wake_time" -> {
+                senior.changeWakeTime(localTimeOf(confirmedValue, "wakeTime"));
+                yield true;
+            }
+            case "sleep_time" -> {
+                senior.changeSleepTime(localTimeOf(confirmedValue, "sleepTime"));
+                yield true;
+            }
+            case "chronic_pain_area" -> {
+                senior.changeChronicPainArea(text(confirmedValue, "chronicPainArea"));
+                yield true;
+            }
+            case "preferred_hospital" -> {
+                senior.changePreferredHospital(text(confirmedValue, "preferredHospital"));
+                yield true;
+            }
             // 계약에 app_user 필드가 추가됐는데 여기 분기를 안 만든 경우다. 조용히 넘어가면
             // "동의했는데 반영이 안 되는" 상태가 되므로 요란하게 실패한다.
             default -> throw new IllegalStateException(
@@ -121,6 +138,22 @@ public class OnboardingMaterializer {
             return LocalDate.parse(raw);
         } catch (DateTimeParseException exception) {
             throw new IllegalArgumentException("birthDate must be ISO-8601 (YYYY-MM-DD), got " + raw);
+        }
+    }
+
+    /**
+     * 확정된 시각 문자열("HH:mm")을 {@link LocalTime} 으로 바꾼다.
+     *
+     * <p>birthDateOf 와 같은 이유로 여기서도 다시 검증한다 — 스키마 검증을 통과했다고
+     * 항상 파싱 가능하다고 믿으면, ASR 을 거친 값이 조용히 예외로 죽는 대신 엉뚱한
+     * 시각으로 저장될 수 있다.</p>
+     */
+    private LocalTime localTimeOf(Map<String, Object> confirmedValue, String field) {
+        String raw = text(confirmedValue, field);
+        try {
+            return LocalTime.parse(raw);
+        } catch (DateTimeParseException exception) {
+            throw new IllegalArgumentException(field + " must be HH:mm, got " + raw);
         }
     }
 
