@@ -18,12 +18,42 @@ import java.util.UUID;
  * content here would make it possible — easy, even — to answer a turn straight from a
  * payload that was written before the senior changed their mind about sharing.</p>
  *
- * <p><b>Every method may be a no-op.</b> When no store is configured, or the embedding model
- * has no API key, {@link #isAvailable()} is false and writes are dropped. That is not a
- * silent failure: the row keeps {@code embedding_status = PENDING}, so the sync job
- * reindexes it the moment the store comes back (V5 exists for exactly this).</p>
+ * <p><b>Writes never pretend to succeed.</b> When no store is configured, the vector has the
+ * wrong dimension, or Qdrant rejects the request, {@link #upsert} returns an explicit
+ * {@link VectorWriteStatus}. The caller may only mark PostgreSQL {@code SYNCED} after
+ * {@link VectorWriteStatus#STORED}. This keeps the derived-index bookkeeping truthful and
+ * makes a later reindex possible.</p>
  */
 public interface VectorStore {
+
+    /**
+     * Result of one vector write.
+     *
+     * <p>{@code UNAVAILABLE} and {@code RETRYABLE_FAILURE} leave PostgreSQL due for a later
+     * run. {@code DIMENSION_MISMATCH} is not retryable until configuration is corrected, so
+     * the sync service isolates that row as {@code FAILED} instead of paying for it every
+     * schedule tick.</p>
+     */
+    enum VectorWriteStatus {
+        STORED(false),
+        UNAVAILABLE(true),
+        RETRYABLE_FAILURE(true),
+        DIMENSION_MISMATCH(false);
+
+        private final boolean retryable;
+
+        VectorWriteStatus(boolean retryable) {
+            this.retryable = retryable;
+        }
+
+        public boolean stored() {
+            return this == STORED;
+        }
+
+        public boolean retryable() {
+            return retryable;
+        }
+    }
 
     /**
      * One candidate: an id and how close it was. Never any content.
@@ -50,7 +80,8 @@ public interface VectorStore {
      *     Not a privacy control — see {@link #search} — but without it every query would
      *     score every senior's memories against each other
      */
-    void upsert(VectorCollection collection, UUID id, UUID seniorId, float[] vector);
+    VectorWriteStatus upsert(VectorCollection collection, UUID id, UUID seniorId,
+        float[] vector);
 
     /**
      * Finds the ids whose vectors are closest to {@code queryVector}.

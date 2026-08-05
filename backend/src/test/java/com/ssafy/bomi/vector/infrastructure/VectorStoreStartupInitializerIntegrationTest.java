@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assumptions.abort;
 
 import com.ssafy.bomi.vector.application.VectorCollection;
 import com.ssafy.bomi.vector.application.VectorStore.VectorHit;
+import com.ssafy.bomi.vector.application.VectorStore.VectorWriteStatus;
 import com.ssafy.bomi.vector.application.VectorStoreStartupInitializer;
 import com.ssafy.bomi.vector.config.QdrantProperties;
 import java.util.List;
@@ -101,7 +102,8 @@ class VectorStoreStartupInitializerIntegrationTest {
         UUID senior = UUID.randomUUID();
         UUID id = UUID.randomUUID();
         for (VectorCollection collection : VectorCollection.values()) {
-            store.upsert(collection, id, senior, unitVector(0));
+            assertThat(store.upsert(collection, id, senior, unitVector(0)))
+                .isEqualTo(VectorWriteStatus.STORED);
             List<VectorHit> hits = store.search(collection, senior, unitVector(0), 1);
             assertThat(hits)
                 .as("%s 컬렉션이 존재해야 업서트가 검색으로 돌아온다", collection.collectionName())
@@ -123,7 +125,8 @@ class VectorStoreStartupInitializerIntegrationTest {
 
         UUID senior = UUID.randomUUID();
         UUID id = UUID.randomUUID();
-        store.upsert(VectorCollection.MEMORY, id, senior, unitVector(0));
+        assertThat(store.upsert(VectorCollection.MEMORY, id, senior, unitVector(0)))
+            .isEqualTo(VectorWriteStatus.STORED);
         store.search(VectorCollection.MEMORY, senior, unitVector(0), 1);
         store.delete(VectorCollection.MEMORY, id);
 

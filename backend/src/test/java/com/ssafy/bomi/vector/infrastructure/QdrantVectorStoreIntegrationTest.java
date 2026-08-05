@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assumptions.abort;
 
 import com.ssafy.bomi.vector.application.VectorCollection;
 import com.ssafy.bomi.vector.application.VectorStore.VectorHit;
+import com.ssafy.bomi.vector.application.VectorStore.VectorWriteStatus;
 import com.ssafy.bomi.vector.config.QdrantProperties;
 import java.util.List;
 import java.util.UUID;
@@ -92,7 +93,8 @@ class QdrantVectorStoreIntegrationTest {
         UUID id = UUID.randomUUID();
 
         for (VectorCollection collection : VectorCollection.values()) {
-            store.upsert(collection, id, senior, unitVector(0));
+            assertThat(store.upsert(collection, id, senior, unitVector(0)))
+                .isEqualTo(VectorWriteStatus.STORED);
             List<VectorHit> hits = store.search(collection, senior, unitVector(0), 1);
             assertThat(hits)
                 .as("%s 컬렉션이 4096차원 업서트를 받아들여야 한다", collection.collectionName())
@@ -111,7 +113,9 @@ class QdrantVectorStoreIntegrationTest {
         UUID senior = UUID.randomUUID();
         UUID id = UUID.randomUUID();
 
-        store.upsert(VectorCollection.MEMORY, id, senior, new float[] {1.0f, 0.0f});
+        assertThat(store.upsert(VectorCollection.MEMORY, id, senior,
+            new float[] {1.0f, 0.0f}))
+            .isEqualTo(VectorWriteStatus.DIMENSION_MISMATCH);
 
         assertThat(store.search(VectorCollection.MEMORY, senior, unitVector(0), 5)).isEmpty();
     }

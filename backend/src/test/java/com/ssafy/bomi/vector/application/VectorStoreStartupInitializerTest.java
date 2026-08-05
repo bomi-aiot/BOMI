@@ -60,7 +60,9 @@ class VectorStoreStartupInitializerTest {
         }
 
         @Override
-        public void upsert(VectorCollection collection, UUID id, UUID seniorId, float[] vector) {
+        public VectorWriteStatus upsert(VectorCollection collection, UUID id, UUID seniorId,
+            float[] vector) {
+            return VectorWriteStatus.STORED;
         }
 
         @Override

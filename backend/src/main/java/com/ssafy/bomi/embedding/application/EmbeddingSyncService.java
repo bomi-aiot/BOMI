@@ -8,6 +8,7 @@ import com.ssafy.bomi.memory.domain.Memory;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
 import com.ssafy.bomi.vector.application.VectorCollection;
 import com.ssafy.bomi.vector.application.VectorStore;
+import com.ssafy.bomi.vector.application.VectorStore.VectorWriteStatus;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Set;
@@ -62,6 +63,12 @@ public class EmbeddingSyncService {
     private static final Set<EmbeddingStatus> DUE_WITH_FAILED =
         Set.of(EmbeddingStatus.PENDING, EmbeddingStatus.STALE, EmbeddingStatus.FAILED);
 
+    private enum IndexOutcome {
+        INDEXED,
+        FAILED,
+        DEFERRED
+    }
+
     private final MemoryRepository memoryRepository;
     private final ConversationSummaryRepository summaryRepository;
     private final EmbeddingClient embeddingClient;
@@ -103,15 +110,15 @@ public class EmbeddingSyncService {
 
     /** What one run did. Returned so the scheduler can log it and tests can assert it. */
     public record SyncReport(int memoriesIndexed, int summariesIndexed, int failed,
-                             boolean skipped) {
+                             int deferred, boolean skipped) {
 
         /** A run that did nothing because the store or the model was unreachable. */
         static SyncReport unavailable() {
-            return new SyncReport(0, 0, 0, true);
+            return new SyncReport(0, 0, 0, 0, true);
         }
 
         public int billedCalls() {
-            return memoriesIndexed + summariesIndexed + failed;
+            return memoriesIndexed + summariesIndexed + failed + deferred;
         }
     }
 
@@ -144,36 +151,39 @@ public class EmbeddingSyncService {
         int memories = 0;
         int summaries = 0;
         int failed = 0;
+        int deferred = 0;
 
         for (Memory memory : memoryRepository.findNeedingEmbedding(statuses, page)) {
-            if (indexMemory(memory)) {
-                memories++;
-            } else {
-                failed++;
+            switch (indexMemory(memory)) {
+                case INDEXED -> memories++;
+                case FAILED -> failed++;
+                case DEFERRED -> deferred++;
             }
         }
         // 남은 예산만큼만 요약을 처리한다. 두 종류가 각자 batchSize 만큼 쓰면 한 번에
         // 두 배가 과금된다 — 상한이 상한이 아니게 된다.
-        int remaining = properties.getSyncBatchSize() - (memories + failed);
+        int remaining = properties.getSyncBatchSize() - (memories + failed + deferred);
         if (remaining > 0) {
             PageRequest summaryPage = PageRequest.of(0, remaining);
             for (ConversationSummary summary
                 : summaryRepository.findNeedingEmbedding(statuses, summaryPage)) {
-                if (indexSummary(summary)) {
-                    summaries++;
-                } else {
-                    failed++;
+                switch (indexSummary(summary)) {
+                    case INDEXED -> summaries++;
+                    case FAILED -> failed++;
+                    case DEFERRED -> deferred++;
                 }
             }
         }
 
-        if (memories + summaries + failed > 0) {
-            log.info("embedding sync: {} memories, {} summaries indexed, {} failed "
+        if (memories + summaries + failed + deferred > 0) {
+            log.info("embedding sync: {} memories, {} summaries indexed, {} failed, "
+                    + "{} deferred "
                     + "({} billed calls, cap {})",
-                memories, summaries, failed, memories + summaries + failed,
+                memories, summaries, failed, deferred,
+                memories + summaries + failed + deferred,
                 properties.getSyncBatchSize());
         }
-        return new SyncReport(memories, summaries, failed, false);
+        return new SyncReport(memories, summaries, failed, deferred, false);
     }
 
     /**
@@ -189,45 +199,99 @@ public class EmbeddingSyncService {
      * window costs money rather than correctness. The transaction is short and this job is
      * the only writer of these columns.</p>
      */
-    boolean indexMemory(Memory memory) {
-        return Boolean.TRUE.equals(transactions.execute(status -> indexMemoryInTx(memory)));
+    private IndexOutcome indexMemory(Memory memory) {
+        return transactions.execute(status -> indexMemoryInTx(memory));
     }
 
-    private boolean indexMemoryInTx(Memory memory) {
+    private IndexOutcome indexMemoryInTx(Memory memory) {
+        float[] vector;
         try {
-            float[] vector = embeddingClient.embedPassage(memory.getContent());
-            vectorStore.upsert(VectorCollection.MEMORY, memory.getId(), memory.getSeniorId(),
-                vector);
-            memory.markEmbeddingSynced(embeddingClient.passageModelId(), OffsetDateTime.now());
-            memoryRepository.save(memory);
-            return true;
+            vector = embeddingClient.embedPassage(memory.getContent());
         } catch (RuntimeException error) {
             log.warn("could not embed memory {}; marking it FAILED so it stays visible "
                 + "instead of being retried as if it were new", memory.getId(), error);
             memory.markEmbeddingFailed();
             memoryRepository.save(memory);
-            return false;
+            return IndexOutcome.FAILED;
         }
-    }
 
-    boolean indexSummary(ConversationSummary summary) {
-        return Boolean.TRUE.equals(transactions.execute(status -> indexSummaryInTx(summary)));
-    }
-
-    private boolean indexSummaryInTx(ConversationSummary summary) {
+        VectorWriteStatus writeStatus;
         try {
-            float[] vector = embeddingClient.embedPassage(summary.getContent());
-            vectorStore.upsert(VectorCollection.CONVERSATION_SUMMARY, summary.getId(),
-                summary.getSeniorId(), vector);
-            summary.markEmbeddingSynced(embeddingClient.passageModelId(), OffsetDateTime.now());
-            summaryRepository.save(summary);
-            return true;
+            writeStatus = vectorStore.upsert(VectorCollection.MEMORY, memory.getId(),
+                memory.getSeniorId(), vector);
+        } catch (RuntimeException error) {
+            log.error("unexpected vector-store failure for memory {}; keeping status {} for "
+                + "reindex", memory.getId(), memory.getEmbeddingStatus(), error);
+            return IndexOutcome.DEFERRED;
+        }
+        if (!writeStatus.stored()) {
+            return handleMemoryWriteFailure(memory, writeStatus);
+        }
+
+        memory.markEmbeddingSynced(embeddingClient.passageModelId(), OffsetDateTime.now());
+        memoryRepository.save(memory);
+        return IndexOutcome.INDEXED;
+    }
+
+    private IndexOutcome handleMemoryWriteFailure(Memory memory,
+        VectorWriteStatus writeStatus) {
+        if (writeStatus.retryable()) {
+            log.warn("vector write for memory {} was {}; keeping status {} for automatic "
+                    + "reindex", memory.getId(), writeStatus, memory.getEmbeddingStatus());
+            return IndexOutcome.DEFERRED;
+        }
+        log.error("vector write for memory {} was {}; marking it FAILED until configuration "
+            + "is corrected and retryFailed is run", memory.getId(), writeStatus);
+        memory.markEmbeddingFailed();
+        memoryRepository.save(memory);
+        return IndexOutcome.FAILED;
+    }
+
+    private IndexOutcome indexSummary(ConversationSummary summary) {
+        return transactions.execute(status -> indexSummaryInTx(summary));
+    }
+
+    private IndexOutcome indexSummaryInTx(ConversationSummary summary) {
+        float[] vector;
+        try {
+            vector = embeddingClient.embedPassage(summary.getContent());
         } catch (RuntimeException error) {
             log.warn("could not embed summary {}; marking it FAILED", summary.getId(), error);
             summary.markEmbeddingFailed();
             summaryRepository.save(summary);
-            return false;
+            return IndexOutcome.FAILED;
         }
+
+        VectorWriteStatus writeStatus;
+        try {
+            writeStatus = vectorStore.upsert(VectorCollection.CONVERSATION_SUMMARY,
+                summary.getId(), summary.getSeniorId(), vector);
+        } catch (RuntimeException error) {
+            log.error("unexpected vector-store failure for summary {}; keeping status {} for "
+                + "reindex", summary.getId(), summary.getEmbeddingStatus(), error);
+            return IndexOutcome.DEFERRED;
+        }
+        if (!writeStatus.stored()) {
+            return handleSummaryWriteFailure(summary, writeStatus);
+        }
+
+        summary.markEmbeddingSynced(embeddingClient.passageModelId(), OffsetDateTime.now());
+        summaryRepository.save(summary);
+        return IndexOutcome.INDEXED;
+    }
+
+    private IndexOutcome handleSummaryWriteFailure(ConversationSummary summary,
+        VectorWriteStatus writeStatus) {
+        if (writeStatus.retryable()) {
+            log.warn("vector write for summary {} was {}; keeping status {} for automatic "
+                    + "reindex", summary.getId(), writeStatus, summary.getEmbeddingStatus());
+            return IndexOutcome.DEFERRED;
+        }
+        log.error("vector write for summary {} was {}; marking it FAILED until configuration "
+            + "is corrected and retryFailed is run", summary.getId(), writeStatus);
+        summary.markEmbeddingFailed();
+        summaryRepository.save(summary);
+        return IndexOutcome.FAILED;
     }
 
     /**

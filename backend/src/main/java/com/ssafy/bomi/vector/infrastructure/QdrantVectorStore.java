@@ -2,6 +2,7 @@ package com.ssafy.bomi.vector.infrastructure;
 
 import com.ssafy.bomi.vector.application.VectorCollection;
 import com.ssafy.bomi.vector.application.VectorStore;
+import com.ssafy.bomi.vector.application.VectorStore.VectorWriteStatus;
 import com.ssafy.bomi.vector.config.QdrantProperties;
 import io.qdrant.client.ConditionFactory;
 import io.qdrant.client.PointIdFactory;
@@ -39,10 +40,10 @@ import org.springframework.stereotype.Component;
  * must survive. Semantic ranking disappears; the conversation does not. The alternative —
  * failing the turn — means the senior gets silence because an <em>index</em> is down.</p>
  *
- * <p><b>Every failure is swallowed and logged, and nothing is retried here.</b> Retrying
- * inside the turn spends the budget the senior is waiting on. Writes do not need a retry
- * either: the row keeps {@code embedding_status = PENDING} or {@code FAILED}, and the sync
- * job picks it up later. That bookkeeping is the retry (V5).</p>
+ * <p><b>Failures are logged and returned as data; nothing is retried here.</b> Retrying inside
+ * the turn spends the budget the senior is waiting on. The sync service only records
+ * {@code SYNCED} after this adapter returns {@link VectorWriteStatus#STORED}; retryable
+ * failures therefore remain due for a later run.</p>
  */
 @Component
 public class QdrantVectorStore implements VectorStore {
@@ -171,17 +172,18 @@ public class QdrantVectorStore implements VectorStore {
     }
 
     @Override
-    public void upsert(VectorCollection collection, UUID id, UUID seniorId, float[] vector) {
-        if (!isAvailable()) {
-            return;
-        }
+    public VectorWriteStatus upsert(VectorCollection collection, UUID id, UUID seniorId,
+        float[] vector) {
         if (vector.length != properties.getDimensions()) {
             // 여기서 막지 않으면 gRPC 오류 메시지로만 남고, 원인이 '모델을 바꿨다'라는
             // 사실에서 멀어진다.
             log.error("refusing to upsert a {}-dim vector into '{}' which expects {}: the "
                     + "embedding model and bomi.qdrant.dimensions disagree",
                 vector.length, collection.collectionName(), properties.getDimensions());
-            return;
+            return VectorWriteStatus.DIMENSION_MISMATCH;
+        }
+        if (!isAvailable()) {
+            return VectorWriteStatus.UNAVAILABLE;
         }
         try {
             client.upsertAsync(collection.collectionName(), List.of(PointStruct.newBuilder()
@@ -189,8 +191,10 @@ public class QdrantVectorStore implements VectorStore {
                 .setVectors(VectorsFactory.vectors(vector))
                 .putPayload(PAYLOAD_SENIOR_ID, ValueFactory.value(seniorId.toString()))
                 .build()), timeout).get();
+            return VectorWriteStatus.STORED;
         } catch (Exception error) {
             markUnreachable("upsert into " + collection.collectionName(), error);
+            return VectorWriteStatus.RETRYABLE_FAILURE;
         }
     }
 

@@ -15,6 +15,7 @@ import com.ssafy.bomi.memory.domain.MemoryVerificationStatus;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
 import com.ssafy.bomi.vector.application.VectorCollection;
 import com.ssafy.bomi.vector.application.VectorStore;
+import com.ssafy.bomi.vector.application.VectorStore.VectorWriteStatus;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -232,6 +233,89 @@ class EmbeddingSyncServiceTest {
             .isEqualTo(EmbeddingStatus.PENDING);
     }
 
+    @Test
+    @DisplayName("★ 사전 확인 뒤 스토어가 비가용해져도 허위 SYNCED 를 만들지 않는다")
+    void anUnavailableWriteResultNeverBecomesSynced() {
+        /*
+         * sync 시작 시 isAvailable=true 여도 embed 와 upsert 사이에 Qdrant 가 죽을 수
+         * 있다. 이 창이 기존 void 계약의 실제 결함이었다. 이미 과금된 호출은 보고하되
+         * 행은 PENDING 으로 남겨 재시작 뒤 자동 재색인한다.
+         */
+        Memory memory = persistMemory("저장 전에 Qdrant가 중단됨", EmbeddingStatus.PENDING);
+        store.writeStatuses.put(memory.getId(), VectorWriteStatus.UNAVAILABLE);
+
+        SyncReport report = service.syncDue();
+        em.flush();
+        em.clear();
+
+        assertThat(report.deferred()).isEqualTo(1);
+        assertThat(report.billedCalls()).isEqualTo(1);
+        assertThat(store.upserts).doesNotContainKey(memory.getId());
+        assertThat(memoryRepository.findById(memory.getId()).orElseThrow().getEmbeddingStatus())
+            .isEqualTo(EmbeddingStatus.PENDING);
+    }
+
+    @Test
+    @DisplayName("★ 부분 쓰기 실패는 성공 행을 보존하고 실패 행만 다음 실행에서 복구한다")
+    void apartialVectorFailureIsRecoveredWithoutRebillingSuccessfulRows() {
+        Memory deferred = persistMemory("첫 번째는 벡터 저장 실패", EmbeddingStatus.PENDING);
+        Memory stored = persistMemory("두 번째는 정상 저장", EmbeddingStatus.PENDING);
+        store.writeStatuses.put(deferred.getId(), VectorWriteStatus.RETRYABLE_FAILURE);
+
+        SyncReport first = service.syncDue();
+        em.flush();
+        em.clear();
+
+        assertThat(first.memoriesIndexed()).isEqualTo(1);
+        assertThat(first.deferred()).isEqualTo(1);
+        assertThat(memoryRepository.findById(deferred.getId()).orElseThrow()
+            .getEmbeddingStatus()).isEqualTo(EmbeddingStatus.PENDING);
+        assertThat(memoryRepository.findById(stored.getId()).orElseThrow()
+            .getEmbeddingStatus()).isEqualTo(EmbeddingStatus.SYNCED);
+
+        store.writeStatuses.put(deferred.getId(), VectorWriteStatus.STORED);
+        SyncReport recovered = service.syncDue();
+        em.flush();
+        em.clear();
+
+        assertThat(recovered.memoriesIndexed()).isEqualTo(1);
+        assertThat(recovered.deferred()).isZero();
+        assertThat(memoryRepository.findById(deferred.getId()).orElseThrow()
+            .getEmbeddingStatus()).isEqualTo(EmbeddingStatus.SYNCED);
+        assertThat(embedding.embeddedTexts)
+            .as("이미 SYNCED 인 두 번째 행은 복구 실행에서 다시 과금하지 않는다")
+            .containsExactly("첫 번째는 벡터 저장 실패", "두 번째는 정상 저장",
+                "첫 번째는 벡터 저장 실패");
+    }
+
+    @Test
+    @DisplayName("★ 차원 불일치는 FAILED 로 격리하고 설정 수정 뒤 명시적으로 재색인한다")
+    void adimensionMismatchRequiresDeliberateReindexAfterCorrection() {
+        Memory memory = persistMemory("차원이 맞지 않는 벡터", EmbeddingStatus.PENDING);
+        store.writeStatuses.put(memory.getId(), VectorWriteStatus.DIMENSION_MISMATCH);
+
+        SyncReport failed = service.syncDue();
+        em.flush();
+        em.clear();
+
+        assertThat(failed.failed()).isEqualTo(1);
+        assertThat(memoryRepository.findById(memory.getId()).orElseThrow().getEmbeddingStatus())
+            .isEqualTo(EmbeddingStatus.FAILED);
+        assertThat(service.syncDue().billedCalls())
+            .as("설정 오류를 매 스케줄마다 다시 과금하지 않는다")
+            .isZero();
+
+        store.writeStatuses.put(memory.getId(), VectorWriteStatus.STORED);
+        SyncReport recovered = service.retryFailed();
+        em.flush();
+        em.clear();
+
+        assertThat(recovered.memoriesIndexed()).isEqualTo(1);
+        assertThat(memoryRepository.findById(memory.getId()).orElseThrow().getEmbeddingStatus())
+            .isEqualTo(EmbeddingStatus.SYNCED);
+        assertThat(store.upserts).containsKey(memory.getId());
+    }
+
     // ── 5. 모델 교체 ─────────────────────────────────────────────────────────
 
     @Test
@@ -372,6 +456,7 @@ class EmbeddingSyncServiceTest {
 
     private static class RecordingVectorStore implements VectorStore {
         final Map<UUID, float[]> upserts = new LinkedHashMap<>();
+        final Map<UUID, VectorWriteStatus> writeStatuses = new LinkedHashMap<>();
         boolean available = true;
 
         @Override
@@ -379,8 +464,14 @@ class EmbeddingSyncServiceTest {
         }
 
         @Override
-        public void upsert(VectorCollection collection, UUID id, UUID seniorId, float[] vector) {
-            upserts.put(id, vector);
+        public VectorWriteStatus upsert(VectorCollection collection, UUID id, UUID seniorId,
+            float[] vector) {
+            VectorWriteStatus status = writeStatuses.getOrDefault(id,
+                VectorWriteStatus.STORED);
+            if (status.stored()) {
+                upserts.put(id, vector);
+            }
+            return status;
         }
 
         @Override
