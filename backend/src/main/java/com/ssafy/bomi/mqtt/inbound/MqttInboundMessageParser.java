@@ -10,6 +10,7 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -25,7 +26,7 @@ public class MqttInboundMessageParser {
         Set.of("DOOR_OPENED", "MOTION_DETECTED", "DOOR_CLOSED", "PRESENCE_DETECTED",
             "AMBIENT_ENVIRONMENT_OBSERVED"),
         MqttInboundCategory.ROBOT_EVENT,
-        Set.of("ONBOARDING_ANSWER_CAPTURED", "CONVERSATION_ENDED"),
+        Set.of("ONBOARDING_ANSWER_CAPTURED", "CONVERSATION_STARTED", "CONVERSATION_ENDED"),
         MqttInboundCategory.ROBOT_STATUS,
         Set.of("REST_STATE_CHANGED", "NAVIGATION_STATUS"),
         MqttInboundCategory.ROBOT_RESULT,
@@ -67,6 +68,8 @@ public class MqttInboundMessageParser {
             );
         }
 
+        Correlation correlation = validateTypeSpecific(body, type);
+
         return new MqttInboundMessage(
             topicMatch.category(),
             topic,
@@ -76,8 +79,138 @@ public class MqttInboundMessageParser {
             occurredAt,
             qos,
             false,
+            correlation.scenarioId(),
+            correlation.conversationId(),
+            correlation.commandId(),
+            correlation.legacyContract(),
             body
         );
+    }
+
+    private static Correlation validateTypeSpecific(JsonNode body, String type) {
+        return switch (type) {
+            case "NAVIGATION_RESULT" -> validateNavigationResult(body);
+            case "CONVERSATION_STARTED" -> validateConversationStarted(body);
+            case "CONVERSATION_ENDED" -> validateConversationEnded(body);
+            default -> new Correlation(
+                optionalUuid(body, "scenarioId"),
+                optionalUuid(body, "conversationId"),
+                optionalText(body, "commandId", MAX_OPAQUE_ID_LENGTH),
+                false);
+        };
+    }
+
+    private static Correlation validateNavigationResult(JsonNode body) {
+        JsonNode payload = body.get("payload");
+        boolean hasV1 = body.has("scenarioId") || body.has("commandId");
+        boolean hasLegacy = payload.has("scenarioId") || payload.has("status");
+        if (hasV1 && hasLegacy) {
+            throw new MqttContractViolationException(
+                "NAVIGATION_RESULT must not mix v1 and legacy fields");
+        }
+        if (!hasV1) {
+            UUID scenarioId = requiredUuid(payload, "scenarioId", "payload.scenarioId");
+            String status = requiredText(payload, "status", 32);
+            if (!Set.of("ARRIVED", "FAILED", "CANCELLED").contains(status)) {
+                throw new MqttContractViolationException(
+                    "Unsupported legacy NAVIGATION_RESULT status '" + status + "'");
+            }
+            return new Correlation(scenarioId, null, null, true);
+        }
+
+        UUID scenarioId = requiredUuid(body, "scenarioId", "scenarioId");
+        String commandId = requiredText(body, "commandId", MAX_OPAQUE_ID_LENGTH);
+        String outcome = requiredText(payload, "outcome", 32);
+        String resultCode = requiredText(payload, "resultCode", 32);
+        if (!Set.of("SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT").contains(outcome)) {
+            throw new MqttContractViolationException(
+                "Unsupported NAVIGATION_RESULT outcome '" + outcome + "'");
+        }
+        if (!Set.of("ARRIVED", "NOT_ARRIVED").contains(resultCode)) {
+            throw new MqttContractViolationException(
+                "Unsupported NAVIGATION_RESULT resultCode '" + resultCode + "'");
+        }
+        String reasonCode = requiredNullableReason(payload);
+        if ("SUCCEEDED".equals(outcome)) {
+            if (!"ARRIVED".equals(resultCode) || reasonCode != null) {
+                throw new MqttContractViolationException(
+                    "Successful NAVIGATION_RESULT must be ARRIVED with reasonCode=null");
+            }
+        } else if (!"NOT_ARRIVED".equals(resultCode) || reasonCode == null) {
+            throw new MqttContractViolationException(
+                "Unsuccessful NAVIGATION_RESULT must be NOT_ARRIVED with a reasonCode");
+        }
+        return new Correlation(scenarioId, null, commandId, false);
+    }
+
+    private static Correlation validateConversationStarted(JsonNode body) {
+        UUID scenarioId = requiredUuid(body, "scenarioId", "scenarioId");
+        UUID conversationId = requiredUuid(body, "conversationId", "conversationId");
+        String commandId = requiredText(body, "commandId", MAX_OPAQUE_ID_LENGTH);
+        String intent = requiredText(body.get("payload"), "intent", 64);
+        if (!Set.of("WELLNESS_CHECK", "MEDICATION_REMINDER", "HOMECOMING_GREETING")
+            .contains(intent)) {
+            throw new MqttContractViolationException(
+                "Unsupported CONVERSATION_STARTED intent '" + intent + "'");
+        }
+        return new Correlation(scenarioId, conversationId, commandId, false);
+    }
+
+    private static Correlation validateConversationEnded(JsonNode body) {
+        UUID scenarioId = requiredUuid(body, "scenarioId", "scenarioId");
+        UUID conversationId = requiredUuid(body, "conversationId", "conversationId");
+        JsonNode payload = body.get("payload");
+        String outcome = requiredText(payload, "outcome", 32);
+        if (!Set.of("COMPLETED", "NO_RESPONSE", "CANCELLED", "FAILED").contains(outcome)) {
+            throw new MqttContractViolationException(
+                "Unsupported CONVERSATION_ENDED outcome '" + outcome + "'");
+        }
+        String reasonCode = requiredNullableReason(payload);
+        if ("FAILED".equals(outcome) && reasonCode == null) {
+            throw new MqttContractViolationException(
+                "FAILED CONVERSATION_ENDED requires a reasonCode");
+        }
+        return new Correlation(scenarioId, conversationId, null, false);
+    }
+
+    private static String requiredNullableReason(JsonNode payload) {
+        if (!payload.has("reasonCode")) {
+            throw new MqttContractViolationException(
+                "MQTT payload field 'reasonCode' is required and may be null");
+        }
+        JsonNode reason = payload.get("reasonCode");
+        if (reason == null || reason.isNull()) {
+            return null;
+        }
+        if (!reason.isTextual() || reason.textValue().isBlank()) {
+            throw new MqttContractViolationException(
+                "MQTT payload field 'reasonCode' must be null or a non-blank string");
+        }
+        return reason.textValue();
+    }
+
+    private static UUID requiredUuid(JsonNode body, String field, String displayName) {
+        String value = requiredText(body, field, 36);
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException ex) {
+            throw new MqttContractViolationException(
+                "MQTT payload field '" + displayName + "' must be a UUID", ex);
+        }
+    }
+
+    private static UUID optionalUuid(JsonNode body, String field) {
+        if (body == null || !body.has(field)) {
+            return null;
+        }
+        return requiredUuid(body, field, field);
+    }
+
+    private static String optionalText(JsonNode body, String field, int maxLength) {
+        if (body == null || !body.has(field)) {
+            return null;
+        }
+        return requiredText(body, field, maxLength);
     }
 
     private static MqttTopicMatch matchTopic(String topic) {
@@ -154,5 +287,13 @@ public class MqttInboundMessageParser {
                 "MQTT payload field 'payload' must be a JSON object"
             );
         }
+    }
+
+    private record Correlation(
+        UUID scenarioId,
+        UUID conversationId,
+        String commandId,
+        boolean legacyContract
+    ) {
     }
 }

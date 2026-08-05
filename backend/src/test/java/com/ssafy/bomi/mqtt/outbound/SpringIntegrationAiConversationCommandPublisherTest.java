@@ -10,30 +10,28 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.ssafy.bomi.conversation.domain.ConversationIntent;
 import com.ssafy.bomi.mqtt.config.BomiMqttProperties;
 import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.springframework.integration.mqtt.support.MqttHeaders;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
-class SpringIntegrationRobotCommandPublisherTest {
+class SpringIntegrationAiConversationCommandPublisherTest {
 
     @Test
     void publishesOnlyAfterActiveTransactionCommits() {
         MessageChannel channel = mock(MessageChannel.class);
         when(channel.send(any(Message.class), eq(5_000L))).thenReturn(true);
-        SpringIntegrationRobotCommandPublisher publisher = publisher(channel);
-        RobotCommand command = command();
+        SpringIntegrationAiConversationCommandPublisher publisher = publisher(channel);
 
         TransactionSynchronizationManager.initSynchronization();
         TransactionSynchronizationManager.setActualTransactionActive(true);
         try {
-            publisher.publish(command);
+            publisher.publish(command());
             verifyNoInteractions(channel);
 
             TransactionSynchronizationManager.getSynchronizations()
@@ -46,28 +44,29 @@ class SpringIntegrationRobotCommandPublisherTest {
     }
 
     @Test
-    void publishesJsonToRobotCommandTopicWithContractHeadersWithoutTransaction() throws Exception {
+    void publishesContractJsonToAiTopicWithoutTransaction() throws Exception {
         MessageChannel channel = mock(MessageChannel.class);
         when(channel.send(any(Message.class), eq(5_000L))).thenReturn(true);
         ObjectMapper objectMapper = mapper();
-        SpringIntegrationRobotCommandPublisher publisher =
-            new SpringIntegrationRobotCommandPublisher(
+        SpringIntegrationAiConversationCommandPublisher publisher =
+            new SpringIntegrationAiConversationCommandPublisher(
                 channel, objectMapper, new BomiMqttProperties());
 
         publisher.publish(command());
 
         @SuppressWarnings("rawtypes")
-        ArgumentCaptor<Message> captor = ArgumentCaptor.forClass(Message.class);
+        var captor = org.mockito.ArgumentCaptor.forClass(Message.class);
         verify(channel).send(captor.capture(), eq(5_000L));
-        Message<?> message = captor.getValue();
-        assertThat(message.getHeaders().get(MqttHeaders.TOPIC))
-            .isEqualTo("bomi/v1/robot/robot-01/commands");
-        assertThat(objectMapper.readTree((String) message.getPayload()).path("commandId").asText())
-            .isEqualTo("command-opaque-01");
+        var json = objectMapper.readTree((String) captor.getValue().getPayload());
+        assertThat(json.path("type").asText()).isEqualTo("START_CONVERSATION");
+        assertThat(json.path("payload").path("intent").asText())
+            .isEqualTo("HOMECOMING_GREETING");
     }
 
-    private static SpringIntegrationRobotCommandPublisher publisher(MessageChannel channel) {
-        return new SpringIntegrationRobotCommandPublisher(
+    private static SpringIntegrationAiConversationCommandPublisher publisher(
+        MessageChannel channel
+    ) {
+        return new SpringIntegrationAiConversationCommandPublisher(
             channel, mapper(), new BomiMqttProperties());
     }
 
@@ -75,14 +74,16 @@ class SpringIntegrationRobotCommandPublisherTest {
         return new ObjectMapper().registerModule(new JavaTimeModule());
     }
 
-    private static RobotCommand command() {
-        return new RobotCommand(
-            "command-opaque-01",
-            UUID.randomUUID(),
-            "robot-01",
-            RobotCommandType.NAVIGATE,
-            OffsetDateTime.parse("2026-07-21T10:30:01+09:00"),
-            OffsetDateTime.parse("2026-07-21T10:31:01+09:00"),
-            Map.of("target", "ENTRANCE"));
+    private static AiConversationCommand command() {
+        OffsetDateTime occurredAt = OffsetDateTime.parse("2026-08-05T10:00:00+09:00");
+        return new AiConversationCommand(
+            "cmd-ai-01", UUID.randomUUID(), UUID.randomUUID(), "robot-01",
+            AiConversationCommandType.START_CONVERSATION,
+            occurredAt, occurredAt.plusSeconds(10),
+            new StartConversationPayload(
+                UUID.randomUUID(),
+                ConversationIntent.HOMECOMING_GREETING,
+                "어서 오세요. 오늘 외출은 어떠셨어요?",
+                Map.of("location", "ENTRANCE")));
     }
 }
