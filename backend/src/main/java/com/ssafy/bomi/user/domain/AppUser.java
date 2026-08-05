@@ -138,6 +138,18 @@ public class AppUser {
     @Column(name = "preferred_hospital")
     private String preferredHospital;
 
+    /**
+     * 자택 주소(자유 문자열, 예: "부산광역시 부산진구"). S15P11E102-347.
+     *
+     * <p>로봇의 지역 결정 폴백("오늘 날씨 어때?"의 기본 지역, 로봇 CLAUDE.md §30)이
+     * 읽는 값이다. 지오 검색용 좌표({@link #homeLatitude}/{@link #homeLongitude})와
+     * 별개다 — 로봇 폴백은 문자열에서 도시명을 찾으므로 좌표로는 동작하지 않는다.
+     * Nullable: 주소를 밝히지 않은 어르신은 지금과 동일하게(지역을 되물으며)
+     * 동작해야 한다. 시·군·구 수준이면 충분하고, 가디언웹에는 노출하지 않는다.</p>
+     */
+    @Column(name = "home_address")
+    private String homeAddress;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "personalization_consent_status", nullable = false, length = 30)
     private ConsentStatus personalizationConsentStatus = ConsentStatus.NOT_REQUESTED;
@@ -252,6 +264,11 @@ public class AppUser {
     /** 단골 병원·약국 이름을 설정한다. null 허용 — 응답하지 않은 어르신을 표현한다. */
     public void changePreferredHospital(String preferredHospital) {
         this.preferredHospital = preferredHospital;
+    }
+
+    /** 자택 주소를 설정한다. null 허용 — 주소를 밝히지 않은 어르신을 표현한다. */
+    public void changeHomeAddress(String homeAddress) {
+        this.homeAddress = homeAddress;
     }
 
     /** Sets or clears the home coordinates used for nearby clinic and pharmacy lookup. */
