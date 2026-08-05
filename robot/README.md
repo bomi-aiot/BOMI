@@ -164,6 +164,7 @@ ros2 launch core person_following.launch.py output_topic:=/cmd_vel
 
 | 방법 | 문서 | 필요한 것 |
 | --- | --- | --- |
+| 실물 로봇을 조이스틱으로 주행하며 생성 | [`docs/robot-joystick-slam.md`](docs/robot-joystick-slam.md) | BOMI, Pico H, 조이스틱, YDLIDAR X4-PRO |
 | Gazebo 시뮬레이션에서 생성 | [`docs/gazebo-slam-mapping.md`](docs/gazebo-slam-mapping.md) | 없음 |
 | 실물 LiDAR를 손으로 이동하며 생성 | [`docs/handheld-lidar-mapping.md`](docs/handheld-lidar-mapping.md) | YDLIDAR X4-PRO |
 
@@ -188,6 +189,7 @@ colcon test-result --verbose
 | [`docs/nav2-troubleshooting.md`](docs/nav2-troubleshooting.md) | 주행 실패, 렌더링, 빌드 문제 해결 |
 | [`docs/gazebo-slam-mapping.md`](docs/gazebo-slam-mapping.md) | Gazebo에서 SLAM 지도 생성 |
 | [`docs/handheld-lidar-mapping.md`](docs/handheld-lidar-mapping.md) | 실물 LiDAR로 2D 지도 생성 |
+| [`docs/robot-joystick-slam.md`](docs/robot-joystick-slam.md) | 실물 조이스틱 구동 확인과 로봇 탑재 LiDAR 지도 생성 |
 | [`docs/waypoint-patrol.md`](docs/waypoint-patrol.md) | SLAM 지도 기반 waypoint 순찰 |
 | [`docs/turtlebot3-nav2-sim.md`](docs/turtlebot3-nav2-sim.md) | TurtleBot3 Nav2 통합 시뮬레이션 |
 | [`docs/turtlesim-teleop.md`](docs/turtlesim-teleop.md) | turtlesim으로 키보드 제어 확인 |

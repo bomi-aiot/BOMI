@@ -1,4 +1,4 @@
-"""실제 YDLIDAR, RF2O 오도메트리와 SLAM Toolbox를 함께 실행한다."""
+"""실제 조이스틱, Pico, X4-PRO와 SLAM Toolbox를 함께 실행한다."""
 
 from pathlib import Path
 
@@ -13,32 +13,30 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description() -> LaunchDescription:
+    """실제 로봇의 수동 주행과 온라인 지도 생성을 구성한다.
+
+    Pico가 /odom과 odom → base_link TF를 발행하므로 RF2O는 실행하지 않는다.
     """
-    실물 LiDAR 지도 생성에 필요한 노드와 설정을 구성한다.
 
-    입력:
-        launch argument로 장치 경로, 토픽, TF 프레임, RF2O 주기와
-        RViz 실행 여부를 받는다.
-
-    출력:
-        선택적인 YDLIDAR 드라이버, RF2O, SLAM Toolbox와 RViz를 포함하는
-        LaunchDescription을 반환한다.
-
-    주의사항:
-        시뮬레이션 launch와 동시에 실행하면 odom TF가 중복되므로 함께
-        실행하지 않는다. LiDAR를 별도 실행할 때는 include_lidar를 false로
-        지정하고 base_link에서 LaserScan frame까지의 TF를 제공해야 한다.
-    """
     mapping_share = Path(get_package_share_directory("mapping"))
+    core_share = Path(get_package_share_directory("core"))
     lidar_share = Path(get_package_share_directory("bomi_lidar"))
+
+    joystick_launch = core_share / "launch" / "joystick_teleop.launch.py"
+    pico_launch = core_share / "launch" / "pico_driver.launch.py"
+    lidar_launch = lidar_share / "launch" / "x4_pro.launch.py"
 
     slam_params = mapping_share / "config" / "slam_toolbox_real.yaml"
     rviz_config = mapping_share / "rviz" / "mapping.rviz"
-    lidar_launch = lidar_share / "launch" / "x4_pro.launch.py"
 
     use_sim_time = LaunchConfiguration("use_sim_time")
+    use_rviz = LaunchConfiguration("use_rviz")
+
+    cmd_vel_topic = LaunchConfiguration("cmd_vel_topic")
+    pico_port = LaunchConfiguration("pico_port")
+    lidar_port = LaunchConfiguration("lidar_port")
+
     scan_topic = LaunchConfiguration("scan_topic")
-    odom_topic = LaunchConfiguration("odom_topic")
     base_frame = LaunchConfiguration("base_frame")
     odom_frame = LaunchConfiguration("odom_frame")
     laser_frame = LaunchConfiguration("laser_frame")
@@ -48,14 +46,23 @@ def generate_launch_description() -> LaunchDescription:
     laser_roll = LaunchConfiguration("laser_roll")
     laser_pitch = LaunchConfiguration("laser_pitch")
     laser_yaw = LaunchConfiguration("laser_yaw")
-    rf2o_frequency = LaunchConfiguration("rf2o_frequency")
-    lidar_port = LaunchConfiguration("lidar_port")
-    include_lidar = LaunchConfiguration("include_lidar")
-    use_rviz = LaunchConfiguration("use_rviz")
+
+    joystick = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(str(joystick_launch)),
+        launch_arguments={
+            "cmd_vel_topic": cmd_vel_topic,
+        }.items(),
+    )
+
+    pico_driver = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(str(pico_launch)),
+        launch_arguments={
+            "serial_port": pico_port,
+        }.items(),
+    )
 
     lidar = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(lidar_launch)),
-        condition=IfCondition(include_lidar),
         launch_arguments={
             "port": lidar_port,
             "scan_topic": scan_topic,
@@ -68,31 +75,6 @@ def generate_launch_description() -> LaunchDescription:
             "laser_pitch": laser_pitch,
             "laser_yaw": laser_yaw,
         }.items(),
-    )
-
-    rf2o = Node(
-        package="rf2o_laser_odometry",
-        executable="rf2o_laser_odometry_node",
-        name="rf2o_laser_odometry",
-        output="screen",
-        parameters=[
-            {
-                "use_sim_time": ParameterValue(
-                    use_sim_time,
-                    value_type=bool,
-                ),
-                "laser_scan_topic": scan_topic,
-                "odom_topic": odom_topic,
-                "publish_tf": True,
-                "base_frame_id": base_frame,
-                "odom_frame_id": odom_frame,
-                "init_pose_from_topic": "",
-                "freq": ParameterValue(
-                    rf2o_frequency,
-                    value_type=float,
-                ),
-            }
-        ],
     )
 
     slam_toolbox = Node(
@@ -136,32 +118,47 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument(
                 "use_sim_time",
                 default_value="false",
-                description="실물 센서는 시스템 시간을 사용하므로 기본값은 false",
+                description="실제 장비에서는 시스템 시간을 사용",
+            ),
+            DeclareLaunchArgument(
+                "use_rviz",
+                default_value="true",
+                description="RViz를 함께 실행할지 여부",
+            ),
+            DeclareLaunchArgument(
+                "cmd_vel_topic",
+                default_value="/cmd_vel",
+                description="조이스틱 명령과 Pico가 공유할 속도 토픽",
+            ),
+            DeclareLaunchArgument(
+                "pico_port",
+                default_value="/dev/ttyACM0",
+                description="Pico H USB CDC 장치 경로",
+            ),
+            DeclareLaunchArgument(
+                "lidar_port",
+                default_value="/dev/ttyUSB0",
+                description="YDLIDAR 시리얼 장치 경로",
             ),
             DeclareLaunchArgument(
                 "scan_topic",
                 default_value="/scan",
-                description="YDLIDAR와 RF2O, SLAM이 공유할 LaserScan 토픽",
-            ),
-            DeclareLaunchArgument(
-                "odom_topic",
-                default_value="/odom_rf2o",
-                description="RF2O가 발행할 Odometry 토픽",
+                description="YDLIDAR와 SLAM이 공유할 LaserScan 토픽",
             ),
             DeclareLaunchArgument(
                 "base_frame",
                 default_value="base_link",
-                description="RF2O가 추정하는 이동 기준 프레임",
+                description="로봇 기준 프레임",
             ),
             DeclareLaunchArgument(
                 "odom_frame",
                 default_value="odom",
-                description="RF2O가 발행할 odometry 부모 프레임",
+                description="Pico가 발행하는 odometry 부모 프레임",
             ),
             DeclareLaunchArgument(
                 "laser_frame",
                 default_value="laser_frame",
-                description="YDLIDAR LaserScan과 정적 TF의 센서 프레임",
+                description="LiDAR LaserScan과 정적 TF 프레임",
             ),
             DeclareLaunchArgument(
                 "laser_x", default_value="0.0",
@@ -187,28 +184,9 @@ def generate_launch_description() -> LaunchDescription:
                 "laser_yaw", default_value="0.0",
                 description="base_link 기준 LiDAR yaw(rad)",
             ),
-            DeclareLaunchArgument(
-                "rf2o_frequency",
-                default_value="20.0",
-                description="RF2O 처리 주기(Hz), 공식 Humble launch 기본값",
-            ),
-            DeclareLaunchArgument(
-                "lidar_port",
-                default_value="/dev/ttyUSB0",
-                description="YDLIDAR가 연결된 시리얼 장치 경로",
-            ),
-            DeclareLaunchArgument(
-                "include_lidar",
-                default_value="true",
-                description="YDLIDAR 드라이버와 기존 정적 TF를 함께 실행",
-            ),
-            DeclareLaunchArgument(
-                "use_rviz",
-                default_value="true",
-                description="기존 mapping RViz 설정을 함께 실행",
-            ),
+            joystick,
+            pico_driver,
             lidar,
-            rf2o,
             slam_toolbox,
             rviz,
         ]

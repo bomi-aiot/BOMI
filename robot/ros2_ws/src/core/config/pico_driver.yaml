@@ -19,7 +19,7 @@ pico_driver:
     left_front_cpr: 979
     right_front_cpr: 979
 
-    control_hz: 50.0
+    control_hz: 20.0
     cmd_vel_timeout_sec: 0.5
     telemetry_timeout_sec: 1.0
 
