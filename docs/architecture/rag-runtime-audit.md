@@ -192,15 +192,16 @@ trace ID, TTS 완료의 turn correlation이다. 메트릭을 추가한 것과 �
 | AI Ruff | 통과 | `src`, `tests`, `evals` 정적 품질 | 런타임 외부 연동 |
 | backend 집중 테스트 | 98 passed | 저장 실패/부분복구, 권위 필터, 한국어 회귀, 문서 HTTP, health/metrics, env/OpenAPI | live Qdrant 네트워크 |
 | backend OpenAPI | 통과 | 기존 계약 문서 회귀 없음 | AI가 실제 배포 endpoint를 호출함 |
-| backend 전체 | 543개 중 1개 실패 | 이번 RAG 범위 외 다수 회귀 없음 | 전체 green 아님 |
+| backend 전체 | 543 passed | 무료 단위·Spring·embedded PostgreSQL 회귀 전체 | 실제 Qdrant·Upstage 경계 |
 | Qdrant `integrationTest` | 9 passed | 공식 1.18.3 서버의 collection/upsert/search/filter/delete/recovery | 실제 Upstage 벡터 품질 |
 | 교차 모듈 RAG E2E | 1 passed | AI HTTP→Spring→PG/Qdrant→prompt→대화 저장→사실 추출→메모리 재색인→다음 턴 회상 | 실제 생성 LLM·TTS·Upstage |
 | Upstage | 미실행 | 대역으로 모델/차원/실패 계약 검증 | 실 키·과금·provider 지연 |
 | 현장 음성/MQTT | 미실행 | 해당 없음 | 실제 하드웨어 E2E |
 
-backend 전체의 단일 실패는 기존 `DoorEventServiceTest`의 occupancy 예상 `AWAY` 대
-실제 `UNKNOWN`이며 단독 재실행에서도 재현됐다. RAG 변경과 무관하더라도 전체 테스트를
-통과했다고 보고하지 않는다.
+첫 전체 실행에서는 `DoorEventServiceTest`가 DB의 `AWAY` bulk update 뒤 테스트
+트랜잭션 1차 캐시에 남은 `UNKNOWN` 객체를 읽어 1건 실패했다. 실제 DB·이벤트 계약을
+바꾸지 않고 실제 다음 요청처럼 영속성 문맥을 비운 뒤 확인하도록 수정했다. 해당 클래스와
+전체 543건을 다시 실행해 failures/errors/skipped가 모두 0임을 XML로 확인했다.
 
 교차 E2E는 AI 브랜치의 Python 드라이버를 별도 프로세스로 실행한다. 실제
 `BackendContextClient`, `BackendConversationClient`, `BackendFactClient`가 Spring Boot의
@@ -222,6 +223,7 @@ backend 전체의 단일 실패는 기존 `DoorEventServiceTest`의 occupancy �
 | 의미 검색 실패가 빈 배열로 보임 | 로봇의 과도한 확신 | reason/hit/latency + 안전 prompt | 완료 |
 | 라우터가 8GB 장치에서 무거움 | 732MB, 6초대 cold start | 규칙으로 축소, 평가 도구로만 유지 | 완료 |
 | Qdrant 유실 시 DB가 계속 `SYNCED` | 재색인 잡이 아무 일도 안 함 | 승인형 STALE 전환 복구 runbook | 문서화 완료 |
+| bulk update 뒤 테스트가 1차 캐시를 읽음 | DB는 정상인데 전체 회귀가 거짓 실패 | 새 영속성 문맥에서 robot snapshot 검증 | 완료 |
 | 사용자별 canary 없음 | 운영 전체 토글만 가능 | 격리 canary 절차, cohort flag 후속 | 미완(P1) |
 | live cross-module/Qdrant E2E 없음 | 직렬화·포트·collection 오류를 놓침 | 공식 Qdrant + 별도 AI 프로세스 자동화 | 완료(무료 경계) |
 | 실제 Upstage provider E2E 없음 | 차원·지연·과금 호환성 확증 불가 | 승인형 billed canary 절차와 미검증 경계 명시 | 미완(P0 승인/비밀값 필요) |
@@ -235,8 +237,6 @@ backend 전체의 단일 실패는 기존 `DoorEventServiceTest`의 occupancy �
    변경에서 배포 전에 찾는 것이다.
 2. 유료 호출 승인을 받은 짧은 canary에서 현재 provider의 4096차원, timeout, 실 지연,
    호출 수를 확인한다. 호출 상한과 잔액을 먼저 기록한다.
-3. 기존 Door occupancy 전체 테스트 실패를 별도 원인으로 수정해 full suite green을
-   회복한다. RAG 변경과 무관하다는 분류가 회귀 기준선의 붕괴를 허용하지는 않는다.
 
 ### P1 — 운영 안정화
 
@@ -280,6 +280,7 @@ backend 논리 커밋:
 - `b49357a` — RAG 활성화·복구 운영 절차 고정
 - `a135a22` — LangGraph·RAG 런타임 감사 보고서
 - `9084342` — AI부터 Qdrant 재색인까지 실제 교차 E2E 고정
+- `04f0afe` — 현관 점유 bulk 갱신 테스트의 1차 캐시 오판 제거
 
 AI 논리 커밋:
 
