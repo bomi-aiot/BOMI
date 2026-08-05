@@ -40,10 +40,42 @@
 | [11. 의미 검색](#11-의미-검색--과금-주의) | 이어짐·회상 | 30분 | ✓ |
 | [정리](#정리--발견한-것을-세-갈래로-나눕니다) | 분류·되돌리기 | 20분 | ✕ |
 
-**셸은 Git Bash(MINGW64) 기준입니다.** 이 문서의 명령은 전부 bash 입니다. PowerShell 을
-쓰신다면 `tail -f` 는 `Get-Content -Wait -Tail`, `grep` 은 `Select-String` 으로 바꿔야
-합니다. (초판은 PowerShell 로 적혀 있었고, 점검 중에 `bash: Get-Content: command not found`
-로 막혔습니다. **문서의 명령이 안 도는 것은 체크리스트에서 가장 나쁜 오류입니다.**)
+**셸은 젯슨(Ubuntu 22.04, aarch64)의 bash 기준입니다.** 이 점검은 실기에서 하는 것이므로
+명령은 전부 리눅스 경로로 적혀 있습니다.
+
+> **초판은 Windows 노트북 기준(`venv/Scripts/python.exe`, `/c/Users/...`)이었고, 실기에서
+> `No such file or directory` 로 막혔습니다.** 리눅스 가상환경에는 `Scripts/` 도 `.exe` 도
+> 없습니다. **문서의 명령이 안 도는 것은 체크리스트에서 가장 나쁜 오류입니다** — 점검자가
+> 무엇이 고장인지 판단하기 전에 문서와 싸우게 됩니다.
+
+| 초판(Windows) | 이 문서(젯슨) |
+| --- | --- |
+| `venv/Scripts/python.exe` | `./.venv/bin/python` |
+| `venv/Scripts/pytest.exe` | `./.venv/bin/pytest` |
+| `venv/Scripts/ruff.exe` | `./.venv/bin/ruff` |
+| `/c/Users/workspaces/S15P11E102` | `~/S15P11E102` |
+
+**이 문서의 모든 명령 블록은 그대로 복사해 붙이면 됩니다.** 각 블록이 필요한 `cd`,
+가상환경 경로, `.env` 변수 로딩까지 스스로 포함하고 있으므로, **어느 디렉터리의 어느 창에서
+쳐도 같은 결과**가 나옵니다. 창을 여러 개 띄우는 §1 같은 곳에서도 준비 단계가 따로
+필요하지 않습니다. 자리표시자(`<USER>`, `<UUID>` 같은 것)는 남겨 두지 않았습니다 — 필요한
+값은 전부 `.env` 에서 읽습니다.
+
+가상환경 이름은 **`.venv`**(점 있음)입니다. `ls` 에는 안 보이므로 `ls -a` 로 확인하십시오.
+매번 경로를 치기 싫으면 창마다 한 번씩 활성화해 두고 `python`·`pytest`·`ruff` 로 쓰셔도
+됩니다(활성화해도 위 블록들은 그대로 돕니다).
+
+```bash
+source ~/S15P11E102/robot/ai_chat/.venv/bin/activate
+```
+
+**★ ROS 2 환경이 가상환경에 샙니다.** 젯슨의 `~/.bashrc` 가 `/opt/ros/humble/setup.bash` 를
+읽어 `PYTHONPATH` 에 ROS 의 site-packages 를 끼워 넣습니다. 그러면 pytest 가 거기 있는
+`launch_testing` 플러그인을 자동으로 불러오다 `ModuleNotFoundError: No module named 'lark'`
+로 죽습니다 — **테스트 코드와는 무관한 환경 문제**입니다. 그래서 이 문서의 파이썬 명령에는
+`env -u PYTHONPATH` 를 붙여 그 실행에서만 ROS 경로를 끊습니다. (같은 이유로 ROS 쪽 numpy
+등이 가상환경 패키지를 가리는 사고도 함께 막힙니다. 반대로 **로봇 본체를 ROS 와 함께 구동할
+때는 빼지 마십시오.**)
 
 ---
 
@@ -52,7 +84,7 @@
 ## 0-1. 코드가 최신인가
 
 ```bash
-cd /c/Users/workspaces/S15P11E102 && git fetch origin && git log --oneline -1 origin/ai-develop
+cd ~/S15P11E102 && git fetch origin && git log --oneline -1 origin/ai-develop
 git log --oneline -1
 ```
 
@@ -73,11 +105,11 @@ git log --oneline -1
 ## 0-2. 자동 테스트가 먼저 초록인가
 
 ```bash
-cd robot/ai_chat && ./venv/Scripts/python.exe -m pytest -m "not integration and not manual" -q
+cd ~/S15P11E102/robot/ai_chat && env -u PYTHONPATH ./.venv/bin/python -m pytest -m "not integration and not manual" -q
 ```
 
 ```bash
-cd robot/ai_chat && ./venv/Scripts/ruff.exe check src tests
+cd ~/S15P11E102/robot/ai_chat && env -u PYTHONPATH ./.venv/bin/ruff check src tests
 ```
 
 **기대**: 테스트 전부 통과 + `All checks passed!`
@@ -85,20 +117,67 @@ cd robot/ai_chat && ./venv/Scripts/ruff.exe check src tests
 > 빨간 것이 있으면 실기로 가지 않습니다. 실기에서 발견한 것이 **코드 문제인지 환경 문제인지
 > 구분할 수 없게** 됩니다.
 
+**`.venv` 가 없거나 `ModuleNotFoundError: bomi_ai_chat` 이 나면** 먼저 만들고 설치합니다.
+CLAUDE.md §18 대로 **이 설치 자체가 aarch64 스모크 테스트**입니다 — ARM 휠이 없는 패키지는
+여기서 소스 빌드로 넘어가며 실패하므로, 노트북에서 됐다고 넘기지 마십시오.
+
+```bash
+cd ~/S15P11E102/robot/ai_chat && python3 -m venv .venv && ./.venv/bin/pip install -U pip && ./.venv/bin/pip install -e ".[dev]"
+```
+
+`ensurepip is not available` 로 실패하면 우분투에 venv 패키지가 없는 것입니다. 설치한 뒤
+**반쯤 만들어진 디렉터리를 지우고** 다시 만드십시오 — 그대로 두면 파이썬 바이너리가 없는
+빈 껍데기가 남아 계속 헷갈립니다.
+
+```bash
+sudo apt install -y python3.10-venv
+```
+
 ## 0-3. `.env` 채우기
 
 `robot/ai_chat/.env` 입니다. 없으면 `.env.example` 을 복사합니다.
+
+### 🔴 먼저 줄바꿈을 리눅스식으로 바꿉니다
+
+**Windows 에서 만들어 젯슨으로 옮긴 `.env` 는 줄 끝에 보이지 않는 `\r`(캐리지 리턴)이
+붙어 있습니다.** 이게 붙어 있으면 두 가지가 조용히 깨집니다.
+
+| 무엇 | 어떻게 깨지나 |
+| --- | --- |
+| 셸로 읽을 때 | 빈 줄마다 `-bash: $'\r': command not found` 가 쏟아집니다. **시끄럽지만 이건 오히려 착한 실패입니다** |
+| **값에 `\r` 이 섞일 때** | `GEMINI_API_KEY=abc\r` 가 그대로 HTTP 헤더에 실려 인증이 실패합니다. **아무 메시지도 안 나오고 그냥 안 됩니다** — 이쪽이 위험합니다 |
+
+두 번째가 이 점검을 통째로 망칩니다. 2절에서 "API 키가 틀렸나"를 붙잡고 있게 되는데,
+키는 맞고 줄바꿈이 문제입니다. **한 번 정규화하고 시작하십시오.**
+
+```bash
+cd ~/S15P11E102/robot/ai_chat
+grep -c $'\r' .env    # 0 이 아니면 CRLF 입니다
+sed -i 's/\r$//' .env
+grep -c $'\r' .env    # 이제 0 이어야 합니다
+```
+
+**기대**: 두 번째 `grep` 이 `0`.
+
+> 이 문서의 `.env` 로더는 `sed 's/\r$//'` 를 거치도록 되어 있어 CRLF 상태에서도 돌아가지만,
+> **로봇 본체(`python-dotenv`)가 읽는 값까지 지켜 주지는 않습니다.** 파일 자체를 고치는 것이
+> 유일하게 확실한 방법입니다.
+>
+> 같은 이유로 `.pem`, `config`, 스크립트 등 **Windows 에서 옮긴 모든 텍스트 파일**이
+> 같은 문제를 갖습니다. 뭔가 이유 없이 안 될 때 `grep -c $'\r' <파일>` 을 먼저 해 보십시오.
 
 | 변수 | 이번 점검에서 넣을 값 | 없으면 |
 | --- | --- | --- |
 | `RTZR_CLIENT_ID` / `_SECRET` | (발급값) | 음성 인식 불가 |
 | `GEMINI_API_KEY` | (발급값) | 문장 생성 불가 |
 | `TYPECAST_API_KEY` | (발급값) | 음성 합성 불가 |
-| `SENIOR_ID` | **0-4 에서 만들 전용 UUID** | 기동 거부 |
+| `SENIOR_ID` | **`99999999-0000-4000-8000-000000000001`** (0-4 에서 확인) | 기동 거부 |
+| `ROBOT_ID` | **`99999999-0002-4000-8000-000000000001`** (0-4 에서 확인) | 9절 온보딩 세션 생성 불가 |
 | `BACKEND_BASE_URL` | `https://i15e102.p.ssafy.io` | 문맥이 캐시로만 |
 | `BACKEND_TIMEOUT_SECONDS` | `3.0` (기본 1.5 에서 올림) | 아래 설명 |
 | `AUDIO_MODE` | **`robot`** | — |
 | `AUDIO_INPUT_DEVICE` / `_OUTPUT_DEVICE` | **0-5 에서 확인한 번호** | `robot` 모드는 기동 거부 |
+| `AUDIO_CHANNELS` | **🔴 `2`로 직접 바꿉니다** — 아래 설명 | `PortAudioError: Invalid number of channels` |
 | `WAKEWORD_ENABLED` | **`0`** (5절까지) | 발화마다 "보미야"를 붙여야 함 |
 | `LOCALSTORE_DIR` | `var/localstore` (기본) | — |
 
@@ -107,28 +186,83 @@ cd robot/ai_chat && ./venv/Scripts/ruff.exe check src tests
 잰 에코 임계치는 전부 거짓입니다. `robot` 모드는 장치 번호를 반드시 쓰게 만들어 이 사고를
 막습니다. 젯슨에서 돌 때와 같은 경로이기도 합니다.
 
+**🔴 `AUDIO_CHANNELS` 를 직접 고쳐야 합니다 — `.env.example` 의 기본값(`1`)이 젯슨에서는
+틀립니다.** `.env.example` 을 그대로 복사했다면 `AUDIO_CHANNELS=1` 이 남아 있고, 이 상태로
+젯슨에서 기동하면 매 턴마다 이렇게 죽습니다.
+
+```
+sounddevice.PortAudioError: Error opening InputStream: Invalid number of channels [PaErrorCode -9998]
+Expression 'parameters->channelCount <= maxChans' failed in 'src/hostapi/alsa/pa_linux_alsa.c'
+```
+
+원인은 reSpeaker(§0-5 에서 확인한 24번)가 **raw ALSA `hw:` 장치**라는 데 있습니다. 채널 수
+변환은 `plughw:` 계층에서만 일어나는데, PortAudio 가 여는 것은 그 밑의 raw `hw:2,0` 노드라
+하드웨어가 고정한 채널 수(2)와 다르게 열 수 없습니다. 0-5 에서 `plughw:2,0` 으로 손수
+테스트했을 때 됐던 것은 그 plug 계층이 대신 변환해 줬기 때문입니다 — 앱 코드는 그 계층을
+거치지 않습니다.
+
+`config.py` 는 `AUDIO_MODE=robot` 일 때 스마트 기본값을 `2` 로 잡아 두었지만, `.env.example`
+의 명시적인 `AUDIO_CHANNELS=1` 줄이 그 기본값을 덮어씁니다. 의미상으로도 `2` 가 맞습니다 —
+`sounddevice_backend.py` 의 "채널 0 이 빔포밍 처리된 신호" 판정 자체가 2채널을 전제합니다.
+
+```bash
+cd ~/S15P11E102/robot/ai_chat
+sed -i "s|^AUDIO_CHANNELS=.*|AUDIO_CHANNELS=2|" .env
+grep -n '^AUDIO_CHANNELS=' .env
+```
+
 **왜 `BACKEND_TIMEOUT_SECONDS` 를 올리는가.** 기본값 1.5초는 백엔드가 같은 기계에 있을 때의
 값입니다. 지금은 노트북에서 인터넷을 건너 EC2 까지 갑니다. 그대로 두면 문맥 조회가 자주
 실패해 캐시로 떨어지고, **로봇이 기억을 못 하는 것처럼 보이는데 원인은 타임아웃**입니다.
 
-## 0-4. 테스트 전용 어르신 만들기
+## 0-4. 점검용 어르신 확인 — **이미 EC2 에 있습니다. 만들지 않습니다**
 
-**왜 전용으로 만드는가.** 이 점검은 EC2 데이터베이스에 진짜 행을 씁니다 — 대화 기록, 보호자
-알림, 현관 이벤트. 시연용 데이터(김순자)에 섞이면 나중에 어느 것이 시연 데이터이고 어느
-것이 점검 흔적인지 구분할 수 없습니다.
+**왜 전용 어르신을 쓰는가.** 이 점검은 EC2 데이터베이스에 진짜 행을 씁니다 — 대화 기록,
+보호자 알림, 현관 이벤트. 시연용 데이터(김순자)에 섞이면 나중에 어느 것이 시연 데이터이고
+어느 것이 점검 흔적인지 구분할 수 없습니다.
 
-먼저 실제 필수 칼럼을 확인합니다. 여기에 고정해서 적으면 스키마가 바뀌는 순간 거짓말이
-되므로, 직접 보고 채우십시오.
+> **초판에는 여기에 `INSERT` 문이 있었습니다. 지웠습니다.** 점검용 세트는 이미 서버에
+> 심겨 있고, `INSERT` 를 다시 돌리면 기본키 충돌로 실패하거나(운 나쁘면) 남이 쓰던 행을
+> 덮어씁니다. **이 스텝은 만드는 단계가 아니라 확인하는 단계입니다.**
+
+점검용 세트는 UUID 가 전부 `99999999-` 로 시작합니다. 시연 데이터는 `10000000-` 입니다 —
+**앞 여덟 자리만 보면 구분됩니다.**
+
+| 무엇 | UUID | 비고 |
+| --- | --- | --- |
+| 어르신 | `99999999-0000-4000-8000-000000000001` | 이름 `점검용`, 1948년생, 대전 |
+| 보호자 | `99999999-0000-4000-8000-000000000002` | `점검용보호자`, PRIMARY·ACTIVE |
+| 로봇 | `99999999-0002-4000-8000-000000000001` | `device_id = bomi-TEST01` |
+
+**한 번에 확인합니다.** 세 행이 다 나와야 이 절을 통과한 것입니다.
 
 ```bash
-ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c '\d app_user'"
+ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"
+SELECT 'senior' AS what, id::text, name, guardian_sharing_consent_status AS share
+  FROM app_user WHERE id='99999999-0000-4000-8000-000000000001'
+UNION ALL SELECT 'guardian', g.id::text, g.name, r.priority || '/' || r.status
+  FROM care_relationship r JOIN app_user g ON g.id=r.guardian_id
+  WHERE r.senior_id='99999999-0000-4000-8000-000000000001'
+UNION ALL SELECT 'robot', id::text, device_id, occupancy_status
+  FROM robot WHERE senior_id='99999999-0000-4000-8000-000000000001';\""
 ```
 
-확인한 칼럼으로 한 행을 만듭니다. **동의 4종 칼럼은 `NOT NULL` 이라 값을 반드시
-채워야 합니다** — 특히 `guardian_sharing_consent_status` 를 `'GRANTED'` 로 넣지
-않으면 **5-4(정서 동의) 스텝이 조용히 항상 막힙니다** (에러 없이 그냥 아무 일도 안
-일어난 것처럼 보입니다). 값은 `NOT_REQUESTED`/`GRANTED`/`DENIED`/`REVOKED` 중
-하나입니다.
+**기대** — 233 점검 시점에 실제로 확인한 값입니다.
+
+```
+  what   |                  id                  |    name     |    share
+---------+--------------------------------------+-------------+--------------
+ senior  | 99999999-0000-4000-8000-000000000001 | 점검용      | GRANTED
+ guardian| 99999999-0000-4000-8000-000000000002 | 점검용보호자| PRIMARY/ACTIVE
+ robot   | 99999999-0002-4000-8000-000000000001 | bomi-TEST01 | UNKNOWN
+```
+
+| 이게 다르면 | 뜻 | 어떻게 |
+| --- | --- | --- |
+| `share` 가 `GRANTED` 가 아님 | 🔴 **5-4(정서 동의)가 조용히 항상 막힙니다** — 오류도 로그도 없이 아무 일도 안 일어난 것처럼 보입니다 | 아래 한 줄로 되돌립니다 |
+| guardian 행이 없음 | 8절 보호자 알림이 받을 사람 없이 나갑니다 | be 담당자에게 시드 재적용 요청 |
+| robot 행이 없음 | 9절 온보딩 세션 생성이 실패합니다 | 〃 |
+| 아무 행도 없음 | 점검용 세트가 지워진 것 | 〃 — **`INSERT` 를 직접 만들지 마십시오.** 시드는 be 라인이 관리합니다 |
 
 아래는 실제로 돌려서 성공을 확인한 문장입니다(233 실기 점검 중 확보). **동의 4종
 말고도 `conversation_preferences`(jsonb)·`onboarding_status`·`time_zone`·
@@ -138,48 +272,129 @@ not-null constraint` 로 실패했습니다.** `\d app_user` 결과가 이것과
 추가됐다면) 그쪽을 따르십시오 — 이 문장은 그 시점의 스냅샷입니다.
 
 ```bash
-ssh bomi "docker exec -i bomi-postgres psql -U bomi -d bomi" <<'SQL'
-INSERT INTO app_user (
-  id, user_type, name,
-  conversation_preferences, onboarding_status, time_zone,
-  personalization_consent_status, health_data_consent_status,
-  schedule_consent_status, guardian_sharing_consent_status,
-  status, created_at, updated_at
-) VALUES (
-  '99999999-0000-4000-8000-000000000001', 'SENIOR', '점검용',
-  '{}'::jsonb, 'NOT_STARTED', 'Asia/Seoul',
-  'GRANTED', 'GRANTED', 'GRANTED', 'GRANTED',
-  'ACTIVE', now(), now()
-);
-SQL
+ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"UPDATE app_user SET guardian_sharing_consent_status='GRANTED', updated_at=now() WHERE id='99999999-0000-4000-8000-000000000001';\""
 ```
 
-`onboarding_status` 는 `NOT_STARTED`/`IN_PROGRESS`/`COMPLETED`/`DECLINED` 중
-하나, `status` 는 `ACTIVE`/`SUSPENDED`/`WITHDRAWN` 중 하나입니다. 점검용 어르신은
-`NOT_STARTED`·`ACTIVE` 로 충분합니다 — 9절(온보딩)을 하면서 실제로 진행됩니다.
+동의 칼럼의 실제 허용값은 `NOT_ASKED`/`GRANTED`/`DENIED`/`REVOKED` 입니다. (초판에는
+`NOT_REQUESTED` 로 적혀 있었으나 **데이터베이스의 실제 값은 `NOT_ASKED`** 입니다.)
 
-만든 UUID 를 `.env` 의 `SENIOR_ID` 와 셸 변수에 둘 다 넣습니다.
+### 이미 심겨 있는 것 — 5·11절에서 그대로 씁니다
+
+점검용 어르신은 빈 껍데기가 아닙니다. **아래가 있기 때문에 해당 스텝들이 성립합니다.**
+
+| 무엇 | 내용 | 쓰이는 곳 |
+| --- | --- | --- |
+| 만성 통증 부위 | `무릎` | 5-8 `"무릎이 아파"` 가 평범한 턴으로 흘러야 하는 근거 |
+| 지병 | 고혈압(2015), 무릎 관절염(2019) | 5-8·5-9 대비 |
+| 복약 | 혈압약 1정, 아침 식후 · 스케줄 `09:00` / `08:30·12:30·18:30` | **5-6 `"약 먹었어"`** |
+| 진료 예약 | 365열린연합의원 정형외과 | 5절 일정 갈래 |
+| 집 좌표 | `36.3511, 127.3850` (대전) | **5-3 의 "도시 없는 질문" 논점** ↓ |
+| 기억 5건 | 저녁에 적적함(5) · **무릎이 시려 산책을 줄임(4)** · 손자 민준이(4) · 베란다 텃밭(3) · 천천히 말하는 것을 좋아함(3) | **11-3 이어짐 시험** |
+| 조용한 시간대 | `22:00`–`07:00` | 7-3 |
+
+**기억 5건이 전부 `embedding_status = PENDING`** 입니다 — 11절을 켜기 전에는 의미 검색이
+이 5건을 못 찾습니다. 11-2 에서 `SYNCED` 로 바뀌는 것을 보게 됩니다.
+
+### `.env` 에 반영
+
+`SENIOR_ID` 와 `ROBOT_ID` 를 둘 다 넣고, 지금 창의 셸 변수로도 올립니다. **`.env` 에 안
+쓰면 로봇이 시연용 어르신(김순자)으로 기동하고, 셸에 안 올리면 이후 `curl`·`psql` 명령이
+빈 값으로 나갑니다** — 둘 다 필요합니다.
 
 ```bash
-export SENIOR_ID=99999999-0000-4000-8000-000000000001
+cd ~/S15P11E102/robot/ai_chat
+grep -q '^SENIOR_ID=' .env && sed -i 's|^SENIOR_ID=.*|SENIOR_ID=99999999-0000-4000-8000-000000000001|' .env || echo 'SENIOR_ID=99999999-0000-4000-8000-000000000001' >> .env
+grep -q '^ROBOT_ID='  .env && sed -i 's|^ROBOT_ID=.*|ROBOT_ID=99999999-0002-4000-8000-000000000001|'  .env || echo 'ROBOT_ID=99999999-0002-4000-8000-000000000001'  >> .env
+set -a; . <(sed 's/\r$//' ./.env); set +a
+grep -nE '^(SENIOR|ROBOT)_ID=' .env; echo "셸: senior=$SENIOR_ID robot=$ROBOT_ID"
 ```
 
-- [ ] 결과지 **0-4** 에 UUID 를 적었습니다 (마지막에 정리할 때 필요합니다)
+**기대**: `.env` 두 줄과 셸 한 줄에 같은 UUID 가 보입니다.
+
+- [ ] 결과지 **0-4** 에 위 확인 결과를 붙여넣었습니다
 
 ## 0-5. 오디오 장치 번호 확인
 
 ```bash
-cd robot/ai_chat && ./venv/Scripts/python.exe tests/list_audio_devices.py
+cd ~/S15P11E102/robot/ai_chat && env -u PYTHONPATH ./.venv/bin/python tests/list_audio_devices.py
 ```
 
 **기대**: 꽂아 둔 외부 마이크와 스피커가 목록에 보이고, 마이크는 `in>0`, 스피커는 `out>0`.
 
-**내장 마이크와 헷갈리지 마십시오.** 이름이 비슷하면 외부 장치를 뽑았다 꽂으면서 목록이
-어떻게 바뀌는지로 구분합니다.
+### 젯슨에서 실제로 나온 목록 (233 점검 시점)
+
+30개가 쏟아지지만 **쓸 것은 두 개뿐**입니다. 나머지는 전부 내장이거나 가상 장치입니다.
+
+| 번호 | 이름 | 정체 |
+| --- | --- | --- |
+| 0–3 | `HDA: HDMI 0~3` | 내장 HDMI 출력 |
+| 4–23 | `APE: -` | 젯슨 내장 오디오 엔진. **20개가 줄줄이 보이지만 전부 무시합니다** |
+| **24** | **`reSpeaker XVF3800 4-Mic Array: USB`** | **외부 마이크 어레이.** `in:2` 는 DSP 처리 후의 2채널이라 마이크가 4개인데 2로 보이는 것이 정상입니다. 2-3 의 빔포밍 장치가 이것입니다 |
+| **25** | **`USB Composite Device: Audio`** | **외부 스피커로 유력.** `out:2` 를 가진 유일한 USB 장치입니다 |
+| 26–29 | `hdmi` `pulse` `demixer` `default` | ALSA 가상 장치 |
+
+**★ 기본 장치가 `29`(`default`)로 잡혀 있습니다.** `AUDIO_MODE=laptop` 이면 이 29번을 쓰게
+되고, **외부 마이크를 꽂아 둔 채로 엉뚱한 장치에 녹음될 수 있습니다.** 0-3 이
+`AUDIO_MODE=robot` 을 요구하는 이유가 이것입니다 — 번호를 반드시 쓰게 만들어 이 사고를
+막습니다.
+
+### 어느 쪽이 스피커인지는 귀로 가릅니다
+
+24번(reSpeaker)도 `out:2` 를 가지고 있어 **목록만 봐서는 확정할 수 없습니다.** 두 장치에
+각각 소리를 넣어 보십시오. `plughw:` 뒤 숫자는 목록의 `(hw:2,0)` `(hw:3,0)` 에서 옵니다 —
+**장치 번호(24·25)가 아니라 `hw` 번호**입니다.
+
+**`timeout 1` 로 잘라 씁니다.** `speaker-test` 는 `-l 1` 을 줘도 채널을 순회하느라 꽤
+오래 울고, 실내에서 하기에는 너무 큽니다.
+
+```bash
+timeout 1 speaker-test -D plughw:3,0 -c 2 -t sine -f 440 >/dev/null 2>&1; echo "25번(USB Composite) 끝"
+```
+
+```bash
+timeout 1 speaker-test -D plughw:2,0 -c 2 -t sine -f 440 >/dev/null 2>&1; echo "24번(reSpeaker) 끝"
+```
+
+그래도 크면 먼저 낮춥니다. `-c` 뒤 숫자는 `plughw:3,0` 의 앞자리(카드 번호)입니다.
+
+```bash
+amixer -c 3 sset Master 30% 2>/dev/null || amixer -c 3 sset PCM 30%
+```
+
+> **볼륨은 3절(에코)의 실측 대상이기도 합니다.** 여기서 낮춰 둔 값이 그대로
+> 에코 임계치에 영향을 주므로, 3-1 에서 최종 볼륨을 결과지에 적으십시오.
+
+마이크까지 한 번에 확인하려면 **3초 녹음하고 그대로 되재생**합니다.
+
+```bash
+arecord -D plughw:2,0 -f S16_LE -r 16000 -c 2 -d 3 /tmp/mic.wav && aplay -D plughw:3,0 /tmp/mic.wav
+```
+
+**엔터를 치면 바로 녹음이 시작됩니다.** 3초 동안 말하십시오.
+
+**기대**: 말한 것이 그대로 스피커로 되돌아옵니다. 아무 소리도 안 나면 입력과
+출력 중 어느 쪽 문제인지 `/tmp/mic.wav` 크기로 갈립니다 — 파일이 거의 0이면 마이크,
+크기는 정상인데 안 들리면 스피커입니다.
+
+```bash
+ls -l /tmp/mic.wav
+```
+
+확정되면 `.env` 에 박습니다.
+
+```bash
+cd ~/S15P11E102/robot/ai_chat
+sed -i 's|^AUDIO_MODE=.*|AUDIO_MODE=robot|; s|^AUDIO_INPUT_DEVICE=.*|AUDIO_INPUT_DEVICE=24|; s|^AUDIO_OUTPUT_DEVICE=.*|AUDIO_OUTPUT_DEVICE=25|' .env
+grep -nE '^AUDIO_(MODE|INPUT_DEVICE|OUTPUT_DEVICE)=' .env
+```
+
+> **장치 번호는 고정값이 아닙니다.** USB 를 다른 포트에 꽂거나 재부팅하면 바뀔 수
+> 있습니다. 소리가 갑자기 안 나면 이 절을 다시 하십시오 — 코드를 의심하기 전에.
 
 ## 0-6. EC2 에 닿는가 — ★ 상태 코드로 판정하지 않습니다
 
 ```bash
+set -a; . <(sed 's/\r$//' ~/S15P11E102/robot/ai_chat/.env); set +a   # .env 를 셸로 (CRLF 무해화)
 curl -s -o /tmp/ctx.json -w '%{http_code}  %{content_type}\n' \
   -X POST https://i15e102.p.ssafy.io/api/v1/seniors/$SENIOR_ID/conversation-context \
   -H 'Content-Type: application/json' -d '{"query":"테스트","memoryTopK":3}'
@@ -209,22 +424,65 @@ head -c 200 /tmp/ctx.json; echo
 
 ## 0-7. 컨테이너가 도는가
 
+**먼저 `ssh bomi` 가 이 기계에서 되는지 확인합니다.** 이 문서의 서버 확인 명령은 전부
+`ssh bomi` 로 시작하는데, 그 별칭은 각자 `~/.ssh/config` 에 있는 것이라 **젯슨에는 없을 수
+있습니다.** 없는 채로 진행하면 0-7 부터 8-1 까지 전부 "서버가 죽었다"로 오진합니다.
+
+```bash
+ssh -o BatchMode=yes -o ConnectTimeout=5 bomi 'echo ssh-ok' || echo '★ ssh bomi 안 됨 — 아래 참고'
+```
+
+`ssh-ok` 가 안 나오면 젯슨의 `~/.ssh/config` 에 별칭을 추가합니다(키 파일 경로는 실제
+가지고 있는 것으로 바꾸십시오).
+
+```bash
+mkdir -p ~/.ssh && cat >> ~/.ssh/config <<'EOF'
+
+Host bomi
+  HostName i15e102.p.ssafy.io
+  User ubuntu
+  IdentityFile ~/.ssh/bomi.pem
+EOF
+chmod 600 ~/.ssh/config
+```
+
+키가 아예 없으면 서버 확인 명령들은 **노트북에서** 치고, 젯슨에서는 로봇 쪽만 봅니다.
+결과지에 그렇게 적으십시오 — 안 한 것과 못 한 것은 다릅니다.
+
 ```bash
 ssh bomi "docker ps --format '{{.Names}}\t{{.Status}}'"
 ```
 
-**기대**: `bomi-backend`, `bomi-postgres`, `bomi-nginx` 가 `healthy` 또는 `Up`.
+**기대** — 233 점검 시점(2026-08-05)에 실제로 확인한 목록입니다. 일곱 개가 전부
+`healthy` 였습니다.
 
-`bomi-qdrant` 와 `bomi-mosquitto` 는 **이 목록에 없을 수도 있습니다.**
-`infra/compose.prod.yml` 에 정의가 없어서, 어떻게 떠 있는지(또는 안 떠 있는지) 저장소로는
-알 수 없습니다. 없으면 **10절(현관)과 11절(의미 검색)을 건너뛰고 결과지에 그렇게 적습니다.**
+```
+bomi-backend    Up About an hour (healthy)
+bomi-qdrant     Up 2 days (healthy)
+bomi-frontend   Up 2 days (healthy)
+bomi-postgres   Up 6 days (healthy)
+bomi-mosquitto  Up 2 weeks (healthy)
+bomi-nginx      Up 2 weeks (healthy)
+bomi-jenkins    Up 2 weeks (healthy)
+```
+
+**★ `bomi-qdrant` 와 `bomi-mosquitto` 는 살아 있습니다.** 초판은 "`infra/compose.prod.yml`
+에 정의가 없어서 떠 있는지 알 수 없다"고 적었는데, **저장소로 알 수 없다는 것이 안 떠 있다는
+뜻은 아니었습니다.** 실제로는 2주째 돌고 있었습니다. 따라서 **10절(현관)과 11절(의미 검색)은
+건너뛰지 않고 수행합니다.**
+
+> 저장소에 정의가 없는데 서버에서는 도는 상태 자체는 그대로 남아 있습니다 — 누군가 손으로
+> 띄웠고, 그 기계가 죽으면 복구 절차가 없다는 뜻입니다. **점검 항목은 아니지만 별도 티켓
+> 후보**이므로 결과지의 「별도 티켓」에 적어 두십시오.
+
+그래도 목록에서 **빠진 것이 있으면** 해당 절을 건너뛰고 결과지에 그렇게 적습니다.
 
 - [ ] 결과지 **0-7** 에 실제 목록을 붙여넣었습니다
 
 ## 0-8. 상태 도구가 도는가
 
 ```bash
-cd robot/ai_chat && ./venv/Scripts/python.exe tests/manual/probe.py
+cd ~/S15P11E102/robot/ai_chat && env -u PYTHONPATH ./.venv/bin/python tests/manual/probe.py
 ```
 
 **기대**: 표가 그려집니다. `runtime_state 에 행이 없습니다` 가 나와도 정상입니다 — 로봇을
@@ -237,33 +495,93 @@ cd robot/ai_chat && ./venv/Scripts/python.exe tests/manual/probe.py
 
 # 1. 창 배치 — 네 개를 띄웁니다
 
+### 🔴 창을 나누기 전에 — `.env` 로더를 창 1 에서 쓰면 안 됩니다
+
+이 문서 곳곳에서 `curl`·`psql` 명령 앞에 씁니다.
+
+```bash
+set -a; . <(sed 's/\r$//' ~/S15P11E102/robot/ai_chat/.env); set +a   # .env 를 셸로
+```
+
+**`set -a` 는 이후 읽는 값을 그 터미널의 환경변수로 export 합니다.** 로봇 앱은
+`load_dotenv(dotenv_path=env_file, override=False)` 로 `.env` 를 읽는데 —
+**`override=False` 는 "환경변수에 이미 그 이름이 있으면 파일 값으로 안 덮어쓴다"** 는
+뜻입니다. 그래서 **한 번이라도 위 로더를 돌린 터미널에서는, 그 뒤 `.env` 파일을 아무리
+고쳐도 앱이 옛 값을 계속 씁니다. 에러도 경고도 없이 조용히.**
+
+233 점검에서 실제로 이렇게 걸렸습니다: `AUDIO_CHANNELS` 를 `.env` 에서 `2` 로 고쳤는데
+로봇은 계속 `AUDIO_CHANNELS=1` 로 열려고 시도해 `PortAudioError: Invalid number of
+channels` 가 반복됐습니다. 원인은 그 터미널에서 이미 한 번 위 로더를 돌려
+`AUDIO_CHANNELS=1` 이 export 돼 있었기 때문입니다.
+
+**규칙: 창 1(로봇)은 `.env` 로더를 쓴 적 없는 새 터미널에서 엽니다.** `.env` 값을
+확인하고 싶으면 셸 변수로 로드하지 말고 파일을 직접 읽습니다.
+
+```bash
+grep -n '^AUDIO_CHANNELS=' ~/S15P11E102/robot/ai_chat/.env
+```
+
+**이미 오염된 터미널이라면** 지금까지 로드한 이름을 전부 지웁니다.
+
+```bash
+unset SENIOR_ID ROBOT_ID MQTT_USERNAME MQTT_PASSWORD AUDIO_MODE AUDIO_INPUT_DEVICE AUDIO_OUTPUT_DEVICE AUDIO_CHANNELS WAKEWORD_ENABLED BACKEND_TIMEOUT_SECONDS
+```
+
+`unset` 뒤에도 찜찜하면 그냥 새 탭을 여는 편이 확실합니다 — `unset` 목록에 하나라도
+빠뜨리면 같은 함정이 다시 옵니다.
+
 ## 창 1 — 로봇 (여기서 말합니다)
 
 ```bash
-cd /c/Users/workspaces/S15P11E102/robot/ai_chat && ./venv/Scripts/python.exe -m bomi_ai_chat -v
+cd ~/S15P11E102/robot/ai_chat && env -u PYTHONPATH ./.venv/bin/python -m bomi_ai_chat -v
 ```
 
-기동할 때 이런 줄들이 보여야 합니다.
+기동할 때 이런 줄들이 보여야 합니다(233 점검에서 실제로 확인한 순서·모양입니다).
 
 ```
-INFO  bomi_ai_chat.main: logging to var\localstore\logs\ai_chat.log
+INFO  root: logging to var/localstore/logs/ai_chat.log
 INFO  bomi_ai_chat.jobs.scheduler: scheduler built: silence/door=60s outbox=30s
-INFO  bomi_ai_chat.bootstrap: conversation runtime ready (senior=9999...)
+WARNING bomi_ai_chat.door.mqtt: MQTT is disabled (MQTT_ENABLED); occupancy stays UNKNOWN
+INFO  bomi_ai_chat.main: conversation runtime ready (senior=9999...)
 WARNING ... self-harm marker list has not been human-reviewed yet
 ```
 
 마지막 경고는 **정상**입니다 — 자해 표현 감지는 동작하지만 사람의 검토가 아직 안 끝났다는
-뜻입니다 (8-3 에서 처리합니다).
+뜻입니다 (8-3 에서 처리합니다). `MQTT is disabled` 경고도 `MQTT_ENABLED=false` 인 동안은
+정상입니다(10절에서 켭니다).
+
+### 🔴 여기서 죽으면 — `ValueError: The tflite inference framework is selected, but onnx models were provided!`
+
+**웨이크워드 모델 워밍업 중에 이 에러로 죽습니다.** `WAKEWORD_ENABLED` 가 아직 `0` 이
+아닌 것입니다 — `config.py` 의 기본값이 `True` 라서, 0-3 을 건너뛰면 항상 이 경로를
+탑니다. 지금 당장은 이렇게 끕니다.
+
+```bash
+cd ~/S15P11E102/robot/ai_chat
+sed -i "s|^WAKEWORD_ENABLED=.*|WAKEWORD_ENABLED=0|" .env
+grep -q '^WAKEWORD_ENABLED=' .env || echo 'WAKEWORD_ENABLED=0' >> .env
+grep -n '^WAKEWORD_ENABLED=' .env
+```
+
+> **★ 이건 임시 회피이지 원인 해결이 아닙니다.** 5절 이후 웨이크워드를 켜는 순간(문서
+> 뒷부분에서 다시 `1` 로 되돌립니다) **다시 이 에러가 납니다.** 우리 웨이크워드 모델은
+> `.onnx` 인데, 젯슨 가상환경에 tflite 런타임이 함께 잡혀 있어 openWakeWord 가
+> `inference_framework` 를 **자동으로 tflite 로 골라 버립니다.**
+> `wakeword.py` `_ensure_model()` 의 `Model(wakeword_models=[self.model_path])` 호출에
+> `inference_framework="onnx"` 를 명시하지 않은 것이 원인입니다. **별도 티켓 대상입니다**
+> — 결과지 「별도 티켓」에 옮겨 적으십시오. 웨이크워드를 실제로 시험해야 하는 절(§1
+> 이후 상시 청취 흐름)에서는 이 수정 없이는 항상 막힙니다.
 
 ## 창 2 — 로그 실시간
 
 ```bash
-cd /c/Users/workspaces/S15P11E102/robot/ai_chat && tail -f -n 0 var/localstore/logs/ai_chat.log
+cd ~/S15P11E102/robot/ai_chat && tail -f -n 0 var/localstore/logs/ai_chat.log
 ```
 
 판정 이유만 보고 싶을 때:
 
 ```bash
+cd ~/S15P11E102/robot/ai_chat
 tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "latency|intent|safety|echo|gate|ladder|occupancy|cache"
 ```
 
@@ -274,9 +592,9 @@ tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "latency|intent|safety|ec
 발화 하나마다 이 두 명령을 씁니다. 창을 따로 띄워 두고 여기서만 칩니다.
 
 ```bash
-cd /c/Users/workspaces/S15P11E102/robot/ai_chat
-./venv/Scripts/python.exe tests/manual/probe.py --save              # 말하기 전
-./venv/Scripts/python.exe tests/manual/probe.py --diff --step 5-8   # 말한 뒤
+cd ~/S15P11E102/robot/ai_chat
+env -u PYTHONPATH ./.venv/bin/python tests/manual/probe.py --save              # 말하기 전
+env -u PYTHONPATH ./.venv/bin/python tests/manual/probe.py --diff --step 5-8   # 말한 뒤
 ```
 
 무엇이 어디에 쌓이는지는
@@ -309,11 +627,11 @@ ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"SELECT notificatio
 이상하다"로 오진합니다. **어느 것이 고장인지 먼저 가려 놓아야** 합니다.
 
 ```bash
-cd robot/ai_chat
-./venv/Scripts/python.exe tests/manual/audio_smoke.py    # 녹음·재생
-./venv/Scripts/python.exe tests/manual/stt_smoke.py      # 음성 → 텍스트
-./venv/Scripts/python.exe tests/manual/tts_smoke.py      # 텍스트 → 음성
-./venv/Scripts/python.exe tests/manual/llm_smoke.py      # 문장 생성
+cd ~/S15P11E102/robot/ai_chat
+env -u PYTHONPATH ./.venv/bin/python tests/manual/audio_smoke.py    # 녹음·재생
+env -u PYTHONPATH ./.venv/bin/python tests/manual/stt_smoke.py      # 음성 → 텍스트
+env -u PYTHONPATH ./.venv/bin/python tests/manual/tts_smoke.py      # 텍스트 → 음성
+env -u PYTHONPATH ./.venv/bin/python tests/manual/llm_smoke.py      # 문장 생성
 ```
 
 ## 2-1. 스피커에서 진짜 소리가 나는가
@@ -354,6 +672,7 @@ cd robot/ai_chat
 > 기능이 문서에는 있는데 실행되지 않으니 체감할 것이 없습니다.
 
 ```bash
+cd ~/S15P11E102/robot/ai_chat
 grep -n "BeamController" src/bomi_ai_chat/main.py src/bomi_ai_chat/bootstrap.py
 ```
 
@@ -383,7 +702,7 @@ grep -n "BeamController" src/bomi_ai_chat/main.py src/bomi_ai_chat/bootstrap.py
 ## 3-1. 로봇이 자기 말에 멈추는가
 
 ```bash
-cd robot/ai_chat && ./venv/Scripts/python.exe -m bomi_ai_chat --once -v
+cd ~/S15P11E102/robot/ai_chat && env -u PYTHONPATH ./.venv/bin/python -m bomi_ai_chat --once -v
 ```
 
 **말할 것** ▶ `"안녕하세요"` 한 마디. 그 뒤 로봇이 말하는 동안 **아무 말도 하지 않습니다.**
@@ -410,7 +729,7 @@ cd robot/ai_chat && ./venv/Scripts/python.exe -m bomi_ai_chat --once -v
 # 4. 한 바퀴 돌리기
 
 ```bash
-cd robot/ai_chat && ./venv/Scripts/python.exe -m bomi_ai_chat -v
+cd ~/S15P11E102/robot/ai_chat && env -u PYTHONPATH ./.venv/bin/python -m bomi_ai_chat -v
 ```
 
 ## 4-1. 왕복이 되는가
@@ -441,6 +760,7 @@ cd robot/ai_chat && ./venv/Scripts/python.exe -m bomi_ai_chat -v
 ## 4-3. 문맥이 캐시로 떨어지지 않는가
 
 ```bash
+cd ~/S15P11E102/robot/ai_chat
 grep -c "falling back to cache" var/localstore/logs/ai_chat.log
 ```
 
@@ -489,6 +809,7 @@ grep -c "falling back to cache" var/localstore/logs/ai_chat.log
 **확인 명령** — 로딩이 언제 일어났는지 눈으로 봅니다.
 
 ```bash
+cd ~/S15P11E102/robot/ai_chat
 tail -f -n 0 var/localstore/logs/ai_chat.log | grep -iE "latency|sentence_transformer|router|모델"
 ```
 
@@ -519,6 +840,7 @@ API·서버 저장소)으로, **나머지 30개는 표 한 줄**로 판정합니
 - 창 2를 이렇게 걸어 둡니다:
 
 ```bash
+cd ~/S15P11E102/robot/ai_chat
 tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "transcribe|intent|safety|latency"
 ```
 
@@ -644,6 +966,7 @@ ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"SELECT content, or
 **확인 방법**
 
 ```bash
+cd ~/S15P11E102/robot/ai_chat
 grep -iE "weather lookup|weather|기상" var/localstore/logs/ai_chat.log | tail -5
 ```
 
@@ -656,7 +979,10 @@ grep -iE "weather lookup|weather|기상" var/localstore/logs/ai_chat.log | tail 
 - ☐ 둘 다 조회함 → 좋은 소식. 이 스텝 설명을 고쳐야 합니다
 
 **★ 이 스텝의 진짜 질문**: 어르신은 `"오늘 몇 도야"` 라고 말하지 `"대전 몇 도야"` 라고
-말하지 않습니다. **집 주소에서 도시를 기본값으로 채워야 하지 않는가?** 결과지에 판단을
+말하지 않습니다. **집 주소에서 도시를 기본값으로 채워야 하지 않는가?**
+점검용 어르신에게는 `home_latitude/longitude` 가 **이미 채워져 있습니다**
+(`36.3511, 127.3850` — 대전). 즉 이것은 "데이터가 없어서 못 한다"가 아니라
+**있는 데이터를 안 쓰고 있다**는 문제입니다. 결과지에 판단을
 적으십시오 — 별도 티켓 후보입니다.
 
 **결과지** ▶ **5-3** (두 응답과 실제 기온을 나란히 적습니다)
@@ -706,6 +1032,7 @@ grep -iE "weather lookup|weather|기상" var/localstore/logs/ai_chat.log | tail 
 **참고 자료가 실제로 뭐였는지 봅니다** — 답변이 이상하면 원인이 자료인지 모델인지 여기서 갈립니다.
 
 ```bash
+cd ~/S15P11E102/robot/ai_chat
 grep "lookup documents" var/localstore/logs/ai_chat.log | tail -3
 ```
 
@@ -760,6 +1087,7 @@ grep "lookup documents" var/localstore/logs/ai_chat.log | tail -3
 **확인 명령**
 
 ```bash
+cd ~/S15P11E102/robot/ai_chat
 tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "lookup documents|intent=|medical"
 ```
 
@@ -801,12 +1129,21 @@ tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "lookup documents|intent=
 > 문턱이 `policy.T3_CONSENT_SIGNAL_THRESHOLD = 3` 입니다. **즉 한 번 말하고 끝나는
 > 스텝이 아닙니다** — 세 번 이상 말해야 관찰할 것이 생깁니다.
 
-**0-4 를 다시 확인하십시오.** 테스트 전용 어르신의 `app_user` 행에
-`guardian_sharing_consent_status` 를 `'GRANTED'` 로 넣지 않았다면, 아래에서 아무리
-말해도 **2번 조건에서 항상 조용히 막힙니다** — 오류도, 로그도 없이 그냥 아무 일도
-안 일어나는 것처럼 보입니다. 그리고 그 값은 서버가 문맥 조립 응답의 `profile` 에
-실어 보내야 로봇이 알 수 있으므로, **이 스텝 전에 문맥 조회가 최소 한 번 성공해서
-로컬 캐시에 반영돼 있어야** 합니다(4-1 을 먼저 통과했다면 충족됩니다).
+**상위 동의부터 확인하십시오.** 점검용 어르신은 `guardian_sharing_consent_status` 가
+`GRANTED` 로 심겨 있지만(0-4), 누군가 9절 온보딩에서 `DENIED` 로 바꿔 놓았을 수
+있습니다. 그러면 아래에서 아무리 말해도 **2번 조건에서 항상 조용히 막힙니다** — 오류도,
+로그도 없이 그냥 아무 일도 안 일어나는 것처럼 보입니다.
+
+```bash
+set -a; . <(sed 's/\r$//' ~/S15P11E102/robot/ai_chat/.env); set +a   # .env 를 셸로 (CRLF 무해화)
+ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"SELECT guardian_sharing_consent_status FROM app_user WHERE id='$SENIOR_ID';\""
+```
+
+**기대**: `GRANTED`. 아니면 0-4 의 `UPDATE` 한 줄로 되돌린 뒤 진행합니다.
+
+그리고 그 값은 서버가 문맥 조립 응답의 `profile` 에 실어 보내야 로봇이 알 수 있으므로,
+**이 스텝 전에 문맥 조회가 최소 한 번 성공해서 로컬 캐시에 반영돼 있어야** 합니다(4-1 을
+먼저 통과했다면 충족됩니다).
 
 **말할 것** ▶ `"외로워"` 를 **세 번 이상**, 서로 다른 턴으로 (같은 대화 안에서)
 
@@ -841,7 +1178,8 @@ tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "lookup documents|intent=
 자동으로 하지만, 점검에서 10분을 기다릴 필요는 없습니다):
 
 ```bash
-cd robot/ai_chat && ./venv/Scripts/python.exe -c "
+cd ~/S15P11E102/robot/ai_chat && set -a; . <(sed 's/\r$//' ~/S15P11E102/robot/ai_chat/.env); set +a   # .env 를 셸로 (CRLF 무해화)
+env -u PYTHONPATH ./.venv/bin/python -c "
 import os
 from bomi_ai_chat.jobs.ticks import consent_tick
 n = consent_tick(os.environ['SENIOR_ID'])
@@ -1160,6 +1498,7 @@ outbox          (행 수)                    0            0            유지
 빠르게 하는 법: 창 2를 이렇게 걸어 두면 발화마다 두 줄만 나옵니다.
 
 ```bash
+cd ~/S15P11E102/robot/ai_chat
 tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "intent=|safety_level="
 ```
 
@@ -1186,6 +1525,7 @@ tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "intent=|safety_level="
 뜻이므로 재개하지 않습니다.
 
 ```bash
+cd ~/S15P11E102/robot/ai_chat
 tail -f -n 0 var/localstore/logs/ai_chat.log | grep -E "barge|echo|remaining|backchannel|ladder"
 ```
 
@@ -1220,7 +1560,8 @@ scheduler built: silence/door=60s outbox=30s
 둔 채로 하면 실제 배경 작업과 이 스크립트가 같은 상태를 두고 다툽니다.
 
 ```bash
-cd robot/ai_chat && ./venv/Scripts/python.exe -c "
+cd ~/S15P11E102/robot/ai_chat && set -a; . <(sed 's/\r$//' ~/S15P11E102/robot/ai_chat/.env); set +a   # .env 를 셸로 (CRLF 무해화)
+env -u PYTHONPATH ./.venv/bin/python -c "
 import time, os
 from bomi_ai_chat.clock import SimClock, install_clock
 from bomi_ai_chat.jobs.scheduler import run_all_ticks_once
@@ -1255,14 +1596,30 @@ for i in range(12):
 **끝나고 되돌리기**
 
 ```bash
-./venv/Scripts/python.exe tests/manual/probe.py --reset-ladder --senior $SENIOR_ID
+cd ~/S15P11E102/robot/ai_chat && set -a; . <(sed 's/\r$//' ~/S15P11E102/robot/ai_chat/.env); set +a   # .env 를 셸로 (CRLF 무해화)
+env -u PYTHONPATH ./.venv/bin/python tests/manual/probe.py --reset-ladder --senior $SENIOR_ID
 ```
 
 ## 7-3. 조용한 시간대
 
-- 어르신의 `quiet_hours_start/end` 를 **지금 시각이 포함되도록** 임시 변경
-- 잡담·수분 알림이 안 나가는지 확인
-- **되돌립니다** (결과지에 체크)
+점검용 어르신의 현재 값은 **`22:00`–`07:00`** 입니다. 낮에 점검한다면 지금 시각이 그 안에
+들어오도록 잠시 넓혔다가 되돌립니다.
+
+```bash
+set -a; . <(sed 's/\r$//' ~/S15P11E102/robot/ai_chat/.env); set +a   # .env 를 셸로 (CRLF 무해화)
+ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"UPDATE app_user SET quiet_hours_start='00:00', quiet_hours_end='23:59', updated_at=now() WHERE id='$SENIOR_ID' RETURNING quiet_hours_start, quiet_hours_end;\""
+```
+
+- 잡담·수분 알림이 **안 나가는지** 확인합니다 (`low`·`ambient` 는 조용한 시간대를 지킵니다)
+- 반대로 `critical`(생존 확인 마지막 칸)은 **뚫고 나가야** 정상입니다 — §7 우선순위 행렬
+
+**반드시 되돌립니다.** 안 되돌리면 이후 모든 능동 발화가 영원히 막혀서, 7-2·8-1 이
+"게이트가 고장났다"로 오진됩니다.
+
+```bash
+set -a; . <(sed 's/\r$//' ~/S15P11E102/robot/ai_chat/.env); set +a   # .env 를 셸로 (CRLF 무해화)
+ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"UPDATE app_user SET quiet_hours_start='22:00', quiet_hours_end='07:00', updated_at=now() WHERE id='$SENIOR_ID' RETURNING quiet_hours_start, quiet_hours_end;\""
+```
 
 ## 7-4. 생존 확인이 감시처럼 들리지 않는가
 
@@ -1324,7 +1681,7 @@ ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"SELECT notificatio
 기동할 때마다 나오는 경고를 없애는 작업입니다.
 
 ```bash
-cd robot/ai_chat && ./venv/Scripts/python.exe -c "
+cd ~/S15P11E102/robot/ai_chat && env -u PYTHONPATH ./.venv/bin/python -c "
 from bomi_ai_chat import policy
 for m in policy.SELF_HARM_MARKERS: print(' -', m)
 print('reviewed =', policy.SELF_HARM_MARKERS_REVIEWED)
@@ -1353,13 +1710,23 @@ print('reviewed =', policy.SELF_HARM_MARKERS_REVIEWED)
 **동의 판정에 LLM 을 쓰지 않습니다.** 모델에게 물으면 "동의한 것으로 보인다"가 되고, 나중에
 "어르신이 정말 동의했는가"를 물었을 때 답할 수 없습니다.
 
-온보딩을 시작하려면 서버에 세션이 있어야 합니다.
+온보딩을 시작하려면 서버에 세션이 있어야 합니다. `ROBOT_ID` 는 0-4 에서 `.env` 에 넣은
+`bomi-TEST01` 로봇입니다 — **시연용 로봇(`bomi-AA001`)으로 세션을 만들면 김순자의 온보딩을
+건드립니다.**
 
 ```bash
+set -a; . <(sed 's/\r$//' ~/S15P11E102/robot/ai_chat/.env); set +a   # .env 를 셸로 (CRLF 무해화)
+echo "senior=$SENIOR_ID robot=$ROBOT_ID"   # 둘 다 99999999- 로 시작해야 합니다
 curl -s -X POST https://i15e102.p.ssafy.io/api/v1/robot/onboarding/sessions \
   -H 'Content-Type: application/json' \
-  -d "{\"seniorId\":\"$SENIOR_ID\",\"robotId\":\"<ROBOT_ID>\"}"
+  -d "{\"seniorId\":\"$SENIOR_ID\",\"robotId\":\"$ROBOT_ID\"}"
 ```
+
+**기대**: 세션 id 와 첫 질문이 담긴 JSON. HTML 이 오면 0-6 의 경로 문제입니다.
+
+점검용 어르신의 `onboarding_status` 는 `NOT_STARTED` 로 시작합니다. 이 절을 하면 실제로
+`IN_PROGRESS`·`COMPLETED` 로 진행되며, **그 값은 되돌리지 않아도 됩니다** — 다음 점검에서
+다시 시작하려면 그때 서버 쪽에서 초기화합니다.
 
 **말할 것** (순서대로)
 
@@ -1386,19 +1753,22 @@ curl -s -X POST https://i15e102.p.ssafy.io/api/v1/robot/onboarding/sessions \
 
 # 10. 현관 (MQTT)
 
-**0-7 에서 `bomi-mosquitto` 가 안 보였다면 이 절을 건너뜁니다.**
+**`bomi-mosquitto` 는 0-7 에서 살아 있는 것으로 확인됐습니다 — 이 절은 수행합니다.**
+(그럼에도 0-7 목록에서 빠져 있었다면 그때만 건너뜁니다.)
 
 센서가 없으면 EC2 안에서 직접 발행합니다. 브로커가 외부에 열려 있지 않아도 이 방법은
 됩니다.
 
 ```bash
-ssh bomi "docker exec bomi-mosquitto mosquitto_pub -h localhost -p 1883 -u '<USER>' -P '<PASS>' -t 'bomi/v1/iot/door_sensor/events' -m '{\"eventId\":\"e1\",\"type\":\"DOOR_OPENED\",\"occurredAt\":\"2026-08-05T14:00:00Z\",\"sourceId\":\"door_sensor\",\"payload\":{}}'"
+set -a; . <(sed 's/\r$//' ~/S15P11E102/robot/ai_chat/.env); set +a   # .env 를 셸로 (CRLF 무해화)
+ssh bomi "docker exec bomi-mosquitto mosquitto_pub -h localhost -p 1883 -u '$MQTT_USERNAME' -P '$MQTT_PASSWORD' -t 'bomi/v1/iot/door_sensor/events' -m '{\"eventId\":\"e1\",\"type\":\"DOOR_OPENED\",\"occurredAt\":\"2026-08-05T14:00:00Z\",\"sourceId\":\"door_sensor\",\"payload\":{}}'"
 ```
 
 3초 뒤 모션을 발행하면 **귀가(들어옴)** 입니다. 순서를 바꾸면(모션 먼저) **외출** 입니다.
 
 ```bash
-ssh bomi "docker exec bomi-mosquitto mosquitto_pub -h localhost -p 1883 -u '<USER>' -P '<PASS>' -t 'bomi/v1/iot/motion_sensor/events' -m '{\"eventId\":\"e2\",\"type\":\"MOTION\",\"occurredAt\":\"2026-08-05T14:00:03Z\",\"sourceId\":\"motion_sensor\",\"payload\":{}}'"
+set -a; . <(sed 's/\r$//' ~/S15P11E102/robot/ai_chat/.env); set +a   # .env 를 셸로 (CRLF 무해화)
+ssh bomi "docker exec bomi-mosquitto mosquitto_pub -h localhost -p 1883 -u '$MQTT_USERNAME' -P '$MQTT_PASSWORD' -t 'bomi/v1/iot/motion_sensor/events' -m '{\"eventId\":\"e2\",\"type\":\"MOTION\",\"occurredAt\":\"2026-08-05T14:00:03Z\",\"sourceId\":\"motion_sensor\",\"payload\":{}}'"
 ```
 
 | 확인 | 기대 |
@@ -1424,7 +1794,8 @@ ssh bomi "docker exec bomi-mosquitto mosquitto_pub -h localhost -p 1883 -u '<USE
 
 # 11. 의미 검색 — ★ 과금 주의
 
-**0-7 에서 `bomi-qdrant` 가 안 보였다면 이 절을 건너뜁니다.**
+**`bomi-qdrant` 는 0-7 에서 살아 있는 것으로 확인됐습니다 — 이 절은 수행합니다.**
+(그럼에도 0-7 목록에서 빠져 있었다면 그때만 건너뜁니다.)
 
 **의미 검색이란**: 글자가 겹치지 않아도 **뜻이 비슷하면** 찾아오는 검색입니다. 지금은 꺼져
 있어서 글자 겹침으로만 찾는데, 한국어는 조사 때문에 `"무릎이"` 와 `"무릎"` 조차 매칭되지
@@ -1465,6 +1836,7 @@ ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"SELECT embedding_s
 ## 11-4. 응답이 켜졌다고 말하는가
 
 ```bash
+set -a; . <(sed 's/\r$//' ~/S15P11E102/robot/ai_chat/.env); set +a   # .env 를 셸로 (CRLF 무해화)
 curl -s -X POST https://i15e102.p.ssafy.io/api/v1/seniors/$SENIOR_ID/conversation-context \
   -H 'Content-Type: application/json' -d '{"query":"무릎"}' | head -c 300
 ```
@@ -1492,18 +1864,31 @@ curl -s -X POST https://i15e102.p.ssafy.io/api/v1/seniors/$SENIOR_ID/conversatio
 하나라도 남으면 실사용에서 이상하게 동작합니다.
 
 - [ ] `policy.SILENCE_LADDER_SEC` (7-2 에서 바꿨다면)
-- [ ] 어르신의 `quiet_hours_start/end` (7-3)
+- [ ] 어르신의 `quiet_hours_start/end` → **`22:00`–`07:00`** (7-3)
+- [ ] `guardian_sharing_consent_status` → **`GRANTED`** (9절 온보딩에서 바뀌었을 수 있음)
 - [ ] **`EMBEDDING_SYNC_ENABLED=false`** (11-1) ← 잔액 보호
 - [ ] `WAKEWORD_ENABLED` 를 원래대로
 - [ ] `BACKEND_TIMEOUT_SECONDS` 를 원래대로 (또는 실측 근거와 함께 유지)
-- [ ] 테스트 전용 어르신의 데이터 정리 (0-4 의 UUID)
 - [ ] `probe.py --reset-ladder`
 - [ ] `policy.ECHO_*` 는 **되돌리지 않습니다** — 실측값이므로 그대로 커밋합니다
 
+**★ 점검용 어르신·보호자·로봇 행은 지우지 마십시오.** 공용 시드이고, 다음 사람이 0-4 에서
+그대로 씁니다. 지워도 되는 것은 **이번 점검이 새로 만든 대화·알림뿐**입니다.
+
 ```bash
-# 지우기 전에 무엇이 지워지는지 먼저 봅니다
-ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"SELECT count(*) FROM conversation_message WHERE conversation_id IN (SELECT id FROM conversation WHERE senior_id='<UUID>');\""
+set -a; . <(sed 's/\r$//' ~/S15P11E102/robot/ai_chat/.env); set +a   # .env 를 셸로 (CRLF 무해화)
+# 무엇이 얼마나 쌓였는지 먼저 봅니다 (지우기 전에)
+ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"
+SELECT 'conversation' AS t, count(*) FROM conversation WHERE senior_id='$SENIOR_ID'
+UNION ALL SELECT 'message', count(*) FROM conversation_message
+  WHERE conversation_id IN (SELECT id FROM conversation WHERE senior_id='$SENIOR_ID')
+UNION ALL SELECT 'guardian_alert', count(*) FROM care_record
+  WHERE senior_id='$SENIOR_ID' AND record_type='GUARDIAN_ALERT';\""
 ```
+
+**0-4 시점의 기준선은 대화 1건입니다.** 그보다 늘어난 만큼이 이번 점검의 흔적입니다.
+남길지 지울지는 결과지에 적고 판단하십시오 — 대화 기록은 11절 재현이나 §17 자연스러움
+회귀 시험의 재료가 되므로, **지우는 것이 항상 옳지는 않습니다.**
 
 # 완료 조건
 
@@ -1521,7 +1906,8 @@ ssh bomi "docker exec bomi-postgres psql -U bomi -d bomi -c \"SELECT count(*) FR
 | 제약 | 결과 |
 | --- | --- |
 | 로봇 본체 미연결 | 문 앞으로 이동하는 동작을 확인할 수 없습니다 |
-| Qdrant·Mosquitto 배포 불명 | 0-7 에서 안 보이면 10·11절을 건너뜁니다 |
+| Qdrant·Mosquitto 가 저장소에 정의되지 않음 | **떠 있는 것은 확인됐으므로 10·11절은 수행합니다.** 다만 복구 절차가 없어 그 기계가 죽으면 되살릴 방법이 문서화돼 있지 않습니다 — 별도 티켓 후보 |
+| **`.env` 가 CRLF 이면 값에 `\r` 이 섞임** | 0-3 에서 정규화합니다. 안 하면 API 키가 조용히 실패합니다 |
 | 임베딩 API 잔액 | 시연까지 아껴야 합니다. 배치를 작게 두고, 끝나면 끕니다 |
 | 날씨는 도시명이 있을 때만 조회됨 | 미배선이 아니라 조건부입니다. 5-3 참고 |
 | 정서 동의는 세 번 이상 말해야 반응함 | 즉시 큐잉이 아니라 누적 문턱(253)입니다. 5-4 참고 |
