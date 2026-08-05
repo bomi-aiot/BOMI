@@ -53,7 +53,7 @@
 | P1-B1 | 기억 삭제·봉인 발화 처리 | A3 — 전무 | 없음(로봇측 1단계는 로컬로 가능) | 1단계: "기억하지 마" 표지 → 해당 대화 T4 봉인 확장(현재 정서 턴 한정 `handlers.py:368` → 전 인텐트로) + 추출 큐에서 해당 대화 행 삭제. 2단계: 이미 제출된 fact_candidate 취소는 **BE 엔드포인트 필요(별도 BE 티켓)** | 중 | 시나리오 K 후반. 봉인 후 추출 큐에 안 들어감을 고정 |
 | P1-B2 | 기억 정정 | A3 | BE의 fact_candidate UPDATE 경로 협의 | 로봇은 `operation: "CREATE"` 고정을 유지하되(사유: `fact_contract.py:76-77`), 모순 발화 감지 시 새 후보에 `supersedes` 힌트 첨부는 BE 계약 확장 후 | 중 | 시나리오 K 전반 — BE 반영 전은 "새 후보 생성"까지만 검증 |
 | P1-B3 | 미사용 프로필 5필드 활용 | C1 | 없음 | `conversationPreferences` 프롬프트 반영, `wakeTime`/`sleepTime` → quiet hours 보조, `preferredHospital` → 의료 조회 기본값 | 낮음 | 프롬프트 빌더 단위 테스트 |
-| P1-B4 | `availability` 소비 | B7 | 없음 | 의미 검색 꺼짐 상태를 프롬프트 "주의" 블록에 반영 — 기억 없음을 단정하지 않게 | 낮음 | 빌더 테스트 |
+| P1-B4 | `availability` 소비 | **AI 구현 완료(26e9635), BE 요청별 계약 대기** | BE의 `retrieval` 필드 확장 | 기능 가용성과 요청별 실행·폴백을 `retrieval_status`로 분리하고 상태·로그·프롬프트 경고에 반영. 문서 출처·버전·청크·인용도 프롬프트까지 보존 | 낮음 | 그래프 E2E + 빌더 테스트 통과. 실제 BE 교차 E2E는 UNVERIFIED |
 | P1-B5 | 사건 연속성(단기 사건 기억) | 부분 — conversation_summary 존재 | 의미 검색 켜기(운영 미결: `EMBEDDING_ENABLED`·EC2 API 키) | 걱정·검진 등 후속 확인 대상 사건을 fact_candidate(factType 확장) 또는 care_record 관찰로 적재하고, 능동 제안(silence_tick 계열)으로 후속 확인 | 높음 — 운영 의존 | 시나리오 J. 의미 검색 미개통 동안 UNVERIFIED 명시 |
 
 ### P1-C — 응답 정책

@@ -243,14 +243,15 @@ nodes**: we decide *whether* and *how* before we decide *what*.
  | self-harm        |       |   | outbox -> notify_guardian |
  +--------+---------+       |   +---------------------------+
           v                 |
- +------------------+       |
- | context_read     | <-----+   backend: assembled context
- | (backend call)   |           + local cache fallback
+ +------------------+
+ | classify_intent  | <-----+   local rules/router; existing intent is kept
  +--------+---------+
           v
  +------------------+
- | classify_intent  |   (skipped when the proposal already knows)
+ | context_read     |           backend: assembled context
+ | (backend call)   |           + local cache fallback
  +--------+---------+
+          v
    +------+--------+----------+-----------+----------+--------------+
    v      v        v          v           v          v              v
  info companion schedule  emotional   greeting  onboarding   clarification
@@ -276,8 +277,8 @@ nodes**: we decide *whether* and *how* before we decide *what*.
 | `proactive_gate` | Four gates, priority arbitration, or silence. |
 | `safety_triage` | Emergency / self-harm classification. On T1 it skips the intent router entirely. |
 | `escalation` | Writes to the outbound queue, then `notify_guardian`. Returns a calm utterance for the senior. |
-| `context_read` | Calls the backend for assembled context; falls back to the local cache when offline. |
-| `classify_intent` | Local, cheap, **no extra LLM round trip** (§16). |
+| `classify_intent` | Local, cheap, **no extra LLM round trip** (§16). Runs before context retrieval so an `info` turn can request the document corpus. Existing proactive/backend intents are kept. |
+| `context_read` | Calls the backend for assembled context; falls back to the local cache when offline. Normalizes capability (`availability`) separately from what this request actually used (`retrieval`). |
 | `handle_*` | Produce `response` text. They decide *what* to say, never *whether*. |
 | `response_shaper` | Enforces §14 and splits into sentences. Every path goes through it. |
 | `memory_write` | Records the turn, queues fact extraction, stamps `last_spoke_at`. |
@@ -413,6 +414,26 @@ model and the job are off unless switched on.
 - Nearby clinics/pharmacies → geo query / Places API
 - Weather → API call
 - Welfare programs, FAQs → vector RAG
+
+### Retrieval result contract — capability is not execution
+
+The backend response must keep two different facts separate:
+
+- `availability.semanticSearch` / `documentCorpus`: can this process use the capability now?
+- `retrieval.semanticRequested` / `semanticUsed` / `fallbackReason` / `hitCount` /
+  `latencyMs`: what happened for this request?
+
+An embedding timeout can leave the service generally configured while this one request falls back
+to keyword ranking. Reporting only `semanticSearch=true` would be a false success. The robot
+normalizes both parts into `state.retrieval_status`, logs identifiers/counts without document
+content, and adds a standard prompt warning when search was unavailable or fell back. Missing
+fields mean **unknown**, not false, during rolling deployment.
+
+For document RAG, classify the turn before `context_read`; otherwise a reactive information
+question has no intent yet and sends `includeDocuments=false`. Each returned chunk keeps its
+`source`, `version`, `chunkId`, `citation`, and optional `url` through to the prompt. A corpus that
+is unavailable and an available corpus with zero hits are different outcomes and must produce
+different warnings.
 
 ### Write path — the safety rule
 
@@ -1448,3 +1469,28 @@ Ticket bodies are Korean, and this is where encoding bugs keep landing.
 - **Report with evidence, not adjectives.** Claim | command | real output. See §26.
 - Comments and docstrings in code stay Korean (§21). Chat responses follow the user's
   language; identifiers and log messages stay English.
+
+## 30. Conversation-context selection priority
+
+This section is the runtime rule for resolving a reference such as "거기" into a tool argument.
+It does **not** authorize general coreference or an extra LLM classification call. Keep only context
+that a concrete consumer such as weather or clinic lookup actually uses.
+
+Priority, highest first:
+
+1. Explicit value in the current utterance (`USER_EXPLICIT`). What the senior just said always wins.
+2. A live `SESSION` candidate: not expired and above `CONTEXT_MIN_CONFIDENCE`. Equal-confidence
+   candidates prefer the most recent.
+3. A structured `SCHEDULED_EVENT` candidate from `careRecords` — future work; do not infer it from
+   free text before the backend contract is fixed.
+4. Current physical location — unsupported because there is no authoritative signal. Do not treat
+   the last door event or a guessed GPS position as one.
+5. A `STANDING` profile default such as the home address, only when the backend actually supplied
+   it. Missing profile data is not permission to invent a city.
+6. No candidate: ask a short clarification question or skip the lookup.
+
+Lifecycle is as important as ranking. `context_slots.update` removes expired/low-confidence values,
+replaces an older value on an explicit correction, decays unrelated topics, and clears `SESSION`
+values at a conversation boundary. A reference expression refreshes the candidate it actually
+uses. Every new context type needs an expiry/scope rule and a real downstream reader in the same
+change; a LastValue field with no expiry is a cross-turn leak, not memory.

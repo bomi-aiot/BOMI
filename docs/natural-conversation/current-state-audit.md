@@ -26,9 +26,10 @@
 → 그래프 1턴             graph/turn.py:103            thread_id=senior_id, checkpointer=runtime.sqlite
    note_interaction      ingress.py:124-              시계 리셋, intent/safety 리셋(341), 바지인 분기, 맞장구→END
    safety_triage         triage.py                    로컬 키워드 (부정·시제 검사), T1→escalation 직행
-   context_read          context.py:98-198            백엔드 문맥조립 POST + 실패 시 로컬 캐시
-                                                       + 날씨/의료 조회(311)를 ctx["documents"]에 병합
-   classify_intent       context.py:424-477,612-674   규칙 우선 + 로컬 임베딩 라우터(의료만), LLM 없음
+   classify_intent       context.py                   규칙 우선 + 로컬 임베딩 라우터(의료만), LLM 없음
+                                                       + info 여부를 문맥 조회 전에 확정
+   context_read          context.py                   백엔드 문맥조립 POST + 실패 시 로컬 캐시
+                                                       + 날씨/의료 조회 + availability/retrieval 정규화
    handle_*              handlers.py                  7종 전부 실구현, 생성 LLM 호출은 _generate 1곳
    response_shaper       output.py:160-219            뼈대 제거 → 문장 분할 → 2문장(terse=1) 절단
    emit                  output.py:222-299            논블로킹, 문장 단위 투입, TTS_HANDLES 전역 보관
@@ -74,7 +75,7 @@
 | 사용자 프로필 | **부분** — 백엔드 문맥조립 실호출 + 로컬 캐시 폴백. 스텁 아님 | `backend_client/context_client.py:72-147`, `prompts/builder.py:70-80` | 계약 15개 필드 중 프롬프트 도달 4개(호칭·이름·나이·질환). `conversationPreferences`/`wakeTime`/`sleepTime`/`chronicPainArea`/`preferredHospital`는 로봇이 안 읽음. **주소 필드는 계약에 아예 없음** | **상** |
 | 현재 문맥 | **없음** — topic/location/people/event 슬롯 전무(전수 grep 0히트). 예외: **현재 날짜·시각은 구현됨** — 매 요청 `[현재 정보]` 블록으로 주입(`llm/client.py:85`), 지남력 표지 판정(`context.py:577-596`) + `orientation_question` 서버 전달 | (해당 없음) | 조회 파라미터가 턴을 넘지 못함. "거기/근처"는 명시적으로 폐기됨(`weather/client.py:107-109`, `llm/medical_flow.py:199-206`) | **최상** |
 | 단기 기억 | **부분** — 서버 `recentMessages`(30분 경계) + `conversation_summary` | `ingress.py:260-318`, `builder.py:152-177` | 로봇 로컬에는 대화 이력 없음(오프라인 시 최근 대화 공백). 사건(event) 단위 기억 없음 | 중 |
-| 장기 기억 | **부분** — 읽기: 문맥조립 `memories`. 쓰기: 추출 큐→fact_candidate 실동작 | `build.py:128-213`, `ticks.py:1056-1167`, `fact_contract.py:41-47` | 의미 검색 꺼져 있음(운영 미배선). `availability` 필드 미소비 — "기억 없음"과 "검색 꺼짐"을 로봇이 구분 못 함 | 중 |
+| 장기 기억 | **부분** — 읽기: 문맥조립 `memories`. 쓰기: 추출 큐→fact_candidate 실동작 | `build.py`, `context.py`, `ticks.py`, `fact_contract.py` | 로봇은 `availability`와 요청별 `retrieval`을 상태·로그·프롬프트에서 소비하도록 구현됨(26e9635). 다만 백엔드 요청별 필드와 의미 검색 운영은 아직 미구현/비활성 | 중 |
 | 감정 처리 | **부분** — `_EMOTIONAL_MARKERS` 8개 키워드 → `handle_emotional`(3갈래), T3 동의 지연·T4 봉인 구현(253/263) | `context.py:605-607`, `handlers.py:321-494`, `ticks.py:915-1010` | 감정 분류기 없음(종류·강도 판정 없음). T4 봉인 표지가 **정서 턴에서만** 검사됨 — companion 잡담 중 "우리끼리 얘긴데"는 봉인 안 되고 추출 큐로 들어감(`handlers.py:368`) | 중 |
 | 도구 실행 | **부분** — 날씨(기상청 REST)·의료(PostgreSQL+Gemini function calling) 실구현, 311이 그래프에 배선 | `weather/client.py`, `db/medical_repository.py`, `context.py:273-421` | 날씨 지역 = 발화 문자열 9개 도시 부분일치가 전부. 도시 없으면 조회 포기 → 실기에서 LLM이 기온을 지어냄(`PROGRESS.md:259`). 범용 실행 확인(confirm-before-execute) 정책 없음(의료 한정 확인 게이트만) | **최상** |
 | 기억 삭제 | **없음** — "기억하지 마" 처리 경로 전무. `operation: "CREATE"` 고정, 백엔드에도 삭제 엔드포인트 없음 | `fact_contract.py:76-87` (사유 주석 포함) | 시나리오 K 전면 미충족. 가장 가까운 것은 T4 봉인(사전 차단)뿐 | **상** |
@@ -110,7 +111,7 @@
 | B4 | **`audio_ctx` writer 부재** — 게이트 4(`is_busy`)가 항상 False. "끼어들기 방지" 게이트 사실상 비활성 | `gate.py:264-290`, `state.py:317` |
 | B5 | **`proposal_meta` writer 부재** — `handlers.py:306`이 읽지만 선언도 쓰기도 없음. 능동 복약 알림 직후 완료 보고가 슬롯을 못 찾을 수 있음 | `handlers.py:306`, `gate.py:414-426` |
 | B6 | `rest_state` / `messages`(add_messages 채널) / `memory_top_k` — 선언만 있고 writer 없는 죽은 필드 | `state.py:157,241,307` |
-| B7 | `availability` 미소비 — "관련 기억 없음"과 "벡터 검색 미배선"을 로봇이 구분 못 함 | 전수 grep 0히트 |
+| B7 | **해소(26e9635).** `availability`와 향후 요청별 `retrieval`을 `retrieval_status`로 정규화하고 프롬프트 경고·로그에 연결. 백엔드 요청별 필드 구현은 BE 작업으로 남음 | `state.py`, `context.py`, `prompts/builder.py`, `test_turn_end_to_end.py` |
 | B8 | Silero VAD 미구현·`EchoAwareVad` 미호출 — end-of-turn은 100% RMS 임계 판정. 233 실기에서 임계 오설정으로 문장 잘림 사고 | `audio/vad.py:7-16,29-76`, `PROGRESS.md:171` |
 
 ### C. 데이터 모델은 있으나 서비스가 활용하지 않음

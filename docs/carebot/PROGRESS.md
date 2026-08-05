@@ -320,9 +320,22 @@ deploying to a real senior.
 
 **그런데 기본값이 꺼짐입니다.** 임베딩 API 가 과금되고 잔액이 프로토타입 시연까지 감당해야 하므로, `EMBEDDING_ENABLED` 와 `EMBEDDING_SYNC_ENABLED` 를 명시적으로 켜야 동작합니다. 켜지지 않은 동안은 여전히 **키워드 겹침 × 중요도 × 최근성**으로만 순위를 매기고, 한국어 조사 때문에 "무릎이"와 "무릎"이 매칭되지 않습니다.
 
-즉 **"이어짐"(CLAUDE.md §17.2)은 스위치를 켜기 전까지 여전히 거의 작동하지 않습니다.** 응답의 `availability.semanticSearch` 가 그 사실을 그대로 알려줍니다 — 조용히 나빠지지는 않습니다.
+즉 **"이어짐"(CLAUDE.md §17.2)은 스위치를 켜기 전까지 여전히 거의 작동하지 않습니다.** 응답의 `availability.semanticSearch` 가 그 사실을 알려주며, AI WIP 커밋 `26e9635`부터 로봇도 이를 `retrieval_status`·로그·프롬프트 경고로 실제 소비합니다.
 
 배포 시 필요한 것: EC2 시크릿에 `UPSTAGE_API_KEY`(현재 없음), `QDRANT_DATA_DIR`, `QDRANT_API_KEY`.
+
+#### AI WIP — 문서 요청 순서와 검색 상태 소비 (26e9635)
+
+- 그래프 순서를 `classify_intent → context_read`로 바꿔 일반 반응형 정보 질문도
+  `includeDocuments=true`를 전송합니다. `"복지제도 알려줘"` 전체 그래프 회귀로
+  고정했습니다.
+- 현재 `availability`와 차기 BE의 요청별 `retrieval`(`semanticRequested`,
+  `semanticUsed`, `fallbackReason`, `hitCount`, `latencyMs`)을 구분해 상태·로그·프롬프트에
+  전달합니다. 없는 필드는 `false`가 아니라 모름으로 유지합니다.
+- 문서의 `source`, `version`, `chunkId`, `citation`, `url`을 최종 프롬프트까지 보존하고,
+  코퍼스 미가용과 정상 조회 0건을 다른 경고로 처리합니다.
+- **논리 검증:** ruff clean, `704 passed`. **미검증:** 실제 BE 요청별 계약, 실제 문서
+  코퍼스, Qdrant·Upstage·Spring Boot를 포함한 교차 모듈 E2E.
 
 ### 2.5 백엔드 API 에 인증이 없습니다
 
@@ -906,7 +919,7 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 |---|---|
 | 날씨 질문 1턴에서 생성 LLM 호출 1회 유지 | ✅ (`test_weather_question_makes_exactly_one_generation_call`) |
 | 날씨·의료 질문의 프롬프트에 "참고 자료" 렌더 (그래프를 태워서) | ✅ (`test_turn_end_to_end.py`, `app.invoke` 경유) |
-| 의료 판정이 한 턴에 한 번만 수행 | ✅ (`test_medical_determination_is_reused_by_classify_intent_in_the_same_turn`) |
+| 의료 판정이 한 턴에 한 번만 수행 | ✅ (`test_medical_determination_is_reused_by_context_read_in_the_same_turn`) |
 | 조회 실패 시 지어내지 않고 되묻거나 솔직히 답함 | ✅ 날씨·의료 각각 고정 |
 | legacy 경로(`pipeline.py`)의 기존 동작 불변 | ✅ 기존 테스트 그대로 통과 |
 
@@ -914,9 +927,9 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 
 **설계 판단 — 조회를 어느 노드에 둘 것인가.** `medical_flow.handle_medical_query` 는 자체적으로 Gemini function-calling 왕복을 합니다. 이것을 `handle_info` 안에서 그대로 부르면 §23(핸들러 직접 I/O 금지)을 깨고, 핸들러가 스스로 "말할지 여부"가 아니라 "무엇을 조회할지"까지 정하게 됩니다. 그래서 조회 자체를 **`context_read`**(`graph/context.py`)로 올렸습니다 — 이미 문맥을 조립하는 노드이고, `ctx["documents"]` 는 `prompts/builder.py` 가 `info` 인텐트에서 "참고 자료"로 이미 렌더하는 슬롯이라 빌더 시그니처를 바꿀 필요가 없었습니다. `handle_info` 는 여전히 `_generate()` 한 번만 부르는 얇은 핸들러로 남습니다.
 
-**두 번째 판단 — 반응형 턴은 이 시점에 아직 `intent` 가 없다.** 그래프 순서는 `context_read -> classify_intent` 입니다. 어르신이 먼저 말한 턴은 `context_read` 가 돌 때 `intent` 가 비어 있어, "info 일 때만 조회"라는 규칙을 그대로 쓸 수 없었습니다. 그래서 `context_read` 안에 정서·일정 표지만 먼저 거르는 값싼 사전 판정을 두고, 의료 힌트 표지(병원·약국·진료과·상비약 브랜드명)가 있을 때만 의료 라우터(`llm/router.py`, 로컬 SentenceTransformer)를 부르도록 좁혔습니다. 처음에는 힌트 없이 매 턴 라우터를 불렀는데, "내 약 뭐야" 같은 **기존** e2e 테스트 문구가 걸려 실제 모델을 로딩하려 하면서 테스트가 300초 넘게 멈췄습니다 — 힌트 표지 게이트로 좁혀 해결했고, 힌트에 바른 "약"을 넣지 않은 이유도 같습니다("내 약 뭐야"는 `ctx.careRecords` 로 이미 답할 수 있는 정확 조회 질문이지, 병원·약국 검색이 아닙니다).
+**두 번째 판단(311 당시) — 반응형 턴은 이 시점에 아직 `intent` 가 없었다.** 당시 그래프 순서는 `context_read -> classify_intent` 였습니다. 그래서 `context_read` 안에 의료 힌트 사전 판정을 두었습니다. 이후 `26e9635`가 문서 코퍼스 요청 누락을 고치기 위해 순서를 `classify_intent -> context_read`로 바꿨으며, 의료 힌트 게이트 자체는 값싼 1차 필터로 유지합니다.
 
-**세 번째 판단 — 라우터를 두 번 안 부르게.** `context_read` 가 의료 라우터를 부른 결과를 `state["is_medical_query"]` 에 남기고, `classify_intent` 는(자기 판정에서 그 값이 필요하면) 그것을 재사용합니다. `context_read` 는 이 값을 '읽지' 않습니다 — 이 노드가 매 턴 가장 먼저 돌기 때문에, 이 시점의 값은 지난 턴의 낡은 값이라 캐시로 믿으면 지난 발화의 의료 판정이 이번 발화에 새어듭니다. 그래서 매번 명시적으로 (재계산했으면 bool, 안 했으면 `None` 으로) 덮어써서 낡은 값이 새지 않게 했습니다.
+**세 번째 판단 — 라우터를 두 번 안 부르게.** 현재는 `classify_intent`가 의료 라우터 결과를 `state["is_medical_query"]`에 남기고, 뒤의 `context_read`가 재사용합니다. `note_interaction`은 매 반응형 턴 이 값을 먼저 `None`으로 지워 지난 판정이 새지 않게 합니다. 능동·백엔드 명령처럼 intent가 이미 있는 경로도 분류 노드에서 의료 판정 캐시만 비웁니다.
 
 **도시 추출 통합**: `pipeline.py`(legacy)에 메서드로만 있던 도시 추출을 `weather/client.py::extract_city` 로 옮기고, `pipeline.py` 는 그 함수를 호출하도록 바꿨습니다. 두 경로가 같은 구현 하나를 씁니다.
 

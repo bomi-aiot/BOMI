@@ -269,14 +269,27 @@ curl -X POST http://localhost:8080/api/v1/seniors/{어르신UUID}/conversation-c
   "relevantSummaries": [ ... ],
   "memories": [ { "content": "...", "score": 0.42 } ],
   "careRecords": [ ... ],
-  "availability": { "semanticSearch": false, "documentCorpus": false, "notes": [...] }
+  "availability": { "semanticSearch": false, "documentCorpus": false, "notes": [...] },
+  "retrieval": {
+    "semanticRequested": true,
+    "semanticUsed": false,
+    "fallbackReason": "embedding_disabled",
+    "hitCount": 0,
+    "latencyMs": 7
+  }
 }
 ```
+
+`retrieval`은 BE 계약 확장 전까지 없을 수 있습니다. 그때 로봇은 값을 `false`로
+지어내지 않고 "모름"으로 둡니다. BE 확장 뒤에는 `availability`가 기능 가용성,
+`retrieval`이 이번 요청의 실제 실행 결과인지 반드시 따로 확인합니다.
 
 | 확인 항목 | 성공 | 실패 |
 |---|---|---|
 | `memories` 개수 | 요청한 `memoryTopK` 이하 | 20개씩 오면 과적재 방지가 깨진 것 |
 | `availability.semanticSearch` | 지금은 `false` **가 정상** (218 은 이미 완료됐지만 임베딩 과금 때문에 `EMBEDDING_ENABLED` 기본값이 off) | `true` 인데 명시적으로 켠 적이 없으면 거짓 보고 |
+| `retrieval.semanticRequested/semanticUsed` | 요청·실행 여부가 실제 폴백과 일치 | 임베딩 실패인데 `semanticUsed=true`, 또는 필드 없이 성공으로 간주 |
+| `retrieval.fallbackReason` | `semanticUsed=false`이면 운영자가 이해할 수 있는 사유 | 빈 값이라 폴백 원인을 추적할 수 없음 |
 | `profile.avoidTopics` | 회피 주제가 실려 온다 | 비어 있으면 프롬프트가 금지문을 못 만든다 |
 | **`memories` 에 `visibility=PRIVATE` 인 기억** | 로봇 호출(guardian 미지정)에서는 **와야 정상** | 보호자 지정 호출에서 오면 🔴 **프라이버시 사고** |
 
@@ -295,8 +308,13 @@ FROM memory WHERE senior_id = '...';
 ### 2.5 반응형 1왕복 — 한 턴이 끝까지 도는가 (204)
 
 ```bash
-cd robot/ai_chat && python -m pytest tests/test_turn_end_to_end.py tests/test_prompt_builder.py -v
+cd robot/ai_chat && python -m pytest tests/test_graph_build.py tests/test_turn_end_to_end.py tests/test_prompt_builder.py -v
 ```
+
+`test_information_turn_requests_documents_and_preserves_retrieval_evidence`가 다음을 한 번에
+검증합니다: `classify_intent → includeDocuments=true → 문서 출처·버전·청크·인용 →
+retrieval_status → 최종 프롬프트`. 실제 Spring Boot·Qdrant까지 포함하는 검증은 BE
+브랜치의 교차 모듈 E2E가 생기기 전까지 `UNVERIFIED`입니다.
 
 **프롬프트를 눈으로 보고 싶다면** (LLM 호출 없이, 순수 함수라 가능):
 

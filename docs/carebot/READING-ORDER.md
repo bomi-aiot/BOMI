@@ -33,8 +33,8 @@
 | 1 | `graph/turn.py` | STT 텍스트를 받아 그래프를 호출. 지연 측정 시작 |
 | 2 | `graph/ingress.py` `note_interaction` | 사다리 리셋, occupancy=HOME, **barge-in 판단** |
 | 3 | `graph/triage.py` `safety_triage` | 안전 분류. T1 이면 여기서 파이프라인을 벗어난다 |
-| 4 | `graph/context.py` `context_read` | 백엔드에서 문맥 조회, 실패 시 캐시 |
-| 5 | `graph/context.py` `classify_intent` | 로컬 규칙으로 인텐트 결정 (LLM 안 씀) |
+| 4 | `graph/context.py` `classify_intent` | 로컬 규칙으로 인텐트 결정. 정보 턴의 문서 요청 여부를 문맥 조회 전에 확정 (LLM 안 씀) |
+| 5 | `graph/context.py` `context_read` | 백엔드에서 문맥 조회, 실패 시 캐시. `availability`와 요청별 `retrieval`을 정규화 |
 | 6 | `graph/handlers.py` `_generate` | **이 턴의 유일한 LLM 호출** |
 | 7 | `prompts/builder.py` `build_prompt` | 프롬프트 조립 (순수 함수) |
 | 8 | `graph/output.py` `response_shaper` | 문장 분할, 개수 제한 |

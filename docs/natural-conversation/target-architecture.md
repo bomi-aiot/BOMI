@@ -37,6 +37,8 @@
 session_state: str            # IDLE/LISTENING/PROCESSING/RESPONDING/ENDING — 관측용 스냅샷.
                               # 권위는 bootstrap 루프. 그래프는 기록만 한다.
 context_candidates: list[ContextCandidate]   # 아래 §3. 유일한 신규 "문맥" 저장소.
+retrieval_status: RetrievalStatus            # 기능 가용성과 이번 요청의 실제 검색·폴백을 분리.
+                                              # AI 구현됨(26e9635), BE 요청별 필드 확장 대기.
 pending_tool_action: dict | None             # 행동형 도구 확인 대기. 현재 도구는 읽기 전용이라
                                              # Phase 6 전까지 항상 None.
 ```
