@@ -68,6 +68,39 @@ def test_hospital_query_escapes_wildcards_and_has_stable_order(
     ]
 
 
+def test_hospital_name_search_ignores_whitespace(monkeypatch):
+    """STT가 공백을 다르게 넣어도 방금 알려준 곳을 계속 찾는다.
+
+    "남경 의원"으로 저장된 곳을 로봇이 말해줬는데, 되물을 때 "남경의원"으로
+    (공백 없이) 넘어오면 예전에는 ILIKE 부분 문자열 매칭이 깨져 로봇 스스로
+    방금 알려준 곳을 "못 찾겠다"고 답했다. 공백을 지우고 비교해야 한다.
+    """
+    connection = RecordingConnection(
+        [{"yadm_nm": "남경 의원", "addr": "부산", "cl_cd_nm": "의원"}]
+    )
+    monkeypatch.setattr(medical_repository, "_get_conn", lambda: connection)
+
+    rows = medical_repository.find_hospitals(name="남경의원")
+
+    assert rows[0]["yadm_nm"] == "남경 의원"
+    assert "regexp_replace(yadm_nm" in connection.cursor_instance.query
+    assert connection.cursor_instance.params[0] == "%남경의원%"
+
+
+def test_pharmacy_name_search_ignores_whitespace(monkeypatch):
+    """find_hospitals 와 같은 이유로 약국 이름도 공백을 지우고 비교한다."""
+    connection = RecordingConnection(
+        [{"yadm_nm": "행복 약국", "addr": "서울", "telno": "02-000-0000"}]
+    )
+    monkeypatch.setattr(medical_repository, "_get_conn", lambda: connection)
+
+    rows = medical_repository.find_pharmacies(name="행복약국")
+
+    assert rows[0]["yadm_nm"] == "행복 약국"
+    assert "regexp_replace(yadm_nm" in connection.cursor_instance.query
+    assert connection.cursor_instance.params[0] == "%행복약국%"
+
+
 def test_pharmacy_query_uses_deterministic_tie_breakers(monkeypatch):
     connection = RecordingConnection([])
     monkeypatch.setattr(

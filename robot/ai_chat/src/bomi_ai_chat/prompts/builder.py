@@ -203,6 +203,7 @@ def build_prompt(
     ctx_is_cached: bool = False,
     speech_origin: str = "",
     recent_phrasings: list[str] | None = None,
+    is_medical: bool = False,
 ) -> str:
     """이번 턴의 프롬프트를 만든다. 순수 함수다.
 
@@ -220,6 +221,9 @@ def build_prompt(
         ctx_is_cached: 백엔드에 닿지 못해 캐시를 썼다. 단정적 표현을 금지한다.
         speech_origin: 능동 턴이면 '왜 말하는가'. 로깅이 아니라 프롬프트에 들어간다.
         recent_phrasings: 같은 종류의 알림에서 최근에 쓴 표현.
+        is_medical: context_read 가 이번 턴에 병원·약국·의약품을 조회했는가
+            (state["is_medical_query"], S15P11E102-311). True 면 medical_stance.md
+            를 덧붙인다.
 
     반환값
         LLM 에 그대로 넘길 문자열.
@@ -230,6 +234,14 @@ def build_prompt(
         - 출력 제약은 맨 끝에 다시 넣는다. 위에만 있으면 긴 문맥에 묻힌다.
         - 지남력 질문의 '반복 횟수'는 절대 여기 들어오지 않는다. 어조에 새어나가
           열 번째 답변이 짜증스럽게 들린다. 그 정보는 T2 추세로만 간다 (CLAUDE.md §8).
+        - ★ is_medical 이 왜 필요한가(실측 버그, S15P11E102-311 이후)
+            system.md 의 "한 번에 한 가지만" 규칙과, 병원 조회 결과가 여러 건인
+            상황이 부딪힌다. 실제로 참고 자료에 "남경의원, 누엘의원, 가덕한의원"
+            세 곳이 정확히 담겨 있었는데도, 모델이 "한 가지만" 규칙과의 충돌을
+            "아무것도 말하지 않는" 쪽으로 풀어서 "찾아드릴게요"로만 답한 사고가
+            있었다. medical_stance.md 는 그 충돌의 해소 방법(2~3개까지는 나열
+            가능, 그래도 확실하지 않은 건 되묻는다)을 명시해서 참고 자료가 있는데
+            안 쓰는 실패를 막는다.
     """
     max_sentences = policy.MAX_SENTENCES_TERSE if terse else policy.MAX_SENTENCES
 
@@ -247,6 +259,13 @@ def build_prompt(
 
     if intent == "info":
         blocks.append(_section("참고 자료", _format_documents(ctx)))
+        if is_medical:
+            # 왜 emotional_stance.md 처럼 조건부인가
+            #   병원 조회가 아닌 날씨·복지제도 질문에도 이 지시를 넣으면 관련
+            #   없는 지시가 프롬프트를 채운다("2~3개만 안내"는 병원 목록에나
+            #   맞는 말이다). is_medical 이 이번 턴에 실제로 의료 조회가
+            #   있었는지를 정확히 가리키므로 여기서만 붙인다.
+            blocks.append(load_template("medical_stance.md"))
 
     if intent == "emotional":
         # 정서 턴에만 태도 지시를 넣는다 (S15P11E102-263).

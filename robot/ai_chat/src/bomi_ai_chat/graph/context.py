@@ -167,6 +167,26 @@ def context_read(state: ConvState) -> dict:
         # 어차피 둘 다 "모델이 답을 지어내지 말고 참고할 것"이라는 같은 역할이다.
         ctx = {**ctx, "documents": [*(ctx.get("documents") or []), *lookup_documents]}
 
+    # 참고 자료가 실제로 채워졌는지 눈으로 확인할 방법이 없었다 — emit() 로그는
+    # intent/response 만 찍고, "핸들러가 뭘 참고했는지"는 안 보였다. is_medical_query
+    # 가 True 인데 문서가 비어 있으면(조회 실패·시설 못 찾음 등), 답변이 참고 자료
+    # 없이 나온 것이므로 이 로그로 바로 의심할 수 있어야 한다.
+    #
+    # content 도 남기는 이유
+    #   제목만으로는 "의료 조회 결과"가 실제로 구체적인 병원 이름을 담고 있는지,
+    #   아니면 "어느 곳을 알려드릴까요?" 류의 안내/실패 메시지인지 구분이 안 된다.
+    #   그 구분이 "일반 LLM이 참고 자료를 무시했다" 대 "참고 자료 자체가 애매했다"
+    #   를 가른다. 200자로 자르는 이유는 파일에 매 턴 남는 로그라 통짜로 쌓이는
+    #   것을 막기 위해서다 — 이 정도면 애매한지 구체적인지 구분하기엔 충분하다.
+    logger.debug(
+        "lookup documents=%d medical=%s details=%s",
+        len(lookup_documents), medical_flag,
+        [
+            {"title": doc.get("title"), "content": (doc.get("content") or "")[:200]}
+            for doc in lookup_documents
+        ],
+    )
+
     return {
         "ctx": ctx,
         "ctx_is_cached": result.is_cached,
@@ -596,6 +616,18 @@ def _classify(text: str, *, medical_hint: bool | None = None) -> str:
         정서 표지를 정보 표지보다 먼저 본다. "외로운데 오늘 며칠이야"는 날짜를
         알려주는 턴이 아니라 들어야 하는 턴이다. 정보로 처리하면 사람이 아니라
         검색창처럼 반응하게 된다.
+
+        ★ medical_hint 가 있으면 물음표 여부와 무관하게 그대로 믿는다 (실측 버그)
+            "부산 강서구 정형외과 찾아줘." 는 _INFO_MARKERS 에도 없고 물음표로도
+            안 끝나서, 예전에는 이 아래 물음표 게이트를 통과 못 해 companion 으로
+            빠졌다 — 그런데 context_read 의 _gather_lookup_documents 는 더 넓은
+            _MEDICAL_HINT_MARKERS 로 이미 의료로 판정해 실제 DB 조회까지 마친
+            뒤였다. 조회는 됐는데 그 결과("참고 자료")를 아무도 안 쓰는 상황이
+            생긴 것이다 — handle_info 만 참고 자료를 읽고, info 로 안 가면
+            버려진다. 그래서 medical_hint 가 None 이 아니면(=context_read 가 이미
+            판정을 마쳤으면) 물음표 게이트를 거치지 않고 곧장 신뢰한다. 힌트가
+            아직 없을 때만(문장이 _MEDICAL_HINT_MARKERS 에도 안 걸린 경우) 기존의
+            좁은 물음표 게이트로 판정기를 새로 부른다.
     """
     lowered = text.lower()
 
@@ -606,13 +638,20 @@ def _classify(text: str, *, medical_hint: bool | None = None) -> str:
     if any(marker in lowered for marker in _INFO_MARKERS):
         return "info"
 
-    # 의료·위치 질문은 기존 임베딩 라우터가 이미 잘 판정한다. 재구현하지 않고
-    # 물음표로 끝나는 애매한 발화에서만 위임한다. medical_hint 가 있으면(311)
-    # context_read 가 이미 부른 라우터 결과를 재사용한다.
-    if _QUESTION_SUFFIX.search(text):
-        is_medical = medical_hint if medical_hint is not None else _is_medical(text)
-        if is_medical:
-            return "info"
+    # 의료·위치 질문은 기존 임베딩 라우터가 이미 잘 판정한다. 재구현하지 않는다.
+    # medical_hint 가 None 이 아니면 context_read 가 이미 판정을 마친 것이므로
+    # 표현 형태(물음표 등)와 무관하게 그대로 쓰고 라우터를 다시 부르지 않는다.
+    # 아직 판정되지 않았을 때만(힌트가 None) 물음표로 끝나는 애매한 발화에서
+    # 새로 판정기를 부른다 — 위 docstring 의 "medical_hint 가 있으면" 항목 참고.
+    if medical_hint is not None:
+        is_medical = medical_hint
+    elif _QUESTION_SUFFIX.search(text):
+        is_medical = _is_medical(text)
+    else:
+        is_medical = False
+
+    if is_medical:
+        return "info"
 
     # 나머지는 전부 말벗이다. 이 제품에서 기본값이 정보 제공이 아니라 대화인 것은
     # 의도된 선택이다. 외로움이 1번 문제이고 말벗이 본체다 (CLAUDE.md §1).

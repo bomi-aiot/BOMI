@@ -202,6 +202,25 @@ class WakeWordDetector:
                     if len(hits) > self.window:
                         hits = hits[-self.window :]
 
+                    # 실패한 시도의 점수도 남긴다 — 인식률 튜닝의 근거 데이터.
+                    #
+                    # 왜 필요한가 (인식률 문제 진단용, 임시 아님)
+                    #   지금까지는 성공했을 때만("wakeword detected") 점수를 남겼다.
+                    #   그래서 "왜 못 들었나"를 판단할 근거가 전혀 없었다 — 점수가
+                    #   threshold(0.4) 근처(예: 0.37)에서 아깝게 떨어졌는지, 아니면
+                    #   애초에 낮게(예: 0.08) 나왔는지에 따라 처방이 다르다. 앞의
+                    #   경우는 WAKEWORD_THRESHOLD 를 낮추면 되지만, 뒤의 경우는
+                    #   threshold 를 만져도 소용없고 마이크 픽업(거리·방향)
+                    #   문제다. 이 로그가 그 구분의 유일한 근거가 된다.
+                    #
+                    #   DEBUG 레벨이라 화면에는 -v 를 줘야 보이지만, 파일에는
+                    #   항상 남는다(main.py._setup_logging, S15P11E102-233) —
+                    #   80ms 마다 찍히므로 화면에 늘 띄우면 다른 로그를 다 덮는다.
+                    LOGGER.debug(
+                        "wakeword score=%.3f threshold=%.2f hits=%d/%d",
+                        score, self.threshold, sum(hits), len(hits),
+                    )
+
                     if sum(hits) >= self.min_hits:
                         LOGGER.info(
                             "wakeword detected score=%.2f hits=%d/%d",
