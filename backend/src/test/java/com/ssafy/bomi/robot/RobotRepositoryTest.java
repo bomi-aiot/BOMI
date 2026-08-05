@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.ssafy.bomi.robot.domain.Robot;
 import com.ssafy.bomi.robot.domain.RobotMode;
+import com.ssafy.bomi.robot.domain.OccupancyStatus;
 import com.ssafy.bomi.robot.repository.RobotRepository;
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -59,5 +60,30 @@ class RobotRepositoryTest {
         Robot locked = robotRepository.findByDeviceIdForUpdate("robot-lock-01").orElseThrow();
 
         assertThat(locked.getId()).isEqualTo(saved.getId());
+    }
+
+    @Test
+    void snapshotOnlyUpdatesPreserveSafetyCriticalMode() {
+        UUID seniorId = UUID.randomUUID();
+        Robot robot = Robot.create(seniorId, "robot-snapshot-01");
+        robot.changeMode(RobotMode.SAFE_STOP);
+        robotRepository.saveAndFlush(robot);
+        em.clear();
+
+        OffsetDateTime ambientAt = OffsetDateTime.now().minusMinutes(1);
+        OffsetDateTime occupancyAt = OffsetDateTime.now();
+        UUID robotId = robotRepository.findIdBySeniorId(seniorId).orElseThrow();
+        assertThat(robotRepository.updateAmbientSnapshotById(
+            robotId, new BigDecimal("22.50"), new BigDecimal("45.00"), ambientAt))
+            .isEqualTo(1);
+        assertThat(robotRepository.updateOccupancySnapshotById(
+            robotId, OccupancyStatus.HOME, occupancyAt))
+            .isEqualTo(1);
+        em.clear();
+
+        Robot found = robotRepository.findById(robot.getId()).orElseThrow();
+        assertThat(found.getCurrentMode()).isEqualTo(RobotMode.SAFE_STOP);
+        assertThat(found.getAmbientTemperatureC()).isEqualByComparingTo("22.50");
+        assertThat(found.getOccupancyStatus()).isEqualTo(OccupancyStatus.HOME);
     }
 }

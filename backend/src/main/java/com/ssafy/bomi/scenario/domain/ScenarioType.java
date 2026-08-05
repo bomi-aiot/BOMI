@@ -27,6 +27,8 @@ public enum ScenarioType {
     MEDICATION_REMINDER,
     /** "보미야" 호출 — AI 대화와 무관하게 거실 도착까지만 관리한다. */
     WAKE_WORD_CALL,
+    /** 산책 — Backend는 따라가기 명령과 상태만 관리하고 추종 제어는 Robot이 맡는다. */
+    WALK,
     /** 낙상 대응 — value reserved; flow not implemented yet. */
     FALL_RESPONSE,
     /** 수동 상호작용 — value reserved; flow not implemented yet. */

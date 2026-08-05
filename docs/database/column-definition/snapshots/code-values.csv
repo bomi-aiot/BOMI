@@ -176,3 +176,45 @@ care_record.status,CANCELLED,돌봄 기록 상태: CANCELLED,care_record.status�
 care_record.status,SUPERSEDED,돌봄 기록 상태: SUPERSEDED,care_record.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
 care_record.recurrence.frequency,DAILY,반복 주기: DAILY,care_record.recurrence.frequency의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
 care_record.recurrence.frequency,WEEKLY,반복 주기: WEEKLY,care_record.recurrence.frequency의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.scenario_type,WALK,시나리오 유형: 산책,scenario.scenario_type의 상태·분기 판단,FOLLOW 제어만 관리하고 tracking은 Robot 책임
+scenario.final_status,STARTING_FOLLOW,FOLLOW_START 결과 대기,WALK 시작 명령 발행 뒤 사용,늦은 STARTED가 STOPPING을 되돌리지 않음
+scenario.final_status,FOLLOWING,Robot 추종 진행 중,유효한 STARTED·UNCHANGED 뒤 사용,공용 20분 watchdog에서 제외
+scenario.final_status,STOPPING_FOLLOW,FOLLOW_STOP 결과 대기,명시적 STOP 또는 안전 종료 시 사용,같은 STOP 요청은 새 command를 만들지 않음
+walk_request_receipt.ingress,MQTT,Voice/AI MQTT 유입,request_id 멱등 범위를 정함,payload source와 구분
+walk_request_receipt.ingress,GUARDIAN_REST,Guardian REST 유입,App requestId 멱등 범위를 정함,MQTT의 같은 문자열 ID와 충돌하지 않음
+walk_request_receipt.action,START,산책 시작 요청,새 WALK 입장 정책 실행,활성 시나리오를 선점하지 않음
+walk_request_receipt.action,STOP,산책 종료 요청,같은 Robot의 활성 WALK를 잠금 조회,새 Scenario를 만들지 않음
+walk_request_receipt.source,VOICE,음성 의도 판정 출처,MQTT 요청 문맥 비교,Backend가 대화 intent를 새로 만들지 않음
+walk_request_receipt.source,APP,Guardian App 출처,REST adapter가 서버에서 고정,클라이언트가 다른 값으로 지정할 수 없음
+walk_request_receipt.disposition,RECEIVED,처리 중 임시 결정,영수증 생성 직후 사용,최종 응답으로 해석하지 않음
+walk_request_receipt.disposition,ACCEPTED,새 FOLLOW 명령 수락,START 또는 STOP 명령 발행 결정,scenario_id·scenario_status 필수
+walk_request_receipt.disposition,NO_OP_ALREADY_STOPPING,이미 종료 명령 대기 중,STOPPING 중 다른 STOP을 결정적으로 수락,기존 commandId를 다시 만들지 않음
+walk_request_receipt.disposition,REJECTED_NO_ACTIVE_WALK,종료할 활성 산책 없음,STOP without active 응답,나중에 생긴 산책을 같은 ID로 멈추지 않음
+walk_request_receipt.disposition,REJECTED_UNKNOWN_ROBOT,미등록 Robot,deviceId 권위 조회 실패,명령 미발행
+walk_request_receipt.disposition,REJECTED_INACTIVE_ROBOT,비활성 Robot,START 입장 정책,STOP 안전 시도에는 적용하지 않음
+walk_request_receipt.disposition,REJECTED_UNASSIGNED_ROBOT,시니어 미배정 Robot,START 대상 검증,어르신 잠금 없이 시작하지 않음
+walk_request_receipt.disposition,REJECTED_SAFE_STOP,SAFE_STOP Robot,START 안전 정책,안전 정지 상태에서 추종을 시작하지 않음
+walk_request_receipt.disposition,REJECTED_REST_GUARD,REST_GUARD Robot,START 휴식 보호 정책,휴식 상태를 산책이 선점하지 않음
+walk_request_receipt.disposition,REJECTED_ACTIVE_SCENARIO,다른 활성 시나리오 존재,시니어 단위 시작 직렬화,기존 흐름을 취소하지 않음
+walk_request_receipt.disposition,REJECTED_BUSY_MODE,지원하지 않는 활성 Robot mode,START mode 검사,IDLE에서만 산책 시작
+walk_request_receipt.disposition,REJECTED_REQUEST_ID_REUSED,요청 ID 문맥 불일치,같은 키의 robot/action/source 비교,기존 결정을 덮어쓰지 않음
+walk_request_receipt.disposition,REJECTED_MQTT_UNAVAILABLE,명령 gateway 비활성,REST 문서 profile·운영 장애 응답,영수증을 확정하지 않아 재시도 가능
+scenario.last_follow_result_code,STARTED,추종 시작 확인,FOLLOW_START 성공 결과,START commandId와 함께 검증
+scenario.last_follow_result_code,STOPPED,추종 종료 확인,명시적 STOP 또는 Robot 자체 종료,어느 commandId인지 함께 보존
+scenario.last_follow_result_code,UNCHANGED,이미 원하는 추종 상태 또는 Backend synthetic timeout 기록 코드,Robot 멱등 성공 결과 또는 timeout- eventId의 Backend 안전 종료,synthetic timeout은 Robot 성공 증거가 아니며 eventId·reasonCode와 함께 판별
+scenario.last_follow_reason_code,PERSON_LOST,추종 대상 놓침,실패 FOLLOW_RESULT,고빈도 tracking 정보는 저장하지 않음
+scenario.last_follow_reason_code,COMMAND_EXPIRED,명령 만료,실패·시간초과 결과,expiresAt과 구분해 코드만 저장
+scenario.last_follow_reason_code,EXECUTION_TIMEOUT,실행 시간초과,Robot 또는 Backend timeout,늦은 STOPPED가 원인을 덮어쓰지 않음
+scenario.last_follow_reason_code,SAFETY_STOP,Robot 안전 정지,취소·실패 결과,terminal Robot mode는 SAFE_STOP
+scenario.last_follow_reason_code,INTERNAL_ERROR,Robot 내부 오류,실패 FOLLOW_RESULT,상세 예외 전문은 로그 경계에 둠
+robot.occupancy_status / occupancy_event.resulting_occupancy,HOME,재실 확인,현관 IN 또는 발화 증거 적용 뒤 사용,현재 스냅샷과 이벤트 결과를 같은 코드로 유지
+robot.occupancy_status / occupancy_event.resulting_occupancy,AWAY,외출 확인,현관 OUT 증거 적용 뒤 사용,침묵을 이상으로 오판하지 않게 함
+robot.occupancy_status / occupancy_event.resulting_occupancy,UNKNOWN,재실 불명,관측 전 또는 현관 하트비트 timeout 뒤 사용,HOME으로 낙관하지 않음
+occupancy_event.direction,IN,현관 안쪽 통과,귀가 이벤트에 사용,방향 없는 재실 변화는 null
+occupancy_event.direction,OUT,현관 바깥쪽 통과,외출 이벤트에 사용,방향 없는 재실 변화는 null
+occupancy_event.source,DOOR_SENSOR,현관 센서 확정,문 통과 재실 변화에 사용,센서 reportedAt은 참고 시각
+occupancy_event.source,SPEECH,발화로 HOME 확정,어르신 발화 감지 시 사용,발화는 집 안 존재의 강한 증거
+occupancy_event.source,HEARTBEAT_TIMEOUT,현관 노드 통신 만료,재실을 UNKNOWN으로 강등할 때 사용,문 통과 사건이 아님
+care_record.notification_tier,T1,즉시 보호자 알림,응급·즉시 공유 사건,T4는 이 컬럼에 저장하지 않음
+care_record.notification_tier,T2,일간 요약,추세·비응급 관찰 집계,중복 발송은 summary_sent_at으로 방지
+care_record.notification_tier,T3,시니어 동의 필요,민감 사실 공유 전 동의 흐름,권한·동의를 우회하지 않음

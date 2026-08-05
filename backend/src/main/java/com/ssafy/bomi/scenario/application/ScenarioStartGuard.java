@@ -65,7 +65,7 @@ public class ScenarioStartGuard {
     public Optional<BlockReason> check(UUID seniorId, ScenarioType type, Duration cooldown) {
         // Every starter takes the same senior-row mutex before exists-then-insert.
         // The partial unique index remains the final cross-process invariant.
-        if (appUserRepository.findByIdForUpdate(seniorId).isEmpty()) {
+        if (!lockSenior(seniorId)) {
             return Optional.of(BlockReason.SENIOR_NOT_FOUND);
         }
         if (scenarioRepository.existsBySeniorIdAndFinalStatusIn(
@@ -78,5 +78,13 @@ public class ScenarioStartGuard {
             return Optional.of(BlockReason.COOLDOWN_ACTIVE);
         }
         return Optional.empty();
+    }
+
+    /** Acquires the shared senior-row mutex without applying START admission policy. */
+    public boolean lockSenior(UUID seniorId) {
+        if (seniorId == null) {
+            return false;
+        }
+        return appUserRepository.findByIdForUpdate(seniorId).isPresent();
     }
 }

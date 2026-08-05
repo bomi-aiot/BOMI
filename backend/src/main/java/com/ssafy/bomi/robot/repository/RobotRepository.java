@@ -1,11 +1,15 @@
 package com.ssafy.bomi.robot.repository;
 
+import com.ssafy.bomi.robot.domain.OccupancyStatus;
 import com.ssafy.bomi.robot.domain.Robot;
 import jakarta.persistence.LockModeType;
+import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -26,4 +30,43 @@ public interface RobotRepository extends JpaRepository<Robot, UUID> {
 
     /** Resolves the robot currently assigned to a senior. */
     Optional<Robot> findBySeniorId(UUID seniorId);
+
+    /** Resolves one authoritative Robot id without attaching a stale Robot snapshot. */
+    @Query("select r.id from Robot r where r.seniorId = :seniorId")
+    Optional<UUID> findIdBySeniorId(@Param("seniorId") UUID seniorId);
+
+    /**
+     * Updates only the ambient snapshot columns.
+     *
+     * <p>A sensor observation must never write a stale {@code current_mode} back over a
+     * concurrently committed scenario or SAFE_STOP transition.</p>
+     */
+    @Modifying(flushAutomatically = true)
+    @Query("""
+        update Robot r
+           set r.ambientTemperatureC = :temperatureC,
+               r.ambientHumidityPercent = :humidityPercent,
+               r.ambientObservedAt = :observedAt
+         where r.id = :robotId
+        """)
+    int updateAmbientSnapshotById(
+        @Param("robotId") UUID robotId,
+        @Param("temperatureC") BigDecimal temperatureC,
+        @Param("humidityPercent") BigDecimal humidityPercent,
+        @Param("observedAt") OffsetDateTime observedAt
+    );
+
+    /** Updates only occupancy snapshot columns, preserving concurrent mode changes. */
+    @Modifying(flushAutomatically = true)
+    @Query("""
+        update Robot r
+           set r.occupancyStatus = :status,
+               r.occupancyObservedAt = :observedAt
+         where r.id = :robotId
+        """)
+    int updateOccupancySnapshotById(
+        @Param("robotId") UUID robotId,
+        @Param("status") OccupancyStatus status,
+        @Param("observedAt") OffsetDateTime observedAt
+    );
 }
