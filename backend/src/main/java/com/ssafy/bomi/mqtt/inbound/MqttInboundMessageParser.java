@@ -20,6 +20,9 @@ public class MqttInboundMessageParser {
     private static final Set<String> NAVIGATION_REASON_CODES = Set.of(
         "COMMAND_EXPIRED", "UNKNOWN_TARGET", "PATH_BLOCKED", "LOCALIZATION_LOST",
         "EXECUTION_TIMEOUT", "SAFETY_STOP", "INTERNAL_ERROR");
+    private static final Set<String> FOLLOW_REASON_CODES = Set.of(
+        "PERSON_LOST", "COMMAND_EXPIRED", "EXECUTION_TIMEOUT", "SAFETY_STOP",
+        "INTERNAL_ERROR");
     // PRESENCE_DETECTED: 초기 계약의 방향-판정 이벤트. IoT는 이제 DOOR_OPENED +
     // MOTION_DETECTED(현관 PIR)로 직접 보낸다 (S15P11E102-226). 아직 이 타입을 보내는
     // 배포가 남아있을 수 있어 당장 제거하지 않고 허용 목록에 남겨둔다 — 지워도 되는지는
@@ -30,11 +33,11 @@ public class MqttInboundMessageParser {
             "AMBIENT_ENVIRONMENT_OBSERVED"),
         MqttInboundCategory.ROBOT_EVENT,
         Set.of("ONBOARDING_ANSWER_CAPTURED", "WAKE_WORD_DETECTED",
-            "CONVERSATION_STARTED", "CONVERSATION_ENDED"),
+            "WALK_REQUESTED", "CONVERSATION_STARTED", "CONVERSATION_ENDED"),
         MqttInboundCategory.ROBOT_STATUS,
         Set.of("REST_STATE_CHANGED", "NAVIGATION_STATUS"),
         MqttInboundCategory.ROBOT_RESULT,
-        Set.of("NAVIGATION_RESULT", "SPEAK_RESULT", "CANCEL_RESULT")
+        Set.of("NAVIGATION_RESULT", "SPEAK_RESULT", "CANCEL_RESULT", "FOLLOW_RESULT")
     );
 
     private final ObjectMapper objectMapper;
@@ -95,6 +98,8 @@ public class MqttInboundMessageParser {
         return switch (type) {
             case "NAVIGATION_RESULT" -> validateNavigationResult(body);
             case "WAKE_WORD_DETECTED" -> validateWakeWordDetected(body);
+            case "WALK_REQUESTED" -> validateWalkRequested(body);
+            case "FOLLOW_RESULT" -> validateFollowResult(body);
             case "CONVERSATION_STARTED" -> validateConversationStarted(body);
             case "CONVERSATION_ENDED" -> validateConversationEnded(body);
             default -> new Correlation(
@@ -135,6 +140,69 @@ public class MqttInboundMessageParser {
         }
 
         return new Correlation(null, null, null, false);
+    }
+
+    private static Correlation validateWalkRequested(JsonNode body) {
+        rejectUnexpectedFields(body,
+            Set.of("eventId", "conversationId", "robotId", "type", "occurredAt", "payload"),
+            "WALK_REQUESTED envelope");
+        JsonNode payload = body.get("payload");
+        rejectUnexpectedFields(payload, Set.of("action", "source"),
+            "WALK_REQUESTED payload");
+
+        String action = requiredText(payload, "action", 10);
+        if (!Set.of("START", "STOP").contains(action)) {
+            throw new MqttContractViolationException(
+                "Unsupported WALK_REQUESTED action '" + action + "'");
+        }
+        String source = requiredText(payload, "source", 10);
+        if (!Set.of("VOICE", "APP").contains(source)) {
+            throw new MqttContractViolationException(
+                "Unsupported WALK_REQUESTED source '" + source + "'");
+        }
+        return new Correlation(
+            null, optionalUuid(body, "conversationId"), null, false);
+    }
+
+    private static Correlation validateFollowResult(JsonNode body) {
+        rejectUnexpectedFields(body,
+            Set.of("eventId", "commandId", "scenarioId", "robotId", "type", "occurredAt",
+                "payload"),
+            "FOLLOW_RESULT envelope");
+        UUID scenarioId = requiredUuid(body, "scenarioId", "scenarioId");
+        String commandId = requiredText(body, "commandId", MAX_OPAQUE_ID_LENGTH);
+        JsonNode payload = body.get("payload");
+        rejectUnexpectedFields(payload, Set.of("outcome", "resultCode", "reasonCode", "message"),
+            "FOLLOW_RESULT payload");
+
+        String outcome = requiredText(payload, "outcome", 32);
+        if (!Set.of("SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT").contains(outcome)) {
+            throw new MqttContractViolationException(
+                "Unsupported FOLLOW_RESULT outcome '" + outcome + "'");
+        }
+        String resultCode = requiredText(payload, "resultCode", 32);
+        if (!Set.of("STARTED", "STOPPED", "UNCHANGED").contains(resultCode)) {
+            throw new MqttContractViolationException(
+                "Unsupported FOLLOW_RESULT resultCode '" + resultCode + "'");
+        }
+        String reasonCode = requiredNullableReason(payload);
+        if (reasonCode != null && !FOLLOW_REASON_CODES.contains(reasonCode)) {
+            throw new MqttContractViolationException(
+                "Unsupported FOLLOW_RESULT reasonCode '" + reasonCode + "'");
+        }
+        if ("SUCCEEDED".equals(outcome) && reasonCode != null) {
+            throw new MqttContractViolationException(
+                "Successful FOLLOW_RESULT requires reasonCode=null");
+        }
+        if (!"SUCCEEDED".equals(outcome) && reasonCode == null) {
+            throw new MqttContractViolationException(
+                "Unsuccessful FOLLOW_RESULT requires a reasonCode");
+        }
+        if (payload.has("message") && !payload.get("message").isTextual()) {
+            throw new MqttContractViolationException(
+                "MQTT payload field 'message' must be a string");
+        }
+        return new Correlation(scenarioId, null, commandId, false);
     }
 
     private static void rejectUnexpectedFields(
@@ -250,7 +318,13 @@ public class MqttInboundMessageParser {
     private static UUID requiredUuid(JsonNode body, String field, String displayName) {
         String value = requiredText(body, field, 36);
         try {
-            return UUID.fromString(value);
+            UUID parsed = UUID.fromString(value);
+            // UUID.fromString accepts shortened hexadecimal groups (for example 1-1-1-1-1),
+            // while the wire contract's format: uuid requires the canonical 36-character form.
+            if (!parsed.toString().equalsIgnoreCase(value)) {
+                throw new IllegalArgumentException("UUID is not in canonical form");
+            }
+            return parsed;
         } catch (IllegalArgumentException ex) {
             throw new MqttContractViolationException(
                 "MQTT payload field '" + displayName + "' must be a UUID", ex);

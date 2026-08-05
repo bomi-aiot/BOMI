@@ -154,6 +154,98 @@ class AsyncApiDocumentationTest {
         assertThat((List<String>) payload.get("required")).containsExactly("keyword");
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void walkAndFollowSchemasMatchTheFinalRuntimeContract() throws IOException {
+        Map<String, Object> components =
+            (Map<String, Object>) loadSpec().get("components");
+        Map<String, Object> schemas =
+            (Map<String, Object>) components.get("schemas");
+
+        Map<String, Object> walk =
+            (Map<String, Object>) schemas.get("WalkRequestedPayload");
+        assertThat(walk.get("additionalProperties")).isEqualTo(false);
+        assertThat((List<String>) walk.get("required"))
+            .containsExactly("eventId", "robotId", "type", "occurredAt", "payload");
+        Map<String, Object> walkProperties =
+            (Map<String, Object>) walk.get("properties");
+        assertThat(walkProperties).containsKey("conversationId");
+        assertThat(walkProperties).doesNotContainKeys("scenarioId", "commandId");
+        Map<String, Object> walkPayload =
+            (Map<String, Object>) walkProperties.get("payload");
+        assertThat(walkPayload.get("additionalProperties")).isEqualTo(false);
+        assertThat((List<String>) walkPayload.get("required"))
+            .containsExactly("action", "source");
+        Map<String, Object> walkPayloadProperties =
+            (Map<String, Object>) walkPayload.get("properties");
+        assertThat((List<String>) ((Map<String, Object>)
+            walkPayloadProperties.get("action")).get("enum"))
+            .containsExactly("START", "STOP");
+        assertThat((List<String>) ((Map<String, Object>)
+            walkPayloadProperties.get("source")).get("enum"))
+            .containsExactly("VOICE", "APP");
+
+        for (String schemaName : List.of("FollowStartCommand", "FollowStopCommand")) {
+            Map<String, Object> command =
+                (Map<String, Object>) schemas.get(schemaName);
+            List<Map<String, Object>> allOf =
+                (List<Map<String, Object>>) command.get("allOf");
+            Map<String, Object> commandProperties =
+                (Map<String, Object>) allOf.get(1).get("properties");
+            Map<String, Object> payload =
+                (Map<String, Object>) commandProperties.get("payload");
+            assertThat(payload)
+                .containsEntry("maxProperties", 0)
+                .containsEntry("additionalProperties", false);
+        }
+
+        Map<String, Object> follow =
+            (Map<String, Object>) schemas.get("FollowResultPayload");
+        assertThat(follow.get("additionalProperties")).isEqualTo(false);
+        assertThat((List<String>) follow.get("required"))
+            .containsExactly(
+                "eventId", "commandId", "scenarioId", "robotId", "type", "occurredAt",
+                "payload");
+        Map<String, Object> followProperties =
+            (Map<String, Object>) follow.get("properties");
+        Map<String, Object> followPayload =
+            (Map<String, Object>) followProperties.get("payload");
+        assertThat(followPayload.get("additionalProperties")).isEqualTo(false);
+        assertThat((List<String>) followPayload.get("required"))
+            .containsExactly("outcome", "resultCode", "reasonCode");
+        Map<String, Object> followPayloadProperties =
+            (Map<String, Object>) followPayload.get("properties");
+        assertThat((List<String>) ((Map<String, Object>)
+            followPayloadProperties.get("resultCode")).get("enum"))
+            .containsExactly("STARTED", "STOPPED", "UNCHANGED");
+        assertThat((List<Object>) ((Map<String, Object>)
+            followPayloadProperties.get("reasonCode")).get("enum"))
+            .containsExactly(
+                null, "PERSON_LOST", "COMMAND_EXPIRED", "EXECUTION_TIMEOUT", "SAFETY_STOP",
+                "INTERNAL_ERROR");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void walkMqttOperationsUseQosOneAndRetainFalse() throws IOException {
+        Map<String, Object> operations =
+            (Map<String, Object>) loadSpec().get("operations");
+
+        for (String operationName : List.of(
+            "sendRobotCommand", "receiveRobotEvents", "receiveRobotResults")) {
+            Map<String, Object> operation =
+                (Map<String, Object>) operations.get(operationName);
+            Map<String, Object> bindings =
+                (Map<String, Object>) operation.get("bindings");
+            Map<String, Object> mqtt =
+                (Map<String, Object>) bindings.get("mqtt");
+            assertThat(mqtt)
+                .as(operationName)
+                .containsEntry("qos", 1)
+                .containsEntry("retain", false);
+        }
+    }
+
     /**
      * 스펙과 마크다운 계약서가 같은 토픽을 말하는지 본다. 토픽을 하나 추가하면서
      * 한쪽만 고치면 여기서 걸린다.

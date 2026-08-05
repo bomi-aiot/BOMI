@@ -11,10 +11,12 @@ import com.ssafy.bomi.occupancy.domain.OccupancyDirection;
 import com.ssafy.bomi.occupancy.repository.OccupancyEventRepository;
 import com.ssafy.bomi.robot.domain.OccupancyStatus;
 import com.ssafy.bomi.robot.domain.Robot;
+import com.ssafy.bomi.robot.domain.RobotMode;
 import com.ssafy.bomi.robot.repository.RobotRepository;
 import com.ssafy.bomi.user.domain.AppUser;
 import com.ssafy.bomi.user.repository.AppUserRepository;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import jakarta.persistence.EntityManager;
 import java.io.IOException;
 import java.time.OffsetDateTime;
 import java.time.temporal.ChronoUnit;
@@ -64,6 +66,7 @@ class DoorEventServiceTest {
     @Autowired private RobotRepository robotRepository;
     @Autowired private CareRecordRepository careRecordRepository;
     @Autowired private AppUserRepository appUserRepository;
+    @Autowired private EntityManager entityManager;
 
     private UUID seniorId;
 
@@ -314,6 +317,24 @@ class DoorEventServiceTest {
                 assertThat(event.getDirection()).isEqualTo(OccupancyDirection.OUT);
                 assertThat(event.getResultingOccupancy()).isEqualTo(OccupancyStatus.AWAY);
             });
+    }
+
+    @Test
+    void occupancySnapshotNeverOverwritesSafeStopMode() {
+        Robot robot = robot();
+        robot.changeMode(RobotMode.SAFE_STOP);
+        robotRepository.saveAndFlush(robot);
+        entityManager.clear();
+
+        OffsetDateTime now = OffsetDateTime.now();
+        service.accept(seniorId, Signal.MOTION, now, null);
+        service.accept(seniorId, Signal.DOOR_OPENED, now.plusSeconds(2), null);
+        robotRepository.flush();
+        entityManager.clear();
+
+        Robot found = robot();
+        assertThat(found.getOccupancyStatus()).isEqualTo(OccupancyStatus.AWAY);
+        assertThat(found.getCurrentMode()).isEqualTo(RobotMode.SAFE_STOP);
     }
 
     @Test

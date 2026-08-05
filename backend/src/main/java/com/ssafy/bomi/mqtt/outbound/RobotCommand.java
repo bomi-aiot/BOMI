@@ -26,6 +26,11 @@ public record RobotCommand(
         expiresAt = requireNonNull(expiresAt, "expiresAt");
         payload = payload == null ? Map.of() : Map.copyOf(payload);
 
+        if ((type == RobotCommandType.FOLLOW_START || type == RobotCommandType.FOLLOW_STOP)
+            && !payload.isEmpty()) {
+            throw new IllegalArgumentException(type + " payload must be an empty object");
+        }
+
         if (!expiresAt.isAfter(occurredAt)) {
             throw new IllegalArgumentException("expiresAt must be after occurredAt");
         }

@@ -26,9 +26,9 @@ import org.hibernate.type.SqlTypes;
  * {@code confirmed_by_user_id} reference {@code app_user}. The optional
  * {@code source_conversation_id} / {@code source_message_id} link the robot-side
  * evidence (§5); the app channel may have neither. All references are raw
- * {@link UUID} logical references per the raw-UUID convention, except
- * {@code source_message_id}, which the MVP ERD designates a physical FK to
- * {@code conversation_message} with {@code ON DELETE SET NULL} (§4).</p>
+ * {@link UUID} logical references per the raw-UUID convention. That includes
+ * {@code source_message_id}; V1~V16 declares no physical FK or automatic delete
+ * propagation (§4).</p>
  *
  * <p>{@code answer_value} is the channel-independent normalized answer. It is not
  * a final query source; sensitive intermediate values are not retained
@@ -65,7 +65,7 @@ public class OnboardingAnswer {
     @Column(name = "source_conversation_id")
     private UUID sourceConversationId;
 
-    /** Physical FK to {@code conversation_message} ({@code ON DELETE SET NULL}). */
+    /** Logical reference to {@code conversation_message}; deletion is handled by policy. */
     @Column(name = "source_message_id")
     private UUID sourceMessageId;
 

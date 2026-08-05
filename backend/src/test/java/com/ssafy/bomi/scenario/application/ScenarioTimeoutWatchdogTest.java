@@ -3,6 +3,7 @@ package com.ssafy.bomi.scenario.application;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -60,7 +61,8 @@ class ScenarioTimeoutWatchdogTest {
     @Test
     void forcesTimedOutAndSyncsRobotModeForStaleActiveScenario() {
         Scenario stuck = conversingScenario();
-        when(scenarioRepository.findByFinalStatusInAndUpdatedAtBefore(anyCollection(), any()))
+        when(scenarioRepository.findByFinalStatusInAndUpdatedAtBefore(
+                eq(ScenarioType.WALK), anyCollection(), any()))
             .thenReturn(List.of(stuck));
         Robot robot = Robot.create(seniorId, "robot-01");
         ReflectionTestUtils.setField(robot, "id", robotId);
@@ -77,13 +79,15 @@ class ScenarioTimeoutWatchdogTest {
     @Test
     void usesConfiguredCutoff() {
         properties.setActiveTimeout(java.time.Duration.ofMinutes(20));
-        when(scenarioRepository.findByFinalStatusInAndUpdatedAtBefore(anyCollection(), any()))
+        when(scenarioRepository.findByFinalStatusInAndUpdatedAtBefore(
+                eq(ScenarioType.WALK), anyCollection(), any()))
             .thenReturn(List.of());
 
         watchdog().tick();
 
         ArgumentCaptor<OffsetDateTime> cutoffCaptor = ArgumentCaptor.forClass(OffsetDateTime.class);
-        verify(scenarioRepository).findByFinalStatusInAndUpdatedAtBefore(anyCollection(), cutoffCaptor.capture());
+        verify(scenarioRepository).findByFinalStatusInAndUpdatedAtBefore(
+            eq(ScenarioType.WALK), anyCollection(), cutoffCaptor.capture());
         assertThat(cutoffCaptor.getValue())
             .isEqualTo(OffsetDateTime.now(fixedClock).minusMinutes(20));
     }
@@ -94,7 +98,8 @@ class ScenarioTimeoutWatchdogTest {
         alreadyDone.decideReturn();
         alreadyDone.returnToDefault();
         alreadyDone.complete(); // resolved by the normal path just before the watchdog got to it
-        when(scenarioRepository.findByFinalStatusInAndUpdatedAtBefore(anyCollection(), any()))
+        when(scenarioRepository.findByFinalStatusInAndUpdatedAtBefore(
+                eq(ScenarioType.WALK), anyCollection(), any()))
             .thenReturn(List.of(alreadyDone));
 
         watchdog().tick();
@@ -105,9 +110,24 @@ class ScenarioTimeoutWatchdogTest {
 
     @Test
     void tickSwallowsRuntimeExceptionsSoNextTickCanRetry() {
-        when(scenarioRepository.findByFinalStatusInAndUpdatedAtBefore(anyCollection(), any()))
+        when(scenarioRepository.findByFinalStatusInAndUpdatedAtBefore(
+                eq(ScenarioType.WALK), anyCollection(), any()))
             .thenThrow(new RuntimeException("db hiccup"));
 
         watchdog().tick(); // must not throw
+    }
+
+    @Test
+    void delegatesWalkExclusionToRepositorySoGenericWatchdogCannotExpireFollowingWalk() {
+        when(scenarioRepository.findByFinalStatusInAndUpdatedAtBefore(
+                eq(ScenarioType.WALK), anyCollection(), any()))
+            .thenReturn(List.of());
+
+        watchdog().tick();
+
+        verify(scenarioRepository).findByFinalStatusInAndUpdatedAtBefore(
+            eq(ScenarioType.WALK), anyCollection(), any());
+        verify(scenarioRepository, never()).save(any());
+        verify(robotRepository, never()).save(any());
     }
 }

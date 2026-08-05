@@ -8,7 +8,9 @@ IoT 발행 코드의 "실행 가능한 정답지"이자, 시연 안전판이다.
     python publish_event.py door                          # 문 열림 → 귀가 시나리오
     python publish_event.py ambient --temp 31.5           # 온습도 (임계값 초과)
     python publish_event.py wake                          # "보미야" 호출
-    python publish_event.py walk                          # 산책 요청
+    python publish_event.py walk-start                    # 음성 산책 시작 요청
+    python publish_event.py walk-stop                     # 음성 산책 종료 요청
+    python publish_event.py follow-result --scenario <uuid> --command <id> --result-code STARTED
     python publish_event.py result --scenario <uuid> --status ARRIVED
     python publish_event.py robot-sim                     # 로봇 흉내: 명령 수신 → 자동 회신
     python publish_event.py door --dry-run                # 발행 없이 메시지만 출력
@@ -32,6 +34,16 @@ DEFAULT_DOOR_SENSOR = "door_sensor"          # bomi.homecoming.sensor-to-senior 
 DEFAULT_AMBIENT_SENSOR = "ambient-sensor-01" # bomi.observation.ambient-sensor-to-senior 등록 필요
 DEFAULT_ROBOT_ID = "bomi-AA001"              # robot.device_id (김순자 시드)
 DEFAULT_WAKE_KEYWORD = "보미야"
+
+FOLLOW_OUTCOMES = ["SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT"]
+FOLLOW_RESULT_CODES = ["STARTED", "STOPPED", "UNCHANGED"]
+FOLLOW_REASON_CODES = [
+    "PERSON_LOST",
+    "COMMAND_EXPIRED",
+    "EXECUTION_TIMEOUT",
+    "SAFETY_STOP",
+    "INTERNAL_ERROR",
+]
 
 TOPIC_IOT_EVENTS = "bomi/v1/iot/{device_id}/events"
 TOPIC_ROBOT_EVENTS = "bomi/v1/robot/{device_id}/events"
@@ -62,6 +74,19 @@ def confidence_0_to_1(value: str) -> float:
     if not 0.0 <= parsed <= 1.0:
         raise argparse.ArgumentTypeError("confidence must be between 0 and 1")
     return parsed
+
+
+def uuid_text(value: str) -> str:
+    try:
+        return str(uuid.UUID(value))
+    except (ValueError, AttributeError) as exc:
+        raise argparse.ArgumentTypeError("must be a UUID") from exc
+
+
+def opaque_id(value: str) -> str:
+    if not value or not value.strip() or len(value) > 64:
+        raise argparse.ArgumentTypeError("must be a non-blank string of at most 64 characters")
+    return value
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +145,35 @@ def build_walk(args):
         "type": "WALK_REQUESTED",
         "occurredAt": now_iso(),
         "robotId": args.robot,
-        "payload": {"source": args.source},
+        "payload": {"action": args.action, "source": args.source},
+    }
+    if args.conversation_id is not None:
+        body["conversationId"] = args.conversation_id
+    return topic, body
+
+
+def build_follow_result(args):
+    if args.outcome == "SUCCEEDED" and args.reason_code is not None:
+        raise SystemExit("SUCCEEDED follow-result requires reasonCode=null (omit --reason-code)")
+    if args.outcome != "SUCCEEDED" and args.reason_code is None:
+        raise SystemExit("non-success follow-result requires --reason-code")
+
+    topic = TOPIC_ROBOT_RESULTS.format(device_id=args.robot)
+    payload = {
+        "outcome": args.outcome,
+        "resultCode": args.result_code,
+        "reasonCode": args.reason_code,
+    }
+    if args.message is not None:
+        payload["message"] = args.message
+    body = {
+        "eventId": new_event_id(),
+        "commandId": args.command,
+        "scenarioId": args.scenario,
+        "robotId": args.robot,
+        "type": "FOLLOW_RESULT",
+        "occurredAt": now_iso(),
+        "payload": payload,
     }
     return topic, body
 
@@ -200,10 +253,18 @@ def publish_one(args, topic, body):
 # ---------------------------------------------------------------------------
 RESULT_MAP = {
     "NAVIGATE": ("NAVIGATION_RESULT", "ARRIVED"),
-    "SPEAK": ("SPEAK_RESULT", "DONE"),
-    "CANCEL": ("CANCEL_RESULT", "CANCELLED"),
+    "SPEAK": ("SPEAK_RESULT", "SPOKEN"),
+    "CANCEL": ("CANCEL_RESULT", "TARGET_CANCELLED"),
     "FOLLOW_START": ("FOLLOW_RESULT", "STARTED"),
     "FOLLOW_STOP": ("FOLLOW_RESULT", "STOPPED"),
+}
+
+FAILURE_RESULT_CODE = {
+    "NAVIGATE": "NOT_ARRIVED",
+    "SPEAK": "NOT_SPOKEN",
+    "CANCEL": "TARGET_UNCHANGED",
+    "FOLLOW_START": "UNCHANGED",
+    "FOLLOW_STOP": "UNCHANGED",
 }
 
 
@@ -220,25 +281,47 @@ def run_robot_sim(args):
             return
         ctype = command.get("type", "?")
         scenario_id = command.get("scenarioId")
+        command_id = command.get("commandId")
         print(f"[robot-sim] 명령 수신: {ctype} payload={command.get('payload')} scenarioId={scenario_id}")
         mapped = RESULT_MAP.get(ctype)
         if not mapped:
             print(f"[robot-sim] 모르는 명령 무시: {ctype}")
             return
+        if not scenario_id or not command_id:
+            print("[robot-sim] scenarioId 또는 commandId가 없는 명령 무시")
+            return
         result_type, ok_status = mapped
-        status = "FAILED" if args.fail else ok_status
+        outcome = "FAILED" if args.fail else "SUCCEEDED"
+        result_code = FAILURE_RESULT_CODE[ctype] if args.fail else ok_status
+        reason_code = "INTERNAL_ERROR" if args.fail else None
         if ctype == "NAVIGATE" and not args.fail:
             print(f"[robot-sim] {args.delay}초 주행 흉내...")
             time.sleep(args.delay)
+        result_payload = {
+            "outcome": outcome,
+            "resultCode": result_code,
+            "reasonCode": reason_code,
+        }
+        if ctype == "CANCEL":
+            result_payload["targetCommandId"] = command.get("payload", {}).get(
+                "targetCommandId"
+            )
         body = {
             "eventId": new_event_id(),
+            "commandId": command_id,
+            "scenarioId": scenario_id,
             "type": result_type,
             "occurredAt": now_iso(),
             "robotId": args.robot,
-            "payload": {"scenarioId": scenario_id, "status": status},
+            "payload": result_payload,
         }
-        client.publish(res_topic, json.dumps(body, ensure_ascii=False), qos=QOS, retain=False)
-        print(f"[robot-sim] 회신: {result_type} {status}")
+        client.publish(
+            res_topic,
+            json.dumps(body, ensure_ascii=False),
+            qos=QOS,
+            retain=False,
+        )
+        print(f"[robot-sim] 회신: {result_type} {outcome}/{result_code}")
 
     def on_connect(_client, _userdata, _flags, rc, *_extra):
         # paho 1.x는 rc(int), 2.x는 ReasonCode — 문자열로 찍는다.
@@ -293,10 +376,31 @@ def main():
                    help="선택: 호출어 감지 신뢰도(0~1)")
     p.set_defaults(builder=build_wake)
 
-    p = sub.add_parser("walk", parents=[conn], help="산책 요청(④)")
+    for command, action in (("walk-start", "START"), ("walk-stop", "STOP")):
+        p = sub.add_parser(command, parents=[conn], help=f"산책 {action} 요청(④)")
+        p.add_argument("--robot", default=DEFAULT_ROBOT_ID)
+        p.add_argument("--source", default="VOICE", choices=["VOICE", "APP"])
+        p.add_argument(
+            "--conversation-id",
+            type=uuid_text,
+            default=None,
+            help="선택: VOICE 대화에서 발생한 경우의 conversationId",
+        )
+        p.set_defaults(builder=build_walk, action=action)
+
+    p = sub.add_parser(
+        "follow-result",
+        parents=[conn],
+        help="FOLLOW_START/FOLLOW_STOP 최종 결과(v1)",
+    )
     p.add_argument("--robot", default=DEFAULT_ROBOT_ID)
-    p.add_argument("--source", default="VOICE", choices=["VOICE", "APP"])
-    p.set_defaults(builder=build_walk)
+    p.add_argument("--scenario", type=uuid_text, required=True)
+    p.add_argument("--command", type=opaque_id, required=True)
+    p.add_argument("--outcome", choices=FOLLOW_OUTCOMES, default="SUCCEEDED")
+    p.add_argument("--result-code", choices=FOLLOW_RESULT_CODES, required=True)
+    p.add_argument("--reason-code", choices=FOLLOW_REASON_CODES, default=None)
+    p.add_argument("--message", default=None)
+    p.set_defaults(builder=build_follow_result)
 
     p = sub.add_parser("conv-end", parents=[conn], help="대화 종료 (복귀 유도)")
     p.add_argument("--robot", default=DEFAULT_ROBOT_ID)
@@ -306,7 +410,7 @@ def main():
     p = sub.add_parser("result", parents=[conn], help="로봇 결과 수동 발행")
     p.add_argument("--robot", default=DEFAULT_ROBOT_ID)
     p.add_argument("--type", default="NAVIGATION_RESULT",
-                   choices=["NAVIGATION_RESULT", "SPEAK_RESULT", "CANCEL_RESULT", "FOLLOW_RESULT"])
+                   choices=["NAVIGATION_RESULT", "SPEAK_RESULT", "CANCEL_RESULT"])
     p.add_argument("--scenario", required=True, help="명령에서 받은 scenarioId (echo 필수)")
     p.add_argument("--status", default="ARRIVED")
     p.add_argument("--reason", default=None)

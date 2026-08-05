@@ -33,10 +33,9 @@ import org.hibernate.type.SqlTypes;
  *
  * <p>{@code target_entity_id} and {@code materialized_target_id} are
  * <b>logical</b> references whose target table depends on {@code target_domain};
- * they are deliberately not physical FKs (§3). Other id columns are raw
- * {@link UUID} logical references, except {@code source_message_id}, which the
- * MVP ERD designates a physical FK to {@code conversation_message} with
- * {@code ON DELETE SET NULL} (§4).</p>
+ * they are deliberately not physical FKs (§3). All other id columns, including
+ * {@code source_message_id}, are also raw {@link UUID} logical references. V1~V16
+ * declares no physical FK or automatic delete propagation (§4).</p>
  */
 @Entity
 @Table(name = "fact_candidate")
@@ -62,7 +61,7 @@ public class FactCandidate {
     @Column(name = "conversation_id")
     private UUID conversationId;
 
-    /** Physical FK to {@code conversation_message} ({@code ON DELETE SET NULL}). */
+    /** Logical reference to {@code conversation_message}; deletion is handled by policy. */
     @Column(name = "source_message_id")
     private UUID sourceMessageId;
 
