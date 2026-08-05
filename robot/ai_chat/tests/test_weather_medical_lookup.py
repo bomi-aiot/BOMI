@@ -3,8 +3,8 @@
 이 파일이 검증하는 완료 조건
     - 날씨·의료 질문의 "참고 자료"가 ctx["documents"] 에 실제로 담긴다
       (그래프를 태운 end-to-end 검증은 test_turn_end_to_end.py 참고)
-    - 의료 판정(라우터 호출)이 한 턴에 한 번만 일어나고, classify_intent 는
-      context_read 가 이미 계산한 값을 재사용한다
+    - 의료 판정(라우터 호출)이 한 턴에 한 번만 일어나고, context_read 는
+      classify_intent 가 이미 계산한 값을 재사용한다
     - 조회 실패(API 에러 등)는 예외를 밖으로 던지지 않고, 지어내지 말라는
       지시가 담긴 "참고 자료"로 대체된다
     - 도시를 특정 못 하거나, 의료·일정·정서 표지가 아니거나, intent 가 이미
@@ -88,6 +88,22 @@ def test_weather_question_with_recognized_city_adds_a_reference_document():
     assert any("22" in doc["content"] for doc in documents)
 
 
+def test_local_weather_document_is_not_counted_as_a_corpus_hit():
+    """로컬 도구 결과와 백엔드 문서 코퍼스 hit 수는 서로 다른 관측값이다."""
+    context_node.set_client(FakeContextClient({
+        "availability": {"semanticSearch": False, "documentCorpus": True},
+        "documents": [],
+    }))
+    context_node.set_weather_client(FakeWeather({"기온": "22", "하늘상태": "1"}))
+
+    out = context_node.context_read(_turn(
+        "오늘 서울 날씨 어때", intent="info", is_medical_query=None))
+
+    assert out["ctx"]["documents"], "날씨 도구 문서는 프롬프트에 남아야 한다"
+    assert out["retrieval_status"]["documents_requested"] is True
+    assert out["retrieval_status"]["document_hit_count"] == 0
+
+
 def test_weather_question_without_a_city_skips_the_api_call_silently():
     """도시를 특정 못 하면 조회 자체를 안 한다 — legacy 경로와 같다.
 
@@ -121,9 +137,8 @@ def test_weather_lookup_failure_becomes_an_honest_reference_not_a_crash():
 # ─────────────────────────────────────────────────────────────────────────────
 # 의료 조회 — 라우터는 항상 대역으로 바꾼다.
 #
-# 실제 llm/router.py 는 SentenceTransformer 모델을 첫 호출에서 로딩한다(§16).
-# 여기서 실제 라우터를 부르면 평범한 단위 테스트가 무거운 모델 다운로드에
-# 얽매인다 — context_node._is_medical 을 직접 바꿔서 그 경계를 지킨다.
+# 이 파일은 조회 호출 흐름에 집중한다. 의도 규칙의 정확도는 test_router.py가 맡고,
+# 여기서는 context_node._is_medical 을 대역으로 바꿔 두 책임을 분리한다.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -160,14 +175,14 @@ def test_medical_lookup_failure_becomes_an_honest_reference_not_a_crash(monkeypa
     )
 
 
-def test_medical_determination_is_reused_by_classify_intent_in_the_same_turn(
+def test_medical_determination_is_reused_by_context_read_in_the_same_turn(
     monkeypatch,
 ):
     """(완료 조건) 의료 판정은 한 턴에 한 번만 수행된다.
 
-    context_read 가 라우터를 불러 판정한 결과를 state["is_medical_query"] 로
-    남기면, classify_intent 는 그 값을 재사용해야 하며 라우터를 다시 불러서는
-    안 된다. 여기서는 _is_medical 자체를 대역으로 바꿔 호출 횟수를 센다.
+    classify_intent 가 라우터를 불러 판정한 결과를 state["is_medical_query"] 로
+    남기면, context_read 는 그 값을 재사용해야 하며 라우터를 다시 불러서는 안
+    된다. 여기서는 _is_medical 자체를 대역으로 바꿔 호출 횟수를 센다.
     """
     calls: list[str] = []
 
@@ -181,15 +196,13 @@ def test_medical_determination_is_reused_by_classify_intent_in_the_same_turn(
         context_node, "handle_medical_query", lambda text: "약국은 근처에 있습니다.")
 
     state = _turn("근처 약국 어디야")
-    context_out = context_node.context_read(state)
-    assert calls == ["근처 약국 어디야"], "context_read 에서 라우터가 정확히 한 번 불려야 한다"
+    intent_out = context_node.classify_intent(state)
+    assert intent_out == {"intent": "info", "is_medical_query": True}
+    assert calls == ["근처 약국 어디야"], "classify_intent 가 라우터를 한 번만 불러야 한다"
 
-    # LangGraph 가 노드 반환값을 state 에 병합하는 것과 같은 순서로 이어 붙인다.
-    merged_state = {**state, **context_out}
-    intent_out = context_node.classify_intent(merged_state)
-
-    assert intent_out == {"intent": "info"}
-    assert calls == ["근처 약국 어디야"], "classify_intent 가 라우터를 또 부르면 안 된다"
+    # LangGraph 가 노드 반환값을 state 에 병합하는 실제 순서로 이어 붙인다.
+    context_node.context_read({**state, **intent_out})
+    assert calls == ["근처 약국 어디야"], "context_read 가 라우터를 또 부르면 안 된다"
 
 
 def test_medical_hint_routes_to_info_even_without_a_question_mark_or_info_marker(
@@ -215,13 +228,11 @@ def test_medical_hint_routes_to_info_even_without_a_question_mark_or_info_marker
         context_node, "handle_medical_query", lambda text: "정형외과는 근처에 있습니다.")
 
     state = _turn("부산 강서구 정형외과 찾아줘.")
-    context_out = context_node.context_read(state)
+    intent_out = context_node.classify_intent(state)
+
+    assert intent_out == {"intent": "info", "is_medical_query": True}
+    context_out = context_node.context_read({**state, **intent_out})
     assert context_out["is_medical_query"] is True
-
-    merged_state = {**state, **context_out}
-    intent_out = context_node.classify_intent(merged_state)
-
-    assert intent_out == {"intent": "info"}
     assert calls == ["부산 강서구 정형외과 찾아줘."], "라우터를 또 부르면 안 된다"
 
 

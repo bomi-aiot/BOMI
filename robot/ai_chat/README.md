@@ -30,7 +30,7 @@ STT로 변환하고, 의료 여부와 날씨 요청을 판별한 뒤 Gemini 2.5 
 src/bomi_ai_chat/
 ├─ audio_io/   laptop/robot 오디오 어댑터와 공통 sounddevice 백엔드
 ├─ db/         direct/SSH PostgreSQL 연결과 의료 조회
-├─ llm/        Gemini 일반 대화, 의료 도구 호출, 임베딩 라우터
+├─ llm/        Gemini 일반 대화, 의료 도구 호출, 의료·날씨 의도 규칙
 ├─ stt/        RTZR 인증·업로드·제한 폴링
 ├─ tts/        Typecast WAV 생성
 ├─ weather/    기상청 단기예보 조회
@@ -75,9 +75,9 @@ tests/manual/  운영자가 직접 실행하는 외부 연동 점검
   - `hospital`, `pharmacy`, `drug_permit` 테이블
   - 의약품 유사 검색을 위한 `pg_trgm`의 `word_similarity`
 
-`sentence-transformers` 모델이 로컬에 없다면 첫 의료 판별 시 모델 다운로드를
-위한 네트워크가 필요하다. 운영 장치에서는 배포 단계에서 모델을 미리
-캐시하는 편이 안전하다.
+의료·날씨 의도 판정은 로컬 결정 규칙이라 모델 다운로드나 네트워크가 필요 없다.
+제거한 SentenceTransformer 라우터와 비교 평가할 때만 `router-eval` 선택 의존성을
+설치하고 `evals/evaluate_router.py --legacy-model`을 실행한다.
 
 ## 설치
 
@@ -121,10 +121,12 @@ Jetson 의 CPU 는 ARM 64비트(aarch64)이고 개발 PC 는 x86 이다. **컴�
 
 | 패키지 | 확인 이유 |
 |---|---|
-| `sentence-transformers` | torch 를 끌고 온다. Jetson 은 NVIDIA 가 배포하는 JetPack 전용 torch 휠을 써야 한다. PyPI 의 일반 x86 휠로는 설치되지 않는다 |
 | `psycopg2-binary` | aarch64 휠이 없으면 `libpq-dev` + 소스 빌드로 넘어간다 |
 | `sounddevice` | `libportaudio2` 시스템 패키지가 먼저 있어야 한다 |
 | `numpy`, `noisereduce` | 소스 빌드로 떨어지면 빌드가 오래 걸린다 |
+
+`sentence-transformers`는 운영 의존성이 아니다. 비교 평가용 `router-eval` 옵션을
+Jetson에 설치하면 torch가 필요하므로, 평가는 개발 PC에서 수행한다.
 
 설치가 끝나면 임포트까지 확인한다. 설치 성공과 임포트 성공은 다른 문제다.
 
@@ -241,7 +243,7 @@ editable 설치 후 생성되는 명령도 동일하다.
 bomi-ai-chat --once
 ```
 
-필수 API 키 또는 robot 장치 설정이 없으면 오디오·임베딩 모델을 불러오기
+필수 API 키 또는 robot 장치 설정이 없으면 오디오 장치를 불러오기
 전에 설정 오류로 종료한다.
 
 ## 로컬 저장소와 보호자 알림 큐

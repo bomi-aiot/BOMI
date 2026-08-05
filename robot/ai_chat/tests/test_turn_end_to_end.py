@@ -16,12 +16,13 @@
 import pytest
 
 from bomi_ai_chat import policy
-from bomi_ai_chat.backend_client import ContextResult
+from bomi_ai_chat.backend_client import BackendContextClient, ContextResult
 from bomi_ai_chat.graph import build, handlers, output
 from bomi_ai_chat.graph import context as context_node
 from bomi_ai_chat.graph.build import build_graph
 from bomi_ai_chat.graph.turn import run_user_turn
 from bomi_ai_chat.localstore import db
+from bomi_ai_chat.turn_timer import TurnTimer
 
 SENIOR = "senior-1"
 
@@ -37,11 +38,37 @@ class FakeContextClient:
         # S15P11E102-306 의 완료 조건("2턴째부터 conversation_id 가 실린다")을
         # 검증하는 유일한 창구다.
         self.received_conversation_ids: list[str | None] = []
+        self.received_documents: list[bool] = []
 
     def fetch_context(self, senior_id, **kwargs):
         self.calls += 1
         self.received_conversation_ids.append(kwargs.get("conversation_id"))
+        self.received_documents.append(bool(kwargs.get("documents")))
         return ContextResult(ctx=self.ctx, is_cached=self.is_cached)
+
+
+class BackendPayloadResponse:
+    """실제 Spring 문맥 API와 같은 JSON object 응답 대역."""
+
+    status_code = 200
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class RecordingBackendSession:
+    """실 HTTP 클라이언트가 만든 method·URL·JSON body를 보존한다."""
+
+    def __init__(self, payload):
+        self.payload = payload
+        self.calls = []
+
+    def request(self, method, url, **kwargs):
+        self.calls.append({"method": method, "url": url, **kwargs})
+        return BackendPayloadResponse(self.payload)
 
 
 class FakeLLM:
@@ -60,7 +87,10 @@ class FakeHandle:
     """재생 핸들 대역.
 
     205 에서 핸들이 barge-in 복구의 권위가 되면서 계약이 생겼다.
-    cancel() 로 멈출 수 있고, remaining_sentences() 로 못 한 말을 알려줘야 한다.
+    cancel() 로 멈출 수 있고, remaining_sentences() 로 못 한 말을 알려줘야 하며,
+    is_done 으로 재생이 끝났는지 답해야 한다(감사 결함 B1 수정이 이 값을 본다).
+    이 대역은 '즉시 전부 말한 것'으로 치므로 is_done 도 항상 True 다 — 그래서
+    다음 턴의 note_interaction 이 실기와 똑같이 '평범한 턴'으로 진행한다.
     """
 
     def __init__(self, sentences):
@@ -73,6 +103,11 @@ class FakeHandle:
     def remaining_sentences(self):
         # 이 대역은 즉시 전부 말한 것으로 친다.
         return []
+
+    @property
+    def is_done(self) -> bool:
+        # 즉시 전부 말했으므로 항상 끝난 상태다.
+        return True
 
 
 class FakePlayer:
@@ -171,6 +206,87 @@ def test_prompt_receives_context_from_backend(wired):
     run_user_turn(app, SENIOR, "안녕하세요")
 
     assert "순자님" in llm.prompts[0]
+
+
+def test_information_turn_requests_documents_and_preserves_retrieval_evidence(
+    wired, settings_factory,
+):
+    """정보 분류→실 HTTP client 계약→근거·검색 상태→프롬프트를 잇는다."""
+    app, _client, llm, _player = wired
+    payload = {
+        "documents": [{
+            "title": "노인맞춤돌봄서비스",
+            "content": "65세 이상이면서 돌봄이 필요한 사람 등을 대상으로 합니다.",
+            "source": "복지로",
+            "version": "2026년 기준, 2026-06-05 반영",
+            "chunkId": "bokjiro-senior-care-overview-2026",
+            "citation": "복지로 복지서비스 상세 > 노인맞춤돌봄서비스",
+            "url": "https://www.bokjiro.go.kr/welfare-info",
+        }],
+        "availability": {
+            "semanticSearch": False,
+            "documentCorpus": True,
+            "notes": ["semantic search unavailable"],
+        },
+        "retrieval": {
+            "semanticRequested": True,
+            "semanticUsed": False,
+            "fallbackReason": "embedding_disabled",
+            "hitCount": 0,
+            "latencyMs": 7,
+            "embeddingLatencyMs": 3,
+            "vectorSearchLatencyMs": 4,
+            "documentRequested": True,
+            "documentUsed": True,
+            "documentFallbackReason": None,
+            "documentHitCount": 1,
+            "documentLatencyMs": 2,
+        },
+    }
+    session = RecordingBackendSession(payload)
+    settings = settings_factory(BACKEND_BASE_URL="http://backend.test")
+    client = BackendContextClient(settings=settings, session=session)
+    context_node.set_client(client)
+
+    timer = TurnTimer()
+    state = run_user_turn(app, SENIOR, "복지제도 알려줘", timer=timer)
+
+    assert state["intent"] == "info"
+    assert len(session.calls) == 1
+    assert session.calls[0]["method"] == "POST"
+    assert session.calls[0]["url"].endswith(
+        f"/api/v1/seniors/{SENIOR}/conversation-context"
+    )
+    assert session.calls[0]["json"]["query"] == "복지제도 알려줘"
+    assert session.calls[0]["json"]["includeDocuments"] is True
+    assert state["retrieval_status"] == {
+        "source": "backend",
+        "documents_requested": True,
+        "document_hit_count": 1,
+        "semantic_available": False,
+        "document_corpus_available": True,
+        "semantic_requested": True,
+        "semantic_used": False,
+        "fallback_reason": "embedding_disabled",
+        "hit_count": 0,
+        "latency_ms": 7,
+        "embedding_latency_ms": 3,
+        "vector_search_latency_ms": 4,
+        "document_used": True,
+        "document_latency_ms": 2,
+        "notes": ["semantic search unavailable"],
+    }
+    assert {"context", "embedding", "vector_search", "llm", "tts_dispatch"} <= timer.stages.keys()
+    assert timer.stages["embedding"] == pytest.approx(0.003)
+    assert timer.stages["vector_search"] == pytest.approx(0.004)
+    prompt = llm.prompts[0]
+    assert "노인맞춤돌봄서비스" in prompt
+    assert "출처=복지로" in prompt
+    assert "버전=2026년 기준, 2026-06-05 반영" in prompt
+    assert "청크=bokjiro-senior-care-overview-2026" in prompt
+    assert "인용=복지로 복지서비스 상세 > 노인맞춤돌봄서비스" in prompt
+    assert "URL=https://www.bokjiro.go.kr/welfare-info" in prompt
+    assert "의미 기반 기억 검색을 사용할 수 없습니다" in prompt
 
 
 def test_cached_context_marks_the_turn(wired, monkeypatch, tmp_path):
@@ -502,8 +618,7 @@ def test_medical_question_renders_reference_material_through_the_graph(
 ):
     """(완료 조건) 의료 질문의 프롬프트에도 '참고 자료' 섹션이 실제로 렌더된다.
 
-    실제 llm/router.py 는 SentenceTransformer 를 로딩하므로(§16), 이 테스트는
-    context_node._is_medical 을 직접 대역으로 바꿔 무거운 모델 로딩을 피한다.
+    이 테스트의 관심사는 조회 문서 전달이므로, 의도 규칙 자체는 대역으로 분리한다.
     """
     app, _client, llm, _player = wired
 
