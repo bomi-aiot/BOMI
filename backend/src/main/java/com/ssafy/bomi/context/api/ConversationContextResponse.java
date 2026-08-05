@@ -28,6 +28,7 @@ import java.util.UUID;
  * @param careRecords consented, relevant care records.
  * @param documents reference corpus chunks; empty unless requested.
  * @param availability what could and could not actually be searched.
+ * @param retrieval what this request actually attempted and completed.
  */
 public record ConversationContextResponse(
     SeniorProfile profile,
@@ -38,7 +39,8 @@ public record ConversationContextResponse(
     List<MemoryItem> memories,
     List<CareRecordItem> careRecords,
     List<DocumentItem> documents,
-    Availability availability
+    Availability availability,
+    Retrieval retrieval
 ) {
 
     /**
@@ -147,7 +149,16 @@ public record ConversationContextResponse(
         Map<String, Object> details
     ) {}
 
-    public record DocumentItem(String title, String content, String sourceRef) {}
+    /** A traceable, versioned reference-corpus chunk. */
+    public record DocumentItem(
+        String title,
+        String content,
+        String source,
+        String version,
+        String chunkId,
+        String citation,
+        String url
+    ) {}
 
     /**
      * Which retrieval paths were actually available.
@@ -157,15 +168,34 @@ public record ConversationContextResponse(
      * opposite behaviour: the first means say you do not know, the second means the
      * robot should not speak about the past with confidence at all.</p>
      *
-     * @param semanticSearch false until the external vector store lands
-     *     (S15P11E102-218); memories were then ranked by keyword overlap, importance,
-     *     and recency only.
-     * @param documentCorpus false until the reference corpus is built.
+     * @param semanticSearch whether query embedding and Qdrant are currently reachable.
+     * @param documentCorpus whether the bundled, versioned reference corpus loaded.
      * @param notes human-readable reasons, safe to log.
      */
     public record Availability(
         boolean semanticSearch,
         boolean documentCorpus,
         List<String> notes
+    ) {}
+
+    /**
+     * Request-level retrieval truth, deliberately separate from {@link Availability}.
+     *
+     * <p>{@code semanticSearch=true} says the feature could run at assembly start;
+     * {@code semanticUsed=true} says this request actually completed at least one vector
+     * query. A completed zero-hit query is therefore distinguishable from an unavailable or
+     * failed query.</p>
+     */
+    public record Retrieval(
+        boolean semanticRequested,
+        boolean semanticUsed,
+        String fallbackReason,
+        int hitCount,
+        long latencyMs,
+        boolean documentRequested,
+        boolean documentUsed,
+        String documentFallbackReason,
+        int documentHitCount,
+        long documentLatencyMs
     ) {}
 }

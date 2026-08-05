@@ -104,7 +104,7 @@ class VectorStoreStartupInitializerIntegrationTest {
         for (VectorCollection collection : VectorCollection.values()) {
             assertThat(store.upsert(collection, id, senior, unitVector(0)))
                 .isEqualTo(VectorWriteStatus.STORED);
-            List<VectorHit> hits = store.search(collection, senior, unitVector(0), 1);
+            List<VectorHit> hits = store.search(collection, senior, unitVector(0), 1).hits();
             assertThat(hits)
                 .as("%s 컬렉션이 존재해야 업서트가 검색으로 돌아온다", collection.collectionName())
                 .isNotEmpty();
@@ -127,7 +127,8 @@ class VectorStoreStartupInitializerIntegrationTest {
         UUID id = UUID.randomUUID();
         assertThat(store.upsert(VectorCollection.MEMORY, id, senior, unitVector(0)))
             .isEqualTo(VectorWriteStatus.STORED);
-        store.search(VectorCollection.MEMORY, senior, unitVector(0), 1);
+        assertThat(store.search(VectorCollection.MEMORY, senior, unitVector(0), 1).completed())
+            .isTrue();
         store.delete(VectorCollection.MEMORY, id);
 
         assertThat(store.isAvailable())

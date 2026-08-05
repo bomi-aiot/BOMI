@@ -475,9 +475,9 @@ class EmbeddingSyncServiceTest {
         }
 
         @Override
-        public List<VectorHit> search(VectorCollection collection, UUID seniorId,
+        public VectorSearchResult search(VectorCollection collection, UUID seniorId,
             float[] queryVector, int limit) {
-            return List.of();
+            return new VectorSearchResult(List.of(), VectorSearchStatus.COMPLETED);
         }
 
         @Override

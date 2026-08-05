@@ -1,6 +1,5 @@
 package com.ssafy.bomi.context.application;
 
-import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Component;
 
@@ -30,8 +29,9 @@ import org.springframework.stereotype.Component;
 public class NoVectorStoreMemorySearch implements MemorySemanticSearch {
 
     @Override
-    public List<SemanticHit> search(UUID seniorId, String query, int limit) {
-        return List.of();
+    public SearchResult search(UUID seniorId, String query, int memoryLimit, int summaryLimit) {
+        return new SearchResult(java.util.List.of(), java.util.List.of(), false,
+            "semantic_unavailable", 0);
     }
 
     @Override

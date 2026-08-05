@@ -63,6 +63,31 @@ public interface VectorStore {
      */
     record VectorHit(UUID id, double score) {}
 
+    /** One vector-query execution, separate from an empty successful result. */
+    enum VectorSearchStatus {
+        COMPLETED,
+        UNAVAILABLE,
+        FAILED,
+        DIMENSION_MISMATCH
+    }
+
+    /**
+     * Result of one vector query.
+     *
+     * <p>An empty {@code hits} list with {@code COMPLETED} means Qdrant was searched and
+     * found no neighbours. The other statuses mean no trustworthy conclusion can be drawn
+     * from an empty list.</p>
+     */
+    record VectorSearchResult(List<VectorHit> hits, VectorSearchStatus status) {
+        public VectorSearchResult {
+            hits = List.copyOf(hits);
+        }
+
+        public boolean completed() {
+            return status == VectorSearchStatus.COMPLETED;
+        }
+    }
+
     /**
      * Makes sure the collections exist with the right dimension.
      *
@@ -92,9 +117,9 @@ public interface VectorStore {
      * and that check is the actual boundary (see {@code ConversationContextService}).</p>
      *
      * @param limit ask for more than needed; the authoritative filter will remove some
-     * @return possibly empty, never null. Empty when the store is unavailable
+     * @return an explicit execution status plus possibly-empty hits
      */
-    List<VectorHit> search(VectorCollection collection, UUID seniorId, float[] queryVector,
+    VectorSearchResult search(VectorCollection collection, UUID seniorId, float[] queryVector,
         int limit);
 
     /** Removes one vector, e.g. when its row was superseded or deleted. */

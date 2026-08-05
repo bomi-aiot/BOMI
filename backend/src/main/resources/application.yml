@@ -144,6 +144,12 @@ bomi:
     dimensions: ${QDRANT_DIMENSIONS:4096}
     timeout-millis: ${QDRANT_TIMEOUT_MILLIS:1500}
 
+  # 번들된 공공 복지 문서 코퍼스. 네트워크·임베딩 호출 없이 검색되며, 각 청크는
+  # 출처·버전·인용·URL을 보존한다. 정책 스냅샷을 교체하거나 긴급 롤백할 때만 끈다.
+  document-corpus:
+    enabled: ${DOCUMENT_CORPUS_ENABLED:true}
+    resource: ${DOCUMENT_CORPUS_RESOURCE:classpath:rag/welfare-corpus.json}
+
   # 임베딩 모델 (S15P11E102-218).
   #
   # ★ 기본값이 전부 꺼짐이다. 백엔드에서 유일하게 과금되는 외부 API 이고, 프로젝트

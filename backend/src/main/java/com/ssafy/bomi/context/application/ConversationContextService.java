@@ -12,6 +12,7 @@ import com.ssafy.bomi.context.api.ConversationContextResponse.CareRecordItem;
 import com.ssafy.bomi.context.api.ConversationContextResponse.DocumentItem;
 import com.ssafy.bomi.context.api.ConversationContextResponse.MemoryItem;
 import com.ssafy.bomi.context.api.ConversationContextResponse.RawMessage;
+import com.ssafy.bomi.context.api.ConversationContextResponse.Retrieval;
 import com.ssafy.bomi.context.api.ConversationContextResponse.SeniorProfile;
 import com.ssafy.bomi.context.api.ConversationContextResponse.SummaryItem;
 import com.ssafy.bomi.context.api.ConversationContextResponse.TodayState;
@@ -185,9 +186,19 @@ public class ConversationContextService {
 
         String query = request.queryOrEmpty();
         Set<String> queryTerms = tokenize(query);
+        int memoryTopK = clampMemoryTopK(request.memoryTopK());
 
-        List<MemoryItem> memories = selectMemories(seniorId, query, queryTerms, allowedVisibilities,
-            clampMemoryTopK(request.memoryTopK()), notes);
+        boolean forGuardian = request.requesterGuardianId() != null;
+        List<Memory> retrievableMemories = memoryRepository.findRetrievable(
+            seniorId, allowedVisibilities);
+        List<ConversationSummary> summaryCandidates = forGuardian
+            ? List.of()
+            : loadSummaryCandidates(seniorId, request.conversationId());
+        SemanticRetrieval semanticRetrieval = retrieveSemantically(
+            seniorId, query, retrievableMemories, summaryCandidates, memoryTopK);
+
+        List<MemoryItem> memories = selectMemories(retrievableMemories, queryTerms, memoryTopK,
+            semanticRetrieval.memorySimilarities());
 
         // 원문 노출 차단 (S15P11E102-254, CLAUDE.md §9 T4).
         //
@@ -197,7 +208,6 @@ public class ConversationContextService {
         // "PRIVATE 이 아니면 보여준다"가 아니라 "보호자에게는 애초에 원문이 없다"가
         // 맞는 기본값이다. 로봇이 어르신과 말할 때(guardianId == null)는 그대로
         // 전부 실린다.
-        boolean forGuardian = request.requesterGuardianId() != null;
         List<RawMessage> recentMessages = forGuardian
             ? List.of()
             : loadRecentMessages(request.conversationId(),
@@ -207,7 +217,9 @@ public class ConversationContextService {
             : loadConversationSummary(request.conversationId());
         List<SummaryItem> relevantSummaries = forGuardian
             ? List.of()
-            : selectRelevantSummaries(seniorId, request.conversationId(), queryTerms);
+            : selectRelevantSummaries(summaryCandidates, queryTerms,
+                semanticRetrieval.summarySimilarities());
+        DocumentRetrieval documentRetrieval = loadDocuments(request, query, notes);
 
         return new ConversationContextResponse(
             buildProfile(senior),
@@ -217,8 +229,19 @@ public class ConversationContextService {
             relevantSummaries,
             memories,
             selectCareRecords(senior, queryTerms),
-            loadDocuments(request, query, notes),
-            new Availability(semanticSearch.isAvailable(), documentSearch.isAvailable(), notes)
+            documentRetrieval.documents(),
+            new Availability(semanticSearch.isAvailable(), documentSearch.isAvailable(), notes),
+            new Retrieval(
+                semanticRetrieval.requested(),
+                semanticRetrieval.used(),
+                semanticRetrieval.fallbackReason(),
+                semanticRetrieval.hitCount(),
+                semanticRetrieval.latencyMs(),
+                documentRetrieval.requested(),
+                documentRetrieval.used(),
+                documentRetrieval.fallbackReason(),
+                documentRetrieval.documents().size(),
+                documentRetrieval.latencyMs())
         );
     }
 
@@ -444,21 +467,27 @@ public class ConversationContextService {
      * <p>The current conversation's own summary is excluded — it is returned separately,
      * and including it twice would spend prompt budget repeating itself.</p>
      */
-    private List<SummaryItem> selectRelevantSummaries(
-        UUID seniorId, UUID currentConversationId, Set<String> queryTerms) {
-
+    private List<ConversationSummary> loadSummaryCandidates(
+        UUID seniorId, UUID currentConversationId) {
         // 후보를 한도의 몇 배만 읽는다. 전부 읽으면 문맥 과적재 방지의 취지가 무너지고,
         // 한도만큼만 읽으면 관련성 판단의 여지가 없다.
         int candidateLimit = Math.max(properties.getSummaryLimit() * 4, properties.getSummaryLimit());
-        List<ConversationSummary> candidates = conversationSummaryRepository
-            .findRecentBySenior(seniorId, PageRequest.of(0, candidateLimit));
-
-        return candidates.stream()
+        return conversationSummaryRepository
+            .findRecentBySenior(seniorId, PageRequest.of(0, candidateLimit)).stream()
             .filter(summary -> currentConversationId == null
                 || !currentConversationId.equals(summary.getConversationId()))
+            .toList();
+    }
+
+    private List<SummaryItem> selectRelevantSummaries(
+        List<ConversationSummary> candidates,
+        Set<String> queryTerms,
+        Map<UUID, Double> semanticSimilarities) {
+
+        return candidates.stream()
             .sorted(Comparator.comparingDouble(
-                (ConversationSummary summary) ->
-                    keywordOverlap(queryTerms, tokenize(summary.getContent())))
+                (ConversationSummary summary) -> semanticSimilarities.getOrDefault(
+                    summary.getId(), keywordOverlap(queryTerms, tokenize(summary.getContent()))))
                 .reversed()
                 .thenComparing(ConversationSummary::getPeriodEndedAt, Comparator.reverseOrder()))
             .limit(properties.getSummaryLimit())
@@ -485,19 +514,14 @@ public class ConversationContextService {
      * all three, a knee complaint from six months ago outranks yesterday's.</p>
      */
     private List<MemoryItem> selectMemories(
-        UUID seniorId,
-        String query,
+        List<Memory> retrievable,
         Set<String> queryTerms,
-        Set<MemoryVisibility> allowedVisibilities,
         int topK,
-        List<String> notes
+        Map<UUID, Double> similarities
     ) {
-        List<Memory> retrievable = memoryRepository.findRetrievable(seniorId, allowedVisibilities);
         if (retrievable.isEmpty()) {
             return List.of();
         }
-
-        Map<UUID, Double> similarities = loadSimilarities(seniorId, query, topK);
 
         OffsetDateTime now = OffsetDateTime.now();
         List<ScoredMemory> selected = retrievable.stream()
@@ -545,25 +569,71 @@ public class ConversationContextService {
         memoryRepository.markUsed(ids, now);
     }
 
-    /** Similarity scores by memory id, or empty when semantic search cannot run. */
-    private Map<UUID, Double> loadSimilarities(UUID seniorId, String query, int topK) {
-        if (!semanticSearch.isAvailable()) {
-            // 미가용 사실은 assemble 에서 이미 notes 에 기록했다. 여기서는 조용히
-            // 빈 결과를 돌려주고, 점수는 키워드·중요도·최근성으로 계산된다.
-            return Map.of();
-        }
+    private record SemanticRetrieval(
+        Map<UUID, Double> memorySimilarities,
+        Map<UUID, Double> summarySimilarities,
+        boolean requested,
+        boolean used,
+        String fallbackReason,
+        int hitCount,
+        long latencyMs
+    ) {}
+
+    /** Runs one query embedding, then accepts scores only for PostgreSQL-authorized rows. */
+    private SemanticRetrieval retrieveSemantically(
+        UUID seniorId,
+        String query,
+        List<Memory> memories,
+        List<ConversationSummary> summaries,
+        int memoryTopK
+    ) {
         if (query.isBlank()) {
-            // 발화가 없는 턴(예: 스케줄 제안)은 비교 기준이 없다. 그때는 중요도와
-            // 최근성만으로 고르는 것이 맞고, 빈 질의로 벡터를 조회할 이유가 없다.
-            return Map.of();
+            return noSemanticRetrieval("query_blank");
+        }
+        if (memories.isEmpty() && summaries.isEmpty()) {
+            return noSemanticRetrieval("no_candidates");
+        }
+        if (!semanticSearch.isAvailable()) {
+            return new SemanticRetrieval(Map.of(), Map.of(), true, false,
+                "semantic_unavailable", 0, 0);
         }
 
-        // 필요한 개수보다 넉넉히 받는다. 선필터가 일부를 걷어내므로, 정확히 topK 만
-        // 받으면 필터 후 개수가 부족해진다.
-        Map<UUID, Double> similarities = new HashMap<>();
-        semanticSearch.search(seniorId, query, topK * 3)
-            .forEach(hit -> similarities.put(hit.memoryId(), hit.similarity()));
-        return similarities;
+        int memoryLimit = memories.isEmpty() ? 0 : memoryTopK * 3;
+        int summaryLimit = summaries.isEmpty() ? 0 : properties.getSummaryLimit() * 3;
+        MemorySemanticSearch.SearchResult result = semanticSearch.search(
+            seniorId, query, memoryLimit, summaryLimit);
+
+        Set<UUID> allowedMemoryIds = memories.stream().map(Memory::getId)
+            .collect(java.util.stream.Collectors.toSet());
+        Set<UUID> allowedSummaryIds = summaries.stream().map(ConversationSummary::getId)
+            .collect(java.util.stream.Collectors.toSet());
+        Map<UUID, Double> memorySimilarities = acceptedSimilarities(
+            result.memoryHits(), allowedMemoryIds);
+        Map<UUID, Double> summarySimilarities = acceptedSimilarities(
+            result.summaryHits(), allowedSummaryIds);
+        return new SemanticRetrieval(
+            memorySimilarities,
+            summarySimilarities,
+            true,
+            result.semanticUsed(),
+            result.fallbackReason(),
+            memorySimilarities.size() + summarySimilarities.size(),
+            result.latencyMs());
+    }
+
+    private SemanticRetrieval noSemanticRetrieval(String reason) {
+        return new SemanticRetrieval(Map.of(), Map.of(), false, false, reason, 0, 0);
+    }
+
+    private Map<UUID, Double> acceptedSimilarities(
+        List<MemorySemanticSearch.SemanticHit> hits, Set<UUID> allowedIds) {
+        Map<UUID, Double> accepted = new HashMap<>();
+        for (MemorySemanticSearch.SemanticHit hit : hits) {
+            if (allowedIds.contains(hit.memoryId())) {
+                accepted.merge(hit.memoryId(), hit.similarity(), Math::max);
+            }
+        }
+        return accepted;
     }
 
     /**
@@ -715,19 +785,41 @@ public class ConversationContextService {
 
     // ── 문서 RAG (info 인텐트에서만) ──────────────────────────────────────────
 
-    private List<DocumentItem> loadDocuments(
+    private record DocumentRetrieval(
+        List<DocumentItem> documents,
+        boolean requested,
+        boolean used,
+        String fallbackReason,
+        long latencyMs
+    ) {}
+
+    private DocumentRetrieval loadDocuments(
         ConversationContextRequest request, String query, List<String> notes) {
 
         if (!request.wantsDocuments()) {
-            return List.of();
+            return new DocumentRetrieval(List.of(), false, false, null, 0);
         }
         if (!documentSearch.isAvailable()) {
             notes.add("document corpus not built yet; no documents searched");
-            return List.of();
+            return new DocumentRetrieval(List.of(), true, false,
+                "document_corpus_unavailable", 0);
         }
-        return documentSearch.search(query, properties.getSummaryLimit()).stream()
-            .map(hit -> new DocumentItem(hit.title(), hit.content(), hit.sourceRef()))
+        if (query.isBlank()) {
+            return new DocumentRetrieval(List.of(), true, false, "query_blank", 0);
+        }
+        DocumentCorpusSearch.SearchResult result = documentSearch.search(
+            query, properties.getSummaryLimit());
+        List<DocumentItem> documents = result.hits().stream()
+            .map(hit -> new DocumentItem(
+                hit.title(), hit.content(), hit.source(), hit.version(), hit.chunkId(),
+                hit.citation(), hit.url()))
             .toList();
+        String fallbackReason = result.fallbackReason();
+        if (result.used() && documents.isEmpty() && fallbackReason == null) {
+            fallbackReason = "document_no_hits";
+        }
+        return new DocumentRetrieval(documents, true, result.used(), fallbackReason,
+            result.latencyMs());
     }
 
     // ── 가시성 결정 ───────────────────────────────────────────────────────────

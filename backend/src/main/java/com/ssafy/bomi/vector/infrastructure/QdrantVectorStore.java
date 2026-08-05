@@ -2,6 +2,8 @@ package com.ssafy.bomi.vector.infrastructure;
 
 import com.ssafy.bomi.vector.application.VectorCollection;
 import com.ssafy.bomi.vector.application.VectorStore;
+import com.ssafy.bomi.vector.application.VectorStore.VectorSearchResult;
+import com.ssafy.bomi.vector.application.VectorStore.VectorSearchStatus;
 import com.ssafy.bomi.vector.application.VectorStore.VectorWriteStatus;
 import com.ssafy.bomi.vector.config.QdrantProperties;
 import io.qdrant.client.ConditionFactory;
@@ -199,11 +201,19 @@ public class QdrantVectorStore implements VectorStore {
     }
 
     @Override
-    public List<VectorHit> search(VectorCollection collection, UUID seniorId,
+    public VectorSearchResult search(VectorCollection collection, UUID seniorId,
         float[] queryVector, int limit) {
 
-        if (!isAvailable() || limit <= 0) {
-            return List.of();
+        if (queryVector.length != properties.getDimensions()) {
+            log.error("refusing to search '{}' with a {}-dim vector; expected {}",
+                collection.collectionName(), queryVector.length, properties.getDimensions());
+            return new VectorSearchResult(List.of(), VectorSearchStatus.DIMENSION_MISMATCH);
+        }
+        if (!isAvailable()) {
+            return new VectorSearchResult(List.of(), VectorSearchStatus.UNAVAILABLE);
+        }
+        if (limit <= 0) {
+            return new VectorSearchResult(List.of(), VectorSearchStatus.COMPLETED);
         }
         try {
             List<ScoredPoint> points = client.queryAsync(QueryPoints.newBuilder()
@@ -226,12 +236,12 @@ public class QdrantVectorStore implements VectorStore {
                     hits.add(new VectorHit(id, point.getScore()));
                 }
             }
-            return hits;
+            return new VectorSearchResult(hits, VectorSearchStatus.COMPLETED);
         } catch (Exception error) {
             // 검색 실패는 턴을 죽이지 않는다. 얕은 랭킹으로 계속 대답하는 편이,
             // 색인이 죽었다는 이유로 어르신을 침묵 앞에 두는 것보다 낫다.
             markUnreachable("search in " + collection.collectionName(), error);
-            return List.of();
+            return new VectorSearchResult(List.of(), VectorSearchStatus.FAILED);
         }
     }
 

@@ -2,6 +2,9 @@ package com.ssafy.bomi.context;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.ssafy.bomi.activity.domain.DailyActivityMetric;
 import com.ssafy.bomi.activity.repository.DailyActivityMetricRepository;
@@ -48,9 +51,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * Verifies the completion conditions of S15P11E102-203 against a real PostgreSQL.
@@ -71,6 +77,7 @@ import org.springframework.transaction.annotation.Transactional;
         "spring.jpa.open-in-view=false",
         "bomi.mqtt.enabled=false"
     })
+@AutoConfigureMockMvc
 @Transactional
 class ConversationContextServiceTest {
 
@@ -86,6 +93,7 @@ class ConversationContextServiceTest {
     @Autowired private CareRecordRepository careRecordRepository;
     @Autowired private DailyActivityMetricRepository metricRepository;
     @Autowired private KnownPersonRepository knownPersonRepository;
+    @Autowired private MockMvc mockMvc;
 
     private AppUser senior;
 
@@ -593,29 +601,82 @@ class ConversationContextServiceTest {
 
     @Test
     void unavailableSemanticSearchIsReportedRatherThanHidden() {
+        saveMemory("무릎이 아프다", List.of("무릎"), (short) 3);
         ConversationContextResponse context = contextService.assemble(
             senior.getId(), new ConversationContextRequest("무릎", null, null, null, false, null));
 
         assertThat(context.availability().semanticSearch()).isFalse();
         assertThat(context.availability().notes())
             .anySatisfy(note -> assertThat(note).contains("semantic search unavailable"));
+        assertThat(context.retrieval().semanticRequested()).isTrue();
+        assertThat(context.retrieval().semanticUsed()).isFalse();
+        assertThat(context.retrieval().fallbackReason()).isEqualTo("semantic_unavailable");
+        assertThat(context.retrieval().hitCount()).isZero();
+        assertThat(context.retrieval().latencyMs()).isZero();
     }
 
     @Test
-    void documentsAreEmptyUnlessRequestedAndUnavailabilityIsReported() {
+    void noCandidatesIsNotReportedAsAFailedSemanticSearch() {
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("무릎", null, null, null, false, null));
+
+        assertThat(context.retrieval().semanticRequested()).isFalse();
+        assertThat(context.retrieval().semanticUsed()).isFalse();
+        assertThat(context.retrieval().fallbackReason()).isEqualTo("no_candidates");
+    }
+
+    @Test
+    void documentsAreSearchedOnlyWhenRequestedAndCarryTraceableMetadata() {
         ConversationContextResponse withoutFlag = contextService.assemble(
             senior.getId(), new ConversationContextRequest("복지", null, null, null, false, null));
         ConversationContextResponse withFlag = contextService.assemble(
             senior.getId(), new ConversationContextRequest("복지", null, null, null, true, null));
 
         assertThat(withoutFlag.documents()).isEmpty();
+        assertThat(withoutFlag.retrieval().documentRequested()).isFalse();
+        assertThat(withoutFlag.availability().documentCorpus()).isTrue();
         assertThat(withoutFlag.availability().notes())
             .noneSatisfy(note -> assertThat(note).contains("document corpus"));
 
-        assertThat(withFlag.documents()).isEmpty();
-        assertThat(withFlag.availability().documentCorpus()).isFalse();
+        assertThat(withFlag.documents()).isNotEmpty()
+            .allSatisfy(document -> {
+                assertThat(document.source()).isEqualTo("복지로");
+                assertThat(document.version()).isNotBlank();
+                assertThat(document.chunkId()).startsWith("bokjiro-");
+                assertThat(document.citation()).isNotBlank();
+                assertThat(document.url()).startsWith("https://www.bokjiro.go.kr/");
+            });
+        assertThat(withFlag.availability().documentCorpus()).isTrue();
+        assertThat(withFlag.retrieval().documentRequested()).isTrue();
+        assertThat(withFlag.retrieval().documentUsed()).isTrue();
+        assertThat(withFlag.retrieval().documentFallbackReason()).isNull();
+        assertThat(withFlag.retrieval().documentHitCount())
+            .isEqualTo(withFlag.documents().size());
         assertThat(withFlag.availability().notes())
-            .anySatisfy(note -> assertThat(note).contains("document corpus"));
+            .noneSatisfy(note -> assertThat(note).contains("document corpus"));
+    }
+
+    @Test
+    void welfareQuestionCarriesCorpusEvidenceThroughTheRealHttpEndpoint() throws Exception {
+        mockMvc.perform(post("/api/v1/seniors/{seniorId}/conversation-context", senior.getId())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "query": "복지제도 알려줘",
+                      "includeDocuments": true
+                    }
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.availability.documentCorpus").value(true))
+            .andExpect(jsonPath("$.retrieval.documentRequested").value(true))
+            .andExpect(jsonPath("$.retrieval.documentUsed").value(true))
+            .andExpect(jsonPath("$.retrieval.documentHitCount").value(3))
+            .andExpect(jsonPath("$.documents[0].source").value("복지로"))
+            .andExpect(jsonPath("$.documents[0].version").isNotEmpty())
+            .andExpect(jsonPath("$.documents[0].chunkId").isNotEmpty())
+            .andExpect(jsonPath("$.documents[0].citation").isNotEmpty())
+            .andExpect(jsonPath("$.documents[0].url").value(
+                org.hamcrest.Matchers.startsWith("https://www.bokjiro.go.kr/")));
     }
 
     // ── 재정렬: 중요도와 최근성이 실제로 작동하는가 ──────────────────────────
