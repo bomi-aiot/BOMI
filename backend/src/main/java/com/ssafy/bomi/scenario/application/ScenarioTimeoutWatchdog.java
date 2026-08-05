@@ -16,15 +16,13 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * 너무 오래 활성 상태에 머문 시나리오를 강제로 끝내는 안전망 (마지막 미제 사건에서
- * 발견된 갭: {@code LoggingConversationGateway}는 로깅 스텁이라 실제 대화 종료 신호가
- * 없으면 {@code CONVERSING}에서 절대 빠져나가지 못하고, {@code ScenarioStartGuard}는
- * 타입을 가리지 않으므로 그 뒤로 그 어르신의 모든 시나리오가 계속 막힌다).
+ * 너무 오래 활성 상태에 머문 시나리오를 강제로 끝내는 마지막 안전망이다.
+ * AI 대화 전용 watchdog이 10초/5분 제한을 먼저 처리하지만, 그 작업 자체가 멈추거나
+ * 예상하지 못한 활성 상태가 남았을 때 다음 시나리오가 영원히 막히지 않게 한다.
  *
  * <p>1분마다 깨어나 활성 상태로 {@code bomi.scenario-timeout.active-timeout}을 넘긴
- * 시나리오를 찾아 {@link Scenario#timeOut()} 처리한다. 대화 게이트웨이의 실제 구현이
- * 붙거나 이벤트가 정상적으로 도착하는 한 이 워치독은 아무 일도 하지 않는다 — 정상
- * 경로는 항상 그보다 먼저 시나리오를 터미널로 옮긴다.</p>
+ * 시나리오를 찾아 {@link Scenario#timeOut()} 처리한다. 정상 경로와 AI 대화 전용
+ * watchdog은 항상 그보다 먼저 시나리오를 다음 상태로 옮긴다.</p>
  *
  * <p>{@link MedicationReminderScheduler}와 같은 폴링 방식을 쓴다: 예약 대신 매분
  * DB의 최신 상태를 다시 보므로 재시작·설정 변경마다 재조정이 필요 없다.</p>

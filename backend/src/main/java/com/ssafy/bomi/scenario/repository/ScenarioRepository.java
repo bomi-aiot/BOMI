@@ -7,9 +7,17 @@ import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface ScenarioRepository extends JpaRepository<Scenario, UUID> {
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from Scenario s where s.id = :id")
+    java.util.Optional<Scenario> findByIdForUpdate(@Param("id") UUID id);
 
     /**
      * 이 어르신에게 주어진 상태들 중 하나인 시나리오가 존재하는가.

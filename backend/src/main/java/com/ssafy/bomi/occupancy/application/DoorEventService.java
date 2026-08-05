@@ -113,17 +113,15 @@ public class DoorEventService {
     }
 
     /**
-     * Sends the greeting to the robot over the command channel.
+     * Hands the chosen greeting to the homecoming scenario.
      *
      * <p><b>Why MQTT and not the HTTP response.</b> The robot already has an ingress path
-     * for backend-commanded speech ({@code backend_command}, built in 208), and it skips the
-     * gate because the backend has already judged. Answering in the HTTP body would create a
-     * second way for the robot to be told to speak, and two paths means two sets of rules
-     * about when it may. The response still reports the decision so tests and logs can see
-     * it — but the delivery is here.</p>
+     * for backend-commanded dialogue. The orchestrator stores the exact sentence, navigates
+     * to the entrance, and publishes START_CONVERSATION only after arrival. The HTTP response
+     * still reports the decision so tests and logs can see it, but delivery has one path.</p>
      *
      * <p>The orchestrator only exists when MQTT is enabled. With it off — every test run, and
-     * any deploy without a broker — the decision is still made and recorded, just not spoken.
+     * any deploy without a broker — the decision is still made and recorded, just not delivered.
      * That is the honest degradation: occupancy is the safety signal and it lands either way.</p>
      */
     private void dispatch(UUID seniorId, String greeting) {
