@@ -31,3 +31,12 @@ logical_fact_materialized,논리 참조,fact_candidate.materialized_target_id,ta
 ck_summary_conversation,조건,conversation_summary,"CONVERSATION은 conversation_id 필수, DAILY는 null",요약 유형과 대상을 일치,DB CHECK
 ck_conversation_time,시간,conversation,ended_at은 started_at 이후,대화 생명주기 모순 방지,DB CHECK
 ck_summary_time,시간,conversation_summary,period_ended_at은 period_started_at 이후,빈·역전 구간 차단,DB CHECK
+pk_wake_word_trigger_receipt,PK,wake_word_trigger_receipt.event_id,WAKE_WORD_DETECTED eventId 기본키,재시작과 QoS 1 재전송에도 처리 결정 하나,DB PRIMARY KEY
+ck_scenario_active_navigation_pair,조건,scenario.active_navigation_command_id/target,commandId와 target은 함께 존재하거나 함께 null,부분 상관정보로 잘못된 결과를 받는 문제 방지,DB CHECK
+ck_scenario_active_navigation_target,허용 값,scenario.active_navigation_target,LIVING_ROOM·ENTRANCE·DEFAULT만 허용,합의되지 않은 이동 목적지 저장 방지,DB CHECK
+ck_scenario_trigger_context_object,JSON 구조,scenario.trigger_context,null 또는 JSON object,호출 트리거의 구조화된 최소 문맥 보장,DB CHECK
+ck_scenario_wake_word_external_event,조건,scenario.external_event_id,WAKE_WORD_CALL이면 MQTT eventId 필수,호출 시나리오가 영속 멱등 키 없이 생성되는 경로 차단,DB CHECK
+uq_scenario_wake_word_event,부분 유일,scenario.external_event_id,scenario_type='WAKE_WORD_CALL'인 non-null eventId는 하나,수락된 동일 호출의 시나리오 중복 방지,DB UNIQUE INDEX
+uq_scenario_one_active_per_senior,부분 유일,scenario.senior_id,종료 상태가 아닌 시나리오는 시니어당 하나,서로 다른 동시 시작도 이동 흐름 하나로 제한,DB UNIQUE INDEX
+ck_wake_word_trigger_confidence,범위,wake_word_trigger_receipt.confidence,null 또는 0 이상 1 이하,유효하지 않은 감지 신뢰도 저장 방지,DB CHECK
+ck_wake_word_trigger_resolution,조건,wake_word_trigger_receipt,"ACCEPTED만 scenario_id 필수, 거절은 null",처리 결정과 생성 시나리오 연결의 모순 방지,DB CHECK

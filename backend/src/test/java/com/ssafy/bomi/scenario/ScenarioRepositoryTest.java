@@ -6,7 +6,10 @@ import com.ssafy.bomi.conversation.domain.ConversationIntent;
 import com.ssafy.bomi.scenario.domain.Scenario;
 import com.ssafy.bomi.scenario.domain.ScenarioStatus;
 import com.ssafy.bomi.scenario.domain.ScenarioType;
+import com.ssafy.bomi.scenario.domain.WakeWordTriggerDisposition;
+import com.ssafy.bomi.scenario.domain.WakeWordTriggerReceipt;
 import com.ssafy.bomi.scenario.repository.ScenarioRepository;
+import com.ssafy.bomi.scenario.repository.WakeWordTriggerReceiptRepository;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
@@ -23,6 +26,7 @@ import org.springframework.test.context.ActiveProfiles;
 class ScenarioRepositoryTest {
 
     @Autowired ScenarioRepository scenarioRepository;
+    @Autowired WakeWordTriggerReceiptRepository receiptRepository;
     @Autowired TestEntityManager em;
 
     @Test
@@ -59,6 +63,59 @@ class ScenarioRepositoryTest {
             .setParameter(1, saved.getId())
             .getSingleResult();
         assertThat(raw.toString()).isEqualTo("MOVING_TO_ENTRANCE");
+    }
+
+    @Test
+    void persistsWakeWordTriggerNavigationCorrelationAndTerminalResult() {
+        OffsetDateTime occurredAt = OffsetDateTime.parse("2026-08-05T10:00:00+09:00");
+        Scenario scenario = Scenario.create(
+            UUID.randomUUID(), UUID.randomUUID(), ScenarioType.WAKE_WORD_CALL, "wake-event-01");
+        scenario.recordTriggerContext(java.util.Map.of(
+            "robotId", "robot-01",
+            "occurredAt", occurredAt.toString(),
+            "keyword", "보미야",
+            "confidence", 0.92));
+        scenario.beginNavigation();
+        scenario.expectNavigationResult("wake-command-01", "LIVING_ROOM");
+        UUID scenarioId = scenarioRepository.saveAndFlush(scenario).getId();
+        em.clear();
+
+        Scenario navigating = scenarioRepository.findById(scenarioId).orElseThrow();
+        assertThat(navigating.getFinalStatus()).isEqualTo(ScenarioStatus.NAVIGATING);
+        assertThat(navigating.getExternalEventId()).isEqualTo("wake-event-01");
+        assertThat(navigating.getTriggerContext())
+            .containsEntry("keyword", "보미야")
+            .containsEntry("confidence", 0.92);
+        assertThat(navigating.getActiveNavigationCommandId()).isEqualTo("wake-command-01");
+        assertThat(navigating.getActiveNavigationTarget()).isEqualTo("LIVING_ROOM");
+
+        navigating.complete("ARRIVED", null);
+        scenarioRepository.saveAndFlush(navigating);
+        em.clear();
+
+        Scenario completed = scenarioRepository.findById(scenarioId).orElseThrow();
+        assertThat(completed.getFinalStatus()).isEqualTo(ScenarioStatus.COMPLETED);
+        assertThat(completed.getCompletionResultCode()).isEqualTo("ARRIVED");
+        assertThat(completed.getCompletionReasonCode()).isNull();
+        assertThat(completed.getActiveNavigationCommandId()).isNull();
+        assertThat(completed.getActiveNavigationTarget()).isNull();
+    }
+
+    @Test
+    void persistsRejectedWakeWordReceiptForRestartSafeIdempotency() {
+        OffsetDateTime occurredAt = OffsetDateTime.parse("2026-08-05T10:00:00+09:00");
+        WakeWordTriggerReceipt receipt = WakeWordTriggerReceipt.receive(
+            "wake-rejected-01", "robot-01", occurredAt, "보미야", null);
+        receipt.reject(WakeWordTriggerDisposition.REJECTED_ACTIVE_SCENARIO);
+        receiptRepository.saveAndFlush(receipt);
+        em.clear();
+
+        WakeWordTriggerReceipt found = receiptRepository.findById("wake-rejected-01")
+            .orElseThrow();
+        assertThat(found.getDisposition())
+            .isEqualTo(WakeWordTriggerDisposition.REJECTED_ACTIVE_SCENARIO);
+        assertThat(found.getScenarioId()).isNull();
+        assertThat(found.describes("robot-01", occurredAt, "보미야", null)).isTrue();
     }
 
     @Test

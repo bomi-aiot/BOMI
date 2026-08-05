@@ -14,15 +14,6 @@ app_user,12,guardian_sharing_consent_status,보호자 공유 동의 상태,VARCH
 app_user,13,status,계정 상태,VARCHAR(30),Y,,,app_user.status에는 정상·정지·탈퇴 계정을 구분하는 값을 저장한다.,계정 상태은(는) 정상·정지·탈퇴 계정을 구분할 때 조회·검증·갱신한다.,WITHDRAWN은 즉시 물리 삭제가 아니다.,ACTIVE
 app_user,14,created_at,생성 시각,TIMESTAMPTZ,Y,,,app_user.created_at에는 사용자 행 최초 생성 시각을 기록하는 값을 저장한다.,생성 시각은(는) 사용자 행 최초 생성 시각을 기록할 때 조회·검증·갱신한다.,저장 기준은 UTC로 통일한다.,UTC 2026-07-27T01:00:00Z
 app_user,15,updated_at,수정 시각,TIMESTAMPTZ,Y,,,app_user.updated_at에는 프로필·상태의 마지막 변경을 표시하는 값을 저장한다.,수정 시각은(는) 프로필·상태의 마지막 변경을 표시할 때 조회·검증·갱신한다.,동의·관계 상세 이력을 대신하지 않는다.,UTC 2026-07-27T02:15:00Z
-app_user,16,quiet_hours_start,조용 시간 시작,TIME,Y,,,app_user.quiet_hours_start에는 능동 발화를 자제할 조용 시간대의 시작 시각을 저장한다.,조용 시간 시작은(는) 능동 발화 게이트와 침묵 사다리가 매 틱마다 조회한다.,UTC가 아닌 현지 시각(time)이며 quiet_hours_end보다 늦어 자정을 넘는 창일 수 있다.,22:00:00
-app_user,17,quiet_hours_end,조용 시간 종료,TIME,Y,,,app_user.quiet_hours_end에는 조용 시간대가 끝나는 시각을 저장한다.,조용 시간 종료은(는) quiet_hours_start와 함께 자정을 넘는 창을 판단할 때 조회한다.,start > end 인 경우를 정상으로 처리해야 하며 단순 비교로는 틀린다.,07:00:00
-app_user,18,home_latitude,집 위도,"NUMERIC(9,6)",N,,,app_user.home_latitude에는 병원·약국 근처 조회의 기준 위도를 저장한다.,집 위도은(는) 근처 시설 조회 기능이 거리 계산에서 조회한다.,NULL을 허용하며 좌표를 모르는 어르신은 위치 기능만 저하된다.,37.501234
-app_user,19,home_longitude,집 경도,"NUMERIC(9,6)",N,,,app_user.home_longitude에는 병원·약국 근처 조회의 기준 경도를 저장한다.,집 경도은(는) home_latitude와 함께 거리 계산에서 조회한다.,NULL을 허용하며 좌표를 모르는 어르신은 위치 기능만 저하된다.,127.039876
-app_user,20,birth_date,생년월일,DATE,N,,,app_user.birth_date에는 대화 문맥의 나이를 계산하는 기준 값을 저장한다.,생년월일은(는) 대화 문맥 조립이 나이를 계산할 때마다 조회한다.,나이는 저장하지 않고 매번 계산하며 NULL이면 나이 줄만 빠진다.,1950-05-12
-app_user,21,wake_time,기상 시각,TIME,N,,,app_user.wake_time에는 어르신의 평소 기상 시각을 저장한다.,기상 시각은(는) 침묵 사다리 루틴 베이스라인 필터가 조회할 예정이다.,NULL을 허용하며 응답하지 않은 어르신은 개인화 없이 동작한다.,06:30
-app_user,22,sleep_time,취침 시각,TIME,N,,,app_user.sleep_time에는 어르신의 평소 취침 시각을 저장한다.,취침 시각은(는) 침묵 사다리 루틴 베이스라인 필터가 조회할 예정이다.,NULL을 허용하며 응답하지 않은 어르신은 개인화 없이 동작한다.,22:30
-app_user,23,chronic_pain_area,만성 통증 부위,TEXT,N,,,app_user.chronic_pain_area에는 어르신이 밝힌 만성 통증 부위를 저장한다.,만성 통증 부위는(는) 대화 문맥 조립이 프로필에 실을 때 조회한다.,응급 판정에는 절대 쓰지 않으며 NULL이면 프로필 줄만 빠진다.,왼쪽 무릎
-app_user,24,preferred_hospital,단골 병원,TEXT,N,,,app_user.preferred_hospital에는 어르신이 다니는 단골 병원·약국 이름을 저장한다.,단골 병원은(는) 대화 문맥 조립이 프로필에 실을 때 조회한다.,근처 병원 검색과 별개이며 NULL이면 프로필 줄만 빠진다.,행복내과의원
 care_relationship,1,id,관계 ID,UUID,Y,PK,,care_relationship.id에는 시니어-보호자 연결을 식별하는 값을 저장한다.,관계 ID은(는) 시니어-보호자 연결을 식별할 때 조회·검증·갱신한다.,사용자 ID 조합을 외부 식별자로 쓰지 않는다.,b839bd4c-efeb-4c86-917c-51896392819e
 care_relationship,2,senior_id,시니어 ID,UUID,Y,FK,app_user.id,care_relationship.senior_id에는 돌봄 대상 시니어를 연결하는 값을 저장한다.,시니어 ID은(는) 돌봄 대상 시니어를 연결할 때 조회·검증·갱신한다.,참조 사용자가 SENIOR인지 검증한다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
 care_relationship,3,guardian_id,보호자 ID,UUID,Y,FK,app_user.id,care_relationship.guardian_id에는 연결 보호자를 지정하는 값을 저장한다.,보호자 ID은(는) 연결 보호자를 지정할 때 조회·검증·갱신한다.,참조 사용자가 GUARDIAN인지 검증한다.,8e1339cb-b0bf-42df-9a7f-f6592be3e84f
@@ -67,7 +58,15 @@ scenario,2,senior_id,대상 시니어 ID,UUID,Y,FK,app_user.id,scenario.senior_i
 scenario,3,robot_id,수행 로봇 ID,UUID,Y,FK,robot.id,scenario.robot_id에는 시나리오 수행 로봇을 연결하는 값을 저장한다.,수행 로봇 ID은(는) 시나리오 수행 로봇을 연결할 때 조회·검증·갱신한다.,도중 로봇 변경은 기본 허용하지 않는다.,7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
 scenario,4,external_event_id,시작 외부 이벤트 ID,VARCHAR(255),N,,,scenario.external_event_id에는 시나리오를 시작한 사건의 멱등 키를 저장하는 값을 저장한다.,시작 외부 이벤트 ID은(는) 시나리오를 시작한 사건의 멱등 키를 저장할 때 조회·검증·갱신한다.,진행·결과 eventId로 덮어쓰지 않는다.,01K0M4W2C8P7A6Q5R9T3V1X4YZ
 scenario,5,scenario_type,시나리오 유형,VARCHAR(50),Y,,,scenario.scenario_type에는 귀가·낙상·수동 상호작용을 구분하는 값을 저장한다.,시나리오 유형은(는) 귀가·낙상·수동 상호작용을 구분할 때 조회·검증·갱신한다.,오류 코드나 자유 문장을 넣지 않는다.,HOMECOMING
-scenario,6,final_status,진행·결과 상태,VARCHAR(255),Y,,,scenario.final_status에는 굵은 진행 단계와 종료 결과를 표시하는 값을 저장한다.,진행·결과 상태은(는) 굵은 진행 단계와 종료 결과를 표시할 때 조회·검증·갱신한다.,종료 상태에서 진행 상태로 되돌리지 않는다.,CONVERSING
+scenario,6,final_status,진행·결과 상태,VARCHAR(50),Y,,,scenario.final_status에는 시나리오 유형별 굵은 진행 단계와 종료 결과를 저장한다.,현재 상태를 전이 검증·동시 실행 차단·대시보드 이력에 사용한다.,종료 상태에서 진행 상태로 되돌리지 않는다.,CONVERSING
+scenario,7,conversation_request,준비된 대화 요청,JSONB,N,,,대화형 시나리오가 이동 전에 확정한 intent·첫 문장·최소 triggerContext를 저장한다.,도착 뒤 같은 요청으로 START_CONVERSATION을 재개할 때 사용한다.,WAKE_WORD_CALL에는 값을 만들지 않고 원본 음성·전체 STT를 넣지 않는다.,"{""intent"":""HOMECOMING_GREETING"",""text"":""어서 오세요"",""triggerContext"":{""location"":""ENTRANCE""}}"
+scenario,8,active_navigation_command_id,활성 이동 명령 ID,VARCHAR(64),N,,,현재 결과를 기다리는 NAVIGATE commandId를 저장한다.,NAVIGATION_RESULT.commandId가 현재 이동 명령과 같은지 검증한다.,최종 결과 반영 뒤 target과 함께 null로 비우며 다른 명령 ID로 덮어쓰지 않는다.,01K1WAKECMD7F5M2N1Q9R6S3T8V
+scenario,9,active_navigation_target,활성 이동 목적지,VARCHAR(30),N,,,현재 NAVIGATE 명령의 합의된 논리 목적지를 저장한다.,재시작 뒤에도 결과가 상태에 맞는 LIVING_ROOM·ENTRANCE·DEFAULT 명령인지 확인한다.,commandId와 항상 함께 존재하거나 함께 null이어야 한다.,LIVING_ROOM
+scenario,10,trigger_context,호출 트리거 최소 문맥,JSONB,N,,,호출을 확정한 robotId·occurredAt·keyword와 선택 confidence를 구조화해 저장한다.,호출 이력과 재시작 후 진단에 사용하고 음성 데이터 없이 감지 근거만 확인한다.,원본 음성·전체 STT·자유 대화 문장을 저장하지 않는다.,"{""robotId"":""bomi-AA001"",""occurredAt"":""2026-08-05T14:00:00+09:00"",""keyword"":""보미야"",""confidence"":0.92}"
+scenario,11,completion_result_code,종료 결과 코드,VARCHAR(50),N,,,상관 검증을 통과한 Robot 최종 resultCode를 저장한다.,호출 완료·실패·취소·시간 초과 이력을 구조화해 조회할 때 사용한다.,사람이 읽는 설명이나 STT 문장을 넣지 않는다.,ARRIVED
+scenario,12,completion_reason_code,종료 원인 코드,VARCHAR(100),N,,,실패·취소·시간 초과의 안정적인 reasonCode를 저장한다.,NOT_ARRIVED 결과의 운영 원인을 집계하고 진단할 때 사용한다.,성공이고 원인이 없으면 null이며 자유 문장을 저장하지 않는다.,PATH_BLOCKED
+scenario,13,created_at,시나리오 생성 시각,TIMESTAMPTZ,Y,,,시나리오 행이 처음 생성된 시각을 저장한다.,멱등 처리와 이력 정렬의 생성 기준으로 사용한다.,센서 occurredAt이나 완료 시각으로 대체하지 않는다.,UTC 2026-08-05T05:00:01Z
+scenario,14,updated_at,시나리오 수정 시각,TIMESTAMPTZ,Y,,,시나리오 상태가 마지막으로 갱신된 시각을 저장한다.,활성 시나리오 watchdog과 운영 진단의 정체 기준으로 사용한다.,종료 시각 전용 컬럼으로 해석하지 않는다.,UTC 2026-08-05T05:00:09Z
 conversation,1,id,대화 ID,UUID,Y,PK,,conversation.id에는 대화 묶음을 식별하는 값을 저장한다.,대화 ID은(는) 대화 묶음을 식별할 때 조회·검증·갱신한다.,메시지 ID와 혼동하지 않는다.,1a4fe41a-6464-4e7e-b292-9a507333a3fa
 conversation,2,senior_id,대화 시니어 ID,UUID,Y,FK,app_user.id,conversation.senior_id에는 대화 소유자를 연결하는 값을 저장한다.,대화 시니어 ID은(는) 대화 소유자를 연결할 때 조회·검증·갱신한다.,보호자·로봇 ID를 넣지 않는다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
 conversation,3,scenario_id,시나리오 ID,UUID,N,FK,scenario.id,conversation.scenario_id에는 대화를 유발한 시나리오를 연결하는 값을 저장한다.,시나리오 ID은(는) 대화를 유발한 시나리오를 연결할 때 조회·검증·갱신한다.,온보딩·수동 대화는 없을 수 있다.,6fd94c8c-3903-4a01-a82d-819e0c8edb12
@@ -92,7 +91,9 @@ conversation_summary,7,content,요약 내용,TEXT,Y,,,conversation_summary.conte
 conversation_summary,8,source_message_count,원본 메시지 수,INTEGER,Y,,,conversation_summary.source_message_count에는 요약에 실제 사용한 Raw 발화 수를 기록하는 값을 저장한다.,원본 메시지 수은(는) 요약에 실제 사용한 Raw 발화 수를 기록할 때 조회·검증·갱신한다.,0보다 커야 하며 품질 점검에 사용한다.,18
 conversation_summary,9,generated_at,요약 생성 시각,TIMESTAMPTZ,Y,,,conversation_summary.generated_at에는 요약 결과가 생성된 시각을 기록하는 값을 저장한다.,요약 생성 시각은(는) 요약 결과가 생성된 시각을 기록할 때 조회·검증·갱신한다.,period_ended_at과 의미가 다르다.,UTC 2026-07-27T10:21:00Z
 conversation_summary,10,superseded_by_id,대체 요약 ID,UUID,N,SELF FK,conversation_summary.id,conversation_summary.superseded_by_id에는 재생성된 새 요약을 연결하는 값을 저장한다.,대체 요약 ID은(는) 재생성된 새 요약을 연결할 때 조회·검증·갱신한다.,요약 자기 참조와 순환을 금지한다.,f3d0dd43-e3dc-4079-9a84-4186c4775327
-conversation_summary,11,embedding,요약 임베딩,VECTOR,N,,,conversation_summary.embedding에는 관련 요약 의미 검색용 벡터를 저장하는 값을 저장한다.,요약 임베딩은(는) 관련 요약 의미 검색용 벡터를 저장할 때 조회·검증·갱신한다.,모델·차원·인덱스는 아직 TBD다.,TBD
+conversation_summary,11,embedding_status,벡터 동기화 상태,VARCHAR(20),Y,,,외부 Qdrant 벡터가 본문과 동기화됐는지 나타내는 상태를 저장한다.,PENDING·SYNCED·STALE·FAILED 상태로 재색인 대상을 고른다.,벡터 자체는 PostgreSQL에 저장하지 않는다.,PENDING
+conversation_summary,12,embedding_synced_at,벡터 동기화 시각,TIMESTAMPTZ,N,,,현재 embedding_model로 Qdrant 반영을 완료한 마지막 시각을 저장한다.,동기화 성공 뒤 상태와 같은 처리 단위로 갱신한다.,생성 시각이나 마지막 시도 시각으로 해석하지 않는다.,UTC 2026-08-05T05:10:00Z
+conversation_summary,13,embedding_model,벡터 모델 식별자,VARCHAR(100),N,,,Qdrant에 저장된 벡터를 생성한 모델 식별자를 저장한다.,현재 모델과 다르면 STALE로 전환해 재색인한다.,서로 다른 모델의 벡터 유사도를 비교하지 않는다.,embedding-passage
 fact_candidate,1,id,후보 ID,UUID,Y,PK,,fact_candidate.id에는 미확정 사실 후보를 식별하는 값을 저장한다.,후보 ID은(는) 미확정 사실 후보를 식별할 때 조회·검증·갱신한다.,최종 업무 ID로 재사용하지 않는다.,dcd1c7f7-ce8a-405f-a3a5-f2bb25eaac31
 fact_candidate,2,senior_id,시니어 ID,UUID,Y,FK,app_user.id,fact_candidate.senior_id에는 후보의 최종 데이터 소유자를 연결하는 값을 저장한다.,시니어 ID은(는) 후보의 최종 데이터 소유자를 연결할 때 조회·검증·갱신한다.,소스 대화·답변의 시니어와 일치시킨다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
 fact_candidate,3,source_type,출처 유형,VARCHAR(40),Y,,,fact_candidate.source_type에는 온보딩 답변과 대화 메시지 출처를 구분하는 값을 저장한다.,출처 유형은(는) 온보딩 답변과 대화 메시지 출처를 구분할 때 조회·검증·갱신한다.,필수 출처 FK와 CHECK로 묶는다.,CONVERSATION_MESSAGE
@@ -138,14 +139,16 @@ memory,6,content,독립 사실 내용,TEXT,Y,,,memory.content에는 대화 없�
 memory,7,verification_status,기억 확인 상태,VARCHAR(30),Y,,,memory.verification_status에는 확인 수준과 거절 여부를 표시하는 값을 저장한다.,기억 확인 상태은(는) 확인 수준과 거절 여부를 표시할 때 조회·검증·갱신한다.,REJECTED는 검색에서 제외한다.,USER_CONFIRMED
 memory,8,lifecycle_status,기억 수명 상태,VARCHAR(30),Y,,,memory.lifecycle_status에는 활성·분쟁·대체·만료·삭제를 구분하는 값을 저장한다.,기억 수명 상태은(는) 활성·분쟁·대체·만료·삭제를 구분할 때 조회·검증·갱신한다.,ACTIVE만 검색 후보로 사용한다.,ACTIVE
 memory,9,visibility,기억 공개 범위,VARCHAR(40),Y,,,memory.visibility에는 시니어 전용·PRIMARY·전체 보호자 공유를 구분하는 값을 저장한다.,기억 공개 범위은(는) 시니어 전용·PRIMARY·전체 보호자 공유를 구분할 때 조회·검증·갱신한다.,공유 동의와 활성 관계도 함께 검사한다.,PRIVATE
-memory,10,embedding,기억 임베딩,VECTOR,N,,,memory.embedding에는 의미 유사 기억 검색 벡터를 저장하는 값을 저장한다.,기억 임베딩은(는) 의미 유사 기억 검색 벡터를 저장할 때 조회·검증·갱신한다.,모델·차원은 TBD이고 혼합 모델을 금지한다.,TBD
-memory,11,source_summary_id,출처 요약 ID,UUID,N,FK,conversation_summary.id,memory.source_summary_id에는 기억을 뒷받침한 대화·일간 요약을 연결하는 값을 저장한다.,출처 요약 ID은(는) 기억을 뒷받침한 대화·일간 요약을 연결할 때 조회·검증·갱신한다.,요약 전문을 content에 복제하지 않는다.,9cd9cbdd-1e7c-4cbb-9014-4ddfb82b73e0
-memory,12,source_candidate_id,출처 후보 ID,UUID,N,FK,fact_candidate.id,memory.source_candidate_id에는 확인·반영을 통과한 후보를 연결하는 값을 저장한다.,출처 후보 ID은(는) 확인·반영을 통과한 후보를 연결할 때 조회·검증·갱신한다.,유일성으로 중복 기억 생성을 막는다.,dcd1c7f7-ce8a-405f-a3a5-f2bb25eaac31
-memory,13,keywords,정확 검색 키워드,TEXT[],Y,,,memory.keywords에는 이름·음식·장소 등 정확 일치 단어를 저장하는 값을 저장한다.,정확 검색 키워드은(는) 이름·음식·장소 등 정확 일치 단어를 저장할 때 조회·검증·갱신한다.,민감 원문 전문이나 무의미한 토큰을 넣지 않는다.,"[""보리차"",""따뜻한 음료""]"
-memory,14,importance,기억 중요도,SMALLINT,Y,,,memory.importance에는 재정렬에 사용할 1~5 중요도를 저장하는 값을 저장한다.,기억 중요도은(는) 재정렬에 사용할 1~5 중요도를 저장할 때 조회·검증·갱신한다.,주관값 하나로 검색 순위를 독점하지 않게 한다.,4
-memory,15,first_observed_at,최초 관찰 시각,TIMESTAMPTZ,Y,,,memory.first_observed_at에는 사실을 처음 알게 된 시각을 기록하는 값을 저장한다.,최초 관찰 시각은(는) 사실을 처음 알게 된 시각을 기록할 때 조회·검증·갱신한다.,기억 행 생성 시각과 다를 수 있다.,UTC 2026-07-20T10:00:00Z
-memory,16,last_confirmed_at,최근 확인 시각,TIMESTAMPTZ,N,,,memory.last_confirmed_at에는 사실을 마지막으로 재확인한 때를 기록하는 값을 저장한다.,최근 확인 시각은(는) 사실을 마지막으로 재확인한 때를 기록할 때 조회·검증·갱신한다.,단순 검색·사용 시각으로 갱신하지 않는다.,UTC 2026-07-27T10:15:00Z
-memory,17,last_used_at,최근 사용 시각,TIMESTAMPTZ,N,,,memory.last_used_at에는 대화 문맥에 실제 채택된 최근 시각을 기록하는 값을 저장한다.,최근 사용 시각은(는) 대화 문맥에 실제 채택된 최근 시각을 기록할 때 조회·검증·갱신한다.,검색 후보였다는 이유만으로 갱신하지 않는다.,UTC 2026-07-27T12:00:00Z
+memory,10,embedding_status,벡터 동기화 상태,VARCHAR(20),Y,,,외부 Qdrant 벡터가 기억 본문과 동기화됐는지 나타내는 상태를 저장한다.,검색 가능한 기억 중 PENDING·STALE·FAILED 대상을 재색인한다.,기억 벡터 자체는 PostgreSQL에 저장하지 않는다.,SYNCED
+memory,11,embedding_synced_at,벡터 동기화 시각,TIMESTAMPTZ,N,,,현재 embedding_model로 기억 벡터 반영을 마친 마지막 시각을 저장한다.,동기화 성공 뒤 상태와 함께 갱신한다.,last_used_at이나 마지막 동기화 시도 시각을 대신하지 않는다.,UTC 2026-08-05T05:11:00Z
+memory,12,embedding_model,벡터 모델 식별자,VARCHAR(100),N,,,Qdrant의 기억 벡터를 생성한 모델 식별자를 저장한다.,모델 변경 시 기존 SYNCED 행을 STALE 재색인 대상으로 찾는다.,모델 이름이 같아도 차원 설정이 일치하는지 별도로 확인한다.,embedding-passage
+memory,13,source_summary_id,출처 요약 ID,UUID,N,FK,conversation_summary.id,memory.source_summary_id에는 기억을 뒷받침한 대화·일간 요약을 연결하는 값을 저장한다.,출처 요약 ID은(는) 기억을 뒷받침한 대화·일간 요약을 연결할 때 조회·검증·갱신한다.,요약 전문을 content에 복제하지 않는다.,9cd9cbdd-1e7c-4cbb-9014-4ddfb82b73e0
+memory,14,source_candidate_id,출처 후보 ID,UUID,N,FK,fact_candidate.id,memory.source_candidate_id에는 확인·반영을 통과한 후보를 연결하는 값을 저장한다.,출처 후보 ID은(는) 확인·반영을 통과한 후보를 연결할 때 조회·검증·갱신한다.,유일성으로 중복 기억 생성을 막는다.,dcd1c7f7-ce8a-405f-a3a5-f2bb25eaac31
+memory,15,keywords,정확 검색 키워드,TEXT[],Y,,,memory.keywords에는 이름·음식·장소 등 정확 일치 단어를 저장하는 값을 저장한다.,정확 검색 키워드은(는) 이름·음식·장소 등 정확 일치 단어를 저장할 때 조회·검증·갱신한다.,민감 원문 전문이나 무의미한 토큰을 넣지 않는다.,"[""보리차"",""따뜻한 음료""]"
+memory,16,importance,기억 중요도,SMALLINT,Y,,,memory.importance에는 재정렬에 사용할 1~5 중요도를 저장하는 값을 저장한다.,기억 중요도은(는) 재정렬에 사용할 1~5 중요도를 저장할 때 조회·검증·갱신한다.,주관값 하나로 검색 순위를 독점하지 않게 한다.,4
+memory,17,first_observed_at,최초 관찰 시각,TIMESTAMPTZ,Y,,,memory.first_observed_at에는 사실을 처음 알게 된 시각을 기록하는 값을 저장한다.,최초 관찰 시각은(는) 사실을 처음 알게 된 시각을 기록할 때 조회·검증·갱신한다.,기억 행 생성 시각과 다를 수 있다.,UTC 2026-07-20T10:00:00Z
+memory,18,last_confirmed_at,최근 확인 시각,TIMESTAMPTZ,N,,,memory.last_confirmed_at에는 사실을 마지막으로 재확인한 때를 기록하는 값을 저장한다.,최근 확인 시각은(는) 사실을 마지막으로 재확인한 때를 기록할 때 조회·검증·갱신한다.,단순 검색·사용 시각으로 갱신하지 않는다.,UTC 2026-07-27T10:15:00Z
+memory,19,last_used_at,최근 사용 시각,TIMESTAMPTZ,N,,,memory.last_used_at에는 대화 문맥에 실제 채택된 최근 시각을 기록하는 값을 저장한다.,최근 사용 시각은(는) 대화 문맥에 실제 채택된 최근 시각을 기록할 때 조회·검증·갱신한다.,검색 후보였다는 이유만으로 갱신하지 않는다.,UTC 2026-07-27T12:00:00Z
 care_record,1,id,돌봄 기록 ID,UUID,Y,PK,,care_record.id에는 확정된 돌봄 사실 버전을 식별하는 값을 저장한다.,돌봄 기록 ID은(는) 확정된 돌봄 사실 버전을 식별할 때 조회·검증·갱신한다.,같은 의미라도 변경 시 새 ID를 만든다.,8f3de8c7-7a04-4c74-977b-223a096dc589
 care_record,2,senior_id,시니어 ID,UUID,Y,FK,app_user.id,care_record.senior_id에는 돌봄 사실의 소유자를 연결하는 값을 저장한다.,시니어 ID은(는) 돌봄 사실의 소유자를 연결할 때 조회·검증·갱신한다.,후보·대화 소유자와 일치시킨다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
 care_record,3,parent_record_id,이전 기록 ID,UUID,N,SELF FK,care_record.id,care_record.parent_record_id에는 변경·취소된 이전 버전을 연결하는 값을 저장한다.,이전 기록 ID은(는) 변경·취소된 이전 버전을 연결할 때 조회·검증·갱신한다.,기존 돌봄 기록을 덮어쓰지 않고 버전 순환을 금지한다.,3f08933a-76c4-4226-809c-f1efcbe47824
@@ -159,3 +162,11 @@ care_record,10,status,돌봄 기록 상태,VARCHAR(30),Y,,,care_record.status에
 care_record,11,details,돌봄 상세,JSONB,Y,,,care_record.details에는 record_type별 확인된 구조화 사실을 저장하는 값을 저장한다.,돌봄 상세은(는) record_type별 확인된 구조화 사실을 저장할 때 조회·검증·갱신한다.,외부 응답 전문·미확정 값·의학적 계산을 넣지 않는다.,"{""medicationName"":""아스피린"",""localTime"":""09:00""}"
 care_record,12,recurrence,반복 규칙,JSONB,N,,,care_record.recurrence에는 복약·일정의 반복 패턴을 구조화하는 값을 저장한다.,반복 규칙은(는) 복약·일정의 반복 패턴을 구조화할 때 조회·검증·갱신한다.,반복이 없으면 null이고 미래 발생분을 전부 펼치지 않는다.,"{""frequency"":""DAILY"",""time"":""09:00""}"
 care_record,13,source_candidate_id,출처 후보 ID,UUID,N,FK,fact_candidate.id,care_record.source_candidate_id에는 최종 반영을 만든 후보를 연결하는 값을 저장한다.,출처 후보 ID은(는) 최종 반영을 만든 후보를 연결할 때 조회·검증·갱신한다.,유일성으로 중복 돌봄 기록 생성을 막는다.,dcd1c7f7-ce8a-405f-a3a5-f2bb25eaac31
+wake_word_trigger_receipt,1,event_id,웨이크 이벤트 ID,VARCHAR(64),Y,PK,,AI가 발행한 WAKE_WORD_DETECTED eventId를 영속 멱등 키로 저장한다.,같은 사건의 순차·동시 재전송과 Backend 재시작 중복을 차단한다.,다른 시나리오의 external_event_id 전체를 전역 UNIQUE로 만들지 않는다.,01K1WAKE7F5M2N1Q9R6S3T8VXC
+wake_word_trigger_receipt,2,robot_device_id,발행 로봇 deviceId,VARCHAR(64),Y,논리 참조,robot.device_id,MQTT 토픽과 본문에서 검증된 발행 Robot deviceId를 저장한다.,중복 eventId가 같은 발행 Robot 이벤트인지 검증하고 Robot을 권위 조회한다.,DB UUID robot.id로 해석하지 않는다.,bomi-AA001
+wake_word_trigger_receipt,3,occurred_at,감지 시각,TIMESTAMPTZ,Y,,,AI가 웨이크워드를 확정한 occurredAt을 저장한다.,같은 eventId가 같은 논리 이벤트인지 최소 문맥을 비교한다.,Backend 수신 시각으로 바꾸지 않는다.,46239.208333333336
+wake_word_trigger_receipt,4,keyword,감지 키워드,VARCHAR(20),Y,,,AI가 확정한 1~20자 호출 키워드만 저장한다.,eventId 재사용 검증과 호출 트리거 이력에 사용한다.,원본 음성·전체 STT 문장을 넣지 않는다.,보미야
+wake_word_trigger_receipt,5,confidence,감지 신뢰도,DOUBLE PRECISION,N,,,AI가 선택적으로 보낸 0 이상 1 이하 신뢰도를 저장한다.,수신된 경우 같은 eventId 문맥 비교와 운영 진단에 사용한다.,누락을 0으로 바꾸거나 Backend가 추정하지 않는다.,0.92
+wake_word_trigger_receipt,6,disposition,처리 결정,VARCHAR(40),Y,,,호출 트리거의 수락 또는 안정적인 거절 결정을 저장한다.,재전송 때 최초 결정을 그대로 적용해 뒤늦은 이동 시작을 막는다.,RECEIVED는 처리 트랜잭션 중간 상태이며 최종 성공으로 해석하지 않는다.,ACCEPTED
+wake_word_trigger_receipt,7,scenario_id,수락 시나리오 ID,UUID,N,논리 참조,scenario.id,수락된 이벤트로 생성한 WAKE_WORD_CALL scenario.id를 저장한다.,ACCEPTED일 때 시나리오 이력을 연결한다.,거절 결정에는 null이고 대화 ID로 재사용하지 않는다.,6fd94c8c-3903-4a01-a82d-819e0c8edb12
+wake_word_trigger_receipt,8,created_at,처리 영수증 생성 시각,TIMESTAMPTZ,Y,,,Backend가 이벤트 처리 영수증을 만든 시각을 저장한다.,멱등 처리 이력의 생성 순서와 운영 진단에 사용한다.,AI occurredAt과 구분한다.,UTC 2026-08-05T05:00:01Z

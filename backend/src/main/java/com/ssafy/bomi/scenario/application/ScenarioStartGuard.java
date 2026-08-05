@@ -3,6 +3,7 @@ package com.ssafy.bomi.scenario.application;
 import com.ssafy.bomi.scenario.domain.ScenarioStatus;
 import com.ssafy.bomi.scenario.domain.ScenarioType;
 import com.ssafy.bomi.scenario.repository.ScenarioRepository;
+import com.ssafy.bomi.user.repository.AppUserRepository;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.Optional;
@@ -34,6 +35,8 @@ public class ScenarioStartGuard {
 
     /** 막힌 이유. 호출부가 로그에 남겨 "왜 로봇이 안 움직였나"를 답할 수 있게 한다. */
     public enum BlockReason {
+        /** Robot assignment points at no registered senior row. */
+        SENIOR_NOT_FOUND,
         /** 이 어르신에게 진행 중인 시나리오가 이미 있다 (타입 무관). */
         ACTIVE_SCENARIO_EXISTS,
         /** 같은 타입 시나리오가 쿨다운 안에 완료됐다. */
@@ -41,9 +44,14 @@ public class ScenarioStartGuard {
     }
 
     private final ScenarioRepository scenarioRepository;
+    private final AppUserRepository appUserRepository;
 
-    public ScenarioStartGuard(ScenarioRepository scenarioRepository) {
+    public ScenarioStartGuard(
+        ScenarioRepository scenarioRepository,
+        AppUserRepository appUserRepository
+    ) {
         this.scenarioRepository = scenarioRepository;
+        this.appUserRepository = appUserRepository;
     }
 
     /**
@@ -55,6 +63,11 @@ public class ScenarioStartGuard {
      * @return 비어 있으면 시작해도 된다. 값이 있으면 그 이유로 막혔다
      */
     public Optional<BlockReason> check(UUID seniorId, ScenarioType type, Duration cooldown) {
+        // Every starter takes the same senior-row mutex before exists-then-insert.
+        // The partial unique index remains the final cross-process invariant.
+        if (appUserRepository.findByIdForUpdate(seniorId).isEmpty()) {
+            return Optional.of(BlockReason.SENIOR_NOT_FOUND);
+        }
         if (scenarioRepository.existsBySeniorIdAndFinalStatusIn(
                 seniorId, ScenarioStatus.activeStatuses())) {
             return Optional.of(BlockReason.ACTIVE_SCENARIO_EXISTS);

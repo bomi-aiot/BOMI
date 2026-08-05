@@ -31,6 +31,7 @@ from datetime import datetime
 DEFAULT_DOOR_SENSOR = "door_sensor"          # bomi.homecoming.sensor-to-senior 등록 키
 DEFAULT_AMBIENT_SENSOR = "ambient-sensor-01" # bomi.observation.ambient-sensor-to-senior 등록 필요
 DEFAULT_ROBOT_ID = "bomi-AA001"              # robot.device_id (김순자 시드)
+DEFAULT_WAKE_KEYWORD = "보미야"
 
 TOPIC_IOT_EVENTS = "bomi/v1/iot/{device_id}/events"
 TOPIC_ROBOT_EVENTS = "bomi/v1/robot/{device_id}/events"
@@ -48,6 +49,19 @@ def now_iso() -> str:
 def new_event_id() -> str:
     """64자 이하 불투명 멱등 키."""
     return str(uuid.uuid4())
+
+
+def wake_keyword(value: str) -> str:
+    if not value or not value.strip() or len(value) > 20:
+        raise argparse.ArgumentTypeError("wake keyword must be a non-blank 1~20 character string")
+    return value
+
+
+def confidence_0_to_1(value: str) -> float:
+    parsed = float(value)
+    if not 0.0 <= parsed <= 1.0:
+        raise argparse.ArgumentTypeError("confidence must be between 0 and 1")
+    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -85,12 +99,16 @@ def build_ambient(args):
 
 def build_wake(args):
     topic = TOPIC_ROBOT_EVENTS.format(device_id=args.robot)
+    payload = {"keyword": getattr(args, "keyword", DEFAULT_WAKE_KEYWORD)}
+    confidence = getattr(args, "confidence", None)
+    if confidence is not None:
+        payload["confidence"] = confidence
     body = {
         "eventId": new_event_id(),
         "type": "WAKE_WORD_DETECTED",
         "occurredAt": now_iso(),
         "robotId": args.robot,
-        "payload": {"confidence": args.confidence},
+        "payload": payload,
     }
     return topic, body
 
@@ -269,7 +287,10 @@ def main():
 
     p = sub.add_parser("wake", parents=[conn], help='"보미야" 호출(③)')
     p.add_argument("--robot", default=DEFAULT_ROBOT_ID)
-    p.add_argument("--confidence", type=float, default=0.92)
+    p.add_argument("--keyword", type=wake_keyword, default=DEFAULT_WAKE_KEYWORD,
+                   help=f"감지를 확정한 호출어 (기본: {DEFAULT_WAKE_KEYWORD})")
+    p.add_argument("--confidence", type=confidence_0_to_1, default=None,
+                   help="선택: 호출어 감지 신뢰도(0~1)")
     p.set_defaults(builder=build_wake)
 
     p = sub.add_parser("walk", parents=[conn], help="산책 요청(④)")

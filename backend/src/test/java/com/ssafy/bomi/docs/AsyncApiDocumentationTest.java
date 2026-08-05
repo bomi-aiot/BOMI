@@ -126,6 +126,34 @@ class AsyncApiDocumentationTest {
         }
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void wakeWordSchemaMatchesTheRuntimeWireValidation() throws IOException {
+        Map<String, Object> components =
+            (Map<String, Object>) loadSpec().get("components");
+        Map<String, Object> schemas =
+            (Map<String, Object>) components.get("schemas");
+
+        Map<String, Object> robotId = (Map<String, Object>) schemas.get("RobotId");
+        assertThat(robotId)
+            .containsEntry("minLength", 1)
+            .containsEntry("maxLength", 64)
+            .containsEntry("pattern", "^[A-Za-z0-9._-]{1,64}$");
+
+        Map<String, Object> wake =
+            (Map<String, Object>) schemas.get("WakeWordDetectedPayload");
+        assertThat(wake.get("additionalProperties")).isEqualTo(false);
+        assertThat((List<String>) wake.get("required"))
+            .containsExactly("eventId", "robotId", "type", "occurredAt", "payload");
+
+        Map<String, Object> properties =
+            (Map<String, Object>) wake.get("properties");
+        Map<String, Object> payload =
+            (Map<String, Object>) properties.get("payload");
+        assertThat(payload.get("additionalProperties")).isEqualTo(false);
+        assertThat((List<String>) payload.get("required")).containsExactly("keyword");
+    }
+
     /**
      * 스펙과 마크다운 계약서가 같은 토픽을 말하는지 본다. 토픽을 하나 추가하면서
      * 한쪽만 고치면 여기서 걸린다.

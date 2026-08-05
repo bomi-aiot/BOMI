@@ -35,15 +35,12 @@ import org.hibernate.type.SqlTypes;
  *
  * <p>{@code finalStatus} keeps the <b>current</b> coarse status throughout the
  * flow (the column name is kept for compatibility; see {@link ScenarioStatus}).
- * Only allowed transitions succeed — see {@link #ALLOWED_TRANSITIONS} and
+ * Only allowed transitions succeed — see {@link #ALLOWED_TRANSITIONS_BY_TYPE} and
  * {@link #transitionTo(ScenarioStatus)}.</p>
  *
- * <p><b>Scope note (this sprint):</b> the transition map below encodes the
- * {@code HOMECOMING} happy path plus "any active state → terminal". This is one
- * shared rule set for all types; {@code FALL_RESPONSE} / {@code MANUAL_INTERACTION}
- * paths are added on top of the same map in a follow-up sprint. Robot mode
- * co-transition is intentionally out of scope here and handled by the robot
- * status/observation ticket.</p>
+ * <p>Conversation-driven types keep the existing homecoming path. The wake-word
+ * call has its own short path ({@code RECEIVED -> NAVIGATING -> COMPLETED}) so an
+ * arrival can never accidentally start an AI conversation or a return command.</p>
  */
 @Entity
 @Table(name = "scenario")
@@ -51,9 +48,9 @@ import org.hibernate.type.SqlTypes;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Scenario {
 
-    /** Shared transition rules: from-status → allowed next statuses. */
-    private static final Map<ScenarioStatus, Set<ScenarioStatus>> ALLOWED_TRANSITIONS =
-        buildAllowedTransitions();
+    /** Scenario type → from-status → allowed next statuses. */
+    private static final Map<ScenarioType, Map<ScenarioStatus, Set<ScenarioStatus>>>
+        ALLOWED_TRANSITIONS_BY_TYPE = buildAllowedTransitionsByType();
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -92,6 +89,19 @@ public class Scenario {
 
     @Column(name = "active_navigation_target", length = 30)
     private String activeNavigationTarget;
+
+    /** Minimal structured trigger metadata; never contains raw audio or full STT text. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "trigger_context")
+    private Map<String, Object> triggerContext;
+
+    /** Terminal Robot result code used by scenario history and diagnostics. */
+    @Column(name = "completion_result_code", length = 50)
+    private String completionResultCode;
+
+    /** Stable terminal reason code; human prose belongs in logs, not this field. */
+    @Column(name = "completion_reason_code", length = 100)
+    private String completionReasonCode;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -163,7 +173,20 @@ public class Scenario {
         return conversationRequest == null ? null : Map.copyOf(conversationRequest);
     }
 
-    /** Stores command correlation before the command is committed to the MQTT outbox. */
+    /** Stores the smallest useful trigger snapshot for non-conversation scenarios. */
+    public void recordTriggerContext(Map<String, Object> context) {
+        if (context == null) {
+            this.triggerContext = Map.of();
+            return;
+        }
+        this.triggerContext = new LinkedHashMap<>(context);
+    }
+
+    public Map<String, Object> getTriggerContext() {
+        return triggerContext == null ? null : Map.copyOf(triggerContext);
+    }
+
+    /** Stores command correlation before the after-commit MQTT publish is registered. */
     public void expectNavigationResult(String commandId, String target) {
         if (activeNavigationCommandId != null) {
             throw new IllegalStateException(
@@ -186,13 +209,16 @@ public class Scenario {
     // --- State machine -------------------------------------------------------
 
     /**
-     * Moves to {@code next} if the transition is allowed by the shared rule set,
+     * Moves to {@code next} if the transition is allowed by this scenario type,
      * otherwise throws {@link IllegalStateException}. This is the single
      * enforcement point; the intent methods below delegate here.
      */
     public void transitionTo(ScenarioStatus next) {
         requireNonNull(next, "next");
-        Set<ScenarioStatus> allowed = ALLOWED_TRANSITIONS.getOrDefault(finalStatus, Set.of());
+        Map<ScenarioStatus, Set<ScenarioStatus>> transitions =
+            ALLOWED_TRANSITIONS_BY_TYPE.getOrDefault(
+                scenarioType, ALLOWED_TRANSITIONS_BY_TYPE.get(ScenarioType.HOMECOMING));
+        Set<ScenarioStatus> allowed = transitions.getOrDefault(finalStatus, Set.of());
         if (!allowed.contains(next)) {
             throw new IllegalStateException(
                 "Illegal scenario transition: " + finalStatus + " -> " + next);
@@ -203,6 +229,11 @@ public class Scenario {
     // Intent methods for the HOMECOMING happy path (readability for orchestration).
     public void beginMovingToEntrance() {
         transitionTo(ScenarioStatus.MOVING_TO_ENTRANCE);
+    }
+
+    /** Starts the wake-word call's one-way movement to the senior. */
+    public void beginNavigation() {
+        transitionTo(ScenarioStatus.NAVIGATING);
     }
 
     public void checkInteraction() {
@@ -222,31 +253,58 @@ public class Scenario {
     }
 
     public void complete() {
-        transitionTo(ScenarioStatus.COMPLETED);
-        clearNavigationCorrelation();
+        complete(null, null);
+    }
+
+    public void complete(String resultCode, String reasonCode) {
+        finish(ScenarioStatus.COMPLETED, resultCode, reasonCode);
     }
 
     // Terminal exits available from any active state.
     public void fail() {
-        transitionTo(ScenarioStatus.FAILED);
-        clearNavigationCorrelation();
+        fail(null, null);
+    }
+
+    public void fail(String resultCode, String reasonCode) {
+        finish(ScenarioStatus.FAILED, resultCode, reasonCode);
     }
 
     public void cancel() {
-        transitionTo(ScenarioStatus.CANCELLED);
-        clearNavigationCorrelation();
+        cancel(null, null);
+    }
+
+    public void cancel(String resultCode, String reasonCode) {
+        finish(ScenarioStatus.CANCELLED, resultCode, reasonCode);
     }
 
     public void timeOut() {
-        transitionTo(ScenarioStatus.TIMED_OUT);
-        clearNavigationCorrelation();
+        timeOut(null, null);
+    }
+
+    public void timeOut(String resultCode, String reasonCode) {
+        finish(ScenarioStatus.TIMED_OUT, resultCode, reasonCode);
     }
 
     public boolean isTerminated() {
         return finalStatus.isTerminal();
     }
 
-    private static Map<ScenarioStatus, Set<ScenarioStatus>> buildAllowedTransitions() {
+    private static Map<ScenarioType, Map<ScenarioStatus, Set<ScenarioStatus>>>
+        buildAllowedTransitionsByType() {
+        Map<ScenarioStatus, Set<ScenarioStatus>> conversation =
+            buildConversationTransitions();
+        Map<ScenarioStatus, Set<ScenarioStatus>> wakeWord =
+            buildWakeWordCallTransitions();
+        Map<ScenarioType, Map<ScenarioStatus, Set<ScenarioStatus>>> byType =
+            new EnumMap<>(ScenarioType.class);
+        for (ScenarioType type : ScenarioType.values()) {
+            byType.put(type, conversation);
+        }
+        byType.put(ScenarioType.WAKE_WORD_CALL, wakeWord);
+        return Map.copyOf(byType);
+    }
+
+    private static Map<ScenarioStatus, Set<ScenarioStatus>> buildConversationTransitions() {
         // Terminal statuses reachable from every active (non-terminal) status.
         Set<ScenarioStatus> terminals = EnumSet.of(
             ScenarioStatus.FAILED, ScenarioStatus.CANCELLED, ScenarioStatus.TIMED_OUT);
@@ -261,6 +319,21 @@ public class Scenario {
         putTransition(map, ScenarioStatus.RETURN_DECISION, ScenarioStatus.RETURNING_TO_DEFAULT, terminals);
         putTransition(map, ScenarioStatus.RETURNING_TO_DEFAULT, ScenarioStatus.COMPLETED, terminals);
         // Terminal statuses admit no outgoing transitions.
+        map.put(ScenarioStatus.COMPLETED, Set.of());
+        map.put(ScenarioStatus.FAILED, Set.of());
+        map.put(ScenarioStatus.CANCELLED, Set.of());
+        map.put(ScenarioStatus.TIMED_OUT, Set.of());
+        return map;
+    }
+
+    private static Map<ScenarioStatus, Set<ScenarioStatus>> buildWakeWordCallTransitions() {
+        Set<ScenarioStatus> exceptionalTerminals = EnumSet.of(
+            ScenarioStatus.FAILED, ScenarioStatus.CANCELLED, ScenarioStatus.TIMED_OUT);
+        Map<ScenarioStatus, Set<ScenarioStatus>> map = new EnumMap<>(ScenarioStatus.class);
+        putTransition(map, ScenarioStatus.RECEIVED, ScenarioStatus.NAVIGATING,
+            exceptionalTerminals);
+        putTransition(map, ScenarioStatus.NAVIGATING, ScenarioStatus.COMPLETED,
+            exceptionalTerminals);
         map.put(ScenarioStatus.COMPLETED, Set.of());
         map.put(ScenarioStatus.FAILED, Set.of());
         map.put(ScenarioStatus.CANCELLED, Set.of());
@@ -309,6 +382,32 @@ public class Scenario {
             copied.put(key, entry.getValue());
         }
         return copied;
+    }
+
+    private void finish(
+        ScenarioStatus terminalStatus,
+        String resultCode,
+        String reasonCode
+    ) {
+        transitionTo(terminalStatus);
+        this.completionResultCode = normalizeCode(resultCode, "resultCode", 50);
+        this.completionReasonCode = normalizeCode(reasonCode, "reasonCode", 100);
+        clearNavigationCorrelation();
+    }
+
+    private static String normalizeCode(String value, String field, int maxLength) {
+        if (value == null) {
+            return null;
+        }
+        String normalized = value.trim();
+        if (normalized.isEmpty()) {
+            throw new IllegalArgumentException(field + " must not be blank");
+        }
+        if (normalized.length() > maxLength) {
+            throw new IllegalArgumentException(
+                field + " must not exceed " + maxLength + " characters");
+        }
+        return normalized;
     }
 
     private void clearNavigationCorrelation() {
