@@ -38,6 +38,7 @@ import java.io.IOException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -574,6 +575,75 @@ class ConversationContextServiceTest {
         // '아무것도 기억하지 못하는' 상태가 된다.
         assertThat(context.memories()).extracting(ConversationContextResponse.MemoryItem::id)
             .contains(unrelated.getId());
+    }
+
+    // ── S15P11E102-262: 최근에 쓴 기억은 감점된다 (같은 회상 반복 방지) ─────────
+
+    /**
+     * 완료 조건: "최근에 사용된 기억이 감점되어, 같은 기억이 연속으로 뽑히지
+     * 않는 것을 테스트로 확인합니다".
+     *
+     * <p>두 기억을 관련성·중요도가 완전히 동일하게 심는다. 어느 쪽이 먼저 뽑히든,
+     * assemble 이 그 기억의 last_used_at 을 갱신하므로 다음 호출에서는 반드시
+     * 나머지 하나가 뽑혀야 한다 — 고친 방향(최근 사용 = 감점)이 실제로 반영됐다는
+     * 증거다. 고치기 전 코드(최근 사용 = 가점)였다면 같은 기억이 계속 뽑혔을
+     * 것이다.</p>
+     */
+    @Test
+    void recentlyUsedMemoriesAreDeprioritizedNextRound() {
+        // memoryTopKMin 이 3 이라(§7 clampMemoryTopK) 4건을 심어 topK=3 으로 요청한다 —
+        // 그래야 '이번엔 뽑히지 않은 한 건'이 반드시 생겨서, 감점 효과를 관찰할 수 있다.
+        List<Memory> memories = new ArrayList<>();
+        for (int index = 0; index < 4; index++) {
+            memories.add(saveMemory("기억 " + index, List.of("무릎"), (short) 3));
+        }
+
+        ConversationContextResponse round1 = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("무릎", null, 3, null, false, null));
+        List<UUID> round1Ids = round1.memories().stream()
+            .map(ConversationContextResponse.MemoryItem::id).toList();
+        assertThat(round1Ids).hasSize(3);
+
+        UUID leftOutOfRound1 = memories.stream().map(Memory::getId)
+            .filter(id -> !round1Ids.contains(id)).findFirst().orElseThrow();
+
+        ConversationContextResponse round2 = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("무릎", null, 3, null, false, null));
+        List<UUID> round2Ids = round2.memories().stream()
+            .map(ConversationContextResponse.MemoryItem::id).toList();
+
+        // 1라운드에서 뽑혔던 세 기억은 이제 감점됐고, 아직 한 번도 안 쓰인 네 번째
+        // 기억은 감점이 없다 — 그래서 2라운드에는 반드시 들어와야 한다. 고치기 전
+        // 코드(최근 사용 = 가점)였다면 1라운드의 세 기억이 그대로 다시 뽑혔을 것이다.
+        assertThat(round2Ids).contains(leftOutOfRound1);
+    }
+
+    /**
+     * markUsed 호출이 실제로 last_used_at 을 채우는지 리포지토리 레벨에서 직접
+     * 확인한다. 서비스 테스트만으로는 "선택이 바뀌었다"까지만 보이고, "그 이유가
+     * 정말 last_used_at 갱신 때문인가"는 이 테스트가 답한다.
+     */
+    @Test
+    void assembleStampsLastUsedAtOnSelectedMemories() {
+        Memory memory = saveMemory("기억", List.of("무릎"), (short) 3);
+        assertThat(memory.getLastUsedAt()).isNull();
+
+        assembleWithTopK(1);
+
+        Memory reloaded = memoryRepository.findById(memory.getId()).orElseThrow();
+        assertThat(reloaded.getLastUsedAt()).isNotNull();
+    }
+
+    /** 한 번도 쓰인 적 없는 기억은 감점되지 않는다 — 회상 씨앗이 영원히 묻히면 안 된다. */
+    @Test
+    void neverUsedMemoryIsNotPenalized() {
+        Memory neverUsed = saveMemory("아직 안 꺼낸 기억", List.of("무릎"), (short) 3);
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("무릎", null, 3, null, false, null));
+
+        assertThat(context.memories()).extracting(ConversationContextResponse.MemoryItem::id)
+            .contains(neverUsed.getId());
     }
 
     // ── 진행 중 대화가 없는 첫 턴 ────────────────────────────────────────────
