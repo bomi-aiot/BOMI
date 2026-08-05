@@ -42,7 +42,7 @@ EXPECTED_COLUMNS = {
         "status", "created_at", "updated_at",
         "quiet_hours_start", "quiet_hours_end", "home_latitude",
         "home_longitude", "birth_date", "wake_time", "sleep_time",
-        "chronic_pain_area", "preferred_hospital",
+        "chronic_pain_area", "preferred_hospital", "home_address",
     ],
     "care_relationship": [
         "id", "senior_id", "guardian_id", "priority", "status", "connected_at",
@@ -270,8 +270,8 @@ def main() -> int:
     }
     if "02_컬럼정의" in tables_by_sheet:
         headers, column_rows = tables_by_sheet["02_컬럼정의"]
-        if len(column_rows) != 253:
-            fail(errors, f"컬럼 수가 253이 아닙니다: {len(column_rows)}")
+        if len(column_rows) != 254:
+            fail(errors, f"컬럼 수가 254가 아닙니다: {len(column_rows)}")
         actual_by_table: dict[str, list[str]] = {name: [] for name in EXPECTED_COLUMNS}
         seen_pairs: list[str] = []
         required_description_indexes = [headers.index(name) for name in ["무엇을 저장하는가", "언제 어떻게 쓰는가", "주의할 점", "예시"]]
@@ -739,7 +739,7 @@ def main() -> int:
     print("컬럼정의서 검증 완료")
     print("- 시트 10개")
     print("- 물리 테이블 17개")
-    print("- 컬럼 253개")
+    print("- 컬럼 254개")
     print("- 목적형 CSV 스냅샷 9개")
     print("- Jira·승인·입력목록·검증결과 시트 없음")
     print("- 컬럼별 의미·사용 맥락·주의·예시 누락 및 동일 문장 반복 없음")

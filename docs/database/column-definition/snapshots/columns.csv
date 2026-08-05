@@ -23,6 +23,7 @@ app_user,21,wake_time,평소 기상 시각,TIME,N,,,어르신의 평소 로컬 �
 app_user,22,sleep_time,평소 취침 시각,TIME,N,,,어르신의 평소 로컬 취침 시각을 저장한다.,기상 시각과 함께 개인별 생활 리듬을 해석한다.,time_zone 기준이며 quiet_hours와 같은 값으로 단정하지 않는다.,22:30
 app_user,23,chronic_pain_area,만성 통증 부위,TEXT,N,,,어르신이 밝힌 만성 통증 부위를 자유 문자열로 저장한다.,대화 문맥 개인화에만 참고한다.,새 통증의 응급 판정을 가리는 규칙으로 사용하지 않는다.,"왼쪽 무릎, 허리"
 app_user,24,preferred_hospital,단골 병원·약국,TEXT,N,,,평소 이용하는 병원·약국 이름을 저장한다.,전국 검색과 별개로 익숙한 기관을 안내할 때 사용한다.,주소·전화번호 구조화 필드가 아니며 모르면 null이다.,보미정형외과
+app_user,25,home_address,자택 주소,TEXT,N,,,어르신 자택 주소를 자유 문자열로 저장한다(시·군·구 수준 권장).,날씨 기본 지역 등 대화 문맥의 기본값으로 쓴다. 로봇 문맥 채널로만 나가고 가디언웹에는 노출하지 않는다.,지오 검색용 좌표(home_latitude/longitude)와 별개이며 모르면 null이다.,부산광역시 부산진구
 care_relationship,1,id,관계 ID,UUID,Y,PK,,care_relationship.id에는 시니어-보호자 연결을 식별하는 값을 저장한다.,관계 ID은(는) 시니어-보호자 연결을 식별할 때 조회·검증·갱신한다.,사용자 ID 조합을 외부 식별자로 쓰지 않는다.,b839bd4c-efeb-4c86-917c-51896392819e
 care_relationship,2,senior_id,시니어 ID,UUID,Y,논리 참조,app_user.id,care_relationship.senior_id에는 돌봄 대상 시니어를 연결하는 값을 저장한다.,시니어 ID은(는) 돌봄 대상 시니어를 연결할 때 조회·검증·갱신한다.,참조 사용자가 SENIOR인지 검증한다.,a2b64af3-5ee5-42ea-98c5-35ac9de10570
 care_relationship,3,guardian_id,보호자 ID,UUID,Y,논리 참조,app_user.id,care_relationship.guardian_id에는 연결 보호자를 지정하는 값을 저장한다.,보호자 ID은(는) 연결 보호자를 지정할 때 조회·검증·갱신한다.,참조 사용자가 GUARDIAN인지 검증한다.,8e1339cb-b0bf-42df-9a7f-f6592be3e84f

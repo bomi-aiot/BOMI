@@ -57,6 +57,7 @@ erDiagram
         TIME sleep_time
         TEXT chronic_pain_area
         TEXT preferred_hospital
+        TEXT home_address
     }
     CARE_RELATIONSHIP {
         UUID id PK

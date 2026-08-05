@@ -108,7 +108,16 @@ class FlywayMigrationValidationTest {
         // 로딩 단계에서 죽어 있었기 때문에, 이 assertion 자체가 실행된 적이 없어서
         // 회귀가 드러나지 않았다.
         assertThat(applied).containsExactly(
-            "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16");
+            "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
+            "15", "16", "17");
+    }
+
+    /** V17(S15P11E102-347): 자택 주소는 nullable 이어야 한다 — 모르는 주소를 지어내
+     *  저장하면 로봇이 엉뚱한 도시의 날씨를 확신 있게 말하게 된다. */
+    @Test
+    void homeAddressColumnExistsAndIsNullable() throws Exception {
+        assertThat(columnExists("app_user", "home_address")).isTrue();
+        assertThat(isNullable("app_user", "home_address")).isTrue();
     }
 
     @Test

@@ -3,4 +3,5 @@
 2026-08-05,WAKE_WORD_CALL 호출 런타임·영속 멱등 receipt·상관 필드·코드 사전 추가,"scenario, wake_word_trigger_receipt, 인덱스·제약·JSONB·연계매핑",AI 자체 대화와 Backend 이동 책임을 분리하고 QoS 1 재전송·재시작에도 호출 이동을 중복 생성하지 않기 위해
 2026-08-05,WALK 산책 상태·FOLLOW 상관관계·유입 범위별 영속 요청 영수증 추가,"scenario, walk_request_receipt, 인덱스·제약·JSONB·코드·연계매핑",Voice MQTT와 Guardian REST가 같은 상태 머신을 사용하고 재시작·동시 요청에도 명령을 중복 생성하지 않기 위해
 2026-08-05,Flyway V1~V16 물리 스키마 17테이블·253컬럼 정합화,"app_user, robot, conversation, conversation_message, care_record, occupancy_event, daily_activity_metric, known_person",컬럼정의서가 실제 운영 보조 테이블과 런타임 컬럼을 누락한 채 물리 스키마라고 표시하던 불일치를 제거하기 위해
+2026-08-06,app_user.home_address 추가 (S15P11E102-347),app_user,'오늘 날씨 어때?'의 기본 지역이 없어 로봇이 되묻거나 지어내던 문제를 없애기 위해. 로봇 대화 문맥 채널 전용이며 가디언웹에는 노출하지 않는다
 2026-08-06,fact_candidate.status 에 CANCELLED_BY_SENIOR 추가 (S15P11E102-348),fact_candidate,"어르신의 '기억하지 마' 요청으로 이미 제출된 미확정 후보를 닫는 상태가 없어, 지운 이야기가 재질의로 되살아날 수 있던 문제를 없애기 위해. DB CHECK 없는 varchar(40)이라 DDL 변경은 없다"

@@ -67,6 +67,13 @@ public record ConversationContextResponse(
      *     shrugged off as "chronic" (CLAUDE.md §10).
      * @param preferredHospital the clinic or pharmacy the senior actually goes to,
      *     free-text. {@code null} when unset. Distinct from a nearby-clinic search.
+     * @param address the senior's home address, free-text, city/district level
+     *     (S15P11E102-347). {@code null} when unset. The robot's location-resolution
+     *     fallback reads exactly this key — "오늘 날씨 어때?" defaults to this region
+     *     when no explicit or session context names one (robot CLAUDE.md §30). Distinct
+     *     from the geo coordinates: the robot extracts a city <em>name</em> from this
+     *     string. Robot conversation-context channel only; not exposed to the guardian
+     *     web profile.
      * @param guardianSharingConsentGranted whether the senior has explicitly granted
      *     T3 guardian-sharing consent (S15P11E102-253). The robot must not even
      *     <strong>ask</strong> "may I tell your family?" unless this is {@code true} —
@@ -92,6 +99,7 @@ public record ConversationContextResponse(
         String sleepTime,
         String chronicPainArea,
         String preferredHospital,
+        String address,
         boolean guardianSharingConsentGranted
     ) {}
 
