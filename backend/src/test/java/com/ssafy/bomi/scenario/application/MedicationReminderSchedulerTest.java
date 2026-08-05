@@ -6,7 +6,6 @@ import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -14,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.ssafy.bomi.care.domain.CareRecord;
 import com.ssafy.bomi.care.domain.CareRecordStatus;
 import com.ssafy.bomi.care.repository.CareRecordRepository;
+import com.ssafy.bomi.conversation.domain.ConversationIntent;
 import com.ssafy.bomi.mqtt.outbound.RobotCommand;
 import com.ssafy.bomi.mqtt.outbound.RobotCommandPublisher;
 import com.ssafy.bomi.mqtt.outbound.RobotCommandType;
@@ -98,27 +98,33 @@ class MedicationReminderSchedulerTest {
     }
 
     @Test
-    void insideWindowStartsScenarioWithNavigateAndSpeak() {
+    void insideWindowStoresConversationAndOnlyNavigates() {
         seedMedication(true);
 
         schedulerAt("2026-08-05T07:55:00").tick(); // 창(07:50~08:15) 안
 
         ArgumentCaptor<Scenario> scenarioCaptor = ArgumentCaptor.forClass(Scenario.class);
         verify(scenarioRepository).save(scenarioCaptor.capture());
-        assertThat(scenarioCaptor.getValue().getScenarioType()).isEqualTo(ScenarioType.MEDICATION_REMINDER);
-        assertThat(scenarioCaptor.getValue().getExternalEventId())
+        Scenario scenario = scenarioCaptor.getValue();
+        assertThat(scenario.getScenarioType()).isEqualTo(ScenarioType.MEDICATION_REMINDER);
+        assertThat(scenario.getExternalEventId())
             .isEqualTo("med-%s-2026-08-05-08:00".formatted(scheduleId));
+        assertThat(scenario.requirePreparedConversation().intent())
+            .isEqualTo(ConversationIntent.MEDICATION_REMINDER);
+        assertThat(scenario.requirePreparedConversation().text()).contains("혈압약");
+        assertThat(scenario.requirePreparedConversation().triggerContext())
+            .containsEntry("medicationScheduleId", scheduleId.toString())
+            .containsEntry("medicationName", "혈압약")
+            .containsEntry("scheduledAt", "2026-08-05T08:00+09:00")
+            .containsEntry("location", "LIVING_ROOM");
 
         ArgumentCaptor<RobotCommand> commandCaptor = ArgumentCaptor.forClass(RobotCommand.class);
-        verify(commandPublisher, times(2)).publish(commandCaptor.capture());
-        RobotCommand navigate = commandCaptor.getAllValues().get(0);
+        verify(commandPublisher).publish(commandCaptor.capture());
+        RobotCommand navigate = commandCaptor.getValue();
         assertThat(navigate.type()).isEqualTo(RobotCommandType.NAVIGATE);
         assertThat(navigate.payload()).containsEntry("target", "LIVING_ROOM");
-        assertThat(scenarioCaptor.getValue().getActiveNavigationCommandId())
+        assertThat(scenario.getActiveNavigationCommandId())
             .isEqualTo(navigate.commandId());
-        RobotCommand speak = commandCaptor.getAllValues().get(1);
-        assertThat(speak.type()).isEqualTo(RobotCommandType.SPEAK);
-        assertThat((String) speak.payload().get("text")).contains("혈압약");
     }
 
     @Test

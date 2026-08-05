@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.ssafy.bomi.care.domain.CareRecord;
 import com.ssafy.bomi.care.repository.CareRecordRepository;
 import com.ssafy.bomi.conversation.domain.Conversation;
+import com.ssafy.bomi.conversation.domain.ConversationIntent;
 import com.ssafy.bomi.conversation.domain.ConversationOutcome;
 import com.ssafy.bomi.conversation.domain.ConversationStatus;
 import com.ssafy.bomi.conversation.repository.ConversationRepository;
@@ -30,11 +32,13 @@ import com.ssafy.bomi.robot.domain.Robot;
 import com.ssafy.bomi.robot.domain.RobotMode;
 import com.ssafy.bomi.robot.repository.RobotRepository;
 import com.ssafy.bomi.scenario.application.HomecomingOrchestrator;
+import com.ssafy.bomi.scenario.application.MedicationReminderScheduler;
 import com.ssafy.bomi.scenario.application.MqttConversationGateway;
 import com.ssafy.bomi.scenario.application.ScenarioStartGuard;
 import com.ssafy.bomi.scenario.application.WellnessCheckOrchestrator;
 import com.ssafy.bomi.scenario.config.AiConversationProperties;
 import com.ssafy.bomi.scenario.config.HomecomingProperties;
+import com.ssafy.bomi.scenario.config.MedicationReminderProperties;
 import com.ssafy.bomi.scenario.domain.Scenario;
 import com.ssafy.bomi.scenario.domain.ScenarioStatus;
 import com.ssafy.bomi.scenario.inbound.ConversationEndedHandler;
@@ -81,6 +85,7 @@ class HomecomingE2eTest {
     private RecordingRobotPublisher robotPublisher;
     private RecordingAiPublisher aiPublisher;
     private MqttInboundDispatcher dispatcher;
+    private MedicationReminderScheduler medicationScheduler;
     private UUID seniorId;
     private UUID robotId;
 
@@ -120,6 +125,14 @@ class HomecomingE2eTest {
         WellnessCheckOrchestrator wellnessOrchestrator = new WellnessCheckOrchestrator(
             scenarioRepository, robotRepository, robotPublisher, startGuard,
             observationProperties, new WellnessProperties());
+        medicationScheduler = new MedicationReminderScheduler(
+            careRecordRepository,
+            scenarioRepository,
+            robotRepository,
+            robotPublisher,
+            startGuard,
+            new MedicationReminderProperties(),
+            clock);
 
         List<MqttMessageHandler> handlers = List.of(
             new DoorOpenedHandler(orchestrator),
@@ -159,7 +172,11 @@ class HomecomingE2eTest {
         assertThat(conversation.getAiStartedAt()).isNull();
 
         dispatcher.dispatch(conversationStarted(
-            "conv-start-1", scenarioId, conversation.getId(), conversation.getStartCommandId()));
+            "conv-start-1",
+            scenarioId,
+            conversation.getId(),
+            conversation.getStartCommandId(),
+            ConversationIntent.HOMECOMING_GREETING));
         sync();
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.CONVERSING);
         assertThat(conversationRepository.findById(conversation.getId()).orElseThrow()
@@ -229,20 +246,124 @@ class HomecomingE2eTest {
     }
 
     @Test
-    void highAmbientTemperatureKeepsExistingWellnessBehavior() {
+    void highAmbientTemperatureRunsThroughAiConversationAndReturnsHome() {
         dispatcher.dispatch(ambientObserved("amb-1", 31.5));
         sync();
 
-        assertThat(robotPublisher.commands).hasSize(2);
-        assertThat(robotPublisher.commands.get(0).payload()).containsEntry("target", "LIVING_ROOM");
-        assertThat(robotPublisher.commands.get(1).type()).isEqualTo(RobotCommandType.SPEAK);
+        assertThat(robotPublisher.commands).hasSize(1);
+        RobotCommand navigate = robotPublisher.commands.get(0);
+        assertThat(navigate.payload()).containsEntry("target", "LIVING_ROOM");
         assertThat(mode()).isEqualTo(RobotMode.SCENARIO_ACTIVE);
 
-        RobotCommand navigate = robotPublisher.commands.get(0);
         dispatcher.dispatch(navigationResult(
             "amb-nav-1", navigate.scenarioId(), navigate.commandId(), "SUCCEEDED"));
         sync();
-        assertThat(status(navigate.scenarioId())).isEqualTo(ScenarioStatus.CONVERSING);
+
+        UUID scenarioId = navigate.scenarioId();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.CHECKING_INTERACTION);
+        assertThat(aiPublisher.commands).hasSize(1);
+        AiConversationCommand aiCommand = aiPublisher.commands.get(0);
+        assertThat(aiCommand.payload().intent()).isEqualTo(ConversationIntent.WELLNESS_CHECK);
+        assertThat(aiCommand.payload().triggerContext())
+            .containsEntry("location", "LIVING_ROOM");
+        assertThat(((Number) aiCommand.payload().triggerContext().get("temperatureC"))
+            .doubleValue()).isEqualTo(31.5);
+        Conversation conversation = conversationRepository.findByScenarioId(scenarioId)
+            .orElseThrow();
+
+        dispatcher.dispatch(conversationStarted(
+            "amb-conv-start-1",
+            scenarioId,
+            conversation.getId(),
+            conversation.getStartCommandId(),
+            ConversationIntent.WELLNESS_CHECK));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.CONVERSING);
+
+        dispatcher.dispatch(conversationEnded(
+            "amb-conv-end-1", scenarioId, conversation.getId(), "COMPLETED", null));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
+        assertThat(robotPublisher.commands).hasSize(2);
+        RobotCommand returnToDefault = robotPublisher.commands.get(1);
+        assertThat(returnToDefault.payload()).containsEntry("target", "DEFAULT");
+
+        dispatcher.dispatch(navigationResult(
+            "amb-nav-2",
+            scenarioId,
+            returnToDefault.commandId(),
+            "SUCCEEDED"));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.COMPLETED);
+        assertThat(mode()).isEqualTo(RobotMode.IDLE);
+    }
+
+    @Test
+    void dueMedicationRunsThroughAiConversationAndReturnsHome() {
+        CareRecord medication = careRecordRepository.saveAndFlush(CareRecord.create(
+            seniorId,
+            "MEDICATION",
+            Map.of("medicationName", "혈압약", "reminderEnabled", true)));
+        CareRecord schedule = CareRecord.create(
+            seniorId,
+            "MEDICATION_SCHEDULE",
+            Map.of(
+                "medicationName", "혈압약",
+                "localTimes", List.of("10:00"),
+                "timeZone", "Asia/Seoul",
+                "reminderLeadMinutes", 0));
+        schedule.assignParent(medication.getId());
+        careRecordRepository.saveAndFlush(schedule);
+
+        medicationScheduler.tick();
+        sync();
+
+        assertThat(robotPublisher.commands).hasSize(1);
+        RobotCommand navigate = robotPublisher.commands.get(0);
+        assertThat(navigate.payload()).containsEntry("target", "LIVING_ROOM");
+        UUID scenarioId = navigate.scenarioId();
+
+        dispatcher.dispatch(navigationResult(
+            "med-nav-1", scenarioId, navigate.commandId(), "SUCCEEDED"));
+        sync();
+
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.CHECKING_INTERACTION);
+        assertThat(aiPublisher.commands).hasSize(1);
+        AiConversationCommand aiCommand = aiPublisher.commands.get(0);
+        assertThat(aiCommand.payload().intent())
+            .isEqualTo(ConversationIntent.MEDICATION_REMINDER);
+        assertThat(aiCommand.payload().text()).contains("혈압약");
+        assertThat(aiCommand.payload().triggerContext())
+            .containsEntry("medicationScheduleId", schedule.getId().toString())
+            .containsEntry("scheduledAt", "2026-08-05T10:00+09:00");
+        Conversation conversation = conversationRepository.findByScenarioId(scenarioId)
+            .orElseThrow();
+
+        dispatcher.dispatch(conversationStarted(
+            "med-conv-start-1",
+            scenarioId,
+            conversation.getId(),
+            conversation.getStartCommandId(),
+            ConversationIntent.MEDICATION_REMINDER));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.CONVERSING);
+
+        dispatcher.dispatch(conversationEnded(
+            "med-conv-end-1", scenarioId, conversation.getId(), "COMPLETED", null));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
+        assertThat(robotPublisher.commands).hasSize(2);
+        RobotCommand returnToDefault = robotPublisher.commands.get(1);
+        assertThat(returnToDefault.payload()).containsEntry("target", "DEFAULT");
+
+        dispatcher.dispatch(navigationResult(
+            "med-nav-2",
+            scenarioId,
+            returnToDefault.commandId(),
+            "SUCCEEDED"));
+        sync();
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.COMPLETED);
+        assertThat(mode()).isEqualTo(RobotMode.IDLE);
     }
 
     @Test
@@ -347,10 +468,11 @@ class HomecomingE2eTest {
         String eventId,
         UUID scenarioId,
         UUID conversationId,
-        String commandId
+        String commandId,
+        ConversationIntent intent
     ) {
         ObjectNode body = objectMapper.createObjectNode();
-        body.putObject("payload").put("intent", "HOMECOMING_GREETING");
+        body.putObject("payload").put("intent", intent.name());
         return message(MqttInboundCategory.ROBOT_EVENT, "CONVERSATION_STARTED", DEVICE_ID, eventId,
             scenarioId, conversationId, commandId, false, body);
     }

@@ -28,7 +28,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Drives the homecoming movement and AI conversation lifecycle. */
+/** Drives the shared movement and AI conversation lifecycle for supported scenarios. */
 @Service
 @ConditionalOnProperty(prefix = "bomi.mqtt", name = "enabled", havingValue = "true")
 public class HomecomingOrchestrator {
@@ -150,16 +150,9 @@ public class HomecomingOrchestrator {
                 scenarioRepository.save(scenario);
                 syncRobotMode(robot, scenario);
 
-                if (scenario.getScenarioType() == ScenarioType.HOMECOMING) {
-                    ConversationStartResult result = conversationGateway.startConversation(scenarioId);
-                    if (!result.published()) {
-                        beginReturnToDefault(scenario, robot);
-                    }
-                } else {
-                    // Wellness/medication are migrated to START_CONVERSATION in their own tickets.
-                    scenario.beginConversation();
-                    scenarioRepository.save(scenario);
-                    syncRobotMode(robot, scenario);
+                ConversationStartResult result = conversationGateway.startConversation(scenarioId);
+                if (!result.published()) {
+                    beginReturnToDefault(scenario, robot);
                 }
             }
             case RETURNING_TO_DEFAULT -> {
@@ -342,8 +335,8 @@ public class HomecomingOrchestrator {
         // The robot physically reached DEFAULT, so AI failure alone must not leave SAFE_STOP.
         robot.changeMode(RobotMode.IDLE);
         robotRepository.save(robot);
-        log.info("Homecoming finished after DEFAULT return: scenarioId={}, status={}",
-            scenario.getId(), scenario.getFinalStatus());
+        log.info("Scenario finished after DEFAULT return: scenarioId={}, type={}, status={}",
+            scenario.getId(), scenario.getScenarioType(), scenario.getFinalStatus());
     }
 
     private void terminateNavigation(
