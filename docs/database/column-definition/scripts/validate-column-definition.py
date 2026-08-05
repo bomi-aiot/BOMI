@@ -497,7 +497,7 @@ def main() -> int:
             required_codes = {
                 "PERSONALIZATION_CONSENT", "HEALTH_DATA_CONSENT",
                 "SCHEDULE_CONSENT", "GUARDIAN_SHARING_CONSENT",
-                "PREFERRED_NAME", "DAILY_ROUTINE", "MEDICATION",
+                "PREFERRED_NAME", "BIRTH_DATE", "DAILY_ROUTINE", "MEDICATION",
                 "MEDICATION_SCHEDULE", "APPOINTMENT",
                 "PRIMARY_GUARDIAN_CARE_MANAGEMENT_CONSENT",
             }
