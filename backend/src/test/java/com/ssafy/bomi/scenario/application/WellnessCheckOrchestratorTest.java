@@ -23,6 +23,8 @@ import com.ssafy.bomi.robot.repository.RobotRepository;
 import com.ssafy.bomi.scenario.domain.Scenario;
 import com.ssafy.bomi.scenario.domain.ScenarioType;
 import com.ssafy.bomi.scenario.repository.ScenarioRepository;
+import com.ssafy.bomi.user.domain.AppUser;
+import com.ssafy.bomi.user.repository.AppUserRepository;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -34,6 +36,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class WellnessCheckOrchestratorTest {
 
     private final ScenarioRepository scenarioRepository = mock(ScenarioRepository.class);
+    private final AppUserRepository appUserRepository = mock(AppUserRepository.class);
     private final RobotRepository robotRepository = mock(RobotRepository.class);
     private final RobotCommandPublisher commandPublisher = mock(RobotCommandPublisher.class);
     private final ObservationProperties observationProperties = new ObservationProperties();
@@ -51,7 +54,11 @@ class WellnessCheckOrchestratorTest {
         observationProperties.setAmbientSensorToSenior(Map.of(sensorId, seniorId));
         orchestrator = new WellnessCheckOrchestrator(
             scenarioRepository, robotRepository, commandPublisher,
-            new ScenarioStartGuard(scenarioRepository), observationProperties, wellnessProperties);
+            new ScenarioStartGuard(scenarioRepository, appUserRepository),
+            observationProperties, wellnessProperties);
+
+        when(appUserRepository.findByIdForUpdate(any()))
+            .thenReturn(Optional.of(mock(AppUser.class)));
 
         when(scenarioRepository.save(any(Scenario.class))).thenAnswer(invocation -> {
             Scenario s = invocation.getArgument(0);

@@ -55,7 +55,14 @@ public interface ScenarioRepository extends JpaRepository<Scenario, UUID> {
      * 것은 그 상태에서 다음으로 넘어가는 이벤트가 한참 오지 않았다는 뜻이다.
      * {@code ScenarioTimeoutWatchdog}가 안전망으로 사용한다 — 대화 핸드오프가 아직 로깅
      * 스텁이거나 이벤트가 유실돼도, 그 어르신의 다음 시나리오가 영원히 막히지 않게 한다.</p>
-     */
+    */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+        select s from Scenario s
+        where s.finalStatus in :statuses and s.updatedAt < :before
+        order by s.id
+        """)
     List<Scenario> findByFinalStatusInAndUpdatedAtBefore(
-        Collection<ScenarioStatus> statuses, OffsetDateTime before);
+        @Param("statuses") Collection<ScenarioStatus> statuses,
+        @Param("before") OffsetDateTime before);
 }

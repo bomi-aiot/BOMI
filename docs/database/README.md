@@ -1,6 +1,6 @@
 # BOMI 데이터베이스 문서
 
-현재 기준은 PostgreSQL + pgvector, 물리 테이블 12개, 컬럼 151개다. Raw 발화, 대화·일간 요약, 장기 기억을 분리하고 앱과 로봇의 온보딩을 같은 질문 계약으로 처리한다. 확인 전 사실은 `fact_candidate`에서 재질의·민감정보 확인·PRIMARY 보호자 협의를 거친다.
+현재 기준은 PostgreSQL + 외부 벡터 스토어 Qdrant, 물리 테이블 13개, 컬럼 171개다. Raw 발화, 대화·일간 요약, 장기 기억을 분리하고 앱과 로봇의 온보딩을 같은 질문 계약으로 처리한다. 확인 전 사실은 `fact_candidate`에서 재질의·민감정보 확인·PRIMARY 보호자 협의를 거친다.
 
 ```text
 app_user
@@ -15,6 +15,7 @@ conversation_summary
 fact_candidate
 memory
 care_record
+wake_word_trigger_receipt
 ```
 
 최종 서비스 조회 원본은 `app_user`, `care_relationship`, `memory`, `care_record`다. 최근 대화와 하루치 대화는 별도 테이블이 아니라 `conversation_message`의 조회 범위다.
@@ -23,7 +24,7 @@ care_record
 
 | 문서 | 목적 |
 | --- | --- |
-| [`mvp-erd.md`](./mvp-erd.md) | 12개 테이블의 컬럼·관계·제약·정책 |
+| [`mvp-erd.md`](./mvp-erd.md) | 13개 테이블의 컬럼·관계·제약·정책 |
 | [`onboarding-question-set-v1.json`](./onboarding-question-set-v1.json) | 앱·로봇 공용 질문·검증·정규화·최종 매핑 |
 | [`onboarding-rest-environment-design.md`](./onboarding-rest-environment-design.md) | 온보딩·후보·대화·휴식·환경 처리 흐름 |
 | [`column-definition/BOMI_컬럼정의서.xlsx`](./column-definition/BOMI_컬럼정의서.xlsx) | 사람이 읽는 테이블·컬럼·코드·제약 정의 |

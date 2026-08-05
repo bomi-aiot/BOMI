@@ -1,6 +1,7 @@
 package com.ssafy.bomi.migration;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import java.io.IOException;
@@ -9,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -106,7 +108,57 @@ class FlywayMigrationValidationTest {
         // 로딩 단계에서 죽어 있었기 때문에, 이 assertion 자체가 실행된 적이 없어서
         // 회귀가 드러나지 않았다.
         assertThat(applied).containsExactly(
-            "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14");
+            "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15");
+    }
+
+    @Test
+    void wakeWordMigrationAddsDurableScopedIdempotencyAndActiveInvariant() throws Exception {
+        assertThat(columnExists("scenario", "trigger_context")).isTrue();
+        assertThat(columnExists("scenario", "completion_result_code")).isTrue();
+        assertThat(columnExists("scenario", "completion_reason_code")).isTrue();
+        assertThat(columnExists("wake_word_trigger_receipt", "event_id")).isTrue();
+        assertThat(columnExists("wake_word_trigger_receipt", "disposition")).isTrue();
+        assertThat(indexExists("uq_scenario_wake_word_event")).isTrue();
+        assertThat(indexExists("uq_scenario_one_active_per_senior")).isTrue();
+        assertThat(constraintExists(
+            "wake_word_trigger_receipt", "ck_wake_word_trigger_confidence")).isTrue();
+        assertThat(constraintExists(
+            "wake_word_trigger_receipt", "ck_wake_word_trigger_resolution")).isTrue();
+        assertThat(constraintExists(
+            "scenario", "ck_scenario_wake_word_external_event")).isTrue();
+
+        UUID duplicateWakeEventSeniorA = UUID.randomUUID();
+        UUID duplicateWakeEventSeniorB = UUID.randomUUID();
+        String eventId = "wake-" + UUID.randomUUID();
+        try (Connection connection = dataSource.getConnection()) {
+            assertThatThrownBy(() -> insertScenario(
+                connection, UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID(),
+                null, "WAKE_WORD_CALL", "COMPLETED"))
+                .isInstanceOf(java.sql.SQLException.class);
+
+            insertScenario(connection, UUID.randomUUID(), duplicateWakeEventSeniorA,
+                UUID.randomUUID(), eventId, "WAKE_WORD_CALL", "COMPLETED");
+            assertThatThrownBy(() -> insertScenario(
+                connection, UUID.randomUUID(), duplicateWakeEventSeniorB,
+                UUID.randomUUID(), eventId, "WAKE_WORD_CALL", "COMPLETED"))
+                .isInstanceOf(java.sql.SQLException.class);
+
+            // The event index is deliberately scoped to WAKE_WORD_CALL, not global.
+            insertScenario(connection, UUID.randomUUID(), UUID.randomUUID(),
+                UUID.randomUUID(), eventId, "HOMECOMING", "COMPLETED");
+            insertScenario(connection, UUID.randomUUID(), UUID.randomUUID(),
+                UUID.randomUUID(), eventId, "HOMECOMING", "COMPLETED");
+
+            UUID sameSenior = UUID.randomUUID();
+            insertScenario(connection, UUID.randomUUID(), sameSenior,
+                UUID.randomUUID(), "active-a-" + UUID.randomUUID(),
+                "HOMECOMING", "RECEIVED");
+            assertThatThrownBy(() -> insertScenario(
+                connection, UUID.randomUUID(), sameSenior,
+                UUID.randomUUID(), "active-b-" + UUID.randomUUID(),
+                "WAKE_WORD_CALL", "NAVIGATING"))
+                .isInstanceOf(java.sql.SQLException.class);
+        }
     }
 
     /**
@@ -182,6 +234,54 @@ class FlywayMigrationValidationTest {
             try (ResultSet rs = ps.executeQuery()) {
                 return rs.next();
             }
+        }
+    }
+
+    private boolean indexExists(String index) throws Exception {
+        try (Connection connection = dataSource.getConnection();
+            var ps = connection.prepareStatement(
+                "SELECT 1 FROM pg_indexes WHERE schemaname = current_schema() "
+                    + "AND indexname = ?")) {
+            ps.setString(1, index);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private boolean constraintExists(String table, String constraint) throws Exception {
+        try (Connection connection = dataSource.getConnection();
+            var ps = connection.prepareStatement(
+                "SELECT 1 FROM information_schema.table_constraints "
+                    + "WHERE table_name = ? AND constraint_name = ?")) {
+            ps.setString(1, table);
+            ps.setString(2, constraint);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static void insertScenario(
+        Connection connection,
+        UUID id,
+        UUID seniorId,
+        UUID robotId,
+        String externalEventId,
+        String scenarioType,
+        String finalStatus
+    ) throws Exception {
+        try (var ps = connection.prepareStatement(
+            "INSERT INTO scenario "
+                + "(id, senior_id, robot_id, external_event_id, scenario_type, final_status, "
+                + "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, now(), now())")) {
+            ps.setObject(1, id);
+            ps.setObject(2, seniorId);
+            ps.setObject(3, robotId);
+            ps.setString(4, externalEventId);
+            ps.setString(5, scenarioType);
+            ps.setString(6, finalStatus);
+            ps.executeUpdate();
         }
     }
 }

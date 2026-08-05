@@ -18,6 +18,8 @@ import java.util.stream.Collectors;
  */
 public enum ScenarioStatus {
     RECEIVED,
+    /** 범용 목적지로 이동 중. 기존 현관 전용 상태는 호환성을 위해 그대로 둔다. */
+    NAVIGATING,
     MOVING_TO_ENTRANCE,
     CHECKING_INTERACTION,
     CONVERSING,

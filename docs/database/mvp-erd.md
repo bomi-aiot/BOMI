@@ -1,6 +1,6 @@
 # BOMI MVP 데이터 모델
 
-> PostgreSQL (pgvector 미사용) + 외부 벡터 스토어 Qdrant / 물리 테이블 12개
+> PostgreSQL (pgvector 미사용) + 외부 벡터 스토어 Qdrant / 물리 테이블 13개
 >
 > 범위: 앱·로봇 온보딩, Raw 대화, 대화 요약, 장기 기억, 민감정보 확인·PRIMARY 협의
 >
@@ -20,7 +20,7 @@
 
 ## 2. 최종 테이블
 
-`app_user`, `care_relationship`, `robot`, `onboarding_session`, `onboarding_answer`, `scenario`, `conversation`, `conversation_message`, `conversation_summary`, `fact_candidate`, `memory`, `care_record`.
+`app_user`, `care_relationship`, `robot`, `onboarding_session`, `onboarding_answer`, `scenario`, `conversation`, `conversation_message`, `conversation_summary`, `fact_candidate`, `memory`, `care_record`, `wake_word_trigger_receipt`.
 
 이번 단계에서는 `memory_evidence`, `memory_retrieval_log`, `care_coordination_event`, `onboarding_question`, `outbox_message`, `audit_log`를 만들지 않는다. 최근 Raw·일간 Raw·최근 요약 전용 테이블도 만들지 않는다.
 
@@ -99,6 +99,14 @@ erDiagram
         VARCHAR external_event_id
         VARCHAR scenario_type
         VARCHAR final_status
+        JSONB conversation_request
+        VARCHAR active_navigation_command_id
+        VARCHAR active_navigation_target
+        JSONB trigger_context
+        VARCHAR completion_result_code
+        VARCHAR completion_reason_code
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ updated_at
     }
     CONVERSATION {
         UUID id PK
@@ -207,6 +215,16 @@ erDiagram
         JSONB recurrence
         UUID source_candidate_id FK
     }
+    WAKE_WORD_TRIGGER_RECEIPT {
+        VARCHAR event_id PK
+        VARCHAR robot_device_id
+        TIMESTAMPTZ occurred_at
+        VARCHAR keyword
+        DOUBLE confidence
+        VARCHAR disposition
+        UUID scenario_id
+        TIMESTAMPTZ created_at
+    }
 
     APP_USER ||--o{ CARE_RELATIONSHIP : senior
     APP_USER ||--o{ CARE_RELATIONSHIP : guardian
@@ -229,9 +247,12 @@ erDiagram
     FACT_CANDIDATE o|--o| MEMORY : materializes
     APP_USER ||--o{ CARE_RECORD : owns
     FACT_CANDIDATE o|--o| CARE_RECORD : materializes
+    SCENARIO o|--o| WAKE_WORD_TRIGGER_RECEIPT : accepted_trigger
 ```
 
-Mermaid의 `TEXT_ARRAY`는 PostgreSQL `TEXT[]` 표현이다. `fact_candidate.target_entity_id`, `materialized_target_id`는 대상 테이블이 `target_domain`에 따라 달라지는 논리 참조이며 물리 FK가 아니다.
+Mermaid의 `TEXT_ARRAY`는 PostgreSQL `TEXT[]`, `DOUBLE`은 `double precision` 표현이다. `fact_candidate.target_entity_id`, `materialized_target_id`와 `wake_word_trigger_receipt.scenario_id`는 서비스가 검증하는 논리 참조이며 물리 FK가 아니다.
+
+`WAKE_WORD_CALL`의 `scenario.external_event_id`는 반드시 실제 MQTT `eventId`여야 한다. 이 타입에만 적용되는 CHECK와 부분 UNIQUE 인덱스로 null 및 중복을 막되, 다른 시나리오 타입의 `external_event_id` 전체를 전역 UNIQUE로 만들지는 않는다. 시나리오 시작은 `app_user` 시니어 행을 공용 잠금으로 사용하고, DB의 시니어별 활성 시나리오 부분 UNIQUE 인덱스를 최종 방어선으로 둔다.
 
 ## 4. 대화·요약·기억
 
@@ -366,6 +387,9 @@ V7 이전에는 시각이 `details` 안에 네 가지 규약으로 흩어져 있
 
 | 대상 | 허용 값 |
 | --- | --- |
+| `scenario.scenario_type` | `HOMECOMING`, `WELLNESS_CHECK`, `MEDICATION_REMINDER`, `WAKE_WORD_CALL`, `FALL_RESPONSE`, `MANUAL_INTERACTION` |
+| `scenario.final_status` | `RECEIVED`, `NAVIGATING`, `MOVING_TO_ENTRANCE`, `CHECKING_INTERACTION`, `CONVERSING`, `RETURN_DECISION`, `RETURNING_TO_DEFAULT`, `COMPLETED`, `FAILED`, `CANCELLED`, `TIMED_OUT` |
+| `wake_word_trigger_receipt.disposition` | `RECEIVED`, `ACCEPTED`, `REJECTED_UNKNOWN_ROBOT`, `REJECTED_INACTIVE_ROBOT`, `REJECTED_UNASSIGNED_ROBOT`, `REJECTED_SAFE_STOP`, `REJECTED_ACTIVE_SCENARIO`, `REJECTED_BUSY_MODE` |
 | `conversation.status` | `OPEN`, `COMPLETED`, `FAILED`, `CANCELLED` |
 | `conversation_message.role` | `SENIOR`, `ROBOT` |
 | `conversation_summary.summary_type` | `CONVERSATION`, `DAILY` |

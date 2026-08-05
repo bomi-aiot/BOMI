@@ -21,6 +21,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -96,7 +97,11 @@ public class MedicationReminderScheduler {
     public void tick() {
         try {
             List<CareRecord> schedules = careRecordRepository
-                .findByRecordTypeAndStatus(RECORD_MEDICATION_SCHEDULE, CareRecordStatus.ACTIVE);
+                .findByRecordTypeAndStatus(RECORD_MEDICATION_SCHEDULE, CareRecordStatus.ACTIVE)
+                .stream()
+                .sorted(Comparator.comparing(CareRecord::getSeniorId)
+                    .thenComparing(CareRecord::getId))
+                .toList();
             for (CareRecord schedule : schedules) {
                 remindIfDue(schedule);
             }
