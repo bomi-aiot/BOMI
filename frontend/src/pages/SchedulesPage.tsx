@@ -60,11 +60,14 @@ export function SchedulesPage() {
     schedules,
     isLoading,
     error,
+    dataErrors,
     pendingActionId,
     refresh,
     addSchedule,
     updateSchedule,
   } = useBomi()
+  const profileError = dataErrors.elderProfile ?? error
+  const scheduleDataError = dataErrors.schedules
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<Schedule | null>(null)
   const [form, setForm] = useState<ScheduleFormValue>(createDefaultForm)
@@ -169,8 +172,8 @@ export function SchedulesPage() {
     return <LoadingState label="일정을 불러오는 중입니다" rows={5} />
   }
 
-  if (error && !elderProfile) {
-    return <ErrorState description={error} onRetry={() => void refresh()} />
+  if (profileError && !elderProfile) {
+    return <ErrorState description={profileError} onRetry={() => void refresh()} />
   }
 
   if (!elderProfile) {
@@ -182,12 +185,29 @@ export function SchedulesPage() {
     )
   }
 
+  if (scheduleDataError && schedules.length === 0) {
+    return (
+      <div className="page-stack">
+        <PageHeader
+          eyebrow="약속을 잊지 않도록"
+          title="일정 관리"
+          description="등록된 병원 예약과 개인 약속을 관리해요."
+        />
+        <ErrorState
+          title="일정을 불러오지 못했어요"
+          description={scheduleDataError}
+          onRetry={() => void refresh()}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="page-stack">
       <PageHeader
         eyebrow="약속을 잊지 않도록"
         title="일정 관리"
-        description="병원 예약과 개인 약속을 보미가 미리 알려드리고, 이후 자연스럽게 안부를 묻습니다."
+        description="등록된 병원 예약과 개인 약속, 알림·사후 질문 설정을 관리해요."
         actions={<Button onClick={openCreate}>새 일정 추가</Button>}
       />
 
@@ -247,7 +267,9 @@ export function SchedulesPage() {
                             ? 'success'
                             : schedule.status === 'CANCELLED'
                               ? 'neutral'
-                              : 'warning'
+                              : schedule.status === 'UNKNOWN'
+                                ? 'warning'
+                                : 'info'
                         }
                         dot
                       >
@@ -255,7 +277,9 @@ export function SchedulesPage() {
                           ? '완료'
                           : schedule.status === 'CANCELLED'
                             ? '취소'
-                            : '예정'}
+                            : schedule.status === 'UNKNOWN'
+                              ? '상태 확인 중'
+                              : '예정'}
                       </Badge>
                     </div>
                     {schedule.description ? (

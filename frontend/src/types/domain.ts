@@ -37,6 +37,7 @@ export const STATUS_LEVELS = [
   "ATTENTION",
   "DANGER",
   "OFFLINE",
+  "UNKNOWN",
 ] as const;
 export type StatusLevel = (typeof STATUS_LEVELS)[number];
 
@@ -300,7 +301,12 @@ export interface ElderProfile {
   updatedAt: string;
 }
 
-export const MEDICATION_STATUSES = ["ACTIVE", "PAUSED", "ENDED"] as const;
+export const MEDICATION_STATUSES = [
+  "ACTIVE",
+  "PAUSED",
+  "ENDED",
+  "UNKNOWN",
+] as const;
 export type MedicationStatus = (typeof MEDICATION_STATUSES)[number];
 
 export const RECURRENCE_TYPES = ["DAILY", "WEEKLY"] as const;
@@ -372,6 +378,7 @@ export const MEDICATION_RESPONSE_STATUSES = [
   "UPCOMING",
   "MISSED",
   "DECLINED",
+  "UNKNOWN",
 ] as const;
 export type MedicationResponseStatus =
   (typeof MEDICATION_RESPONSE_STATUSES)[number];
@@ -383,7 +390,6 @@ export interface MedicationResponse {
   scheduledAt: string;
   respondedAt?: string;
   status: MedicationResponseStatus;
-  responseText?: string;
 }
 
 export const SCHEDULE_TYPES = ["APPOINTMENT", "PERSONAL_SCHEDULE"] as const;
@@ -393,6 +399,7 @@ export const SCHEDULE_STATUSES = [
   "UPCOMING",
   "COMPLETED",
   "CANCELLED",
+  "UNKNOWN",
 ] as const;
 export type ScheduleStatus = (typeof SCHEDULE_STATUSES)[number];
 
@@ -431,6 +438,7 @@ export const CONFIRMATION_REQUEST_STATUSES = [
   "EDITED",
   "REJECTED",
   "REASK_REQUESTED",
+  "EXPIRED",
 ] as const;
 export type ConfirmationRequestStatus =
   (typeof CONFIRMATION_REQUEST_STATUSES)[number];
@@ -483,6 +491,9 @@ export interface ConfirmationRequest {
   previousStatus?: ConfirmationRequestStatus;
   previousProposedValue?: StructuredValue;
   appliedEntityId?: string;
+  canResolve?: boolean;
+  canRequestRecheck?: boolean;
+  waitingReason?: "CLARIFICATION" | "COORDINATION" | "CAPTURED" | "EXPIRED";
 }
 
 export interface ActivitySummary {
@@ -493,24 +504,34 @@ export interface ActivitySummary {
   occurredAt: string;
   source: InformationSource;
   statusLevel: StatusLevel;
+  kind?: "SHARED_MEMORY" | "CARE_UPDATE" | "DAILY_SUMMARY";
+  visibility?: Extract<
+    MemoryVisibility,
+    "SHARED_WITH_PRIMARY" | "SHARED_WITH_GUARDIANS"
+  >;
   relatedMemoryId?: string;
   relatedCareRecordId?: string;
+}
+
+export interface SafetyAlert {
+  id: string;
+  message: string;
+  occurredAt?: string;
+  status: "OPEN";
 }
 
 export interface RobotStatus {
   id: string;
   elderId: string;
   deviceId?: string;
-  currentMode: RobotMode;
-  isActive: boolean;
+  currentMode?: RobotMode;
+  registrationActive: boolean;
   ambientTemperatureC?: number;
   ambientHumidityPercent?: number;
   ambientObservedAt?: string;
 }
 
 export interface HomeEnvironmentSummary {
-  statusLevel: StatusLevel;
-  label: string;
   temperatureC?: number;
   humidityPercent?: number;
   lastObservedAt?: string;
@@ -528,12 +549,11 @@ export interface HomeDashboardSummary {
   elder: {
     id: string;
     displayName: string;
-    statusLevel: StatusLevel;
-    statusLabel: string;
-    lastCheckedAt: string;
+    lastObservedAt?: string;
   };
   robot: RobotStatus;
-  todayIncidentCount: number;
+  /** null means the alert feed could not be verified; [] means a successful empty result. */
+  safetyAlerts: SafetyAlert[] | null;
   homeEnvironment: HomeEnvironmentSummary;
   todaySchedules: Schedule[];
   medications: Medication[];
@@ -541,7 +561,8 @@ export interface HomeDashboardSummary {
   medicationProgress: MedicationProgress;
   pendingConfirmationCount: number;
   confirmationRequests: ConfirmationRequest[];
-  recentActivities: ActivitySummary[];
+  /** null means the guardian-visible activity contract is unavailable. */
+  recentActivities: ActivitySummary[] | null;
   generatedAt: string;
 }
 
