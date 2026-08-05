@@ -65,6 +65,37 @@ canary query 호출 상한 = 후보가 있는 canary 문맥 요청 수
 단가는 변할 수 있으므로 코드나 이 문서의 숫자를 비용 근거로 사용하지 않는다.
 승인 시점의 공급자 대시보드 단가와 잔액을 별도로 기록한다.
 
+### 2.1 Docker가 없는 Windows 개발기의 무료 검증
+
+공식 [Qdrant 1.18.3 Windows 릴리스](https://github.com/qdrant/qdrant/releases/tag/v1.18.3)의
+`qdrant-x86_64-pc-windows-msvc.zip`을 별도 임시 디렉터리에 풀어 실행할 수 있다. 저장소에
+바이너리·스토리지·로그를 커밋하지 않는다.
+
+```powershell
+$qdrantDir = Resolve-Path .\tmp\qdrant-1.18.3-codex
+Start-Process -FilePath "$qdrantDir\qdrant.exe" `
+  -WorkingDirectory $qdrantDir -WindowStyle Hidden
+Invoke-RestMethod http://127.0.0.1:6333/collections
+```
+
+AI 브랜치는 backend 브랜치와 동시에 필요하므로 별도 worktree를 사용한다. Python은 AI
+모듈의 기존 가상환경을 지정한다. 이 테스트의 임베딩은 무료 결정적 대역이며 Upstage를
+호출하지 않는다.
+
+```powershell
+$env:QDRANT_HOST = "127.0.0.1"
+$env:QDRANT_GRPC_PORT = "6334"
+$env:BOMI_AI_PYTHON = "C:\path\to\robot\ai_chat\venv\Scripts\python.exe"
+$env:BOMI_AI_CHAT_DIR = "C:\path\to\ai-worktree\robot\ai_chat"
+Set-Location backend
+.\gradlew.bat integrationTest --rerun-tasks
+```
+
+성공 기준은 Qdrant 어댑터·초기화 9건과 교차 모듈 RAG E2E 1건이 모두 `passed`이고
+`skipped/aborted`가 0건인 것이다. 교차 E2E는 복지 문서 프롬프트, 대화 저장, 사실 후보,
+메모리 생성, Qdrant 재색인, 다음 턴 회상을 검증한다. 종료 후 실행한 Qdrant 프로세스와
+임시 스토리지는 정확한 경로·PID를 확인한 뒤 정리한다.
+
 ## 3. 초기 색인과 canary
 
 현재 코드는 사용자별 feature flag를 제공하지 않는다. 따라서 운영 전체에 바로 켜는
@@ -193,5 +224,7 @@ COMMIT;
 - 사용자별/비율별 semantic canary flag가 없다. 기본 활성화 전에 추가하는 것이 좋다.
 - 이 저장소의 Qdrant는 파생 인덱스라 별도 백업하지 않는다. 복구 시간은 Upstage
   호출 한도와 동기화 주기에 좌우된다.
+- 공식 Qdrant와 결정적 임베딩을 사용한 무료 교차 모듈 E2E는 통과했지만 CI 필수 잡은
+  아직 아니다.
 - 현장 음성·MQTT·유료 Upstage까지 포함한 E2E는 키와 비용 승인이 있어야 실행할 수
   있다. 무료 테스트 통과를 그 검증으로 간주하지 않는다.
