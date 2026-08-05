@@ -258,6 +258,39 @@ class ConversationContextServiceTest {
         assertThat(context.profile().preferredHospital()).isNull();
     }
 
+    // ── S15P11E102-253: 상위 동의 없이는 질문 자체를 만들지 않는다 ────────────
+
+    /** 명시적으로 GRANTED 인 경우만 로봇이 동의 질문을 만들어도 된다고 본다(완료 조건). */
+    @Test
+    void profileExposesGuardianSharingConsentWhenGranted() {
+        senior.changeGuardianSharingConsent(ConsentStatus.GRANTED);
+        appUserRepository.save(senior);
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().guardianSharingConsentGranted()).isTrue();
+    }
+
+    /**
+     * DENIED 와 기본값(NOT_REQUESTED) 둘 다 "동의 아님"으로 취급한다 — "모르면
+     * 동의로 본다"가 이 값에서 가장 위험한 방향의 실수다({@code isGranted} 와
+     * 같은 원칙).
+     */
+    @Test
+    void profileTreatsDeniedAndNotRequestedAsNotGranted() {
+        ConversationContextResponse defaultContext = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+        assertThat(defaultContext.profile().guardianSharingConsentGranted()).isFalse();
+
+        senior.changeGuardianSharingConsent(ConsentStatus.DENIED);
+        appUserRepository.save(senior);
+
+        ConversationContextResponse deniedContext = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+        assertThat(deniedContext.profile().guardianSharingConsentGranted()).isFalse();
+    }
+
     // ── S15P11E102-260: known_person 이 회피 대상의 새 출처 ──────────────────
 
     /**

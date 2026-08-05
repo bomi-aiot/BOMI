@@ -243,7 +243,8 @@ public class ConversationContextService {
             senior.getWakeTime() == null ? null : senior.getWakeTime().toString(),
             senior.getSleepTime() == null ? null : senior.getSleepTime().toString(),
             senior.getChronicPainArea(),
-            senior.getPreferredHospital()
+            senior.getPreferredHospital(),
+            isGranted(senior.getGuardianSharingConsentStatus())
         );
     }
 
