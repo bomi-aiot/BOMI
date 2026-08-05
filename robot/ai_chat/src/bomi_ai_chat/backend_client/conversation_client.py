@@ -31,10 +31,12 @@ from typing import Any
 
 import requests
 
+from bomi_ai_chat.backend_client.session import build_backend_session
 from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.http import (
     ExternalServiceError,
     decode_json_object,
+    is_auth_failure,
     request_with_retry,
 )
 
@@ -54,7 +56,7 @@ class BackendConversationClient:
         self.timeout_seconds = settings.backend_timeout_seconds
         self.backoff_seconds = settings.http_backoff_seconds
         self.max_backoff_seconds = settings.http_max_backoff_seconds
-        self._session = session or requests
+        self._session = session or build_backend_session(settings)
 
     def record_turn(
         self,
@@ -67,7 +69,7 @@ class BackendConversationClient:
         trigger_type: str | None = None,
         priority: str | None = None,
         orientation_question: bool | None = None,
-    ) -> str | None:
+    ) -> tuple[str | None, str | None]:
         """발화 하나를 올린다. 예외를 던지지 않는다.
 
         인자
@@ -84,8 +86,15 @@ class BackendConversationClient:
             기다리게 하지 않는다. 한 번 실패하면 그 턴의 기록은 포기한다.
 
         반환값
-            서버가 배정한 conversation_id, 또는 실패했으면 None.
-            호출부는 이 값을 다음 턴에 넘겨 같은 대화에 이어 붙인다.
+            (conversationId, messageId) — S15P11E102-306 에서 단일 값에서 넓혔다.
+            실패하면 (None, None). 호출부(graph/build.py)는 conversationId 를 다음
+            턴에 넘겨 같은 대화에 이어 붙이고, messageId 는 어르신 발화 행에 대해서만
+            state 에 남긴다(fact_candidate 추출(255)의 sourceMessageId 근거).
+
+            ★ messageId 는 아직 서버가 안 돌려줄 수 있다. 이 티켓 시점에는 백엔드가
+              그 필드를 보내도록 바뀌지 않았다(255 번이 그 작업이다). body 에 없으면
+              .get() 이 조용히 None 을 준다 — 로봇 쪽은 이미 그 None 을 다룰 준비가
+              되어 있고, 서버가 나중에 필드를 채우기 시작하면 코드 변경 없이 이어진다.
         """
         url = f"{self.base_url}/api/v1/robot/conversation-events"
         payload: dict[str, Any] = {
@@ -115,12 +124,25 @@ class BackendConversationClient:
         except (ExternalServiceError, OSError, ValueError) as error:
             # 좁게 잡는다. Exception 을 통째로 잡으면 호출 인자를 틀린 프로그래밍
             # 오류까지 "네트워크 실패"로 둔갑한다.
-            logger.warning(
-                "conversation event not recorded (%s); the turn continues, but the T2 "
-                "utterance count will be short by one", error)
-            return None
+            if is_auth_failure(error):
+                # 401/403 은 통계 유실이 아니라 설정 오류다. 아래의 "그냥 통계
+                # 한 칸 빠졌다" 문구와 섞이면 배포 때 시크릿을 안 맞춘 실수를
+                # 아무도 알아채지 못한다(S15P11E102-307).
+                logger.warning(
+                    "AUTH FAILURE: backend rejected the shared secret (status=%s) "
+                    "while recording a conversation event; this is a config "
+                    "problem, not a dropped turn. Check BACKEND_SHARED_SECRET.",
+                    error.status_code,
+                )
+            else:
+                logger.warning(
+                    "conversation event not recorded (%s); the turn continues, but "
+                    "the T2 utterance count will be short by one", error)
+            # (conversationId, messageId) 튜플 계약은 S15P11E102-306 이 세웠다.
+            # 여기서 단일 None 을 돌려주면 호출부의 튜플 언패킹이 TypeError 로 죽는다.
+            return None, None
 
-        return body.get("conversationId")
+        return body.get("conversationId"), body.get("messageId")
 
 
 def _to_iso(epoch_seconds: float) -> str:

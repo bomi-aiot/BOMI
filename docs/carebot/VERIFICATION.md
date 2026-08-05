@@ -5,13 +5,20 @@
 
 ## 0. 준비
 
+> ⚠️ **백엔드 명령은 `be-develop` 체크아웃에서만 유효합니다.** 이 저장소는 라인마다
+> 다른 소스를 갖습니다(CLAUDE.md §25). `ai-develop`(이 문서가 있는 라인)의 `backend/`
+> 는 `HealthController` 하나만 있는 껍데기라서, `ai-develop` 체크아웃에서
+> `./gradlew test` 를 돌리면 `BUILD SUCCESSFUL` 이 나오지만 **실제로는 아무것도 검증하지
+> 않습니다.** 이 문서에서 **[be-develop]** 표시가 붙은 절은 `be-develop` 워크트리에서
+> 실행하십시오.
+
 ```bash
-# 로봇 (Python)
+# 로봇 (Python) — ai-develop
 cd robot/ai_chat
 python -m venv venv && ./venv/Scripts/activate    # Windows
 pip install -e ".[dev]"
 
-# 백엔드 (Java 17)
+# 백엔드 (Java 17) — [be-develop] 에서만
 cd backend
 ./gradlew --version
 ```
@@ -20,11 +27,20 @@ cd backend
 
 ---
 
+## 0. 실기로 점검할 때는 별도 문서가 있습니다
+
+마이크·스피커를 쓰는 점검은 [`FIELD-TEST-233.md`](FIELD-TEST-233.md) 를 씁니다. 이 문서는 "무엇을 실행하고 무엇을 성공으로 볼지"를 영역별로 적은 참조서이고, 그 문서는 **책상에서 채워 넣는 종이**입니다 — 순서, 기록할 칸, 발견한 것을 분류하는 표가 있습니다.
+
+특히 그 문서의 §0.5(에코)를 먼저 하십시오. 건너뛰면 이후 모든 게이트 버그 리포트가 실제로는 에코입니다.
+
 ## 1. 가장 빠른 전체 점검 (2분)
 
 ```bash
 cd robot/ai_chat && python -m pytest -m "not integration and not manual" -q && python -m ruff check src tests
 ```
+
+**[be-develop]** 에서만 의미가 있습니다 — `ai-develop` 의 `backend/` 는 껍데기라
+`BUILD SUCCESSFUL` 이 나와도 아무것도 검증한 것이 아닙니다(§0).
 
 ```bash
 cd backend && ./gradlew test
@@ -32,8 +48,8 @@ cd backend && ./gradlew test
 
 | 결과 | 판정 |
 |---|---|
-| 로봇 `454 passed` + `All checks passed` | ✅ |
-| 백엔드 `BUILD SUCCESSFUL` | ✅ |
+| 로봇 `499 passed` + `All checks passed` | ✅ |
+| **[be-develop]** 백엔드 `BUILD SUCCESSFUL` | ✅ |
 | 하나라도 실패 | ❌ — 아래에서 어느 영역인지 좁힌다 |
 
 > 숫자는 티켓이 진행되며 늘어납니다. **줄어들면 누가 테스트를 지운 것**이므로 확인하십시오.
@@ -56,6 +72,48 @@ cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py -q
 
 **실기에서 확인할 것**(233): 마이크에 "외로워"라고 말하고 대답이 나오는지, 그 대답에 가족·공유 이야기가 섞이지 않는지. 그리고 45분 뒤에 동의 질문이 실제로 나오는지 — 압축 시계로는 `SimClock` 을 advance 해서 볼 수 있지만, 실시간 45분은 실기에서만 확인됩니다.
 
+### 자연스러움 10개 항목 (212)
+
+```bash
+cd robot/ai_chat && python -m pytest tests/test_naturalness_replay.py tests/test_degradation.py -q
+```
+
+`45 passed` 여야 합니다.
+
+시나리오는 [`tests/scenarios/naturalness_v1.json`](../../robot/ai_chat/tests/scenarios/naturalness_v1.json) 에 있습니다. **파이썬을 몰라도 케이스를 추가할 수 있습니다** — `turns` 에 어르신 발화를 넣고 `expect` 에 확인할 것을 적으면 됩니다. 파일 안에 쓸 수 있는 키 목록이 있습니다.
+
+**⚠️ 이 세트는 실제 녹취가 아닙니다.** 사람이 작성한 시나리오입니다. 확인하는 것은 두 가지뿐입니다 — 모델에게 무엇이 주어졌는가, 그리고 출력이 규칙을 지켰는가. "따뜻한가", "자연스러운가"는 기계가 못 봅니다. 그 판단은 233 에서 사람이 듣고 합니다.
+
+| 항목 | 여기서 재는가 |
+|---|---|
+| 1 짧은 턴 / 3 아는 것 재질문 / 4 반복 온기 | ✅ |
+| 5 회피 목록 / 7 되묻기 / 8 표현 다양성 / 9 내부 기제 | ✅ |
+| 6 말 안 할 때 | ✅ (게이트를 직접 돌립니다) |
+| **2 이어짐 / 10 회상** | ❌ 의미 검색 필요 → 218 배포 후 |
+
+가장 중요한 세 개:
+
+| 테스트 | 깨지면 잡히는 것 |
+|---|---|
+| `test_every_tuning_dial_has_a_reader` | **policy.py 에 있는데 아무도 읽지 않는 상수.** 실제로 `DEGRADATION_ORDER` 가 그랬습니다 |
+| `test_the_module_offers_no_way_to_weaken_safety` | 저하 모듈이 침묵 사다리·트리아지·outbox 를 약하게 만들 수 있게 되는 것 |
+| `test_the_scenario_file_covers_every_criterion_or_says_why_not` | 항목이 조용히 사라지는 것. 시나리오를 지우면 커버리지가 줄어드는데 테스트는 통과합니다 |
+
+### 성능 저하 순서를 눈으로 보기
+
+```bash
+cd robot/ai_chat && python -c "
+from bomi_ai_chat import degradation, policy
+for i in range(5):
+    print(f'level {degradation.level()}: top_k={degradation.memory_top_k()} '
+          f'docs={degradation.documents_allowed()} ambient={degradation.ambient_allowed()}')
+    for _ in range(policy.DEGRADE_AFTER_SLOW_TURNS):
+        degradation.note_turn_latency(policy.TURN_LATENCY_BUDGET_SEC + 1)
+"
+```
+
+단계가 오를수록 `top_k` 가 줄고, 문서가 끊기고, 잡담이 끊겨야 합니다. **`probes_simplified()` 는 어느 단계에서도 True 입니다** — 프로브는 처음부터 캐시 음성이고, 그것이 네트워크가 끊긴 순간에도 생존 확인이 나가는 이유입니다.
+
 ## 2. 영역별 검증
 
 ### 2.1 주입 시계 — 하루가 10초에 흐르는가 (200)
@@ -64,7 +122,7 @@ cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py -q
 cd robot/ai_chat && python -m pytest tests/test_clock.py -v
 ```
 
-**성공**: `test_sim_clock_compresses_a_day_into_ten_seconds` 통과
+**성공**: `test_sim_clock_flows_one_day_in_ten_real_seconds` 통과
 **실패의 의미**: 압축 시계가 깨졌다는 뜻이고, 침묵 사다리(207)와 일일 요약(211)을 **검증할 방법이 사라집니다.** 실시간으로 기다리면 테스트 한 번에 하루가 걸립니다.
 
 시계 규칙이 지켜지는지 직접 확인:
@@ -140,13 +198,13 @@ rm -rf robot/ai_chat/var/demo
 
 ---
 
-### 2.3 백엔드 스키마 — 빈 DB 에서 마이그레이션이 도는가 (201)
+### 2.3 백엔드 스키마 — 빈 DB 에서 마이그레이션이 도는가 (201) **[be-develop]**
 
 ```bash
 cd backend && ./gradlew test --tests "com.ssafy.bomi.migration.FlywayMigrationValidationTest"
 ```
 
-이 테스트가 실제로 하는 일: **빈 PostgreSQL 을 띄우고 → V1~V5 를 순서대로 실행하고 → Hibernate 로 엔티티와 대조**합니다.
+이 테스트가 실제로 하는 일: **빈 PostgreSQL 을 띄우고 → V1 부터 최신 V파일까지 순서대로 실행하고 → Hibernate 로 엔티티와 대조**합니다. 정확한 파일 개수는 이 문서가 아니라 `FlywayMigrationValidationTest.migrationsApplyToEmptyDatabaseAndEntitiesValidate()` 의 `containsExactly(...)` 목록이 갖습니다 — 숫자를 여기 다시 적으면 새 V파일이 생길 때마다 이 문서가 또 낡습니다.
 
 | 실패 메시지 | 의미 |
 |---|---|
@@ -158,7 +216,7 @@ cd backend && ./gradlew test --tests "com.ssafy.bomi.migration.FlywayMigrationVa
 
 ---
 
-### 2.4 문맥 조립 API — 6종이 다 오는가 (203)
+### 2.4 문맥 조립 API — 6종이 다 오는가 (203) **[be-develop]**
 
 ```bash
 cd backend && ./gradlew test --tests "com.ssafy.bomi.context.ConversationContextServiceTest"
@@ -195,7 +253,7 @@ curl -X POST http://localhost:8080/api/v1/seniors/{어르신UUID}/conversation-c
 | 확인 항목 | 성공 | 실패 |
 |---|---|---|
 | `memories` 개수 | 요청한 `memoryTopK` 이하 | 20개씩 오면 과적재 방지가 깨진 것 |
-| `availability.semanticSearch` | 지금은 `false` **가 정상** (218 전) | `true` 인데 218 이 안 끝났으면 거짓 보고 |
+| `availability.semanticSearch` | 지금은 `false` **가 정상** (218 은 이미 완료됐지만 임베딩 과금 때문에 `EMBEDDING_ENABLED` 기본값이 off) | `true` 인데 명시적으로 켠 적이 없으면 거짓 보고 |
 | `profile.avoidTopics` | 회피 주제가 실려 온다 | 비어 있으면 프롬프트가 금지문을 못 만든다 |
 | **`memories` 에 `visibility=PRIVATE` 인 기억** | 로봇 호출(guardian 미지정)에서는 **와야 정상** | 보호자 지정 호출에서 오면 🔴 **프라이버시 사고** |
 
@@ -326,12 +384,17 @@ occ.apply_backend_occupancy("senior-1", "AWAY", observed_at=<외출 시각>)
 
 - `occupancy` 가 `AWAY` 에 머무는데 `away_since` 가 0 → 부재 시간을 잴 수 없습니다. 경고 로그가 나옵니다
 - 하트비트가 한 번도 안 옴 → 알림은 안 가고 프로세스당 한 번 경고만 나옵니다. `MQTT_ENABLED` 와 라즈베리파이를 확인하십시오
-- **인사가 안 나갑니다.** 이건 정상입니다 — 판정하는 쪽(226)이 아직 없습니다
+- **인사가 실기에서 검증되지 않았습니다.** 판정 로직(226)은 만들어졌지만, `backend_command` 경로로 실제 인사가 나가는 것은 아직 실기로 확인되지 않았습니다(PROGRESS.md §2.1)
 
 ### 2.8 계약 주도형 대화 — 온보딩·재질의 (209, 227)
 
 ```bash
 cd robot/ai_chat && python -m pytest tests/test_contract_dialogue.py -v
+```
+
+아래는 **[be-develop]** 에서만 돌릴 수 있습니다:
+
+```bash
 cd backend && ./gradlew test --tests "*RobotOnboarding*" --tests "*RobotClarification*"
 ```
 
@@ -427,19 +490,22 @@ outbox.pending_count()      # T1 적재 직후 1
 | 시도 | 지금 결과 | 언제 고쳐지나 |
 |---|---|---|
 | "약 먹었어" 라고 말하기 | **정상 처리됨** (206) | — |
-| "외로워" 라고 말하기 | 대답 없음 (`handle_emotional` 미구현) | 별도 티켓 |
 | "가슴이 아파" 라고 말하기 | **정상 처리됨** (210) | — |
-| 어제 얘기 참조 기대 | 잘 안 됨 (키워드 매칭뿐) | 218 |
+| 어제 얘기 참조 기대 | 잘 안 됨 (키워드 매칭뿐 — 의미 검색은 218 에서 만들어졌지만 임베딩 과금 때문에 기본값이 꺼짐) | `EMBEDDING_ENABLED`·`EMBEDDING_SYNC_ENABLED` 를 켜면 (§2.4) |
 | 보호자 알림 | **백엔드로 전달됨** (211). 화면 표시는 웹 대시보드 | — |
-| 능동 발화 (로봇이 먼저 말 걸기) | 안 함 — `build_scheduler()` 를 부트스트랩이 호출하지 않음 | 실기 배선 |
-| 현관 인사 (배웅·환영) | **안 함** — 판정하는 쪽이 없음 | 226 |
-| 온보딩·재질의 | 코드는 완성, **실제 호출 미검증** | 227 머지 후 |
 | `memory`/`care_record` 최종 반영 | 후보가 CONFIRMED 에 머묾 | 별도 티켓 |
+
+> **"외로워"(263), 능동 발화 스케줄러 배선(232), 현관 인사 판정(226), 온보딩·재질의 계약
+> API(227) 는 이 표에서 빠졌습니다.** 전부 머지되어 더 이상 "아직 안 만든 것"이 아닙니다 —
+> 최신 머지 상태는 PROGRESS.md §1 을 보십시오. "외로워"는 이 문서 §1 의 정서 표현 절에서
+> 검증합니다. 나머지는 코드는 있으나 실기 검증이 남은 상태이고, 그것은 "아직 안 만든
+> 것"과 다른 위험이라 이 표(**의도적 미구현**)가 아니라 PROGRESS.md 의 위험 목록에서
+> 다룹니다.
 
 로그에서 이런 경고가 보이면 **정상**입니다:
 
 ```
-self-harm marker list has not been human-reviewed yet (HANDOFF §7)
+self-harm marker list has not been human-reviewed yet (docs/carebot/PROGRESS.md §2.2)
 guardian notification not delivered (no channel configured)
 semantic search unavailable; memories ranked by keyword overlap...
 ```

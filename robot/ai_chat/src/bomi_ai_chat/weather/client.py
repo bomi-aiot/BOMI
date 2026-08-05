@@ -29,6 +29,27 @@ CITY_GRID = {
 }
 
 
+def extract_city(text: str) -> str | None:
+    """문장 안에서 CITY_GRID 가 지원하는 도시명을 찾는다.
+
+    왜 여기 있는가 (S15P11E102-311)
+        원래 legacy 파이프라인(pipeline.py)의 ConversationPipeline 안에 메서드로만
+        있었다. 그래프 경로(graph/context.py)도 날씨 조회를 하려면 같은 판정이
+        필요한데, 그대로 복사하면 도시 목록이 두 곳에 생기고 CITY_GRID 에 도시를
+        추가할 때마다 하나를 빠뜨릴 위험이 생긴다. 그래서 날씨 클라이언트가 이미
+        소유한 CITY_GRID 옆으로 옮기고, 두 경로가 이 함수 하나를 import 해서 쓴다.
+
+    반환값
+        가장 먼저 매칭되는 도시명, 없으면 None. 여러 도시가 동시에 언급되는 문장은
+        드물다고 보고 첫 매치를 쓴다 — 애매하면 로봇이 되묻는 편이 낫지만, 그 판단은
+        호출부(조회 실패/도시 불명 처리)의 몫이다.
+    """
+    for city in CITY_GRID:
+        if city in text:
+            return city
+    return None
+
+
 class WeatherClient:
     """기상청 단기예보 API 클라이언트."""
 

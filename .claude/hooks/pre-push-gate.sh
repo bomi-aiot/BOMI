@@ -12,9 +12,10 @@
 #   3. 안 건드렸으면 통과시킨다 — 문서만 고친 push 를 14초 기다리게 하지 않는다.
 #
 # 왜 scripts/ci/verify-ai.sh 를 쓰지 않는가
-#   그 스크립트는 존재하지 않는 `ai/` 디렉터리를 가리켜 exit 3 으로 죽는다(런타임은
-#   robot/ai_chat/ 이다, CLAUDE.md §20). 도커로 pip install 까지 하므로 분 단위이기도 하다.
-#   push 직전 게이트는 초 단위여야 한다.
+#   그 스크립트는 이제 robot/ai_chat/ 을 올바르게 가리킨다(S15P11E102-294 에서 경로를
+#   고쳤다). 하지만 도커로 pip install -e ".[dev]" 까지 하므로 분 단위 소요다(torch
+#   의존성 때문에 캐시 없이는 더 길다). push 직전 게이트는 초 단위여야 하므로 여전히
+#   이 로컬 스크립트를 쓴다 — verify-ai.sh 는 서버(Jenkins) 파이프라인의 몫이다.
 #
 # 출력  통과 → exit 0 (조용히). 거부 → exit 2 + stderr.
 set -uo pipefail
@@ -100,6 +101,14 @@ RUFF_OUT="$("$RUFF" check "$AI_DIR/src" "$AI_DIR/tests" 2>&1)" || FAILED="ruff"
 
 # manual/integration 은 하드웨어·외부 API·자격증명이 필요하다. 게이트에서 제외하는 것은
 # 편의가 아니라 정확성이다 — 노트북에 마이크가 없다는 사실이 push 를 막아서는 안 된다.
+#
+# 이 -m 플래그 자체가 지금 거르는 테스트는 0건이다(`tests/` 안에 integration/manual
+# 마커가 붙은 테스트가 아직 없다 — `pytest --collect-only -m "integration or manual"` 로
+# 확인 가능). 실제 격리는 두 가지가 한다: pyproject.toml 의 `norecursedirs = ["manual"]`
+# 이 하드웨어 스모크 스크립트가 있는 tests/manual/ 을 아예 수집에서 뺀다. 그리고
+# tests/conftest.py 의 autouse fixture `block_external_http` 가, integration/manual 로
+# 표시되지 않은 테스트가 실제 HTTP 요청을 보내면 즉시 실패시킨다. -m 플래그는 앞으로
+# 마커가 붙은 pytest 통합 테스트가 생길 때를 위한 관례로 남겨 둔다.
 PYTEST_OUT="$(cd "$AI_DIR" && "$PYTEST" -q -m "not integration and not manual" 2>&1)" \
   || FAILED="${FAILED:+$FAILED + }pytest"
 

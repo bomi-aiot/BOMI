@@ -1,0 +1,154 @@
+{
+  "version": 1,
+  "ticket": "S15P11E102-212",
+
+  "honestNote": [
+    "이것은 '실제 녹취'가 아닙니다. 사람이 작성한 시나리오입니다.",
+    "티켓은 '녹취 기반 세트'라고 적었지만, 어르신 대상 실제 녹취가 아직 없습니다.",
+    "지어낸 문장으로 실측을 대신할 수는 없으므로, 이 파일이 무엇인지 먼저 적어 둡니다.",
+    "실기 점검(233) 뒤에 진짜 발화로 교체·보강하는 것이 이 파일의 다음 단계입니다.",
+    "특히 BACKCHANNELS 목록은 여기서 채우지 않았습니다 — 상상으로 만든 목록을",
+    "상상으로 검증하면 통과했다는 사실만 남고 아무것도 알게 되지 않습니다."
+  ],
+
+  "howToAddACase": [
+    "turns 에 어르신 발화를 넣고, expect 에 기계적으로 확인 가능한 것만 적습니다.",
+    "쓸 수 있는 expect 키:",
+    "  maxSentences      최종 발화의 문장 수 상한",
+    "  promptContains    프롬프트에 반드시 있어야 하는 문자열들",
+    "  promptExcludes    프롬프트에 절대 없어야 하는 문자열들",
+    "  responseExcludes  최종 발화에 절대 없어야 하는 문자열들",
+    "  intent            분류 결과가 이것이어야 한다",
+    "  allPromptsIdentical  반복 턴의 프롬프트가 글자까지 같아야 한다",
+    "  proactive         반응형 대신 능동 제안을 게이트에 태운다(§17.8 처럼 능동",
+    "                    턴에서만 채워지는 값을 실제 배선으로 확인해야 할 때).",
+    "                    {intent, priority, seed, origin} 를 담은 객체. repeatTurns",
+    "                    와 함께 쓰면 같은 제안을 여러 번 반복해 표현 이력이 쌓이는",
+    "                    것을 확인할 수 있다.",
+    "★ promptExcludes 함정: system.md 는 금지 예시를 '문장으로' 담고 있습니다.",
+    "  예를 들어 '방금 말씀드렸는데' 는 쓰지 말라는 지시로 프롬프트 안에 있습니다.",
+    "  그것을 금지 문자열로 넣으면 지시문 자체에 걸려 항상 실패합니다.",
+    "  4번 항목은 그래서 allPromptsIdentical 로 봅니다 — 반복 횟수가 새면 달라집니다.",
+    "'따뜻한가', '자연스러운가' 는 여기에 적지 않습니다. 기계가 못 봅니다.",
+    "그 판단은 실기(233)에서 사람이 듣고 합니다."
+  ],
+
+  "scenarios": [
+    {
+      "id": "01-one-thing-per-turn",
+      "criterion": 1,
+      "title": "짧은 턴 — 하나만 말하고 되묻는다",
+      "why": "정확하지만 긴 답변은 이 제품에서 실패다. 귀로는 따라갈 수 없다 (§14).",
+      "turns": ["오늘 날씨 어때"],
+      "llmReply": "오늘은 조금 춥습니다. 내복 입으시면 좋겠어요. 바람도 있습니다. 우산도 챙기세요. 저녁에는 더 추워집니다.",
+      "expect": {
+        "maxSentences": 2,
+        "promptContains": ["문장 이내", "한 가지만"]
+      }
+    },
+    {
+      "id": "03-never-reasks-a-known-fact",
+      "criterion": 3,
+      "title": "아는 것을 다시 묻지 않는다",
+      "why": "이름을 두 번 물으면 몰입이 즉시 깨진다. 모델이 되묻는 이유가 없도록 프롬프트가 먼저 알려줘야 한다.",
+      "ctx": {"profile": {"name": "김순자", "preferredName": "순자님", "age": 78}},
+      "turns": ["안녕하세요"],
+      "expect": {
+        "promptContains": ["순자님"]
+      }
+    },
+    {
+      "id": "04-tenth-time-same-warmth",
+      "criterion": 4,
+      "title": "열 번째 '오늘 며칠이야'가 첫 번째와 같다",
+      "why": "반복 횟수가 프롬프트에 들어가면 어조에 새어나간다. 그 정보는 T2 추세로만 간다 (§8).",
+      "repeatTurns": 10,
+      "turns": ["오늘 며칠이야"],
+      "expect": {
+        "allPromptsIdentical": true,
+        "promptExcludes": ["번째"]
+      }
+    },
+    {
+      "id": "05-the-avoid-list-is-a-prohibition",
+      "criterion": 5,
+      "title": "돌아가신 배우자를 살아있는 것처럼 언급하지 않는다",
+      "why": "이 시스템이 낼 수 있는 최악의 실패 중 하나다. 사실로 주면 모델이 화제로 활용한다 (§16 3단계).",
+      "ctx": {"profile": {"preferredName": "순자님", "avoidTopics": ["남편 사망", "큰아들과의 불화"]}},
+      "turns": ["보고 싶다"],
+      "expect": {
+        "promptContains": ["말하지 않을 주제", "남편 사망", "큰아들과의 불화"]
+      }
+    },
+    {
+      "id": "07-asks-back-instead-of-guessing",
+      "criterion": 7,
+      "title": "못 알아들었으면 되묻는다",
+      "why": "어르신 발화 + 원거리 마이크 조합에서 ASR 은 자주 틀린다. 자신 있게 틀린 답이 침묵보다 나쁘다.",
+      "turns": ["그 저기 그거 뭐였지 어제"],
+      "expect": {
+        "promptContains": ["되묻습니다"]
+      }
+    },
+    {
+      "id": "08-varies-its-phrasing",
+      "criterion": 8,
+      "title": "같은 알림이 사흘 연속 글자까지 같지 않다",
+      "why": "같은 문장이 반복되면 사람이 아니라 알람으로 들린다. 핸들러를 직접 부르는 우회가 아니라 실제 게이트 -> memory_write(기록) -> context_read(조회) 경로를 두 번 태워, 두 번째 프롬프트에 첫 번째 발화가 '표현 반복 피하기' 섹션으로 실제로 실려 오는지 확인한다 (S15P11E102-256).",
+      "proactive": {
+        "intent": "companion",
+        "priority": "high",
+        "seed": "물 한 잔 드시겠어요?",
+        "origin": "schedule:water:1000"
+      },
+      "repeatTurns": 2,
+      "llmReply": "물 한 잔 드세요.",
+      "expect": {
+        "promptContains": ["다르게 말합니다", "물 한 잔 드세요."]
+      }
+    },
+    {
+      "id": "09-never-narrates-its-machinery",
+      "criterion": 9,
+      "title": "내부 기제를 입에 담지 않는다",
+      "why": "'기록에 따르면', 'AI로서'는 말벗을 시스템으로 되돌린다. 티어·제안·검색도 마찬가지다 (§17.9).",
+      "turns": ["내 약 뭐야"],
+      "expect": {
+        "promptContains": ["기록에 따르면", "AI로서", "내부 동작을 입에 담지 않습니다"]
+      }
+    },
+    {
+      "id": "09b-emotional-turn-keeps-the-prohibitions",
+      "criterion": 9,
+      "title": "정서 턴에서도 금지가 유지된다",
+      "why": "263 이 정서 턴에만 태도 지시를 '추가'하는 구조를 만들었다. 공통 금지가 빠지지 않았는지 본다.",
+      "ctx": {"profile": {"preferredName": "순자님", "avoidTopics": ["남편 사망"]}},
+      "turns": ["외로워"],
+      "expect": {
+        "intent": "emotional",
+        "promptContains": ["말하지 않을 주제", "내부 동작을 입에 담지 않습니다", "조언하지 않습니다"]
+      }
+    }
+  ],
+
+  "notMeasurableHere": [
+    {
+      "criterion": 2,
+      "title": "이어짐 — 어제 무릎 얘기를 오늘 참조한다",
+      "blockedBy": "S15P11E102-218 배포",
+      "why": "의미 검색이 필요하다. 218 에서 구현했지만 과금 때문에 기본값이 꺼져 있고, EC2 시크릿에 UPSTAGE_API_KEY 가 아직 없다. 키워드 겹침만으로는 한국어 조사 때문에 '무릎이'와 '무릎'이 매칭되지 않는다."
+    },
+    {
+      "criterion": 10,
+      "title": "회상 — 옛 이야기를 끌어내고 따라간다",
+      "blockedBy": "S15P11E102-218 배포 + 실기(233)",
+      "why": "2번과 같은 이유로 수단이 없고, '따라간다'는 판단은 여러 턴에 걸친 사람의 청취가 필요하다. 대역 LLM 으로는 무엇도 알 수 없다."
+    },
+    {
+      "criterion": 6,
+      "title": "말 안 할 때를 안다",
+      "blockedBy": "없음 — 다만 발화 데이터로는 못 잰다",
+      "why": "이것은 발화가 '없는' 것을 확인하는 항목이라 turns 로 표현할 수 없다. 게이트를 직접 돌려서 확인하며, 그 테스트는 test_naturalness_replay.py 안에 있다."
+    }
+  ]
+}

@@ -52,9 +52,10 @@ def _warn_self_harm_list_unreviewed() -> None:
 
     ★ '미구현' 경고와 다르다. 판별기는 동작한다.
 
-        HANDOFF §7 은 이 목록을 즉흥적으로 만들지 말라고 명시한다. 지금 목록은
-        보수적인 출발점이고, 실기 배포 전에 검토를 받아야 한다. 검토 여부를 코드
-        밖에서만 관리하면 잊히므로, 상태를 런타임으로 끌어낸다.
+        이 목록을 즉흥적으로 만들지 말고 사람이 검토해야 한다는 요구다(유래는
+        docs/carebot/PROGRESS.md §8.3). 지금 목록은 보수적인 출발점이고, 실기 배포
+        전에 검토를 받아야 한다. 검토 여부를 코드 밖에서만 관리하면 잊히므로, 상태를
+        런타임으로 끌어낸다.
 
         검토가 끝나면 policy.SELF_HARM_MARKERS_REVIEWED 를 True 로 바꾼다.
     """
@@ -63,7 +64,8 @@ def _warn_self_harm_list_unreviewed() -> None:
         return
     _REVIEW_WARNED = True
     logger.warning(
-        "self-harm marker list has not been human-reviewed yet (HANDOFF §7). "
+        "self-harm marker list has not been human-reviewed yet "
+        "(docs/carebot/PROGRESS.md §2.2). "
         "Detection is active but conservative; review the list in policy.py before "
         "deploying to a real senior.")
 

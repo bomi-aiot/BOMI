@@ -1,4 +1,4 @@
-"""여덟 개의 핸들러 — '무엇을' 말할지 정하고, '말할지 여부'는 정하지 않는다.
+"""일곱 개의 핸들러 — '무엇을' 말할지 정하고, '말할지 여부'는 정하지 않는다.
 
 어디에 위치하는가
     인텐트 라우터와 response_shaper 사이. 핸들러가 실행되는 시점에는 말하기로 하는
@@ -13,13 +13,14 @@
     왜 이렇게 엄격한가: 핸들러가 자기 출력을 억제할 수 있게 되는 순간
     "로봇이 왜 조용했는가"에 대한 답이 하나가 아니게 되고, 게이트를 신뢰할 수 없게 된다.
 
-핸들러의 세 계열
+핸들러의 두 계열
     개방형:       info, companion, schedule, emotional, greeting
-                  LLM 이 자연스럽게 표현할 여지가 있다.
-    DB 정확 조회형: medical
-                  자유 생성이 아니다. LLM은 어느 도구(병원/약국/의약품)를 부를지만
-                  고르고, 실제 문장은 DB 조회 결과에서 만든다. 병원 주소나 약 정보를
-                  일반 LLM이 근거 없이 지어내면 안전 문제이기 때문이다(CLAUDE.md §8).
+                  LLM 이 자연스럽게 표현할 여지가 있다. 병원·약국·의약품·날씨
+                  조회(S15P11E102-311)는 이 핸들러들이 직접 하지 않는다 —
+                  context_read 가 미리 조회해 ctx["documents"]("참고 자료")로
+                  넘기고, info 핸들러의 _generate() 가 그것을 참고해 답한다.
+                  실제 조회는 llm/medical_flow.py·weather/client.py 에 위임한다
+                  (graph/context.py 의 _gather_lookup_documents 참고).
     계약 주도형:   onboarding, clarification
                   백엔드가 강제하는 계약이 정의한 고정 슬롯을 채운다. LLM 에게 자유를
                   거의 주지 않는다. 한 필드, 한 질문, 그 외에는 아무것도 (CLAUDE.md §12).
@@ -27,10 +28,6 @@
 기존 모듈에 위임한다 (재구현 금지)
     이 패키지에는 이미 검증된 클라이언트들이 있다. 핸들러는 얇아야 한다.
         일반 대화        -> llm/client.py
-        의료 조회        -> llm/medical_flow.py  (function calling, handle_medical 이 호출)
-        날씨             -> weather/client.py
-        병원·약국·의약품  -> db/medical_repository.py  (medical_flow 를 통해서만 조회,
-                             지오/정확 조회이며 RAG 아님)
         의도 분류        -> llm/router.py 에 위임 (context.classify_intent 참고)
     핸들러가 하는 일은 "무엇을 말할지"를 정하고 프롬프트를 조립해 위 클라이언트를
     호출하는 것까지다. HTTP 호출이나 SQL 을 직접 쓰지 않는다.
@@ -58,6 +55,8 @@ from bomi_ai_chat.backend_client.contract_client import (
 )
 from bomi_ai_chat.clock import clock
 from bomi_ai_chat.graph import contract_dialogue
+from bomi_ai_chat.localstore import consent as consent_store
+from bomi_ai_chat.localstore import emotion, outbox
 from bomi_ai_chat.localstore import proposals as proposal_store
 from bomi_ai_chat.prompts import (
     build_extraction_prompt,
@@ -122,7 +121,7 @@ def set_contract_clients(onboarding=None, clarification=None) -> None:
 _FALLBACK_RESPONSE = "죄송해요, 지금 잘 못 들었어요. 다시 한 번 말씀해 주시겠어요?"
 
 
-def _generate(state: ConvState) -> str:
+def _generate(state: ConvState, *, fallback: str = _FALLBACK_RESPONSE) -> str:
     """이 턴의 '유일한' 생성 호출.
 
     무엇을 하는가
@@ -136,25 +135,34 @@ def _generate(state: ConvState) -> str:
     무엇을 호출하는가
         prompts.build_prompt(순수 함수), 그다음 llm/client.py.
 
-    주의사항
-        생성 실패에 예외를 올리지 않는다. 어르신 입장에서 예외는 그냥 대답 없는
-        로봇이다. 되묻는 문장으로 저하시킨다.
-    """
-    prompt = build_prompt(
-        state.get("ctx") or {},
-        state.get("intent") or "companion",
-        state.get("user_input", ""),
-        terse=bool(state.get("terse")),
-        ctx_is_cached=bool(state.get("ctx_is_cached")),
-        speech_origin=state.get("speech_origin", ""),
-        recent_phrasings=state.get("recent_phrasings"),
-    )
+    인자
+        fallback: 생성이 실패했을 때 대신 내놓을 문장. 기본값은 일반적인
+            "다시 한 번 말씀해 주시겠어요?" 지만, 정서 턴처럼 그 문장이 오히려
+            상처가 되는 곳은 핸들러가 자기 폴백을 넘긴다(S15P11E102-253).
 
+    주의사항
+        - 생성 실패에 예외를 올리지 않는다. 어르신 입장에서 예외는 그냥 대답 없는
+          로봇이다. 되묻는 문장으로 저하시킨다.
+        - ★ build_prompt 호출도 이 try 안에 있다 (S15P11E102-253 이전에는 밖에
+          있었다). 템플릿 파일이 없으면 load_template 이 FileNotFoundError 를
+          던지는데, 그게 이 함수를 그대로 뚫고 나가면 핸들러가 예외로 죽는다.
+          프롬프트를 못 만든 것도 결국 "이번 턴에 말할 것을 못 만들었다"는
+          점에서 생성 실패와 같은 사건이므로, 같은 우산 아래 둔다.
+    """
     try:
+        prompt = build_prompt(
+            state.get("ctx") or {},
+            state.get("intent") or "companion",
+            state.get("user_input", ""),
+            terse=bool(state.get("terse")),
+            ctx_is_cached=bool(state.get("ctx_is_cached")),
+            speech_origin=state.get("speech_origin", ""),
+            recent_phrasings=state.get("recent_phrasings"),
+        )
         return _llm().generate(prompt)
     except Exception:  # noqa: BLE001 - 생성 실패가 턴을 죽이면 안 된다
         logger.warning("generation failed; falling back to a clarifying reply", exc_info=True)
-        return _FALLBACK_RESPONSE
+        return fallback
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -182,48 +190,6 @@ def handle_info(state: ConvState) -> dict:
         - 한두 문장으로 답한다. 정확한 세 문단 답변은 여기서는 실패다.
     """
     return {"response": _generate(state)}
-
-
-def handle_medical(state: ConvState) -> dict:
-    """병원·약국·의약품 질문에 답한다 — 일반 생성이 아니라 실제 DB 조회다.
-
-    무엇을 하는가
-        어르신 발화를 llm/medical_flow.handle_medical_query 에 그대로 넘긴다. 그
-        안에서 Gemini function calling 이 어느 도구(find_medical_facility /
-        check_pill_info)를 부를지 고르고, db/medical_repository.py 가 실제
-        hospital/pharmacy/drug_permit 테이블을 조회해 응답 문장을 만든다.
-
-    왜 handle_info 의 _generate 를 쓰지 않는가
-        일반 LLM 에게 병원 주소나 약 정보를 자유롭게 말하게 하면 근거 없이
-        지어낼 위험이 있다 — 프로필·복약처럼 정확 조회가 필요한 데이터다
-        (CLAUDE.md §8). medical_flow 는 도구 호출 결과(DB 행)에서만 문장을
-        만들도록 시스템 프롬프트로 막아 둔다. 이 턴의 유일한 생성 호출은
-        medical_flow 내부의 Gemini 호출이며, handle_info 의 _generate 와
-        동시에 쓰지 않는다(CLAUDE.md §16, 턴당 생성 호출 1회).
-
-    누가 호출하는가   build.py, intent "medical".
-    무엇을 호출하는가  llm/medical_flow.handle_medical_query.
-    반환값            {"response": str}
-
-    주의사항
-        - medical_flow 자체가 이미 흔한 실패(DB 오류, 위치 정보 없음, 시설을
-          못 찾음 등)를 안내 문장으로 흡수한다. 여기서는 그 밖의 예상치 못한
-          예외(라이브러리 버그 등)만 잡아 침묵 대신 되묻는 문장으로 저하시킨다
-          — 어르신은 방금 말을 걸었으므로 무응답은 고장 난 기계처럼 보인다.
-        - ctx(프로필·기억)는 쓰지 않는다. 병원/약국/의약품은 어르신 개인
-          데이터가 아니라 공개 참조 데이터라서 문맥 조립이 필요 없다(§8).
-    """
-    from bomi_ai_chat.llm.medical_flow import handle_medical_query
-
-    text = state.get("user_input", "")
-    try:
-        return {"response": handle_medical_query(text)}
-    except Exception:  # noqa: BLE001 - 예상 밖 실패가 턴을 죽이면 안 된다
-        logger.warning(
-            "medical query failed; falling back to a clarifying reply",
-            exc_info=True,
-        )
-        return {"response": _FALLBACK_RESPONSE}
 
 
 def handle_companion(state: ConvState) -> dict:
@@ -341,11 +307,18 @@ def _resolve_slot_key(state: ConvState) -> str | None:
 
 
 def handle_emotional(state: ConvState) -> dict:
-    """듣는다. 그리고 훨씬 나중에, 공유해도 되는지 묻는다.
+    """듣는다. 그리고 훨씬 나중에, 공유해도 되는지 묻는다. 답이 오면 그 답을 판정한다.
 
     무엇을 하는가
-        외로움, 상실, 가족 갈등에 지지적으로 반응하고, T3 동의 질문을 그날의 자연스러운
-        시점을 위해 큐에 넣는다.
+        세 갈래다.
+          1. 방금 로봇이 던진 동의 질문에 대한 답이 와 있으면(pending_consent)
+             그 답을 규칙으로 판정하고, GRANTED 일 때만 outbox 에 T3 를 남긴다.
+          2. 지금 이 턴이 그 동의 질문을 '던지는' 능동 턴이면(_is_t3_consent_turn)
+             제안의 seed 를 그대로 말하고, pending_consent 를 새로 연다.
+          3. 그 외에는 평범한 정서 발화다. 봉인 표지가 있으면 대화를 봉인하고,
+             없으면 신호를 하나 남긴다(localstore.emotion). 언제 실제로 질문을
+             올릴지는 jobs.ticks.consent_tick 이 누적치를 보고 정한다 — 여기서는
+             큐잉하지 않는다(S15P11E102-253, 263 에서 바뀐 부분).
 
     왜 이 '지연'이 설계의 핵심인가
         속마음을 꺼내는 순간 "아드님께 알려드릴까요?"로 끊는 것은 최악의 대응이다.
@@ -353,29 +326,67 @@ def handle_emotional(state: ConvState) -> dict:
         그래서 로봇은 지금 듣고, 나중에 묻는다 (CLAUDE.md §9).
 
     누가 호출하는가  build.py, intent "emotional".
-    반환값          {"response": str}
+    반환값          {"response": str, "pending_consent": dict|None}
 
     주의사항
         - 자해는 이 핸들러에 절대 도달하지 않는다. 트리아지가 먼저 잡아 T1 으로
           에스컬레이션하며 동의를 무시한다. 여기서 상담 로직을 쓰고 있다면 멈춘다.
           그건 사람의 몫이다.
-        - T3 는 동의와 guardian_sharing_consent_status 둘 다 필요하다. T4 자료(일상
-          푸념, 회상, "우리끼리 얘기")는 로봇을 아예 떠나지 않으며, 어르신이 그것을
-          믿을 수 있어야 T3 가 작동한다.
-        - LangGraph 의 interrupt / human-in-the-loop 가 이 지연된 질문에 직접 만든
-          큐보다 잘 맞는다 (CLAUDE.md §16). 지금은 제안 큐를 쓴다 — 그 큐가 이미
-          '나중에 자연스러운 시점'을 판정하는 게이트를 가지고 있기 때문이다.
+        - T3 는 동의와 guardian_sharing_consent_status 둘 다 필요하다. 후자는
+          서버가 outbox 전송 시점에 다시 확인한다(notify/backend_notifier.py) —
+          로봇은 '언제 여쭤볼지'만 정한다. T4 자료(일상 푸념, 회상, "우리끼리
+          얘기")는 로봇을 아예 떠나지 않으며, 어르신이 그것을 믿을 수 있어야
+          T3 가 작동한다.
+        - 갈래 1·2 는 둘 다 LLM 을 부르지 않는다(완료 조건). 질문은 이미 정해진
+          문장을 그대로 말하고, 답은 규칙(contract_dialogue.read_affirmation)으로
+          판정한다 — "동의한 것으로 보인다"를 재현 불가능한 채로 남기지 않는다
+          (CLAUDE.md §8, §16).
     """
-    # 이 턴이 이미 T3 동의를 여쭤보는 능동 턴이라면, 또 큐에 넣지 않는다.
-    # 넣으면 동의 질문이 동의 질문을 낳는다.
-    if not _is_t3_consent_turn(state):
-        _queue_t3_consent_question(state)
+    pending_consent = state.get("pending_consent")
+    if pending_consent:
+        return _resolve_consent_answer(state, pending_consent)
 
-    return {"response": _generate(state)}
+    if _is_t3_consent_turn(state):
+        return _speak_consent_question(state)
+
+    senior_id = state.get("senior_id") or ""
+    conversation_id = state.get("conversation_id") or ""
+    text = state.get("user_input") or ""
+
+    if senior_id and _contains_seal_marker(text):
+        # 봉인은 대화 단위다. conversation_id 가 없으면(대화 경계 판정 전의
+        # 첫 턴 등) emotion.mark_sealed 가 조용히 아무것도 하지 않는다 —
+        # 무엇을 봉인하는지 정의되지 않았기 때문이다(emotion.py 참고).
+        emotion.mark_sealed(senior_id, conversation_id)
+        logger.info("conversation sealed by the senior's own words; it will not "
+                    "count toward a T3 consent question")
+    elif senior_id:
+        emotion.record_signal(senior_id, conversation_id)
+
+    return {"response": _generate(state, fallback=_EMOTIONAL_FALLBACK)}
 
 
-# 큐에 들어간 동의 질문을 알아보는 표식. 제안의 meta 에 실린다.
+# 정서 턴 전용 폴백. 일반 폴백("다시 한 번 말씀해 주시겠어요?")은 방금 마음을
+# 꺼낸 사람에게는 서비스 오류처럼 들린다 — 최악의 응답이다(S15P11E102-253).
+_EMOTIONAL_FALLBACK = "곁에서 듣고 있어요. 제가 잠깐 놓쳤어요, 다시 한 번 말씀해 주시겠어요?"
+
+# 큐에 들어간 동의 질문을 알아보는 표식. 제안의 origin 에 실린다.
 _T3_CONSENT_MARKER = "t3_consent"
+
+# origin 에서 request_id 를 꺼내는 패턴. jobs.ticks.consent_tick 이 만드는
+# origin 의 모양("t3_consent:<id>: ...")과 반드시 같이 바뀌어야 한다.
+_T3_CONSENT_ORIGIN_RE = re.compile(rf"^{re.escape(_T3_CONSENT_MARKER)}:(\d+):")
+
+# T4 봉인 표지. 이 발화가 나오면 이 대화는 다시는 동의 질문의 재료가 되지 않는다.
+_SEAL_MARKERS = policy.T4_SEAL_MARKERS
+
+# 동의 질문의 답을 못 알아들었을 때. 예/아니오 둘 다 아니라는 뜻이지, 거절이 아니다.
+_CONSENT_RECONFIRM = (
+    "제가 잘 못 들었어요. 가족분께 전해드려도 괜찮으면 '네', 아니면 '아니요'라고 "
+    "한 번만 말씀해 주시겠어요?"
+)
+_CONSENT_GRANTED_REPLY = "네, 가족분께 잘 전해드릴게요."
+_CONSENT_DECLINED_REPLY = "네, 알겠어요. 저만 알고 있을게요."
 
 
 def _is_t3_consent_turn(state: ConvState) -> bool:
@@ -386,66 +397,89 @@ def _is_t3_consent_turn(state: ConvState) -> bool:
     return _T3_CONSENT_MARKER in (state.get("speech_origin") or "")
 
 
-def _queue_t3_consent_question(state: ConvState) -> None:
-    """공유해도 되는지 '나중에' 여쭤볼 질문을 큐에 넣는다.
+def _contains_seal_marker(text: str) -> bool:
+    """"우리끼리 얘기" 류 표현이 이 발화에 섞여 있는가."""
+    return any(marker in text for marker in _SEAL_MARKERS)
 
-    무엇을 하는가
-        지금은 아무 말도 덧붙이지 않는다. T3_CONSENT_DELAY_SEC 뒤에 게이트를
-        통과할 수 있는 제안 하나를 남긴다.
 
-    왜 지금 묻지 않는가  ★ 이것이 T3 의 전부다
-        속마음을 꺼내는 순간 "아드님께 전해드릴까요?"로 끊으면, 로봇은 그 한 문장으로
-        말벗에서 감시 장치가 된다. 그 뒤로 어르신은 털어놓지 않고, 그러면 T3 로 보낼
-        내용 자체가 사라진다. 문구보다 타이밍이 중요하다 (CLAUDE.md §9).
+def _speak_consent_question(state: ConvState) -> dict:
+    """T3 동의 질문을 '그대로' 말하고, 다음 턴이 답을 알아볼 수 있게 연다.
 
-    누가 호출하는가  handle_emotional. 다른 곳에서 부르지 않는다.
-    무엇을 호출하는가  proposal_store.enqueue, clock.now.
+    ★ LLM 을 부르지 않는다  (완료 조건)
+        온보딩(handle_onboarding)이 계약 문장을 그대로 말하는 것과 같은 이유다.
+        나중에 "어르신이 정말 동의했는가"를 물었을 때, 실제로 무엇을 물었는지가
+        매번 달라지면 안 된다. 이긴 제안의 seed 가 이미 최종 문장이고
+        (jobs.ticks.consent_tick 이 만든다), 다시 쓰면 그 보장이 깨진다.
+
+    누가 호출하는가  handle_emotional, _is_t3_consent_turn 이 True 일 때.
+    반환값  {"response": str, "pending_consent": dict}
 
     주의사항
-        - 우선순위는 low 다. 이 질문은 급하지 않고, 복약이나 안전 프로브를 밀어낼
-          이유가 전혀 없다. quiet hours 와 쿨다운을 모두 지킨다.
-        - 대기 중인 질문이 이미 있으면 새로 만들지 않는다. 정서 대화가 이어질 때마다
-          만들면 하루에 여러 번 같은 것을 묻게 된다.
-        - 동의를 '받는' 것과 실제로 '보내는' 것은 다르다. 보내기 전에는 서버가
-          guardian_sharing_consent_status 를 다시 본다. 로봇은 여쭤보는 시점만 정한다.
-        - 어르신 id 가 없으면 조용히 넘어간다. 큐의 키가 어르신 id 이고, 임의의 키로
-          넣으면 영원히 아무도 집어가지 않는 행이 쌓인다.
+        origin 에 request_id 가 없으면(형식이 어긋났거나 누군가 손으로 만든
+        제안이면) 질문은 그대로 말하되 pending_consent 를 열지 않는다. 열어도
+        답을 어느 요청에 연결할지 모르므로, 여는 것 자체가 거짓 약속이다.
     """
-    senior_id = state.get("senior_id") or ""
-    if not senior_id:
-        logger.debug("no senior_id on the state; not queueing a T3 consent question")
-        return
+    request_id = _extract_consent_request_id(state.get("speech_origin") or "")
+    response = state.get("user_input") or ""
+    out: dict = {"response": response}
 
-    if policy.T3_CONSENT_ONE_PENDING_ONLY and _has_pending_t3_consent(senior_id):
-        return
+    if request_id is None:
+        logger.warning("t3 consent turn has no request id in speech_origin=%r; "
+                       "the senior's answer cannot be resolved later",
+                       state.get("speech_origin"))
+        return out
 
-    now = clock.now()
-    proposal_store.enqueue(senior_id, {
-        "intent": "emotional",
-        "priority": "low",
-        # seed 는 최종 문장이 아니라 힌트다. response_shaper 를 거쳐 나간다.
-        "seed": "아까 마음이 힘들다고 하셨던 이야기, 가족분께 전해도 괜찮을까요?",
-        # not_before 가 아니라 origin 에 표식을 둔다. 게이트는 만료만 보고 시작 시각은
-        # 보지 않으므로, 지연은 expires_at 이 아니라 '언제 넣는가'로 만들 수 없다.
-        # 그래서 아래 not_before 를 meta 에 넣고 게이트가 아닌 제안 자체가 갖게 한다.
-        "expires_at": now + policy.T3_CONSENT_DELAY_SEC + policy.T3_CONSENT_TTL_SEC,
-        "origin": f"{_T3_CONSENT_MARKER}: 어르신이 마음을 이야기하셨고, 그것을 가족과 "
-                  "나눠도 되는지 아직 여쭤보지 않았습니다.",
-        "meta": {
-            _T3_CONSENT_MARKER: True,
-            "not_before": now + policy.T3_CONSENT_DELAY_SEC,
-        },
-    })
-    logger.info("queued a T3 consent question for senior %s (asking in %ds)",
-                senior_id, policy.T3_CONSENT_DELAY_SEC)
+    out["pending_consent"] = {"request_id": request_id, "asked_at": clock.now()}
+    return out
 
 
-def _has_pending_t3_consent(senior_id: str) -> bool:
-    """이미 대기 중인 동의 질문이 있는가."""
-    return any(
-        (proposal.get("meta") or {}).get(_T3_CONSENT_MARKER)
-        for proposal in proposal_store.pending(senior_id)
-    )
+def _extract_consent_request_id(origin: str) -> int | None:
+    """origin 문자열에서 동의 요청 id 를 꺼낸다. 못 찾으면 None."""
+    match = _T3_CONSENT_ORIGIN_RE.match(origin)
+    return int(match.group(1)) if match else None
+
+
+def _resolve_consent_answer(state: ConvState, pending: dict) -> dict:
+    """어르신의 "응"/"아니"를 규칙으로 판정하고, GRANTED 일 때만 outbox 에 남긴다.
+
+    ★ 이 판정만은 LLM 에게 맡기지 않는다  (완료 조건)
+        contract_dialogue._resolve_confirmation 과 같은 원칙이다. "동의한 것으로
+        보인다"는 재현되지 않는 근거다 — 나중에 "정말 동의했는가"를 물었을 때
+        답할 수 있어야 한다.
+
+    세 갈래.
+        긍정   GRANTED 로 확정하고 outbox 에 T3 한 건을 남긴다. 발화 원문은
+               싣지 않는다 — 보호자에게 필요한 것은 "가서 봐 주세요"이지 원문이
+               아니고, 원문을 실으면 T4 가 T1/T3 알림에 묻어 나가는 경로가 생긴다
+               (notify/backend_notifier.py 참고).
+        부정   DECLINED 로 확정한다. 아무것도 나가지 않고, pending_consent 를
+               비우므로 다시 묻지 않는다.
+        애매   확정하지 않는다. pending_consent 를 그대로 두고 한 번 더 확인한다
+               ("글쎄"를 거절로 접으면 안 되는 이유는 contract_dialogue 와 같다).
+
+    누가 호출하는가  handle_emotional, pending_consent 가 있을 때.
+    반환값  {"response": str, "pending_consent": dict|None}
+    """
+    verdict = contract_dialogue.read_affirmation(state.get("user_input") or "")
+    if verdict is None:
+        return {"response": _CONSENT_RECONFIRM, "pending_consent": pending}
+
+    request_id = pending.get("request_id")
+    if request_id is not None:
+        consent_store.resolve(request_id, "GRANTED" if verdict else "DECLINED")
+
+    if verdict:
+        outbox.enqueue("T3", {
+            "reason": "emotional_disclosure",
+            "request_id": request_id,
+        })
+        response = _CONSENT_GRANTED_REPLY
+    else:
+        response = _CONSENT_DECLINED_REPLY
+
+    # None 을 명시적으로 돌려준다. 안 그러면 이 키에는 reducer 가 없으므로
+    # (state.py 참고) 다음 턴까지 이번 요청이 '아직 대기 중'인 것처럼 남는다.
+    return {"response": response, "pending_consent": None}
 
 
 def handle_greeting(state: ConvState) -> dict:

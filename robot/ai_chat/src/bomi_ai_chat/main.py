@@ -3,7 +3,9 @@
 import argparse
 import logging
 from collections.abc import Sequence
+from logging.handlers import RotatingFileHandler
 
+from bomi_ai_chat import policy
 from bomi_ai_chat.audio_io.base import AudioInput, AudioOutput
 from bomi_ai_chat.config import ConfigurationError, Settings, get_settings
 
@@ -18,6 +20,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="한 번만 대화한 뒤 종료합니다. 기본값은 Ctrl+C까지 반복입니다.",
     )
     parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help=(
+            "DEBUG 까지 화면에 찍습니다. 실기 점검에서 판정 이유를 볼 때 씁니다 "
+            "(S15P11E102-233). 로그 파일에는 -v 없이도 항상 남습니다."
+        ),
+    )
+    parser.add_argument(
         "--legacy",
         action="store_true",
         help=(
@@ -27,6 +37,65 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     return parser
+
+
+def _setup_logging(settings: Settings, *, verbose: bool) -> None:
+    """화면과 파일 두 곳에 로그를 남긴다.
+
+    ★ 왜 이 함수가 생겼나 (S15P11E102-233)
+        여기에 있던 basicConfig 가 주석 처리되어 있었다. 그래서 로봇을 켜면 핸들러가
+        하나도 없고, INFO 는 통째로 사라지고 WARNING 만 형식 없이 stderr 로 나갔다.
+
+        사라진 것들: "turn latency 1.83s", "scheduler built", "occupancy UNKNOWN ->
+        HOME", "degrading to level 1". 실기 점검에서 봐야 할 것이 정확히 그것들이다.
+        무엇이 왜 일어났는지 볼 수 없으면, 마이크 앞에서 관찰한 것을 코드의 어느
+        판단과 연결할 방법이 없다.
+
+    왜 파일에도 남기는가
+        실기 점검의 산출물은 기록이다. 스크롤로 흘러간 화면은 다음 날 없다. 파일이
+        있어야 "아까 그 턴이 왜 그랬지"를 나중에 grep 할 수 있고, 그것이 212 회귀
+        세트의 재료가 된다.
+
+    왜 파일은 항상 DEBUG 인가
+        되돌릴 수 없는 것은 '남기지 않은 로그'다. 화면은 시끄러우면 안 되지만 파일은
+        시끄러워도 된다. 문제가 생긴 뒤에 -v 를 켜고 재현하는 것은, 재현되지 않는
+        문제 앞에서 아무 의미가 없다.
+
+    어디에 쓰는가
+        {LOCALSTORE_DIR}/logs/ai_chat.log — 운영 상태와 같은 디렉터리다. SD카드를
+        옮기거나 백업할 때 대화 기록과 로그가 함께 간다.
+    """
+    from bomi_ai_chat.localstore.db import localstore_dir
+
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+
+    console = logging.StreamHandler()
+    console.setLevel(logging.DEBUG if verbose else logging.INFO)
+    console.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+                                           datefmt="%H:%M:%S"))
+    root.addHandler(console)
+
+    try:
+        log_dir = localstore_dir() / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        # 회전시킨다. 실기 점검은 몇 시간씩 돌고 DEBUG 는 빠르게 커진다.
+        file_handler = RotatingFileHandler(
+            log_dir / "ai_chat.log", maxBytes=20 * 1024 * 1024, backupCount=5,
+            encoding="utf-8")
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)-7s %(name)s: %(message)s"))
+        root.addHandler(file_handler)
+        root.info("logging to %s", log_dir / "ai_chat.log")
+    except OSError:
+        # 파일을 못 열어도 대화는 떠야 한다. 화면 로그는 이미 붙어 있다.
+        root.exception("could not open the log file; console logging only")
+
+    # 라이브러리 로그가 우리 로그를 덮지 않게 한다. httpx 는 요청마다 INFO 한 줄을
+    # 남기는데, 실기에서는 그것이 화면의 대부분을 차지한다.
+    for noisy in ("httpx", "httpcore", "urllib3", "paho", "apscheduler.executors.default"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def _build_audio_adapters(
@@ -90,10 +159,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ConfigurationError as exc:
         raise SystemExit(f"설정 오류: {exc}") from None
 
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    _setup_logging(settings, verbose=args.verbose)
 
     audio_in, audio_out = _build_audio_adapters(settings)
 
@@ -180,7 +246,16 @@ def _run_graph_runtime(settings: Settings, audio_in, audio_out, *, once: bool) -
             max_turns=1 if once else None,
             wake=wake, audio_out=audio_out)
     finally:
-        runtime.shutdown()
+        # --once 일 때만 재생이 끝나기를 기다린다 (S15P11E102-233).
+        #
+        # ★ 재생은 daemon 스레드다. --once 는 한 턴 뒤 바로 끝나므로, 기다리지 않으면
+        #   프로세스가 죽으면서 스레드도 죽고 **한 마디도 들리지 않는다.** 그래프는
+        #   정상으로 돌고 로그도 정상인데 스피커만 조용해서, 원인을 오디오 장치나
+        #   TTS 키에서 찾게 된다.
+        #
+        # 상시 실행(Ctrl+C)에서는 기다리지 않는다. 끄려는 사람을 문장이 끝날 때까지
+        # 붙잡아 두는 것은 다른 종류의 잘못이다.
+        runtime.shutdown(wait_for_speech_sec=policy.SPEECH_DRAIN_SEC if once else 0.0)
 
     return 0 if turns else 1
 

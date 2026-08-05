@@ -143,16 +143,90 @@ def test_the_outbox_marks_a_refused_alert_as_done(settings_factory, frozen_clock
 # ── 대화 적재 ────────────────────────────────────────────────────────────────
 
 
+def test_the_real_client_returns_a_conversation_and_message_id_pair(settings_factory):
+    """(S15P11E102-306) 실제 클라이언트도 (conversationId, messageId) 튜플을 돌려준다.
+
+    graph/build.py 는 이제 단일 값이 아니라 튜플을 기대한다. 여기서는 진짜
+    BackendConversationClient 가 백엔드 응답 본문에서 두 필드를 함께 뽑아내는지를
+    HTTP 계층까지 내려가 확인한다(RecordingConversationClient 는 대역일 뿐이라
+    실제 파싱 로직은 검증하지 못한다).
+    """
+    from bomi_ai_chat.backend_client.conversation_client import (
+        BackendConversationClient,
+    )
+
+    session = FakeSession(response=FakeResponse(
+        {"conversationId": "conversation-9", "messageId": "message-9"}))
+    client = BackendConversationClient(settings=settings_factory(), session=session)
+
+    conversation_id, message_id = client.record_turn(
+        SENIOR, role="SENIOR", content="안녕하세요", occurred_at=0.0)
+
+    assert conversation_id == "conversation-9"
+    assert message_id == "message-9"
+
+
+def test_the_real_client_tolerates_a_missing_message_id(settings_factory):
+    """★ 255 번(백엔드가 messageId 를 채우기 시작하는 티켓)이 아직 나가지 않았을 수
+    있다. 본문에 messageId 가 없어도 조용히 None 이어야지, 예외를 던지면 안 된다.
+    """
+    from bomi_ai_chat.backend_client.conversation_client import (
+        BackendConversationClient,
+    )
+
+    session = FakeSession(response=FakeResponse({"conversationId": "conversation-9"}))
+    client = BackendConversationClient(settings=settings_factory(), session=session)
+
+    conversation_id, message_id = client.record_turn(
+        SENIOR, role="SENIOR", content="안녕하세요", occurred_at=0.0)
+
+    assert conversation_id == "conversation-9"
+    assert message_id is None
+
+
+def test_the_real_client_returns_a_none_pair_on_failure(settings_factory):
+    """네트워크 실패는 (None, None) 이다 — 통계 때문에 턴을 막지 않으려고 예외를
+    던지지 않는다(모듈 docstring 참고)."""
+    from bomi_ai_chat.backend_client.conversation_client import (
+        BackendConversationClient,
+    )
+
+    session = FakeSession(error=OSError("network unreachable"))
+    client = BackendConversationClient(settings=settings_factory(), session=session)
+
+    result = client.record_turn(SENIOR, role="SENIOR", content="안녕하세요", occurred_at=0.0)
+
+    assert result == (None, None)
+
+
 class RecordingConversationClient:
+    """대화 적재 대역 — 서버와 같은 계약(null-in → 새 id 발급, 아니면 에코).
+
+    S15P11E102-306: 예전에는 호출마다 무조건 "conversation-1"을 돌려줘서,
+    turn.py 가 매 턴 conversation_id 를 None 으로 덮어쓰는 결함이 있어도 대화가
+    이어지는 것처럼 보이는 함정이 있었다. 여기서 같은 함정을 다시 만들지 않는다.
+    """
+
     def __init__(self, *, fail=False):
         self.turns = []
         self.fail = fail
+        self._next_conversation_id = 1
+        self._next_message_id = 1
 
     def record_turn(self, senior_id, **fields):
         if self.fail:
-            return None
+            return None, None
+
         self.turns.append({"seniorId": senior_id, **fields})
-        return "conversation-1"
+
+        conversation_id = fields.get("conversation_id")
+        if conversation_id is None:
+            conversation_id = f"conversation-{self._next_conversation_id}"
+            self._next_conversation_id += 1
+
+        message_id = f"message-{self._next_message_id}"
+        self._next_message_id += 1
+        return conversation_id, message_id
 
 
 class FakeContextClient:

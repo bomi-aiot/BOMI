@@ -178,6 +178,17 @@ class Settings:
     backend_base_url: str
     backend_timeout_seconds: float
 
+    # 백엔드 서블릿 필터가 요구하는 공유 시크릿 (S15P11E102-307).
+    #
+    # 왜 선택값(optional)인가
+    #   백엔드에서 이 값을 설정하지 않으면 필터가 헤더 검사를 건너뛰고 그대로
+    #   통과시킨다 — 그래야 시크릿을 아직 안 돌린 로컬 개발이 계속 돌아간다. 로봇
+    #   쪽도 같은 이유로 미설정을 허용한다. 다만 실기에서 백엔드에는 시크릿이 걸려
+    #   있는데 로봇에 이 값이 비어 있으면, 헤더 없는 요청이 나가 401 을 맞는다 —
+    #   그 401 은 조용한 캐시 폴백에 묻히지 않고 backend_client/session.py 를 거쳐
+    #   경고 로그로 남는다.
+    backend_shared_secret: str | None
+
     # 이 로봇의 id. 배포된 기기마다 다르므로 policy 가 아니라 여기다.
     #
     # 왜 필요한가
@@ -206,6 +217,33 @@ class Settings:
     #   기본값이 true 인 이유: 배선이 끝난 뒤에도 false 로 두면 아무도 새 경로를
     #   쓰지 않고, 그러면 배선한 의미가 없다.
     use_graph_runtime: bool
+
+    # T3 동의 질문 기능의 운영 킬스위치 (S15P11E102-253).
+    #
+    # policy.T3_CONSENT_ENABLED 와 무엇이 다른가
+    #   policy 쪽은 '제품 판단'(코드 상수)이고, 이 값은 '오늘 당장 끄고 싶다'는
+    #   운영 판단이다. 실기에서 이 질문이 이상하게 나간다는 신고가 들어왔을 때,
+    #   코드를 고치고 재배포할 시간이 없어도 이 환경변수 하나로 그날 안에
+    #   끌 수 있어야 한다(CLAUDE.md §26 의 "재현 가능한 방식으로 끌 수 있어야
+    #   한다"는 원칙과 같다). jobs/ticks.consent_tick 이 이 값과 policy 값을
+    #   모두 확인하고, 둘 중 하나라도 꺼지면 질문을 올리지 않는다.
+    #
+    # 기본값이 True 인 이유
+    #   꺼진 채로 배포되면 정서 발화가 아무리 쌓여도 보호자에게 절대 닿지 않고,
+    #   그 사실이 로그 한 줄 없이 조용하다. 명시적으로 끄는 것이 배포 체크리스트에
+    #   남는 편이 안전하다.
+    t3_consent_enabled: bool
+
+    # 사실 추출 기능의 운영 킬스위치 (S15P11E102-255).
+    #
+    # policy.EXTRACTION_ENABLED 와 무엇이 다른가
+    #   t3_consent_enabled 와 같은 구도다. policy 쪽은 '제품 판단'(코드 상수)이고,
+    #   이 값은 '오늘 당장 끄고 싶다'는 운영 판단이다. LLM 비용이 튀거나 잘못된
+    #   사실 후보가 쏟아진다는 신고가 들어왔을 때, 코드를 고치고 재배포할 시간이
+    #   없어도 이 환경변수 하나로 그날 안에 끌 수 있어야 한다. graph/build.py 의
+    #   큐잉과 jobs/ticks.extraction_flush 둘 다 이 값과 policy 값을 모두 확인하고,
+    #   둘 중 하나라도 꺼지면 아무것도 하지 않는다.
+    extraction_enabled: bool
 
     # ── MQTT: 현관 이벤트 구독  (CLAUDE.md §11, docs/mqtt/topic-convention.md) ──
     #
@@ -272,21 +310,31 @@ class Settings:
             ),
             kma_api_key=_optional_env("KMA_API_KEY"),
             audio_mode=audio_mode,
-            # 이 프로젝트는 ReSpeaker XVF3800을 마이크로 쓴다. 미설정 시 이름으로
-            # 자동 검색되도록 기본값을 "reSpeaker"로 둔다(USB 재연결로 인덱스가
-            # 바뀌어도 자동 대응). 다른 마이크를 쓰려면 .env에서 AUDIO_INPUT_DEVICE를
-            # 지정하면 이 기본값을 덮어쓴다.
-            # 원래 기본값: audio_input_device=_audio_device_env("AUDIO_INPUT_DEVICE"),
-            audio_input_device=_audio_device_env("AUDIO_INPUT_DEVICE", "reSpeaker"),
+            # 하드웨어 전용 기본값은 robot 모드에서만 적용한다 (S15P11E102-233).
+            #
+            # ★ 이 프로젝트는 ReSpeaker XVF3800 을 마이크로 쓰고, USB 재연결로 인덱스가
+            #   바뀌어도 따라가도록 이름으로 자동 검색한다. 그 편의가 맞는 것은 로봇
+            #   위에서뿐이다.
+            #
+            # 왜 모드별로 갈랐나
+            #   laptop 모드에서도 "reSpeaker" 를 찾다가 실기 점검이 첫 명령에서 막혔다.
+            #       RuntimeError: 이름에 'reSpeaker'가 들어간 입력 장치를 찾을 수 없습니다
+            #   노트북에는 그 마이크가 없는 것이 정상이다. laptop 모드의 뜻이 "OS 기본
+            #   장치를 쓴다"인데, 없는 USB 장치를 요구하면 그 모드가 의미를 잃는다.
+            #   .env 로 덮어쓸 수는 있었지만, 기본값이 틀린 것을 사용자가 매번 고치는
+            #   것은 설정이 아니라 우회다.
+            audio_input_device=_audio_device_env(
+                "AUDIO_INPUT_DEVICE", "reSpeaker" if audio_mode == "robot" else None),
             audio_output_device=_audio_device_env("AUDIO_OUTPUT_DEVICE"),
             audio_sample_rate=_positive_integer_env(
                 "AUDIO_SAMPLE_RATE",
                 16000,
             ),
-            # ReSpeaker는 2채널(왼쪽=처리된 빔, 오른쪽=원본 mic0)로 열어 왼쪽만
-            # 사용하므로 기본값을 2로 둔다.
-            # 원래 기본값: audio_channels=_positive_integer_env("AUDIO_CHANNELS", 1),
-            audio_channels=_positive_integer_env("AUDIO_CHANNELS", 2),
+            # ReSpeaker 는 2채널(왼쪽=처리된 빔, 오른쪽=원본 mic0)로 열어 왼쪽만 쓴다.
+            # 위와 같은 이유로 robot 모드에서만 2다 — 노트북 마이크에 2채널을 요구하면
+            # 장치에 따라 InputStream 열기가 실패한다 (S15P11E102-233).
+            audio_channels=_positive_integer_env(
+                "AUDIO_CHANNELS", 2 if audio_mode == "robot" else 1),
             audio_chunk_seconds=_positive_float_env(
                 "AUDIO_CHUNK_SECONDS",
                 0.5,
@@ -361,9 +409,12 @@ class Settings:
                 or "http://localhost:8080"
             ),
             backend_timeout_seconds=_positive_float_env("BACKEND_TIMEOUT_SECONDS", 1.5),
+            backend_shared_secret=_optional_env("BACKEND_SHARED_SECRET"),
             robot_id=_optional_env("ROBOT_ID"),
             senior_id=_optional_env("SENIOR_ID"),
             use_graph_runtime=_bool_env("USE_GRAPH_RUNTIME", True),
+            t3_consent_enabled=_bool_env("T3_CONSENT_ENABLED", True),
+            extraction_enabled=_bool_env("EXTRACTION_ENABLED", True),
             mqtt_enabled=_bool_env("MQTT_ENABLED", False),
             mqtt_broker_url=_optional_env("MQTT_BROKER_URL", "") or "",
             mqtt_door_topic=(

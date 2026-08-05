@@ -62,13 +62,18 @@
 
 ## 3. 서버 쪽 (백엔드)
 
+⚠️ **이 절 전체가 `be-develop` 전용입니다.** `ai-develop`(이 문서가 있는 라인)의 `backend/`
+는 `HealthController` 하나만 있는 껍데기이고, 아래 경로는 전부 `com.ssafy.bomi` 패키지
+기준 상대 경로입니다(`backend/src/main/java/com/ssafy/bomi/` 를 앞에 붙이십시오). `be-develop`
+워크트리에서 여십시오.
+
 | 순서 | 파일 | 여기서 볼 것 |
 |---|---|---|
-| 1 | `docs/database/mvp-erd.md` §9 | 문맥 조립 레시피. **이것이 계약이다** |
+| 1 | `docs/database/mvp-erd.md` §9 | 문맥 조립 레시피. **이것이 계약이다.** `ai-develop` 의 `docs/database/` 에는 `README.md` 만 있습니다 |
 | 2 | `context/api/ConversationContextResponse.java` | 로봇이 받는 것 전부. 응답 모양이 곧 명세 |
 | 3 | `context/application/ConversationContextService.java` | 조립 로직. **§5 선필터가 핵심** |
 | 4 | `memory/repository/MemoryRepository.java` | `findRetrievable` — 프라이버시 통제가 이 쿼리다 |
-| 5 | `backend/src/main/resources/db/migration/V2~V5` | 로봇 런타임이 쓰는 컬럼들 |
+| 5 | `backend/src/main/resources/db/migration/` | 로봇 런타임이 쓰는 컬럼들. V1 부터 최신 V파일까지 — 정확한 기대 목록은 `FlywayMigrationValidationTest.migrationsApplyToEmptyDatabaseAndEntitiesValidate()` 가 갖고 있으니 숫자를 여기 다시 박지 않습니다 |
 
 **4번을 반드시 보십시오.** 이 쿼리 하나가 "누가 어떤 기억을 볼 수 있는가"를 결정합니다. 여기가 틀리면 보호자에게 어르신의 속마음이 새어 나갑니다.
 
@@ -84,7 +89,9 @@
 | `policy.py` | 제품 판단 상수. `config.py`(환경변수)와 성격이 다르다 |
 | `config.py` | 환경변수. 배포마다 바뀌는 값 |
 | `state.py` | 한 턴의 상태 스키마 + `SpeechProposal` |
+| `bootstrap.py` | **런타임 배선 (232).** 200~211 에서 만든 그래프·게이트·사다리·현관·트리아지·온보딩·보호자 알림이 실행 경로에 실제로 연결되는 곳. `build_runtime()` 하나가 컴파일된 그래프에 재생기·백엔드 클라이언트를 꽂고 스케줄러와 현관 구독을 띄운다 |
 | `turn_timer.py` | 턴 지연 실측. `clock` 이 아니라 `monotonic` 을 쓰는 이유가 적혀 있다 |
+| `conversation_control.py` | 대화 시작·응답·종료 판단. 레거시 파이프라인과 그래프 런타임이 함께 쓴다 |
 | `graph/build.py` | 배선만 |
 | `graph/ingress.py` | 진입 **4경로** + barge-in. `door_event` 가 왜 END 로 끝나는지 여기 |
 | `graph/gate.py` | 능동 발화 게이트 (**206**). `not_before` 연기 확인은 263 — 지연이 필요한 제안(T3 동의)을 위한 것이고, 폐기가 아니라 연기다 |
@@ -92,8 +99,9 @@
 | `graph/context.py` | 문맥 조회 + 인텐트 분류 |
 | `graph/handlers.py` | 7개 핸들러 (**전부 구현됨**. `handle_emotional` 은 263) |
 | `graph/output.py` | 정제 + 재생 시작 |
-| `graph/turn.py` | 반응형 한 턴 실행 |
+| `graph/turn.py` | 반응형 한 턴 실행. `turn_timer` 로 단계별 지연을 잰다 |
 | `prompts/builder.py` | 프롬프트 조립 (순수 함수) |
+| `degradation.py` | 압박이 올 때 무엇을 먼저 버리는가 (**212**). 안전 경로는 여기서 아예 쳐다보지 않는다 |
 | `prompts/templates/*.md` | 실제 프롬프트 문구. **여기를 고치면 로봇 말투가 바뀐다** |
 | `graph/contract_dialogue.py` | **무엇을 LLM 에게 맡기지 않는가.** 확인 판정의 규칙 |
 | `backend_client/contract_client.py` | 온보딩·재질의 API. **실패하면 예외** (문맥 조회와 반대) |
@@ -102,16 +110,25 @@
 | `door/intake.py` | 문 이벤트 하나의 처리. 저장소가 두 개인 이유가 여기 적혀 있다 |
 | `door/mqtt.py` | 브로커 구독. 판정 로직이 없어서 브로커 없이 테스트된다 |
 | `backend_client/` | 어르신의 사실·기억으로 가는 유일한 길 |
+| `backend_client/conversation_client.py` | 대화 이벤트 적재(`conversation_message`), 보호자 알림 수신 (211) |
+| `backend_client/door_client.py` | 현관 이벤트를 백엔드로 전달. 실패해도 로컬 안전 감시는 계속된다 (208) |
 | `localstore/db.py` | **DB 파일이 왜 두 개인지**가 여기 적혀 있다 |
 | `localstore/outbox.py` | 보호자 알림 큐. 전송보다 저장이 먼저 |
 | `localstore/runtime.py` | 재부팅을 넘는 운영 상태. **틱이 읽는 쪽** |
 | `localstore/schema.py` | 표 정의 + 뒤늦게 추가한 컬럼의 멱등 마이그레이션 |
 | `localstore/proposals.py` | 게이트가 심판할 대기 목록 |
+| `localstore/audio_cache.py` | critical 프로브용 캐시 오디오. 오프라인에서도 생존 확인 발화가 가능해야 한다 (§18) |
+| `localstore/context_cache.py` | 백엔드 문맥 조회 실패 시 읽는 로컬 캐시 (204) |
+| `localstore/dump.py` | 로컬 DB 를 USB/서버로 내보내는 일간 백업 (§18) |
 | `audio/echo_guard.py` | 자기 목소리를 걸러내는 판정 |
+| `audio/vad.py` | Voice Activity Detection — 지금 누가 말하는지 값싸게 판정 (205) |
 | `audio/playback.py` | **진행 상황의 권위.** 동기화 버그가 가장 나기 쉬운 곳 |
+| `audio_io/wakeword.py` | 웨이크워드 감지. 항상 스트리밍하지 않기 위한 로컬 트리거 |
 | `notify/base.py` | 보호자 채널 어댑터 인터페이스 |
+| `notify/logging_notifier.py` | 기본 채널. 실제 보호자 채널이 없을 때 로그로만 기록 |
 | `notify/backend_notifier.py` | **거절과 실패를 구분하는 곳.** 로봇은 푸시 서버를 모른다 |
 | `jobs/ticks.py` | 주기 작업. 일간 요약은 백엔드로 옮겼다(211) |
+| `jobs/scheduler.py` | `build_scheduler()` — APScheduler 배선. `bootstrap.py` 가 시작한다 (232) |
 
 ### 이미 있던 것 (재구현하지 않음)
 
@@ -122,7 +139,7 @@
 | `stt/`, `tts/` | 외부 API 클라이언트 |
 | `weather/`, `db/` | 날씨, 의료 참조 조회 |
 | `audio_io/` | 장치 입출력. `audio/`(판단)와 다르다 |
-| `pipeline.py` | 입력 루프 드라이버. **아직 그래프에 연결 안 됨** |
+| `pipeline.py` | `--legacy` 전용 구경로. **그래프를 거치지 않는다** — 게이트도, 침묵 사다리도, 트리아지도, 현관도 없다. 실기에서 그래프 경로에 문제가 생겼을 때 코드 수정 없이 즉시 되돌리기 위해서만 남아 있다(232) |
 
 ---
 
@@ -131,6 +148,8 @@
 | 알고 싶은 것 | 읽을 것 |
 |---|---|
 | 로봇이 언제 말하는가 | `CLAUDE.md` §7 → `policy.py` 우선순위 표 → `graph/gate.py` |
+| 느려질 때 무엇을 버리는가 | `CLAUDE.md` §18 → `policy.DEGRADATION_ORDER` → `degradation.py` → `graph/context.py`·`graph/gate.py` |
+| 자연스러움을 어떻게 재는가 | `CLAUDE.md` §17 → `tests/scenarios/naturalness_v1.json` → `tests/test_naturalness_replay.py` |
 | 속마음을 언제 가족과 나누는가 | `CLAUDE.md` §9 → `policy.py` `T3_CONSENT_DELAY_SEC` → `graph/handlers.py` `_queue_t3_consent_question` → `graph/gate.py` `is_too_early` |
 | 로봇이 왜 이렇게 말하는가 | `prompts/templates/system.md` → `prompts/builder.py` |
 | 무엇을 기억하는가 | `CLAUDE.md` §8 → `MemoryRepository.findRetrievable` → `ConversationContextService` |

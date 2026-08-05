@@ -989,13 +989,15 @@ process, not a request/response service.
 ```
 S15P11E102/
 ├── CLAUDE.md                       <- this file
-├── HANDOFF.md                      <- one-off handover for the runtime work
 ├── docs/
-│   ├── database/                   <- ERD, question set, Flyway guide (AUTHORITATIVE for schema)
+│   ├── database/                   <- ERD, question set, Flyway guide (be-develop only —
+│   │                                   mvp-erd.md does not exist on this line, §24)
 │   ├── architecture/, scenario/, mqtt/, api/, hardware/
 │   └── design/care-bot-design.md   <- long-form runtime rationale (Korean)
 │
-├── backend/                        <- Spring Boot, Flyway, the ERD, guardian API
+├── backend/                        <- Spring Boot, Flyway, the ERD, guardian API. On this
+│                                       (ai-develop) line this is a shell (HealthController
+│                                       only) — the real backend lives on be-develop
 ├── frontend/
 │
 ├── robot/                          <- UNIT 1: on the Jetson
@@ -1009,6 +1011,11 @@ S15P11E102/
 │           ├── policy.py           <- every tuning dial: priority matrix, cooldowns, TTLs, top-k
 │           ├── config.py           <- environment variables only (keys, hosts, devices)
 │           ├── state.py            <- ConvState schema + SpeechProposal
+│           ├── bootstrap.py        <- wires the compiled graph, checkpointer, scheduler, door
+│           │                          subscriber and player into one runnable Runtime (232)
+│           ├── turn_timer.py       <- per-turn latency measurement against the ~2s budget (§16)
+│           ├── conversation_control.py <- wake/end-of-turn rules shared by the legacy
+│           │                          pipeline and the graph runtime
 │           ├── graph/
 │           │   ├── build.py        <- StateGraph wiring ONLY, no business logic
 │           │   ├── ingress.py      <- note_interaction, route_ingress, back-channel routing
@@ -1016,20 +1023,31 @@ S15P11E102/
 │           │   ├── triage.py       <- safety_triage, escalation
 │           │   ├── context.py      <- context_read, classify_intent, route_intent
 │           │   ├── handlers.py     <- info, companion, schedule, emotional,
-│           │   │                      greeting, onboarding, clarification
+│           │   │                      greeting, onboarding, clarification (all implemented, 263)
+│           │   ├── contract_dialogue.py <- what onboarding/clarification never hand to the
+│           │   │                      LLM: consent yes/no, readback confirmation (§12, 227)
+│           │   ├── turn.py         <- runs one reactive turn end to end, drives turn_timer
 │           │   └── output.py       <- response_shaper, emit
-│           ├── jobs/ticks.py       <- silence_tick, door_watch_tick, daily_summary_job,
-│           │                          outbox_flush
-│           ├── audio_io/           <- laptop/robot adapters, sounddevice backend, beam control
+│           ├── jobs/
+│           │   ├── ticks.py        <- silence_tick, door_watch_tick, daily_summary_job,
+│           │   │                      outbox_flush
+│           │   └── scheduler.py    <- build_scheduler(); started by bootstrap.py (232)
+│           ├── audio/              <- echo/barge-in judgement: echo_guard, vad, playback.
+│           │                          Not audio_io/ — that is device I/O, this is the decision
+│           ├── audio_io/           <- laptop/robot adapters, sounddevice backend, beam
+│           │                          control, wakeword
+│           ├── contracts/          <- wire-format schemas shared across machines (door events)
 │           ├── llm/                <- Gemini client, medical flow, embedding router (EXISTS)
 │           ├── stt/, tts/, weather/, db/   <- external clients (EXIST — delegate, do not rewrite)
-│           ├── pipeline.py         <- input loop driver: capture -> STT -> app.invoke
+│           ├── pipeline.py         <- legacy STT -> LLM -> TTS driver, `--legacy` flag only;
+│           │                          does not go through the graph (232)
 │           ├── http.py, main.py, __main__.py
-│           │
-│           │   ── not created yet; each arrives with its ticket ──
-│           ├── localstore/         <- SQLite: proposals, ladder, occupancy, checkpointer, outbox (202)
-│           ├── notify/             <- guardian adapter, swap the channel here (202 iface -> 211)
-│           ├── backend_client/     <- context assembly, fact_candidate, care_record, consent (204)
+│           ├── localstore/         <- SQLite: proposals, ladder, occupancy, checkpointer,
+│           │                          outbox, audio cache, context cache, daily dump (202)
+│           ├── notify/             <- guardian adapter: base, logging (default), backend
+│           │                          notifier — swap the channel here (202 iface -> 211)
+│           ├── backend_client/     <- context assembly, contract dialogue, conversation
+│           │                          logging, door events (204, 227, 211, 208)
 │           ├── prompts/            <- templates as files, versioned, never inline strings (204)
 │           └── door/               <- entrance-node client, occupancy rules, heartbeat watch (208)
 │
@@ -1325,8 +1343,17 @@ implementation was thrown away.
   venv/Scripts/pytest.exe -q -m "not integration and not manual"
   ```
 
-  `integration` and `manual` are excluded on purpose: they need hardware, credentials, or
-  external APIs, and a laptop without a microphone must not block a push (§18).
+  `integration` and `manual` exist as markers for hardware-, credential-, or external-API-
+  dependent tests, and a laptop without a microphone must not block a push (§18). **As of
+  this writing no test under `tests/` actually carries either marker** — `pytest
+  --collect-only -m "integration or manual"` collects zero items — so today the `-m` flag
+  itself filters nothing. The isolation that actually keeps a default run hardware- and
+  network-free is two other mechanisms: `pyproject.toml`'s `norecursedirs = ["manual"]` keeps
+  the operator-run smoke scripts under `tests/manual/` out of collection entirely, and
+  `tests/conftest.py`'s autouse `block_external_http` fixture raises immediately if any
+  non-`integration`/`manual` test attempts a real HTTP request. Keep the `-m` flag anyway —
+  it is the forward-compatible convention for the day a real pytest-based integration test
+  gets marked — but do not describe it as doing work it is not doing today.
 
 - **Verify config and deploy changes end to end, against reality rather than files.**
   - For web endpoints, confirm the **response body and content-type**, not the status code.

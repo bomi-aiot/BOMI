@@ -20,8 +20,8 @@
     데이터를 분리해 두었으니, 전부를 하나의 유사도 질의로 요청해서 그걸 무너뜨리지
     않는다 (CLAUDE.md §8).
 
-읽는 값   user_input, intent
-쓰는 값   ctx, ctx_is_cached
+읽는 값   user_input, intent, is_medical_query
+쓰는 값   ctx, ctx_is_cached, is_medical_query
 
 db/ 와 backend_client/ 의 경계  ★ 혼동 주의
     db/medical_repository.py = 의료 '참조' 데이터 조회(병원·약국·의약품 허가).
@@ -30,19 +30,31 @@ db/ 와 backend_client/ 의 경계  ★ 혼동 주의
         반드시 백엔드 API 를 통한다. ssh_tunnel 로 직접 조회하지 않는다.
     두 경로를 섞으면 검색 규칙(선필터·visibility·동의)이 두 곳에 구현된다.
 
+날씨·의료 조회가 왜 핸들러가 아니라 여기 있는가 (S15P11E102-311)
+    handle_info 는 §6 규칙대로 "무엇을 말할지"만 정해야 하고 직접 I/O 를 하면
+    안 된다(§23). 그런데 "근처 병원 어디야", "오늘 서울 날씨 어때" 는 근거 데이터
+    없이는 LLM 이 그냥 지어낸다. 그래서 조회 자체는 이 노드(context_read)가 하고,
+    결과를 ctx["documents"] 에 담아 넘긴다. prompts/builder.py 가 info 인텐트일 때
+    그 목록을 "참고 자료" 섹션으로 이미 렌더하므로 프롬프트 빌더 시그니처는 바뀌지
+    않는다. handle_info 는 여전히 _generate() 한 번만 부르는 얇은 핸들러로 남는다.
+
 참고
-    CLAUDE.md §5 (소유권과 API 이음새), §8 (기억과 RAG 경계)
+    CLAUDE.md §5 (소유권과 API 이음새), §8 (기억과 RAG 경계), §14 (날씨는 행동이다),
+    §16 (턴당 생성 호출 1회), §23 (핸들러 직접 I/O 금지)
     docs/database/mvp-erd.md §9 (권위 있는 문맥 조립 레시피)
 """
 
 from __future__ import annotations
 
 import logging
+import re
 
-from bomi_ai_chat import policy
+from bomi_ai_chat import degradation
 from bomi_ai_chat.backend_client import BackendContextClient
 from bomi_ai_chat.graph import contract_dialogue
+from bomi_ai_chat.llm.medical_flow import handle_medical_query
 from bomi_ai_chat.state import ConvState
+from bomi_ai_chat.weather.client import WeatherClient, extract_city
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +64,9 @@ logger = logging.getLogger(__name__)
 #   생성 시점에 Settings 를 읽는다. import 시점에 읽으면 테스트가 환경변수를 바꾸기
 #   전에 굳어버리고, .env 가 없는 환경에서는 import 자체가 실패한다.
 _CLIENT: BackendContextClient | None = None
+
+# 날씨 클라이언트도 같은 이유로 지연 생성한다 (S15P11E102-311).
+_WEATHER_CLIENT: WeatherClient | None = None
 
 
 def _client() -> BackendContextClient:
@@ -65,6 +80,19 @@ def set_client(client: BackendContextClient | None) -> None:
     """클라이언트를 교체한다. 테스트와 부트스트랩에서 쓴다."""
     global _CLIENT
     _CLIENT = client
+
+
+def _weather_client() -> WeatherClient:
+    global _WEATHER_CLIENT
+    if _WEATHER_CLIENT is None:
+        _WEATHER_CLIENT = WeatherClient()
+    return _WEATHER_CLIENT
+
+
+def set_weather_client(client: WeatherClient | None) -> None:
+    """날씨 클라이언트를 교체한다. 테스트와 부트스트랩에서 쓴다."""
+    global _WEATHER_CLIENT
+    _WEATHER_CLIENT = client
 
 
 def context_read(state: ConvState) -> dict:
@@ -93,7 +121,7 @@ def context_read(state: ConvState) -> dict:
         backend_client.fetch_context. 실패 시 localstore.read_context_cache.
 
     반환값
-        {"ctx": {...}, "ctx_is_cached": bool}
+        {"ctx": {...}, "ctx_is_cached": bool, "is_medical_query": bool | None}
 
     주의사항
         - 이 호출은 지연 예산 '안에' 있다. top-k 는 policy.MEMORY_TOP_K 로 유지하고,
@@ -103,6 +131,10 @@ def context_read(state: ConvState) -> dict:
         - ctx_is_cached 가 True 면 핸들러는 일정과 복약에 대해 단정적으로 말하지 않아야
           한다. 캐시는 낡았을 수 있고, 낡은 복약 정보를 단정적으로 말하는 것은 품질
           문제가 아니라 안전 문제다.
+        - 날씨·의료 조회(S15P11E102-311)는 백엔드 문서 검색과 별개다. 반응형 턴은
+          이 시점에 아직 classify_intent 가 돌지 않았으므로(intent 가 비어 있다),
+          같은 규칙으로 '미리' 살펴봐서 조회 여부를 정한다. 자세한 이유는
+          _gather_lookup_documents 참고.
     """
     senior_id = state.get("senior_id")
     if not senior_id:
@@ -114,8 +146,10 @@ def context_read(state: ConvState) -> dict:
 
     # 문서는 info 인텐트에서만 요청한다(§8). top-k 는 함수에 박지 않고 policy 에서 읽으며,
     # 성능 저하 모드에서는 낮춘 값이 들어온다(policy.DEGRADATION_ORDER).
-    want_documents = state.get("intent") == "info"
-    top_k = state.get("memory_top_k") or policy.MEMORY_TOP_K
+    # 저하 단계를 실제로 읽는다 (S15P11E102-212). 212 전까지 이 주석은 "압박 상황에서는
+    # 낮춘 값이 들어온다"고 말했지만 넣는 사람이 없었다.
+    want_documents = state.get("intent") == "info" and degradation.documents_allowed()
+    top_k = state.get("memory_top_k") or degradation.memory_top_k()
 
     result = _client().fetch_context(
         senior_id,
@@ -124,7 +158,231 @@ def context_read(state: ConvState) -> dict:
         top_k=top_k,
         documents=want_documents,
     )
-    return {"ctx": result.ctx, "ctx_is_cached": result.is_cached}
+
+    lookup_documents, medical_flag = _gather_lookup_documents(state)
+    ctx = result.ctx
+    if lookup_documents:
+        # 백엔드 문서(복지제도·FAQ)와 우리가 직접 조회한 날씨·의료 자료를 같은
+        # "참고 자료" 슬롯에 합친다. build_prompt 는 출처를 구분하지 않는다 —
+        # 어차피 둘 다 "모델이 답을 지어내지 말고 참고할 것"이라는 같은 역할이다.
+        ctx = {**ctx, "documents": [*(ctx.get("documents") or []), *lookup_documents]}
+
+    return {
+        "ctx": ctx,
+        "ctx_is_cached": result.is_cached,
+        # 이 턴에 판정하지 않았으면 명시적으로 None 을 써서, 지난 턴에 남은 값이
+        # 이번 턴까지 새는 것을 막는다. checkpoint 된 state 는 이 노드가 손대지
+        # 않는 키를 그대로 들고 있기 때문이다(state.py 의 is_medical_query 설명 참고).
+        "is_medical_query": medical_flag,
+        "recent_phrasings": _lookup_recent_phrasings(state, senior_id),
+    }
+
+
+def _lookup_recent_phrasings(state: ConvState, senior_id: str) -> list[str]:
+    """같은 종류의 알림에서 최근에 쓴 표현을 찾는다 (§17.8, S15P11E102-256).
+
+    무엇을 하는가
+        능동/명령 턴(trigger_type in "proactive"/"backend_command")에서만
+        phrasing_key 를 만들어 localstore.phrasings.recent 로 조회한다.
+
+    ★ 왜 반응형 턴은 항상 빈 리스트인가 — 이 함수에서 가장 중요한 판단
+        speech_origin 과 intent 는 checkpoint 된 state 의 필드라 reducer 가 없다
+        (state.py 참고). 능동 턴이 "silence_ladder:1" 을 남기고 나면, 바로 다음
+        어르신 발화(user_utterance) 턴에도 그 값이 그대로 남아 있다 — 아무도
+        지우지 않았을 뿐이다. 이 함수가 trigger_type 을 보지 않고 speech_origin
+        만 봤다면, "능동 턴 직후의 반응형 턴"에 지난 알림의 표현 이력이 새어
+        들어간다. graph/build.py._record_phrasing 도 기록 쪽에서 같은 가드를
+        쓴다 — 둘이 어긋나면 저장과 조회 중 하나만 걸러져 조용히 틀린다.
+
+    누가 호출하는가
+        context_read, ctx 를 만든 다음.
+
+    반환값
+        표현 문자열 목록. 반응형 턴이거나, origin/intent 가 다양화 대상이 아니면
+        (graph.phrasing.phrasing_key 참고) 빈 리스트.
+    """
+    if state.get("trigger_type") not in ("proactive", "backend_command"):
+        return []
+
+    from bomi_ai_chat.graph.phrasing import phrasing_key
+    from bomi_ai_chat.localstore import phrasings
+
+    key = phrasing_key(state.get("speech_origin") or "", state.get("intent") or "")
+    return phrasings.recent(senior_id, key)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 날씨·의료 조회 (S15P11E102-311)
+#
+# 핸들러가 아니라 여기서 조회하는 이유는 모듈 docstring 참고. 이 절의 함수들은
+# 전부 "무엇을 조회할지"만 정하고, 실제 호출은 이미 검증된 기존 클라이언트
+# (weather/client.py, llm/medical_flow.py)에 위임한다 — 재구현하지 않는다.
+#
+# _WEATHER_MARKERS 는 아래에서 정의하지 않는다. _INFO_MARKERS 바로 위(§8 절)에
+# 이미 있고, 여기서 또 만들면 "날씨 질문"의 기준이 두 곳에 생긴다.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# 라우터(SentenceTransformer 추론)를 부르기 '전'에 거치는 값싼 1차 필터.
+#
+# 왜 필요한가
+#   라우터는 네트워크는 안 쓰지만(로컬 추론) 모델이 첫 호출에서 로딩된다
+#   (llm/router.py 최상단 `SentenceTransformer(...)`). "안녕하세요", "심심해"
+#   같은 흔한 잡담까지 매번 라우터로 보내면 평범한 대화 테스트마저 무거운 모델
+#   로딩에 얽매인다. 그래서 의료 '시설·의약품 검색' 과 조금이라도 관련 있어
+#   보이는 발화만 넘긴다.
+#
+# 왜 "병원"/"약국"만으로 부족한가
+#   router.py 의 MEDICAL_EXAMPLES 에는 상비약 브랜드명("게보린", "정로환")과
+#   진료과 이름("정형외과")도 있고, 그 발화들은 "병원"이라는 글자를 포함하지
+#   않는다.
+#
+# ★ 바른 "약" 을 일부러 넣지 않는다
+#   "내 약 뭐야", "혈압약 한 알이요" 처럼 어르신 '자신의' 복약을 묻는 흔한 말에
+#   전부 걸린다. 그런 질문은 이미 ctx.careRecords(정확 조회, CLAUDE.md §8)로
+#   답할 수 있고, 이 조회(medical_flow)가 다루는 "약국이 어디야"·"이 약이 뭐야
+#   (허가 정보)"와는 다른 질문이다. 브랜드명·진료과처럼 구체적인 표지만 남긴다.
+_MEDICAL_HINT_MARKERS = (
+    "병원", "약국", "약사", "처방", "진료", "부작용", "의원",
+    "정형외과", "이비인후과", "안과", "소아과", "치과", "내과", "외과", "피부과",
+    "타이레놀", "게보린", "판피린", "정로환", "베아제", "활명수",
+    "후시딘", "마데카솔", "우루사", "인사돌", "파스",
+)
+
+
+def _gather_lookup_documents(state: ConvState) -> tuple[list[dict], bool | None]:
+    """날씨·의료 조회를 수행해 '참고 자료' 문서 목록을 만든다.
+
+    무엇을 하는가
+        이 턴이 info 로 흘러갈 가능성이 있을 때만(아래 _eligible_for_lookup)
+        의료 힌트 표지가 있으면 라우터로 확인하고, 의료가 아니면 날씨 표지를
+        본다. 의료가 이기는 이유는 legacy 경로(pipeline.py)와 같다 — 두 조건이
+        동시에 참인 문장은 드물고, 있다면 의료 쪽이 더 안전 관련이 크다.
+
+    왜 classify_intent 의 판정을 그대로 못 쓰는가
+        그래프 순서가 context_read -> classify_intent 다. 반응형 턴(어르신이
+        먼저 말한 턴)은 이 시점에 아직 intent 가 없다. intent 가 없다고 조회를
+        건너뛰면 "근처 병원 어디야" 같은 흔한 질문이 이 티켓이 고치려는 문제
+        그대로 남는다. 그래서 여기서 같은 규칙을 '미리' 한 번 본다.
+
+    왜 의료 판정이 classify_intent._classify 보다 넓은가  ★
+        _classify 는 "어디야"·"뭐야"·"알려줘" 같은 값싼 정보 표지에 먼저 걸리면
+        의료 라우터까지 가지도 않고 "info" 로 확정한다("근처 병원 **어디야**"가
+        정확히 이 경우다). 그 판정 자체는 옳다(info 가 맞다) — 문제는 '조회'
+        여부를 그 판정에 의존하면, 의료 라우터가 한 번도 불리지 않아 조회가
+        전혀 안 된다는 것이다. 그래서 여기서는 _MEDICAL_HINT_MARKERS 로 넓게
+        훑어 라우터를 부른다 — _classify 가 보는 _INFO_MARKERS 매칭과는 무관하다.
+
+    왜 힌트가 없으면 라우터를 아예 안 부르는가 (그리고 그것이 왜 안전한가)
+        _classify 는 원래도 "질문형으로 끝나고 다른 표지가 없을 때만" 라우터를
+        불렀다. 그 좁은 문(원래 동작)은 여기서 그대로 classify_intent 에 남아
+        있다 — 힌트가 없어 여기서 판정하지 않은 턴은 is_medical_query 가 None 인
+        채로 넘어가고, classify_intent 는 자기 힌트가 없으니 원래 하던 대로
+        (필요하면 스스로 라우터를 불러) 판정한다. 즉 이 사전 필터는 '더 넓게
+        잡는 지름길'을 추가할 뿐, 기존 좁은 경로를 막지 않는다.
+
+    반환값
+        (documents, is_medical) - documents 는 build_prompt 의 "참고 자료"에
+        들어갈 {"title", "content"} 목록. is_medical 은 라우터를 이 턴에 실제로
+        불렀을 때만 bool, 그 외에는 캐시할 것이 없다는 뜻으로 None.
+
+    주의사항  ★ state["is_medical_query"] 를 여기서 '읽지' 않는다
+        이 함수는 그 값을 채우는 쪽이지 읽는 쪽이 아니다. context_read 는 이번
+        턴에 가장 먼저 도는 노드라, 이 시점의 state["is_medical_query"] 는 이번
+        턴에 아직 아무도 쓰지 않은 값 — 즉 checkpoint 에 남은 '지난 턴' 값이다.
+        그것을 캐시로 믿으면 지난 발화의 의료 판정을 이번 발화에 그대로
+        재사용하는 사고가 난다. 캐시는 classify_intent(context_read 다음 노드,
+        같은 턴)만 읽는다.
+    """
+    text = (state.get("user_input") or "").strip()
+    if not _eligible_for_lookup(state, text):
+        return [], None
+
+    medical_flag: bool | None = None
+    if any(marker in text for marker in _MEDICAL_HINT_MARKERS):
+        medical_flag = _is_medical(text)
+        if medical_flag:
+            return _lookup_medical_documents(text), medical_flag
+
+    if any(marker in text for marker in _WEATHER_MARKERS):
+        return _lookup_weather_documents(text), medical_flag
+    return [], medical_flag
+
+
+def _eligible_for_lookup(state: ConvState, text: str) -> bool:
+    """조회를 시도할 가치가 있는 턴인가.
+
+    무엇을 하는가
+        세 가지를 확인한다.
+          1. 발화가 있는가. 능동 턴의 seed 는 우리가 이미 통제하는 문구라
+             조회 대상이 아니다.
+          2. intent 가 이미 확정돼 있다면 info 가 아닌 한 조회할 이유가 없다.
+             (능동/backend_command 턴은 여기 도달하기 전에 이미 intent 가
+             붙어 있다 — greeting 문구에 "비"가 우연히 들어 있다고 다시
+             기상청을 부르면 낭비다.)
+          3. 정서·일정 표지가 뚜렷하면 의료·날씨일 리 없다. _classify 와 같은
+             우선순위다 — 정서가 정보보다 먼저다(CLAUDE.md §1).
+    """
+    if not text:
+        return False
+    intent = state.get("intent")
+    if intent not in (None, "info"):
+        return False
+    if any(marker in text for marker in _EMOTIONAL_MARKERS):
+        return False
+    return not any(marker in text for marker in _SCHEDULE_MARKERS)
+
+
+# 조회 실패를 "참고 자료"로 감싸는 공통 문구. 근거 없이 답하는 대신, 확인이
+# 어렵다고 솔직히 말하거나 되묻으라고 모델에게 직접 지시한다(완료 조건).
+_LOOKUP_FAILURE_NOTE = (
+    "{topic} 정보를 지금 확인할 수 없습니다. 모르는 것을 지어내지 말고, "
+    "확인이 어렵다고 솔직히 말하거나 필요한 것을 다시 여쭤봅니다."
+)
+
+
+def _lookup_unavailable_document(topic: str) -> dict:
+    return {"title": f"{topic} 조회 실패", "content": _LOOKUP_FAILURE_NOTE.format(topic=topic)}
+
+
+def _lookup_weather_documents(text: str) -> list[dict]:
+    """기상청 조회를 하고 '참고 자료' 한 건으로 감싼다.
+
+    도시를 특정 못 하면(예: "오늘 날씨 어때") 조회 자체를 시도하지 않는다.
+    legacy 경로(pipeline.py)도 같다 — 이것은 조회 '실패'가 아니라 정보 부족이라,
+    완료 조건 5번이 요구하는 "조회 실패" 처리(_LOOKUP_FAILURE_NOTE) 대상이 아니다.
+    """
+    city = extract_city(text)
+    if not city:
+        return []
+    try:
+        forecast = _weather_client().get_forecast(city)
+    except Exception:  # noqa: BLE001 - 조회 실패가 턴을 죽이면 안 된다
+        logger.warning("weather lookup failed for city=%s", city, exc_info=True)
+        return [_lookup_unavailable_document(f"{city} 날씨")]
+
+    summary = ", ".join(f"{label} {value}" for label, value in forecast.items())
+    return [{"title": f"{city} 날씨", "content": summary}]
+
+
+def _lookup_medical_documents(text: str) -> list[dict]:
+    """의료 function-calling 조회(llm/medical_flow.py)를 하고 '참고 자료'로 감싼다.
+
+    ★ 여기서 Gemini 를 한 번 더 부르는 것과 CLAUDE.md §16 의 관계
+        handle_medical_query 는 자체적으로 병원/약국/의약품 검색 인자를 뽑는
+        function-calling 왕복을 한다. 이 턴에는 이미 handle_info._generate() 가
+        부르는 '응답 생성' 호출이 하나 있고, §16 이 세는 "턴당 생성 호출 1회"는
+        바로 그 호출이다 — 여기서는 무엇을 말할지 정하지 않고 조회만 한다.
+        이 호출을 handle_info 안에서 그대로 했다면 핸들러가 직접 I/O 를 하는
+        셈이라 §23 을 깼을 것이다. context_read 로 올려서 그 문제만 해결한다.
+    """
+    try:
+        answer = handle_medical_query(text)
+    except Exception:  # noqa: BLE001 - 조회 실패가 턴을 죽이면 안 된다
+        logger.warning("medical lookup failed", exc_info=True)
+        return [_lookup_unavailable_document("의료(병원·약국·의약품)")]
+
+    return [{"title": "의료 조회 결과", "content": answer}]
 
 
 def classify_intent(state: ConvState) -> dict:
@@ -153,10 +411,22 @@ def classify_intent(state: ConvState) -> dict:
           그것을 강제하는 곳은 백엔드(하나만 내려줌)와 contract_tick(한 대화에 한 번만
           제안)이다 (CLAUDE.md §12).
     """
+    text = (state.get("user_input") or "").strip()
+
+    # ★ pending_consent 는 state.get("intent") 검사보다 먼저 본다.
+    #
+    #   T3 동의 질문을 던진 턴 자체가 intent="emotional" 을 남기고, 그 값은
+    #   reducer 가 없는(LastValue) 채널이라 바로 다음 반응형 턴까지 checkpoint
+    #   에 그대로 남아 있을 수 있다(state.py 참고). 그 우연에 기대면, 질문과
+    #   답 사이에 다른 능동 발화가 하나라도 끼면(예: 복약 알림) intent 가
+    #   "schedule" 로 덮여 답 판정이 조용히 새어나간다. 그래서 pending_consent
+    #   가 있으면 남아 있는 intent 값과 무관하게 먼저 확인한다.
+    if _pending_consent_intent(state, text):
+        return {"intent": "emotional"}
+
     if state.get("intent"):
         return {}
 
-    text = (state.get("user_input") or "").strip()
     if not text:
         # 발화가 없는데 인텐트도 없다면 말벗으로 둔다. info 로 두면 있지도 않은
         # 질문에 답하려 든다.
@@ -166,7 +436,9 @@ def classify_intent(state: ConvState) -> dict:
     if pending:
         return {"intent": pending}
 
-    return {"intent": _classify(text)}
+    # context_read 가 이미 의료 라우터를 불렀다면(S15P11E102-311) 그 결과를 넘겨
+    # 받아 재사용한다 — 같은 턴에 같은 로컬 모델을 두 번 부르지 않는다.
+    return {"intent": _classify(text, medical_hint=state.get("is_medical_query"))}
 
 
 def _pending_contract_intent(state: ConvState, text: str) -> str | None:
@@ -187,6 +459,13 @@ def _pending_contract_intent(state: ConvState, text: str) -> str | None:
         의문형이 오면 그것은 어르신이 되묻는 것이므로 여전히 가로채지 않는다 —
         아래 검사가 두 단계 모두에 같이 적용된다.
 
+    ★ 정서 표현도 같은 이유로 가로채지 않는다  (S15P11E102-253)
+        온보딩이 어떤 필드를 기다리는 중에 어르신이 "외로워"라고 하면, 그건
+        답이 아니라 마음을 꺼낸 것이다. 여기서 계약으로 보내면 그 발화가
+        `_extract_value` 를 거쳐 필드값 후보가 되려 들고, 정서 핸들러는 이
+        턴을 아예 보지 못한다 — 위로도 못 받고, 신호도 쌓이지 않는다. 의문형과
+        마찬가지로 **먼저 듣고, 계약은 나중에** 다시 잇는다.
+
     반환값
         "onboarding" | "clarification" | None
     """
@@ -199,29 +478,50 @@ def _pending_contract_intent(state: ConvState, text: str) -> str | None:
                     pending.get("kind"))
         return None
 
+    if any(marker in text for marker in _EMOTIONAL_MARKERS):
+        logger.info("the senior spoke emotionally; answering that first and deferring "
+                    "the %s question", pending.get("kind"))
+        return None
+
     kind = pending.get("kind")
     return kind if kind in {"onboarding", "clarification"} else None
 
 
-# 지남력·날씨 질문의 표지 — 의료 질문과 겹치지 않는다.
+def _pending_consent_intent(state: ConvState, text: str) -> bool:
+    """이 발화가 '방금 로봇이 던진 T3 동의 질문'에 대한 답인가 (S15P11E102-253).
+
+    _pending_contract_intent 와 같은 원칙이다 — 어르신이 먼저 물은 턴은
+    가로채지 않는다. 로봇이 "가족분께 전해도 될까요"라고 물었는데 어르신이
+    "오늘 며칠이야?"라고 하면 그것은 답이 아니라 새 질문이다. pending_consent
+    는 사라지지 않으므로(_resolve_consent_answer 만 지운다) 다음 턴에 다시
+    이어진다.
+
+    반환값
+        True  -> handle_emotional 로 보내 답을 판정한다.
+        False -> pending_consent 가 없거나, 어르신이 먼저 물었다.
+    """
+    pending = state.get("pending_consent")
+    if not pending:
+        return False
+    if contract_dialogue.looks_like_a_question(text):
+        logger.info("the senior asked something; answering first and deferring "
+                    "the T3 consent question")
+        return False
+    return True
+
+
+# 날씨 질문의 표지. _gather_lookup_documents(아래 §311 절)가 조회 여부를 정하는
+# 데도 그대로 재사용한다 — "info 로는 분류됐는데 조회는 안 됐다" 같은 두 곳의
+# 어긋남을 막으려면 표지가 하나여야 한다.
+_WEATHER_MARKERS = ("날씨", "기온", "비 와", "비와", "추워", "더워")
+
+# 지남력·사실 질문의 표지.
 #
 # 지남력 질문("오늘 며칠이야?")이 가장 빈번한 질문 유형이고, 초기 치매에서는 더
 # 잦아진다. 매번 따뜻하게 답해야 하므로 반드시 info 로 흘러가야 한다 (CLAUDE.md §8).
 _INFO_MARKERS = (
     "몇 시", "몇시", "며칠", "무슨 요일", "무슨요일", "오늘 날짜", "지금 몇",
-    "날씨", "기온", "비 와", "비와", "추워", "더워",
-)
-
-# "알려줘"/"어디야"/"뭐야"처럼 주제를 가리지 않는 표지.
-#
-# ★ 왜 _INFO_MARKERS 와 따로 두는가
-#   "병원 어디야", "이 약 뭐야", "약국 좀 알려줘"처럼 병원/약국/의약품 질문도
-#   똑같은 말투를 쓴다. 이 표지를 _INFO_MARKERS 에 같이 두면, 의료 판정기
-#   (_is_medical)를 부르기도 전에 여기서 먼저 "info"로 확정돼 버린다 — 실제로
-#   "부산에 있는 병원 알려줘"가 handle_info(일반 LLM 생성, DB 조회 없음)로 새는
-#   사고로 확인됐다. 그래서 이 표지에 걸리면 곧장 info로 보내지 않고, 먼저
-#   의료 판정기에게 물어본 뒤에 아니라고 하면 그때 info로 보낸다.
-_AMBIGUOUS_INFO_MARKERS = (
+    *_WEATHER_MARKERS,
     "뭐야", "뭔가요", "알려줘", "알려주", "가르쳐", "어디야", "어디에",
 )
 
@@ -270,40 +570,10 @@ _EMOTIONAL_MARKERS = (
     "외로", "쓸쓸", "보고 싶", "보고싶", "슬퍼", "우울", "허전", "힘들어", "속상",
 )
 
-# 시설 유형을 문자 그대로 담은 표지 — 결정적이라 임베딩 판정기를 부르지 않는다.
-#
-# ★ 왜 필요한가
-#   "서울대병원이 어디 있는지 알고 싶어", "행복약국 좀 찾아줘야겠어", "부산 강서구
-#   병원 찾아줘", "남경의원 더 자세히 알려줘"— 전부 실제로 companion 으로 샌 사례다.
-#   특정 기관명("남경의원", "행복약국")에는 "병원"/"약국" 같은 일반 단어가 없고
-#   문장 구조도 제각각이라, 임베딩 판정기(_is_medical)가 자주 놓친다. 반면
-#   "병원"/"의원"/"약국"/진료과 이름은 의료 시설이 아닌 문맥에 쓰이는 경우가
-#   사실상 없으므로, 문자열 포함만으로 판정해도 안전하다.
-_MEDICAL_FACILITY_MARKERS = (
-    "병원", "의원", "약국", "한의원", "치과",
-    "정형외과", "이비인후과", "안과", "소아과", "내과", "피부과", "산부인과",
-)
+_QUESTION_SUFFIX = re.compile(r"(까요|나요|어요\?|가요|니\?|냐\?|\?)\s*$")
 
 
-def _strip_whitespace(text: str) -> str:
-    """이 표지 검사 전용 — 공백을 전부 지운 버전을 만든다.
-
-    왜 필요한가
-        STT 가 "남경의원"을 "남경의 원"처럼 단어 중간에 공백을 넣어 인식하는
-        사례가 실제로 있었다 (db/medical_repository.py 의 이름 비교에서 이미 같은
-        문제를 만나 whitespace-insensitive 비교로 고쳤다). "의원"처럼 표지 자체가
-        공백 없이 이어진 문자열이라, 원문에 공백이 끼면 부분 문자열 매칭이
-        깨져서 medical 로 잡혀야 할 발화가 조용히 companion/info 로 샌다.
-
-    주의사항
-        이 표지 검사에만 쓴다. _SCHEDULE_MARKERS("약 먹었" 등) 같은 다른 표지는
-        공백이 있어야 의미가 구분되므로, 전체 lowered 텍스트를 공백 제거 버전으로
-        바꾸면 그쪽이 깨진다.
-    """
-    return "".join(text.split())
-
-
-def _classify(text: str) -> str:
+def _classify(text: str, *, medical_hint: bool | None = None) -> str:
     """규칙만으로 인텐트를 고른다.
 
     왜 규칙이 먼저인가
@@ -316,25 +586,16 @@ def _classify(text: str) -> str:
         아니므로 네트워크 예산을 쓰지는 않는다. 다만 모델을 메모리에 상주시키고
         CPU 시간을 쓰므로, 값싼 문자열 검사로 갈리는 것을 굳이 넘기지 않는다.
 
+    인자
+        medical_hint: context_read 가 조회 여부를 정하려고 이미 라우터를 불렀다면
+            그 결과(S15P11E102-311). None 이 아니면 라우터를 다시 부르지 않고
+            그대로 쓴다 — 값싼 마커 검사와 달리 라우터는 모델 추론이라, 같은 턴에
+            두 번 부를 이유가 없다.
+
     주의사항
         정서 표지를 정보 표지보다 먼저 본다. "외로운데 오늘 며칠이야"는 날짜를
         알려주는 턴이 아니라 들어야 하는 턴이다. 정보로 처리하면 사람이 아니라
         검색창처럼 반응하게 된다.
-
-        "info"가 아니라 "medical"을 고르는 이유
-            병원/약국/의약품은 일반 잡담용 LLM이 자유롭게 답할 데이터가 아니다 —
-            주소나 약 정보를 근거 없이 지어내면 안전 문제로 이어진다(CLAUDE.md §8).
-            handle_medical 이 llm/medical_flow.py 를 거쳐 실제
-            hospital/pharmacy/drug_permit DB를 조회하는 경로로 가야 하므로,
-            handle_info(일반 생성)와 이름을 나눠 둔다.
-
-        문장이 물음표로 끝나는지는 판정 조건이 아니다
-            예전에는 "문장이 까요/나요/가요/...?로 끝나는가"를 먼저 확인하고,
-            그럴 때만 의료 판정기(_is_medical)를 불렀다. 하지만 어르신 발화는
-            "궁금하네." 처럼 평서형으로 끝나는 경우가 흔하고, STT 는 억양만으로
-            물음표를 못 살리는 경우도 많다 — 그 경우 판정기를 부르지도 못하고
-            그냥 말벗으로 빠졌었다. 그래서 문장 끝 모양과 무관하게 판정기에게
-            물어본다.
     """
     lowered = text.lower()
 
@@ -342,32 +603,19 @@ def _classify(text: str) -> str:
         return "emotional"
     if any(marker in lowered for marker in _SCHEDULE_MARKERS):
         return "schedule"
-    if any(marker in _strip_whitespace(lowered) for marker in _MEDICAL_FACILITY_MARKERS):
-        # 결정적 표지라 임베딩 판정기를 거치지 않는다 (_MEDICAL_FACILITY_MARKERS
-        # 주석 참고). "병원 예약" 같은 일정 처리 표현은 위 _SCHEDULE_MARKERS 에서
-        # 이미 걸러졌으므로 순서가 중요하다. 공백을 지우고 비교하는 이유는
-        # _strip_whitespace 주석 참고 — STT 가 "남경의원"을 "남경의 원"처럼
-        # 쪼개는 경우를 잡기 위해서다.
-        return "medical"
     if any(marker in lowered for marker in _INFO_MARKERS):
         return "info"
 
-    if any(marker in lowered for marker in _AMBIGUOUS_INFO_MARKERS):
-        # "병원 어디야"도 "약국 좀 알려줘"도 이 표지에 걸린다. 곧장 info로 보내지
-        # 않고 먼저 의료 판정기에게 물어본다 (_AMBIGUOUS_INFO_MARKERS 주석 참고).
-        if _is_medical(text):
-            return "medical"
-        return "info"
+    # 의료·위치 질문은 기존 임베딩 라우터가 이미 잘 판정한다. 재구현하지 않고
+    # 물음표로 끝나는 애매한 발화에서만 위임한다. medical_hint 가 있으면(311)
+    # context_read 가 이미 부른 라우터 결과를 재사용한다.
+    if _QUESTION_SUFFIX.search(text):
+        is_medical = medical_hint if medical_hint is not None else _is_medical(text)
+        if is_medical:
+            return "info"
 
-    # 아무 표지에도 안 걸린 나머지 발화 — "정형외과", "타이레놀 있어?"처럼 표지
-    # 없이도 의료일 수 있으니 말벗으로 확정하기 전에 마지막으로 한 번 더
-    # 판정기에게 물어본다.
-    if _is_medical(text):
-        return "medical"
-
-    # 그래도 아니면 전부 말벗이다. 이 제품에서 기본값이 정보 제공이 아니라
-    # 대화인 것은 의도된 선택이다. 외로움이 1번 문제이고 말벗이 본체다
-    # (CLAUDE.md §1).
+    # 나머지는 전부 말벗이다. 이 제품에서 기본값이 정보 제공이 아니라 대화인 것은
+    # 의도된 선택이다. 외로움이 1번 문제이고 말벗이 본체다 (CLAUDE.md §1).
     return "companion"
 
 
