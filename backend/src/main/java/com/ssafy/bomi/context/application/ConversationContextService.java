@@ -189,13 +189,32 @@ public class ConversationContextService {
         List<MemoryItem> memories = selectMemories(seniorId, query, queryTerms, allowedVisibilities,
             clampMemoryTopK(request.memoryTopK()), notes);
 
+        // 원문 노출 차단 (S15P11E102-254, CLAUDE.md §9 T4).
+        //
+        // 보호자가 요청자면(requesterGuardianId != null) 최근 raw 발화와 대화 요약
+        // 원문을 아예 비워서 돌려준다. memories 는 위에서 이미 가시성(visibility)으로
+        // 걸렀지만, raw 메시지와 conversation_summary 는 그런 필터가 없다 —
+        // "PRIVATE 이 아니면 보여준다"가 아니라 "보호자에게는 애초에 원문이 없다"가
+        // 맞는 기본값이다. 로봇이 어르신과 말할 때(guardianId == null)는 그대로
+        // 전부 실린다.
+        boolean forGuardian = request.requesterGuardianId() != null;
+        List<RawMessage> recentMessages = forGuardian
+            ? List.of()
+            : loadRecentMessages(request.conversationId(),
+                clampRecentMessages(request.recentMessageLimit()));
+        String conversationSummary = forGuardian
+            ? null
+            : loadConversationSummary(request.conversationId());
+        List<SummaryItem> relevantSummaries = forGuardian
+            ? List.of()
+            : selectRelevantSummaries(seniorId, request.conversationId(), queryTerms);
+
         return new ConversationContextResponse(
             buildProfile(senior),
             loadTodayState(senior),
-            loadRecentMessages(request.conversationId(),
-                clampRecentMessages(request.recentMessageLimit())),
-            loadConversationSummary(request.conversationId()),
-            selectRelevantSummaries(seniorId, request.conversationId(), queryTerms),
+            recentMessages,
+            conversationSummary,
+            relevantSummaries,
             memories,
             selectCareRecords(senior, queryTerms),
             loadDocuments(request, query, notes),

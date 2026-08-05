@@ -39,6 +39,28 @@ public interface ConversationMessageRepository extends JpaRepository<Conversatio
     Integer findMaxSequenceNo(@Param("conversationId") UUID conversationId);
 
     /**
+     * 이 대화에서 가장 최근 발화 시각, 또는 발화가 하나도 없으면 {@code null}
+     * (S15P11E102-254).
+     *
+     * <p>{@code ConversationLifecycleService} 가 "마지막으로 무슨 일이 있었나"를
+     * 판단하는 데 쓴다 — 발화가 있으면 그 시각이, 없으면 호출부가
+     * {@code conversation.startedAt} 으로 대체한다. {@code findMaxSequenceNo} 와 같은
+     * 이유로 서버가 계산한다: 로봇은 재시작을 버티며 정확한 순서를 유지할 필요가
+     * 없다.</p>
+     */
+    @Query("SELECT MAX(m.occurredAt) FROM ConversationMessage m "
+        + "WHERE m.conversationId = :conversationId")
+    OffsetDateTime findMaxOccurredAt(@Param("conversationId") UUID conversationId);
+
+    /**
+     * 이 대화에 발화가 하나라도 있는가 (S15P11E102-254).
+     *
+     * <p>유휴시간 초과로 대화를 닫을 때 COMPLETED(발화 있음)와 CANCELLED(발화
+     * 없음)를 가르는 데 쓴다 — 완료 조건이 명시적으로 요구하는 구분이다.</p>
+     */
+    boolean existsByConversationId(UUID conversationId);
+
+    /**
      * One senior's messages within a time window.
      *
      * <p>Used by the daily aggregation. The subquery exists because {@code senior_id}
