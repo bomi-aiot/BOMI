@@ -7,7 +7,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, NotSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -15,7 +15,9 @@ from launch_ros.parameter_descriptions import ParameterValue
 def generate_launch_description() -> LaunchDescription:
     """실제 로봇의 수동 주행과 온라인 지도 생성을 구성한다.
 
-    Pico가 /odom과 odom → base_link TF를 발행하므로 RF2O는 실행하지 않는다.
+    Pico가 /odom과 /imu를 발행하고, EKF가 둘을 융합해 odom → base_link TF를
+    발행한다. 이때 Pico의 TF 발행은 끈다. LiDAR 스캔만 쓰는 RF2O는 실행하지
+    않는다.
     """
 
     mapping_share = Path(get_package_share_directory("mapping"))
@@ -27,10 +29,12 @@ def generate_launch_description() -> LaunchDescription:
     lidar_launch = lidar_share / "launch" / "x4_pro.launch.py"
 
     slam_params = mapping_share / "config" / "slam_toolbox_real.yaml"
+    ekf_params = core_share / "config" / "ekf.yaml"
     rviz_config = mapping_share / "rviz" / "mapping.rviz"
 
     use_sim_time = LaunchConfiguration("use_sim_time")
     use_rviz = LaunchConfiguration("use_rviz")
+    use_ekf = LaunchConfiguration("use_ekf")
 
     cmd_vel_topic = LaunchConfiguration("cmd_vel_topic")
     pico_port = LaunchConfiguration("pico_port")
@@ -54,11 +58,35 @@ def generate_launch_description() -> LaunchDescription:
         }.items(),
     )
 
+    # EKF가 odom → base_link TF를 발행하므로 Pico의 TF 발행을 끈다.
+    # 두 노드가 같은 변환을 발행하면 TF가 충돌한다.
     pico_driver = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(pico_launch)),
         launch_arguments={
             "serial_port": pico_port,
+            "publish_tf": NotSubstitution(use_ekf),
         }.items(),
+    )
+
+    # 엔코더의 직진 속도와 자이로의 회전 속도만 융합한다.
+    # 스키드 스티어는 회전에서 바퀴가 미끄러져 엔코더 회전각을 믿을 수 없다.
+    ekf = Node(
+        package="robot_localization",
+        executable="ekf_node",
+        name="ekf_filter_node",
+        condition=IfCondition(use_ekf),
+        output="screen",
+        parameters=[
+            str(ekf_params),
+            {
+                "use_sim_time": ParameterValue(
+                    use_sim_time,
+                    value_type=bool,
+                ),
+                "odom_frame": odom_frame,
+                "base_link_frame": base_frame,
+            },
+        ],
     )
 
     lidar = IncludeLaunchDescription(
@@ -126,6 +154,14 @@ def generate_launch_description() -> LaunchDescription:
                 description="RViz를 함께 실행할지 여부",
             ),
             DeclareLaunchArgument(
+                "use_ekf",
+                default_value="true",
+                description=(
+                    "엔코더와 자이로를 EKF로 융합할지 여부. "
+                    "false면 이전처럼 Pico가 odom → base_link TF를 발행한다."
+                ),
+            ),
+            DeclareLaunchArgument(
                 "cmd_vel_topic",
                 default_value="/cmd_vel",
                 description="조이스틱 명령과 Pico가 공유할 속도 토픽",
@@ -187,6 +223,7 @@ def generate_launch_description() -> LaunchDescription:
             joystick,
             pico_driver,
             lidar,
+            ekf,
             slam_toolbox,
             rviz,
         ]
