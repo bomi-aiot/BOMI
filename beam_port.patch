@@ -1,0 +1,521 @@
+diff --git a/robot/ai_chat/src/bomi_ai_chat/audio_io/beam_control.py b/robot/ai_chat/src/bomi_ai_chat/audio_io/beam_control.py
+new file mode 100644
+index 0000000..d8b88d8
+--- /dev/null
++++ b/robot/ai_chat/src/bomi_ai_chat/audio_io/beam_control.py
+@@ -0,0 +1,165 @@
++# robot/ai_chat/src/bomi_ai_chat/audio_io/beam_control.py
++"""마이크(ReSpeaker XVF3800)가 '앞쪽 방향'만 듣도록 고정하는 코드.
++
++[배경 지식]
++이 마이크는 안에 마이크가 4개 들어있어서, 소리가 어느 방향에서 오는지
++알 수 있고 특정 방향 소리만 골라서 크게 들을 수 있다. 이렇게 특정 방향에
++귀를 기울이는 걸 '빔(beam)'이라고 부른다. 기본 상태에서는 이 빔이 소리가
++나는 쪽으로 자동으로 따라 움직인다(= 말하는 사람을 자동으로 쫓아감).
++
++우리는 로봇 정면에 선 사람만 듣고 싶기 때문에, 이 빔이 따라다니지 않고
++'앞쪽 한 방향'에 딱 고정되도록 설정한다. 그러면 옆이나 뒤에서 나는 잡음,
++다른 사람 목소리를 덜 듣게 된다.
++
++[중요: 소리 녹음과 방향 설정은 별개다]
++- 소리를 실제로 녹음하는 건 mic_array.py가 담당한다(sounddevice 사용).
++- 마이크의 방향을 어디로 고정할지 '설정'하는 건 이 파일이 담당한다.
++방향 설정은 소리 녹음과 전혀 다른 통로로 이뤄진다. 제조사(Seeed)가 준
++'xvf_host'라는 작은 프로그램에 명령어를 보내면 마이크 설정이 바뀐다.
++이 파일은 그 프로그램을 대신 실행해 주는 역할이다.
++
++[앞쪽 고정에 필요한 명령 3개]
++1. AEC_FIXEDBEAMSAZIMUTH_VALUES <각도> <각도>
++     -> 빔을 어느 방향(각도)에 고정할지 정한다. 각도 단위는 라디안.
++2. AEC_FIXEDBEAMSONOFF 1
++     -> '방향 고정 모드'를 켠다. 이제 빔이 자동으로 안 따라다니고 멈춘다.
++3. AUDIO_MGR_OP_L 6 0
++     -> 녹음되어 나오는 소리를 '고정한 방향의 빔'으로 바꾼다.
++       (이게 없으면 방향만 고정될 뿐, 실제 녹음되는 소리는 여전히
++        '제일 크게 들리는 사람' 쪽을 따라간다. 그래서 꼭 필요하다.)
++
++[원래대로 되돌리려면]
++    AUDIO_MGR_OP_L 8 0     -> 녹음 소리를 기본(자동 추적)으로
++    AEC_FIXEDBEAMSONOFF 0  -> 방향 고정 모드 끄기
++
++참고: 위 설정들은 마이크 전원을 껐다 켜거나 USB를 다시 꽂으면 초기화된다.
++마이크에 영구 저장하고 싶으면 SAVE_CONFIGURATION 1 명령을 한 번 실행하면 된다.
++
++[.env로 조절하는 값들]
++    BEAM_FIX_ENABLED       "1"이면 대화 시작 시 빔을 앞쪽으로 고정한다. 그 외엔 안 함(기본값 "0").
++    XVF_HOST_PATH          xvf_host 프로그램 파일 위치(윈도우는 xvf_host.exe).
++    XVF_HOST_PROTOCOL      마이크와 통신하는 방식(보통 비워두면 USB로 자동).
++    BEAM_FRONT_AZIMUTH_DEG 로봇 정면이 몇 도인지(각도). 조립 후 calibrate_beam.py로 측정해서 넣는다.
++    BEAM_GATING            "1"이면 고정한 방향 외의 빔 소리를 아예 없앤다(보통 "0").
++"""
++
++import math
++import os
++import subprocess
++
++
++class BeamController:
++    """xvf_host 프로그램을 실행해서 마이크의 빔 방향을 고정/해제한다."""
++
++    def __init__(self):
++        # .env에 적힌 설정값들을 읽어온다.
++        self.enabled = os.getenv("BEAM_FIX_ENABLED", "0") == "1"
++        self.host_path = os.getenv("XVF_HOST_PATH", "").strip()
++        self.protocol = os.getenv("XVF_HOST_PROTOCOL", "").strip()
++        self.front_deg = float(os.getenv("BEAM_FRONT_AZIMUTH_DEG", "90"))
++        self.gating = os.getenv("BEAM_GATING", "0") == "1"
++
++    def _available(self) -> bool:
++        """xvf_host 프로그램 파일이 실제로 그 위치에 있는지 확인한다."""
++        return bool(self.host_path) and os.path.exists(self.host_path)
++
++    def _run(self, *args) -> str:
++        """xvf_host에 명령어 하나를 보내고, 화면에 출력된 결과 글자를 돌려준다."""
++        # 예: xvf_host.exe AEC_FIXEDBEAMSONOFF 1  <- 이런 형태의 명령을 만든다.
++        cmd = [self.host_path]
++        if self.protocol:
++            cmd += ["--use", self.protocol]
++        cmd += [str(a) for a in args]
++
++        result = subprocess.run(
++            cmd,
++            # xvf_host는 같은 폴더에 있는 command_map.dll 파일이 필요해서,
++            # 그 프로그램이 있는 폴더 안에서 실행되도록 위치를 맞춰준다.
++            cwd=os.path.dirname(self.host_path) or None,
++            capture_output=True,
++            text=True,
++            timeout=10,
++        )
++        # 명령이 실패하면(0이 아닌 코드로 끝나면) 이유를 담아 에러를 낸다.
++        if result.returncode != 0:
++            detail = result.stderr.strip() or result.stdout.strip()
++            raise RuntimeError(f"xvf_host 실행 실패 ({' '.join(map(str, args))}): {detail}")
++        return result.stdout.strip()
++
++    def apply_fixed_beam(self) -> bool:
++        """마이크 빔을 설정된 '앞쪽 방향'에 고정한다.
++
++        실제로 고정했으면 True, 안 하고 넘어갔으면 False를 돌려준다.
++        노트북에서 개발할 때처럼 마이크가 없거나 BEAM_FIX_ENABLED가 꺼져
++        있으면, 에러 없이 그냥 넘어가서 나머지 대화 기능은 정상 동작하게 한다.
++        """
++        # 기능이 꺼져 있으면 아무것도 안 하고 넘어간다.
++        if not self.enabled:
++            print("[BeamController] BEAM_FIX_ENABLED != 1 -> 빔 고정 건너뜀")
++            return False
++        # xvf_host 프로그램을 못 찾으면(경로 잘못됨/장치 없음) 넘어간다.
++        if not self._available():
++            print(f"[BeamController] xvf_host를 찾을 수 없음({self.host_path!r}) -> 빔 고정 건너뜀")
++            return False
++
++        # 사람이 이해하기 쉬운 '도(90도)' 단위를 마이크가 쓰는 '라디안'으로 바꾼다.
++        rad = math.radians(self.front_deg)
++        rad_str = f"{rad:.5f}"
++
++        # 위 설명의 명령 3개를 순서대로 보낸다.
++        self._run("AEC_FIXEDBEAMSAZIMUTH_VALUES", rad_str, rad_str)  # 1) 방향 정하기
++        self._run("AEC_FIXEDBEAMSONOFF", "1")                        # 2) 고정 모드 켜기
++        self._run("AUDIO_MGR_OP_L", "6", "0")                       # 3) 녹음 소리를 고정 빔으로
++        if self.gating:
++            self._run("AEC_FIXEDBEAMSGATING", "1")  # (선택) 다른 방향 소리 완전히 끄기
++
++        print(f"[BeamController] 빔 고정 완료: {self.front_deg:.1f}도 ({rad_str} 라디안)"
++              f"{', gating 켬' if self.gating else ''}")
++        return True
++
++    def reset(self) -> None:
++        """빔 고정을 풀고 원래 상태(방향 자동 추적)로 되돌린다."""
++        if not self._available():
++            return
++        self._run("AUDIO_MGR_OP_L", "8", "0")   # 녹음 소리를 기본으로
++        self._run("AEC_FIXEDBEAMSONOFF", "0")   # 고정 모드 끄기
++        print("[BeamController] 빔 고정 해제(자동 추적으로 복귀)")
++
++    def read_direction_deg(self) -> float:
++        """지금 마이크가 소리를 잡고 있는 방향을 '도(0~360)' 단위로 읽어온다.
++
++        로봇 정면 각도를 측정할 때 사용한다(calibrate_beam.py에서 호출).
++
++        마이크에 AEC_AZIMUTH_VALUES 명령을 보내면 방향 4개가 돌아온다:
++            [빔1, 빔2, 자동추적 빔, 최종 선택된 빔]
++        이 중 마지막 값(최종 선택된 빔)이 '지금 말하는 사람 방향'이라서
++        그 값을 사용한다.
++
++        돌아오는 글자 예시:
++            AEC_AZIMUTH_VALUES 1.57080 (90.00 deg) 1.57080 (90.00 deg) \
++                1.20925 (69.28 deg) 1.20925 (69.28 deg)
++        여기서 라디안 숫자 4개(1.57080, 1.57080, 1.20925, 1.20925)만 뽑는다.
++
++        마이크(xvf_host)를 못 찾으면 방향을 읽을 수 없으므로 에러를 낸다.
++        (호출하는 쪽에서 이 에러를 잡아 '방향 모름'으로 처리하면 된다.)
++        """
++        if not self._available():
++            raise RuntimeError(f"xvf_host를 찾을 수 없어 방향을 읽을 수 없음: {self.host_path!r}")
++
++        out = self._run("AEC_AZIMUTH_VALUES")
++
++        # 결과 글자를 공백으로 쪼갠 뒤, 숫자로 바꿀 수 있는 것만 모은다.
++        # 괄호가 붙은 "(90.00" 이나 "deg)" 같은 조각은 숫자로 못 바꿔서 자동으로 걸러진다.
++        # 그래서 순수한 라디안 값 4개만 남는다.
++        rads = []
++        for token in out.split():
++            try:
++                rads.append(float(token))
++            except ValueError:
++                continue
++
++        if len(rads) < 4:
++            raise RuntimeError(f"AEC_AZIMUTH_VALUES 결과 해석 실패: {out!r}")
++
++        # 4번째 값(라디안)을 사람이 보기 쉬운 '도'로 바꿔서 돌려준다.
++        return math.degrees(rads[3]) % 360.0
+diff --git a/robot/ai_chat/src/bomi_ai_chat/llm/router.py b/robot/ai_chat/src/bomi_ai_chat/llm/router.py
+index a0cf610..e4a8aa0 100644
+--- a/robot/ai_chat/src/bomi_ai_chat/llm/router.py
++++ b/robot/ai_chat/src/bomi_ai_chat/llm/router.py
+@@ -14,6 +14,18 @@ MEDICAL_EXAMPLES = [
+     "동네 병원 좀 찾아줘", "병원 위치 좀 알려줄래",
+     "이 약 부작용 있어?", "이 약 먹어도 안전한가",
+     "약 처방받은 거 확인 좀 해줘",
++    # 증상 + 병원 문의 패턴 (간접적으로 병원을 묻는 경우)
++    "허리가 아픈데 병원 가봐야 할까", "다리가 아파서 병원 가야하나",
++    "배가 아픈데 병원 가야할까", "머리가 아픈데 병원 가봐야 하나",
++    "무릎이 아픈데 병원 가야 하나", "속이 안 좋은데 병원 가야 할까",
++    # 흔한 상비약 브랜드명
++    "게보린 있어?", "판피린 있어?", "정로환 있어?", "베아제 있어?",
++    "활명수 있어?", "후시딘 있어?", "마데카솔 있어?", "우루사 있어?", "인사돌 있어?",
++    # 파스류
++    "파스 붙여야 하는데 뭐가 좋을까", "파스 있어?",
++    # 동사 없이 시설명/진료과만 언급하는 명사형 패턴
++    "정형외과", "이비인후과", "안과", "소아과", "치과", "내과",
++    "대현동 정형외과", "서면 이비인후과",
+ ]
+ 
+ _medical_embeddings = _model.encode(MEDICAL_EXAMPLES, convert_to_tensor=True)
+@@ -26,3 +38,29 @@ def is_medical_query(text: str) -> bool:
+     text_emb = _model.encode(text, convert_to_tensor=True)
+     max_sim = util.cos_sim(text_emb, _medical_embeddings).max().item()
+     return max_sim >= THRESHOLD
++
++
++
++# ---------------------------------------------------------------------------
++# 날씨 의도 판단
++# ---------------------------------------------------------------------------
++# 사용자가 '날씨'를 물었는지 판단한다. 정확한 단어("날씨")를 찾는 대신,
++# 문장의 '의미'가 아래 예시들과 비슷한지로 판단한다.
++WEATHER_EXAMPLES = [
++    "오늘 날씨 어때", "오늘 날씨 알려줘", "지금 날씨 어때", "내일 날씨 어때",
++    "서울 날씨 알려줘", "부산 날씨 어때", "오늘 부산 날씨 어때",
++    "밖에 날씨 어때", "지금 밖에 어때",
++    "오늘 비 와?", "비 올까?", "우산 챙겨야 해?",
++    "밖에 추워?", "오늘 더워?", "기온 몇 도야", "오늘 하늘 어때",
++]
++
++_weather_embeddings = _model.encode(WEATHER_EXAMPLES, convert_to_tensor=True)
++
++WEATHER_THRESHOLD = 0.7
++
++
++def is_weather_query(text: str) -> bool:
++    """날씨 관련 질문인지 (문장 의미 기준으로) 판단한다."""
++    text_emb = _model.encode(text, convert_to_tensor=True)
++    max_sim = util.cos_sim(text_emb, _weather_embeddings).max().item()
++    return max_sim >= WEATHER_THRESHOLD
+diff --git a/robot/ai_chat/src/bomi_ai_chat/main.py b/robot/ai_chat/src/bomi_ai_chat/main.py
+index 05431f9..c761280 100644
+--- a/robot/ai_chat/src/bomi_ai_chat/main.py
++++ b/robot/ai_chat/src/bomi_ai_chat/main.py
+@@ -63,6 +63,21 @@ def main(argv: Sequence[str] | None = None) -> int:
+         audio_out=audio_out,
+         settings=settings,
+     )
++
++    # 실제 실행에서만 빔 제어와 의미 기반 날씨 판정을 붙인다.
++    # (단위 테스트의 StubPipeline 생성자 계약을 깨지 않도록 속성으로 주입한다.)
++    from bomi_ai_chat.audio_io.beam_control import BeamController
++
++    pipeline.beam = BeamController()
++
++    def _semantic_weather(text: str) -> bool:
++        # 무거운 임베딩 라우터는 실제 판정 시점에만 불러온다.
++        from bomi_ai_chat.llm.router import is_weather_query
++
++        return is_weather_query(text)
++
++    pipeline._detect_weather = _semantic_weather
++
+     if args.once:
+         result = pipeline.run_once()
+         return 0 if result.succeeded else 1
+diff --git a/robot/ai_chat/src/bomi_ai_chat/pipeline.py b/robot/ai_chat/src/bomi_ai_chat/pipeline.py
+index b5eaab8..a289be5 100644
+--- a/robot/ai_chat/src/bomi_ai_chat/pipeline.py
++++ b/robot/ai_chat/src/bomi_ai_chat/pipeline.py
+@@ -66,6 +66,8 @@ class ConversationPipeline:
+         settings: Settings | None = None,
+         *,
+         medical_query_detector: Callable[[str], bool] | None = None,
++        weather_query_detector: Callable[[str], bool] | None = None,
++        beam=None,
+         monotonic: Callable[[], float] = time.monotonic,
+         sleep: Callable[[float], None] = time.sleep,
+     ):
+@@ -79,6 +81,13 @@ class ConversationPipeline:
+         self._is_medical_query = (
+             medical_query_detector or _default_medical_query_detector
+         )
++        # 날씨 의도 판정기. 기본은 가벼운 키워드 검사(테스트 격리 유지).
++        # 실제 실행(main)에서는 임베딩 기반 is_weather_query를 주입한다.
++        self._detect_weather = (
++            weather_query_detector or (lambda text: "날씨" in text)
++        )
++        # 대화 턴 동안 마이크 빔을 앞쪽으로 고정하는 컨트롤러(없으면 미사용).
++        self.beam = beam
+         self._monotonic = monotonic
+         self._sleep = sleep
+ 
+@@ -186,6 +195,21 @@ class ConversationPipeline:
+         return value.strip()
+ 
+     def run_once(self) -> ConversationResult:
++        """빔을 대화 턴 동안 고정한 채 한 번의 대화를 처리한다.
++
++        빔 고정은 대화가 시작될 때만 걸리고, 정상/오류 어느 쪽으로 끝나든
++        finally에서 반드시 해제된다. beam이 없으면(노트북 개발 등) 건너뛴다.
++        """
++
++        if self.beam is not None:
++            self.beam.apply_fixed_beam()
++        try:
++            return self._run_once_inner()
++        finally:
++            if self.beam is not None:
++                self.beam.reset()
++
++    def _run_once_inner(self) -> ConversationResult:
+         """한 번의 대화를 처리하고 실패 단계와 보존된 텍스트를 반환한다."""
+ 
+         started_at = self._monotonic()
+@@ -256,7 +280,7 @@ class ConversationPipeline:
+             print(f"[의료 API] 응답: {response}")
+         else:
+             weather_data = None
+-            if "날씨" in user_text:
++            if self._detect_weather(user_text):
+                 city = self._extract_city(user_text)
+                 if city:
+                     try:
+diff --git a/robot/ai_chat/tests/beam_manual_check.py b/robot/ai_chat/tests/beam_manual_check.py
+new file mode 100644
+index 0000000..cbee1e3
+--- /dev/null
++++ b/robot/ai_chat/tests/beam_manual_check.py
+@@ -0,0 +1,73 @@
++# robot/ai_chat/tests/test_beam_manual.py
++"""빔 고정이 실제로 되는지 눈으로 확인하는 수동 테스트.
++
++마이크(ReSpeaker)가 USB로 연결된 '실제 컴퓨터'에서 실행해야 한다.
++전체 대화(STT/LLM/TTS) 없이 BeamController만 따로 돌려서,
++빔 고정 명령을 걸기 전/후/해제 후 상태를 되읽어 비교한다.
++
++실행:  (ai_chat 폴더에서)  python tests/beam_manual_check.py
++
++이 테스트는 확인을 위해 BEAM_FIX_ENABLED 값을 강제로 "1"로 켜고 시작한다.
++(.env 파일은 건드리지 않는다.)
++"""
++
++import os
++
++# .env를 읽기 전에 먼저 켜둔다. python-dotenv는 이미 설정된 값을 덮어쓰지 않으므로
++# .env의 BEAM_FIX_ENABLED=0 이어도 이 테스트에서는 1로 동작한다.
++os.environ["BEAM_FIX_ENABLED"] = "1"
++
++from dotenv import load_dotenv
++
++load_dotenv()
++
++from bomi_ai_chat.audio_io.beam_control import BeamController
++
++
++def show(bc: BeamController, label: str):
++    """현재 마이크의 빔 관련 상태 3가지를 읽어서 출력한다."""
++    print(f"\n[{label}]")
++    print("  고정 모드 ON/OFF :", bc._run("AEC_FIXEDBEAMSONOFF"))
++    print("  고정 빔 방향     :", bc._run("AEC_FIXEDBEAMSAZIMUTH_VALUES"))
++    print("  좌채널 출력 경로 :", bc._run("AUDIO_MGR_OP_L"))
++
++
++def main():
++    bc = BeamController()
++
++    print("=== 설정 확인 ===")
++    print("  BEAM_FIX_ENABLED :", bc.enabled)
++    print("  XVF_HOST_PATH    :", bc.host_path)
++    print("  앞각(도)         :", bc.front_deg)
++
++    if not bc._available():
++        raise SystemExit(f"\nxvf_host를 찾을 수 없습니다: {bc.host_path!r}\n"
++                         ".env의 XVF_HOST_PATH가 맞는지, 마이크가 연결됐는지 확인하세요.")
++
++    # 1) 고정 전 상태
++    show(bc, "고정 전 (지금 상태)")
++
++    # 2) 빔 고정 적용
++    print("\n>>> apply_fixed_beam() 실행")
++    applied = bc.apply_fixed_beam()
++    show(bc, "고정 후")
++
++    # 간단 자동 판정: 고정 모드가 켜졌고(ON=1), 출력 경로가 6번(고정 빔)인지
++    onoff_ok = bc._run("AEC_FIXEDBEAMSONOFF").split()[-1] == "1"
++    route_ok = "[6]" in bc._run("AUDIO_MGR_OP_L")
++    print("\n  -> 고정 모드 켜짐?      :", "OK" if onoff_ok else "실패")
++    print("  -> 출력이 고정 빔으로?  :", "OK" if route_ok else "실패")
++
++    # 3) 원상 복구
++    print("\n>>> reset() 실행 (원래 자동 추적 상태로)")
++    bc.reset()
++    show(bc, "해제 후")
++
++    if applied and onoff_ok and route_ok:
++        print("\n결과: 빔 고정 정상 동작 확인")
++    else:
++        print("\n결과: 뭔가 예상과 다름 (위 출력값 확인 필요)")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/robot/ai_chat/tests/calibrate_beam.py b/robot/ai_chat/tests/calibrate_beam.py
+new file mode 100644
+index 0000000..c7a6282
+--- /dev/null
++++ b/robot/ai_chat/tests/calibrate_beam.py
+@@ -0,0 +1,89 @@
++# robot/ai_chat/tests/calibrate_beam.py
++"""로봇 조립 후 '정면이 몇 도인지' 한 번 측정하는 스크립트.
++
++[왜 필요한가]
++마이크가 말하는 '0도, 90도' 같은 각도는, 마이크를 로봇에 어느 방향으로
++붙이느냐에 따라 실제 가리키는 곳이 달라진다. 그래서 조립을 끝낸 뒤
++'로봇 정면이 마이크 기준 몇 도인지'를 직접 재서 알아내야 한다.
++여기서 나온 각도를 .env의 BEAM_FRONT_AZIMUTH_DEG 에 넣으면, 그 뒤로는
++로봇이 항상 그 방향(정면)만 듣게 된다.
++
++[사용 방법]
++    1. .env에 XVF_HOST_PATH(xvf_host 프로그램 위치)를 적어둔다.
++    2. 로봇 정면(사람이 설 자리)에 사람이 서서 계속 말할 준비를 한다.
++    3. ai_chat 폴더에서 실행:  python tests/calibrate_beam.py
++    4. 10초 뒤 나오는 '정면 각도'를 .env의 BEAM_FRONT_AZIMUTH_DEG 에 적는다.
++
++[어떻게 측정하나]
++    측정하는 동안에는 빔 고정을 잠깐 꺼서(자동 추적 켜서) 마이크가 말하는
++    사람 쪽을 따라가게 한다. 그 방향을 0.5초마다 여러 번 읽어서 평균을 낸다.
++    단, 각도는 359도 다음이 0도로 돌아가는 '동그란' 값이라, 단순 평균을 쓰면
++    엉뚱한 값(예: 350도와 10도의 평균을 180도로 계산)이 나올 수 있다.
++    그래서 이런 경우에도 맞게 나오는 '원형 평균'을 사용한다.
++"""
++
++import math
++import time
++
++from dotenv import load_dotenv
++
++load_dotenv()
++
++from bomi_ai_chat.audio_io.beam_control import BeamController
++
++SAMPLE_SECONDS = 10     # 총 몇 초 동안 측정할지
++SAMPLE_INTERVAL = 0.5   # 몇 초 간격으로 방향을 읽을지
++
++
++def circular_mean_deg(degrees: list[float]) -> float:
++    """각도들의 '원형 평균'을 0~360 범위로 계산한다.
++
++    각도는 동그랗게 이어져서(359도 다음이 0도) 그냥 더해서 나누면 틀린다.
++    그래서 각 각도를 좌표(sin, cos)로 바꿔 평균을 낸 뒤 다시 각도로 되돌린다.
++    이렇게 하면 350도와 10도의 평균이 제대로 0도로 나온다.
++    """
++    sin_sum = sum(math.sin(math.radians(d)) for d in degrees)
++    cos_sum = sum(math.cos(math.radians(d)) for d in degrees)
++    return math.degrees(math.atan2(sin_sum, cos_sum)) % 360.0
++
++
++def main():
++    bc = BeamController()
++
++    # xvf_host 위치가 없거나 파일을 못 찾으면 안내 후 종료.
++    if not bc.host_path:
++        raise SystemExit("XVF_HOST_PATH가 설정되지 않았습니다 (.env를 확인하세요)")
++    if not bc._available():
++        raise SystemExit(f"xvf_host 프로그램을 찾을 수 없습니다: {bc.host_path!r}")
++
++    # 측정 중에는 빔 고정을 꺼서 마이크가 말하는 사람을 따라가게 한다.
++    bc._run("AEC_FIXEDBEAMSONOFF", "0")
++
++    print(f"로봇 '정면'에 서서 계속 말씀해주세요. {SAMPLE_SECONDS}초간 방향을 측정합니다...")
++
++    # 0.5초마다 현재 방향을 읽어서 모은다.
++    samples: list[float] = []
++    end = time.time() + SAMPLE_SECONDS
++    while time.time() < end:
++        try:
++            deg = bc.read_direction_deg()
++            print(f"  현재 방향: {deg:6.1f} 도")
++            samples.append(deg)
++        except RuntimeError as exc:
++            print(f"  (읽기 실패: {exc})")
++        time.sleep(SAMPLE_INTERVAL)
++
++    # 한 번도 못 읽었으면 연결/말소리 문제일 가능성이 높다.
++    if not samples:
++        raise SystemExit("방향을 하나도 읽지 못했습니다. 마이크 연결과 말소리를 확인하세요.")
++
++    # 모은 방향들의 원형 평균이 곧 '정면 각도'다.
++    front = circular_mean_deg(samples)
++    print("\n=== 측정 결과 ===")
++    print(f"읽은 횟수: {len(samples)}회")
++    print(f"정면 각도(평균): {front:.1f} 도")
++    print(f"\n아래 값을 .env에 넣으세요:\n  BEAM_FRONT_AZIMUTH_DEG={front:.1f}")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/robot/ai_chat/tests/list_audio_devices.py b/robot/ai_chat/tests/list_audio_devices.py
+new file mode 100644
+index 0000000..f655439
+--- /dev/null
++++ b/robot/ai_chat/tests/list_audio_devices.py
+@@ -0,0 +1,33 @@
++# robot/ai_chat/tests/list_audio_devices.py
++"""컴퓨터에 연결된 오디오 장치(입력/출력) 목록을 보여주는 스크립트.
++
++USB 스피커나 마이크가 sounddevice에 어떤 '이름'과 '번호(인덱스)'로 잡히는지
++확인할 때 쓴다. 출력할 스피커를 코드에서 골라 쓰려면 그 이름을 알아야 한다.
++
++실행:  (ai_chat 폴더에서)  python tests/list_audio_devices.py
++"""
++
++import sounddevice as sd
++
++
++def main():
++    print("=== 전체 오디오 장치 목록 ===")
++    print("(in=입력채널수, out=출력채널수. out>0 이면 스피커로 쓸 수 있는 장치)\n")
++
++    for idx, dev in enumerate(sd.query_devices()):
++        hostapi = sd.query_hostapis(dev["hostapi"])["name"]
++        print(
++            f"[{idx:2}] {dev['name']}\n"
++            f"      호스트API: {hostapi} | "
++            f"in: {dev['max_input_channels']}, out: {dev['max_output_channels']} | "
++            f"기본 샘플레이트: {int(dev['default_samplerate'])}Hz"
++        )
++
++    print("\n=== 현재 기본 장치 ===")
++    default_in, default_out = sd.default.device
++    print(f"기본 입력 : {default_in}")
++    print(f"기본 출력 : {default_out}")
++
++
++if __name__ == "__main__":
++    main()

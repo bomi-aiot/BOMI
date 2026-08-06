@@ -2,13 +2,13 @@
 set -Eeuo pipefail
 
 readonly SOURCE_DIR="${BOMI_SOURCE_DIR:-$(git rev-parse --show-toplevel)}"
-[[ -d "$SOURCE_DIR/ai" ]] || {
-  echo '[verify-ai] AI project directory is not available yet: ai/' >&2
+[[ -d "$SOURCE_DIR/robot/ai_chat" ]] || {
+  echo '[verify-ai] AI conversation runtime directory is not available yet: robot/ai_chat' >&2
   exit 3
 }
 
 docker run --rm \
-  --volume "$SOURCE_DIR/ai:/source:ro" \
+  --volume "$SOURCE_DIR/robot/ai_chat:/source:ro" \
   python:3.11-slim \
   sh -ec '
     cp -a /source /workspace
@@ -18,7 +18,10 @@ docker run --rm \
       python -m venv /venv
       /venv/bin/pip install --quiet --upgrade pip
       /venv/bin/pip install --quiet -e ".[dev]"
-      if [ -d tests ]; then /venv/bin/python -m pytest; fi
+      /venv/bin/ruff check src tests
+      if [ -d tests ]; then
+        /venv/bin/python -m pytest -q -m "not integration and not manual"
+      fi
     elif [ -f requirements.txt ]; then
       python -m venv /venv
       /venv/bin/pip install --quiet -r requirements.txt
