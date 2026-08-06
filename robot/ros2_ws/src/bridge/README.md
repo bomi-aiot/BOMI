@@ -190,6 +190,36 @@ python3 -m bridge.mqtt_client
 
 설계 근거는 `docs/decisions/0001-nav2-driver-owns-action-client.md`를 참고하세요.
 
+### 도착 후 사람 접근 (선택, 킬 스위치 — CLAUDE.md §3a)
+
+보미야 호출로 거실 waypoint 에 도착한 뒤, 어르신 앞 약 0.5m 까지 마지막
+몇 걸음을 좁히는 기능입니다. 기본값은 **꺼짐**입니다 — V4 실기에서 처음
+검증되므로, 불안정하면 파라미터 하나로 "거실 좌표 도착까지"의 검증된
+동작으로 되돌릴 수 있어야 합니다.
+
+| 파라미터 | 기본값 | 의미 |
+| --- | --- | --- |
+| `approach_enabled` | `false` | 킬 스위치. 꺼져 있으면 도착 훅이 아무 일도 하지 않습니다 |
+| `approach_duration_seconds` | `15.0` | 추종을 켜 두는 시간 상한(초) |
+| `approach_enable_topic` | `/person_following/enable` | `person_follower`(core) 를 켜고 끄는 `std_msgs/Bool` 토픽 |
+
+`LIVING_ROOM` NAVIGATE 가 `SUCCEEDED`/`ARRIVED` 로 끝난 직후에만 발동합니다
+(`ENTRANCE`·`DEFAULT` 는 대상이 아닙니다 — `bridge/approach.py` 참고).
+`person_follower`(core) 는 이 스위치와 무관하게 항상 떠 있어야 하며, 접근
+대본에서는 `output_topic:=/cmd_vel start_enabled:=false` 로 띄워
+Nav2 유휴 시간에만 bridge 가 짧게 켭니다:
+
+```bash
+ros2 launch core person_following.launch.py \
+  output_topic:=/cmd_vel start_enabled:=false
+
+ros2 launch bridge mqtt_bridge.launch.py \
+  driver_type:=nav2 approach_enabled:=true
+```
+
+`vision_udp_bridge`(core, UDP:5005 수신)와 `bomi_vision.udp_main`(ai_vision,
+카메라 → UDP 송신)도 이 체인에 필요합니다 — 둘 다 별도 실행입니다.
+
 ### 시뮬레이션에서 실제 이동 확인 (선택, WSL)
 
 로봇이 실제로 현관으로 가는지 보고 싶을 때만 진행합니다. 이 테스트는 **WSL 안의

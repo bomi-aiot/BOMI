@@ -28,7 +28,9 @@
 
 import rclpy
 from rclpy.node import Node
+from std_msgs.msg import Bool
 
+from bridge.approach import DEFAULT_APPROACH_DURATION_SEC, ApproachController
 from bridge.mqtt_client import MqttBridgeRunner
 from bridge.nav2_robot_driver import create_nav2_robot_driver
 from bridge.robot_driver import (
@@ -65,6 +67,15 @@ class MqttBridgeNode(Node):
         self.declare_parameter("nav_action_name", "navigate_to_pose")
         self.declare_parameter("nav_frame_id", "map")
 
+        # 도착 후 사람 접근 (CLAUDE.md §3a, 2-5). 킬 스위치 — 기본 꺼짐.
+        # V4 실기에서 처음 검증되는 기능이라, 불안정하면 이 파라미터 하나로
+        # "거실 좌표 도착"까지의 검증된 동작으로 즉시 되돌릴 수 있어야 한다.
+        self.declare_parameter("approach_enabled", False)
+        self.declare_parameter(
+            "approach_duration_seconds", DEFAULT_APPROACH_DURATION_SEC)
+        self.declare_parameter(
+            "approach_enable_topic", "/person_following/enable")
+
         robot_id = str(self.get_parameter("robot_id").value)
         host = str(self.get_parameter("broker_host").value)
         port = int(self.get_parameter("broker_port").value)
@@ -82,6 +93,12 @@ class MqttBridgeNode(Node):
         nav_action_name = str(self.get_parameter("nav_action_name").value)
         nav_frame_id = str(self.get_parameter("nav_frame_id").value)
 
+        approach_enabled = bool(self.get_parameter("approach_enabled").value)
+        approach_duration_seconds = float(
+            self.get_parameter("approach_duration_seconds").value)
+        approach_enable_topic = str(
+            self.get_parameter("approach_enable_topic").value)
+
         # nav2 를 고른 경우에만 create_nav2 팩터리가 호출되어 전용 ROS 2 노드가
         # 만들어진다. mock 을 고르면 Nav2 자원을 전혀 생성하지 않는다.
         self._driver = create_driver(
@@ -95,6 +112,17 @@ class MqttBridgeNode(Node):
             ),
         )
 
+        # publish 는 rclpy 발행자 기준 스레드 안전이다 — bridge 워커 스레드
+        # (on_arrival)와 접근 타이머 스레드(만료 시 끄기) 양쪽에서 안전하게
+        # 호출된다(approach.py 모듈 docstring "스레드 모델" 참고).
+        self._approach_enable_publisher = self.create_publisher(
+            Bool, approach_enable_topic, 10)
+        self._approach = ApproachController(
+            self._publish_approach_enable,
+            duration_sec=approach_duration_seconds,
+            enabled=approach_enabled,
+        )
+
         self._runner = MqttBridgeRunner(
             robot_id,
             host,
@@ -105,15 +133,22 @@ class MqttBridgeNode(Node):
             use_tls=use_tls,
             ca_certs=ca_certs,
             tls_insecure=tls_insecure,
+            on_arrival=self._approach.on_arrival,
         )
         self._runner.connect_and_loop_start()
         self.get_logger().info(
             f"MQTT bridge node started: robot_id={robot_id}, "
-            f"broker={host}:{port}, driver_type={driver_type}"
+            f"broker={host}:{port}, driver_type={driver_type}, "
+            f"approach_enabled={approach_enabled}"
         )
+
+    def _publish_approach_enable(self, enable: bool) -> None:
+        self._approach_enable_publisher.publish(Bool(data=enable))
 
     def destroy_node(self) -> bool:
         """종료 시 MQTT 러너 루프를 멈추고 드라이버 자원을 정리한다."""
+        # 접근 중에 종료되면 추종을 켠 채로 죽는다 — 먼저 끈다.
+        self._approach.stop()
         self._runner.stop()
         self._driver.shutdown()
         return super().destroy_node()

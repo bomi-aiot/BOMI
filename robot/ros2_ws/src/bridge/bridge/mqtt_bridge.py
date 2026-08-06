@@ -115,11 +115,18 @@ class MqttBridge:
         *,
         async_execution: bool = False,
         now: Callable[[], datetime] | None = None,
+        on_arrival: Callable[[str], None] | None = None,
     ) -> None:
         self._robot_id = robot_id
         self._driver = driver
         self._publish = publish
         self._now = now or (lambda: datetime.now(timezone.utc))
+        # 도착 직후 훅(선택). NAVIGATE 가 SUCCEEDED/ARRIVED 로 끝난 뒤 target
+        # 문자열과 함께 불린다 — "도착 후 사람 접근"(CLAUDE.md §3a, 보미야 호출
+        # 대본의 마지막 구간)이 이 훅에 얹힌다. 백엔드 계약과 무관한 로봇 내부
+        # 행동이므로 결과 발행 '뒤'에 부른다: 훅이 아무리 오래 걸리거나 죽어도
+        # 백엔드가 보는 시나리오는 이미 정상 종결돼 있다.
+        self._on_arrival = on_arrival
 
         # 최근에 본 commandId. OrderedDict 를 LRU 처럼 쓴다(값은 무의미).
         self._seen: OrderedDict[str, None] = OrderedDict()
@@ -275,6 +282,13 @@ class MqttBridge:
             contract.RESULT_NAVIGATION, command, outcome, code,
             self._reason_for(outcome),
         )
+        # 도착 훅은 결과 발행 뒤에, 성공했을 때만. 실패한 주행 뒤에 사람 접근을
+        # 시작하면 로봇이 어디 있는지도 모르는 채 움직인다.
+        if outcome == contract.OUTCOME_SUCCEEDED and self._on_arrival is not None:
+            try:
+                self._on_arrival(target)
+            except Exception:  # noqa: BLE001 - 접근 훅 실패가 명령 처리를 죽이면 안 된다
+                logger.exception("도착 훅 실행 중 오류 (target=%s)", target)
 
     def _handle_speak(self, command: contract.RobotCommand) -> None:
         status = self._driver.speak(command.text or "")

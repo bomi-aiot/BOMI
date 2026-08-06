@@ -30,6 +30,8 @@ def generate_launch_description() -> LaunchDescription:
     tls_insecure = LaunchConfiguration("tls_insecure")
     username = LaunchConfiguration("username")
     password = LaunchConfiguration("password")
+    approach_enabled = LaunchConfiguration("approach_enabled")
+    approach_duration_seconds = LaunchConfiguration("approach_duration_seconds")
 
     return LaunchDescription(
         [
@@ -57,6 +59,18 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument("tls_insecure", default_value="false"),
             DeclareLaunchArgument("username", default_value=""),
             DeclareLaunchArgument("password", default_value=""),
+            # 도착 후 사람 접근(CLAUDE.md §3a). 킬 스위치 — 기본 꺼짐. V4
+            # 실기에서 불안정하면 approach_enabled:=false 로 재실행해 검증된
+            # "거실 좌표 도착까지"로 되돌린다(person_follower 재시작 불필요 —
+            # 그쪽 노드는 start_enabled 와 무관하게 항상 이 스위치를 따른다).
+            DeclareLaunchArgument(
+                "approach_enabled", default_value="false",
+                description="Enable follow-the-person after LIVING_ROOM arrival",
+            ),
+            DeclareLaunchArgument(
+                "approach_duration_seconds", default_value="15.0",
+                description="Max seconds to keep person-following on after arrival",
+            ),
             Node(
                 package="bridge",
                 executable="mqtt_bridge",
@@ -78,6 +92,10 @@ def generate_launch_description() -> LaunchDescription:
                         "tls_insecure": ParameterValue(tls_insecure, value_type=bool),
                         "username": username,
                         "password": password,
+                        "approach_enabled": ParameterValue(
+                            approach_enabled, value_type=bool),
+                        "approach_duration_seconds": ParameterValue(
+                            approach_duration_seconds, value_type=float),
                     }
                 ],
             ),

@@ -334,6 +334,65 @@ def test_follow_commands_get_immediate_failed_stub(follow_type: str) -> None:
     assert envelope["payload"]["outcome"] == contract.OUTCOME_FAILED
 
 
+# ── 도착 훅 (사람 접근의 진입점) ─────────────────────────────────────────────
+
+
+def test_arrival_hook_fires_after_successful_navigate() -> None:
+    """★ ARRIVED 발행 '뒤'에 target 과 함께 훅이 불린다 — 사람 접근의 진입점."""
+    arrivals: list[str] = []
+    collector = _Collector()
+    bridge = MqttBridge(
+        "robot-01", MockRobotDriver(), collector,
+        now=lambda: _NOW, on_arrival=arrivals.append,
+    )
+
+    bridge.on_command(
+        _command_json(contract.CMD_NAVIGATE, target=contract.TARGET_LIVING_ROOM)
+    )
+
+    assert arrivals == [contract.TARGET_LIVING_ROOM]
+    # 훅 이전에 결과가 이미 발행돼 있어야 한다(백엔드 시나리오 종결이 먼저다).
+    assert len(collector.messages) == 1
+
+
+def test_arrival_hook_does_not_fire_on_failure() -> None:
+    """실패한 주행 뒤에 사람 접근을 시작하면 안 된다."""
+    arrivals: list[str] = []
+    collector = _Collector()
+    bridge = MqttBridge(
+        "robot-01", MockRobotDriver(), collector,
+        now=lambda: _NOW, on_arrival=arrivals.append,
+    )
+
+    bridge.on_command(_command_json(contract.CMD_NAVIGATE, target="KITCHEN"))
+
+    assert arrivals == []
+
+
+def test_arrival_hook_failure_does_not_break_the_bridge() -> None:
+    """훅이 죽어도 결과는 이미 나갔고 다음 명령 처리도 정상이어야 한다."""
+    def broken(_target: str) -> None:
+        raise RuntimeError("approach controller exploded")
+
+    collector = _Collector()
+    bridge = MqttBridge(
+        "robot-01", MockRobotDriver(), collector,
+        now=lambda: _NOW, on_arrival=broken,
+    )
+
+    bridge.on_command(
+        _command_json(contract.CMD_NAVIGATE, target=contract.TARGET_LIVING_ROOM)
+    )
+    bridge.on_command(
+        _command_json(
+            contract.CMD_NAVIGATE, target=contract.TARGET_ENTRANCE,
+            command_id="cmd-2",
+        )
+    )
+
+    assert len(collector.messages) == 2  # 두 결과 모두 정상 발행
+
+
 # ── 스레드 분리 (async_execution) ────────────────────────────────────────────
 
 

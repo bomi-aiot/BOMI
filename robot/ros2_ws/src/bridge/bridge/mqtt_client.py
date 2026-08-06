@@ -40,6 +40,7 @@ class MqttBridgeRunner:
         use_tls: bool = False,
         ca_certs: str | None = None,
         tls_insecure: bool = False,
+        on_arrival=None,
     ) -> None:
         self._robot_id = robot_id
         self._host = host
@@ -69,6 +70,10 @@ class MqttBridgeRunner:
             driver or MockRobotDriver(),
             self._publish,
             async_execution=True,
+            # "도착 후 사람 접근"(CLAUDE.md §3a) — LIVING_ROOM 도착 훅. None
+            # 이면(순수 paho 경로, ApproachController 를 만들 rclpy 노드가
+            # 없다) 조용히 비활성 — mqtt_bridge_node.py 만 이 값을 채운다.
+            on_arrival=on_arrival,
         )
         self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message

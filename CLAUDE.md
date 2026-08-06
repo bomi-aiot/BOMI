@@ -95,6 +95,37 @@
 - 시연 트리거: `publish_event.py ambient --temp 31`(§4·§5) 또는 실센서 +
   드라이기로 30°C 이상 만들기.
 
+`bridge`/`core`/`ai_vision` 쪽 배선 완료 항목 (2-5, 도착 후 사람 접근 —
+"웨이크워드 인지 후 로봇이 사용자 근처로 온다"의 실체):
+- `ai/feat/S15P11E102-338-tracking-udp-sender` cherry-pick — `ai_vision`
+  의 `adapters/udp.py`/`udp_main.py`. 수신측(`vision_udp_bridge`)과 JSON
+  스키마·포트(5005) 완전 일치 확인됨(조사 단계). 테스트 6건 별도 검증
+  (opencv-python 최소 설치로 실행, ultralytics 불필요).
+- `bridge/approach.py` — `ApproachController`. `MqttBridge` 에 새 도착
+  훅(`on_arrival`, 결과 발행 **뒤**에만 호출)을 추가해, `LIVING_ROOM`
+  `ARRIVED` 직후 `person_follower`(core)를 `std_msgs/Bool`
+  (`/person_following/enable`)로 짧게 켠다. 시간 상한(기본 15초, 파라미터
+  `approach_duration_seconds`)이 지나면 무조건 끈다 — 침묵 고착 방지(§3a)
+  와 대칭인 "접근 고착 방지". 재도착 시 이전 타이머를 취소하고 새로 시작.
+- `core/person_follower.py` — 켜고 끄는 런타임 스위치(`enable_topic`,
+  기본 `/person_following/enable`)를 신설. **`_publish_velocity` 단일
+  초크포인트**에서 막는다 — 꺼진 채 매 프레임 정지를 계속 내보내면
+  `/cmd_vel` 을 공유하는 Nav2 주행을 0 으로 짓밟기 때문. 끄는 순간의
+  마지막 정지 1회는 스위치를 내리기 **전에** 통과시킨다(순서 중요).
+- **킬 스위치 (`approach_enabled`, 기본 꺼짐)** — V4 실기에서 처음
+  검증되는 기능. 불안정하면 파라미터 하나로 "거실 좌표 도착까지"의
+  검증된 동작(2-1~2-4, 2-6)으로 되돌린다.
+- 배선: `person_following.launch.py output_topic:=/cmd_vel
+  start_enabled:=false` + `mqtt_bridge.launch.py approach_enabled:=true`
+  (`bridge/README.md` "도착 후 사람 접근" 절 참고). `vision_udp_bridge`
+  와 `bomi_vision.udp_main` 은 각각 별도 실행 필요(런치 파일에 없음).
+- 실기 미검증: `approach.py`(순수 로직, 가짜 타이머)와 `person_follower`
+  스위치(가짜 노드, `object.__new__` 패턴)는 로직 단위 테스트를 마쳤지만
+  rclpy 필요 파일이라 로컬(Windows)에서 실행하지 못했다 — WSL/Jetson
+  colcon test 에서 처음 확인된다. LiDAR 안전 게이팅(정지 0.5m/재개
+  1.0m/비상 0.3m)은 기존 `person_following.yaml` 값을 그대로 쓰며 이번에
+  건드리지 않았다.
+
 **백엔드는 `SPEAK` 를 절대 발행하지 않는다** (main 전체 grep 0건). 대화는 전부
 `START_CONVERSATION` 이고, bridge 는 이동만 담당한다.
 
