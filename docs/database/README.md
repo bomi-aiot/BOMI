@@ -1,84 +1,60 @@
-# BOMI 데이터베이스 문서
+# Database
 
-현재 Flyway V1~V17 기준은 PostgreSQL + 외부 벡터 스토어 Qdrant, 물리 테이블 18개, 컬럼 263개다. Raw 발화, 대화·일간 요약, 장기 기억을 분리하고 앱과 로봇의 온보딩을 같은 질문 계약으로 처리한다. 재실 변경은 `occupancy_event`, 하루 활동 집계는 `daily_activity_metric`, 어르신 주변 인물은 `known_person`에 보존한다. 확인 전 사실은 `fact_candidate`에서 재질의·민감정보 확인·PRIMARY 보호자 협의를 거친다. Voice MQTT와 Guardian REST의 산책 요청은 같은 `scenario` 상태 머신과 `walk_request_receipt` 멱등 장부를 사용한다. V17은 운영자 Robot mode 복구 감사 테이블을 추가한다.
+## 기술 선택
 
-> `BOMI_컬럼정의서.xlsx`와 CSV snapshots는 현재 V1~V16의 17테이블·253컬럼 기준 산출물이다. V17의 1테이블·10컬럼 확장은 [`V17__create_robot_mode_recovery_audit.sql`](../../backend/src/main/resources/db/migration/V17__create_robot_mode_recovery_audit.sql)과 [`mvp-erd.md`](./mvp-erd.md)를 함께 본다. XLSX를 갱신하기 전까지 Excel/CSV만으로 현재 물리 스키마 전체를 판단하지 않는다.
+BOMI의 중앙 데이터베이스는 PostgreSQL 17과 pgvector를 사용합니다.
 
-```text
-app_user
-care_relationship
-robot
-onboarding_session
-onboarding_answer
-scenario
-conversation
-conversation_message
-conversation_summary
-fact_candidate
-memory
-care_record
-occupancy_event
-daily_activity_metric
-known_person
-wake_word_trigger_receipt
-walk_request_receipt
-robot_mode_recovery_audit
-```
+- 관계형 데이터와 트랜잭션: PostgreSQL
+- 임베딩 저장 및 유사도 검색: pgvector
+- 운영 이미지: `pgvector/pgvector:0.8.5-pg17`
+- 문자 인코딩: UTF-8
+- 저장 시각 기준: UTC
 
-개인화·관계·돌봄 영역의 최종 조회 원본은 `app_user`, `care_relationship`, `memory`, `care_record`다. 재실·일간 활동·회피 인물은 각각 `occupancy_event`, `daily_activity_metric`, `known_person`을 원본으로 조회한다. 최근 대화와 하루치 대화는 별도 테이블이 아니라 `conversation_message`의 조회 범위다.
+초기 도메인 후보는 사용자, 보호 대상자, 로봇, 장치, 센서 이벤트, 귀가 기록,
+시나리오 실행 기록, 대화 기록·요약, 알림입니다. ERD와 벡터 차원은 도메인 및
+임베딩 모델이 확정된 후 결정합니다.
 
-## 문서
+## 연결 원칙
 
-| 문서 | 목적 |
-| --- | --- |
-| [`mvp-erd.md`](./mvp-erd.md) | V1~V17 18개 테이블·263개 컬럼의 관계·제약·정책 |
-| [`onboarding-question-set-v1.json`](./onboarding-question-set-v1.json) | 앱·로봇 공용 질문·검증·정규화·최종 매핑 |
-| [`onboarding-rest-environment-design.md`](./onboarding-rest-environment-design.md) | 온보딩·후보·대화·휴식·환경 처리 흐름 |
-| [`column-definition/BOMI_컬럼정의서.xlsx`](./column-definition/BOMI_컬럼정의서.xlsx) | V1~V16 기준 사람이 읽는 테이블·컬럼·코드·제약 정의 |
-| [`column-definition/snapshots/`](./column-definition/snapshots/) | V1~V16 Excel과 동일한 Git diff용 CSV 9개 |
+- 운영 DB는 인터넷에 공개하지 않습니다.
+- Spring Backend만 Docker 내부 네트워크에서 DB에 접근합니다.
+- 운영 접속 주소는 `jdbc:postgresql://postgres:5432/bomi`입니다.
+- 로컬 개발에서만 `127.0.0.1:5432`를 사용합니다.
+- 실제 비밀번호는 Git에 저장하지 않습니다.
 
-관련 문서는 [`../architecture/system-overview.md`](../architecture/system-overview.md), [`../scenario/homecoming-welcome.md`](../scenario/homecoming-welcome.md), [`../mqtt/topic-convention.md`](../mqtt/topic-convention.md)다.
+## 스키마 관리
 
-## 생명주기
+현재는 초기 인프라 단계이므로 pgvector 확장만 최초 초기화 SQL로 활성화합니다.
+업무 테이블이 추가되기 시작하면 Flyway를 도입하여 다음 항목을 버전 관리합니다.
 
-```mermaid
-flowchart LR
-  Input["앱 답변·로봇 발화"] --> Raw["onboarding_answer / conversation_message"]
-  Raw --> Candidate["fact_candidate"]
-  Candidate --> Verify["재질의·확인·PRIMARY 협의"]
-  Verify --> Final["개인화·관계·돌봄 최종 원본"]
-  Raw --> Summary["conversation_summary"]
-  Summary --> Context["선별된 대화 문맥"]
-  Final --> Context
-  Raw -->|요약·후보·반영·만료 조건 충족| Delete["Raw 삭제 가능"]
-```
+- 테이블과 인덱스 생성
+- 제약조건 변경
+- pgvector 컬럼과 벡터 인덱스
+- 기준 데이터 변경
 
-V1~V17의 UUID 관계 컬럼은 물리 FK가 아닌 논리 참조다. Raw 삭제 시 근거 ID를 비우고 최종 업무 데이터를 보존하는 규칙은 서비스·보존 배치가 적용하며, DB의 `ON DELETE SET NULL`에 의존하지 않는다.
+운영 환경에서 Hibernate가 임의로 스키마를 변경하지 않도록
+`spring.jpa.hibernate.ddl-auto=validate`를 유지합니다.
 
-## 권한
+## pgvector 사용 원칙
 
-- `user_type=GUARDIAN`만으로 특정 시니어에게 접근할 수 없다.
-- 조회는 활성 관계, 목적별 동의, 데이터 공개 범위를 함께 적용한다.
-- 민감정보 대리 확인·변경은 `ACTIVE + PRIMARY + care_management_permission_status=GRANTED` 한 명만 가능하다.
-- SECONDARY는 허용 범위에서 조회만 가능하다.
-- 충돌 시 양쪽에 알리고 협의를 유도한다. 통화 사실은 증명하지 않고 디지털 입장·연락 시도·최종 결정만 기록한다.
-- 시니어 반대·연락 불가를 보존한 채 PRIMARY가 2차 책임 확인을 완료하면 보호자 결정값을 적용할 수 있다.
+벡터 컬럼의 차원은 사용할 임베딩 모델이 확정된 후 정합니다. 모델이 달라지면 벡터
+차원과 의미가 달라질 수 있으므로 각 임베딩에는 최소한 다음 정보를 함께 관리합니다.
 
-## 컬럼정의서 운영
+- 임베딩 모델 이름과 버전
+- 벡터 차원
+- 원본 데이터 식별자
+- 생성 시각
+- 재생성 여부를 판단할 버전 정보
 
-V1~V16에서 Excel은 설명 원본이고 CSV는 리뷰 표면이다. V17 확장은 migration과 `mvp-erd.md`에 먼저 반영되어 있으며, 다음 전체 컬럼정의서 동기화 전까지는 이 두 문서를 함께 읽는다. CSV만 수동으로 고쳐 Excel과 다른 산출물을 만들지 않는다. Excel에서 DDL·Flyway SQL을 생성하지 않는다. Jira·승인자·검토자·형식용 검증 시트는 두지 않는다.
+초기 데이터가 적을 때는 정확 검색을 우선하고, 데이터 규모와 조회 패턴을 측정한 뒤
+HNSW 또는 IVFFlat 인덱스를 선택합니다.
 
-```powershell
-python docs/database/column-definition/scripts/export-column-definition-csv.py
-python docs/database/column-definition/scripts/validate-column-definition.py
-```
+## 영속성 및 백업
 
-## TBD
+- 운영 데이터 경로: `/home/ubuntu/bomi/data/postgres`
+- 논리 백업 형식: `pg_dump -Fc`
+- 백업 경로: `/home/ubuntu/bomi/backup`
+- 컨테이너 삭제와 데이터 삭제를 별개의 작업으로 취급합니다.
+- 백업 성공 여부뿐 아니라 실제 복구 가능 여부를 정기적으로 검증합니다.
 
-- 요약·기억 embedding 모델·차원과 벡터 인덱스
-- 반복 협의가 필요할 때의 `care_coordination_event`
-- 긴 대화 중간 압축이 필요할 때의 `TIME_WINDOW`
-- 운영 중 무배포 질문 편집이 필요할 때의 `onboarding_question`
-- 호출·산책 외 메시지를 포함하는 범용 수신 이벤트 원장, Outbox, 범용 감사 로그
-
-문서의 제약은 구현 계약이며 코드·DDL이 이미 존재한다는 뜻이 아니다.
+실행, 점검, 백업 절차는 `infra/README.md`를 따릅니다.
