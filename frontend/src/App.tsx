@@ -25,7 +25,7 @@ const LOCAL_TOAST_ROUTES = new Set([
 ])
 
 const ROUTE_TITLES: Record<string, string> = {
-  '/': 'BOMI | 집의 하루가 안심으로 이어지는 길',
+  '/': 'BOMI | 돌봄의 매일에, 보미가 함께',
   '/dashboard': '오늘 | BOMI 보호자 센터',
   '/records': '생활 기록 | BOMI 보호자 센터',
   '/care-plan': '돌봄 계획 | BOMI 보호자 센터',
@@ -155,10 +155,10 @@ function App() {
 
   useEffect(() => {
     document.title = ROUTE_TITLES[pathname] ?? '페이지를 찾을 수 없음 | BOMI'
+    if (pathname === '/') return
+
     const frame = window.requestAnimationFrame(() => {
-      const main = document.getElementById(
-        pathname === '/' ? 'landing-main' : 'main-content',
-      )
+      const main = document.getElementById('main-content')
       main?.focus({ preventScroll: true })
     })
     return () => window.cancelAnimationFrame(frame)
