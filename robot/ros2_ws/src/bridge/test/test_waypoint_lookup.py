@@ -35,9 +35,18 @@ def test_entrance_target_maps_to_entrance_waypoint_name() -> None:
     assert resolve_waypoint_name(contract.TARGET_ENTRANCE) == "entrance"
 
 
-def test_default_target_is_not_supported() -> None:
-    # DEFAULT의 실제 위치가 확정되지 않아 임의 지점에 연결하지 않는다.
-    assert resolve_waypoint_name(contract.TARGET_DEFAULT) is None
+def test_living_room_target_maps_to_living_room_waypoint_name() -> None:
+    """★ v1 개편으로 지원 목적지에 추가됨 — 보미야 호출·복약·온습도의 목적지."""
+    assert resolve_waypoint_name(contract.TARGET_LIVING_ROOM) == "living_room"
+
+
+def test_default_target_maps_to_default_waypoint_name() -> None:
+    """★ v1 개편으로 지원 목적지에 추가됨 — 대화 종료 후 복귀 지점.
+
+    좌표 자체는 room_waypoints.yaml 에 실측 전 임시값으로 들어 있다
+    (해당 파일 주석 참고). 이름 매핑은 확정이다.
+    """
+    assert resolve_waypoint_name(contract.TARGET_DEFAULT) == "default"
 
 
 def test_unknown_target_is_not_supported() -> None:

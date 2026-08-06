@@ -20,7 +20,20 @@ from bridge import contract
 
 
 class RobotDriver(ABC):
-    """명령을 실제 로봇 동작으로 실행하고 결과 상태 문자열을 반환하는 경계다."""
+    """명령을 실제 로봇 동작으로 실행하고 결과 상태 문자열을 반환하는 경계다.
+
+    last_reason_code
+        실패/취소 직후 브릿지가 v1 결과의 reasonCode 로 읽어 가는 선택
+        속성이다(``getattr`` 로 조회하므로 없어도 동작은 하지만, 그러면
+        reasonCode 가 항상 INTERNAL_ERROR 로 뭉개진다). 값은 반드시
+        ``contract.REASON_*`` 중 하나여야 한다 — 백엔드는 그 enum 밖 문자열을
+        조용히 폐기한다. 각 실패 분기마다 **명시적으로** 설정할 것: 이전
+        호출이 남긴 값이 새어 나가는 버그가 실제로 있었다(speak() 가
+        초기화를 빼먹어 직전 navigate() 의 reason 을 물려받은 사례).
+    """
+
+    #: 서브클래스가 매 실패 분기에서 갱신한다. 기본값 None = INTERNAL_ERROR.
+    last_reason_code: str | None = None
 
     @abstractmethod
     def navigate(self, target: str) -> str:
@@ -49,13 +62,24 @@ class MockRobotDriver(RobotDriver):
     실제 주행/발화 대신 정해진 성공 상태를 반환한다. 통신·상태 전이 검증이
     목적이므로 기본 지연은 0이며, 필요하면 ``delay_seconds`` 로 이동 시간을
     흉내 낼 수 있다.
+
+    ★ 단, 알 수 없는 target 은 Mock 도 FAILED 로 처리한다. 과거에는 아무
+      target 에나 ARRIVED 를 돌려줬는데, 그러면 백엔드가 존재하지 않는
+      목적지에 대해 "도착했다"는 거짓 성공을 받는다 — mock 검증(V1·V2 단계)
+      전체가 무의미해지는 구멍이라 실물과 같은 판정 기준을 쓴다.
     """
 
     def __init__(self, delay_seconds: float = 0.0) -> None:
         self._delay_seconds = delay_seconds
+        # 브릿지가 실패 결과의 reasonCode 로 읽어 가는 값(선택 규약).
+        self.last_reason_code: str | None = None
 
     def navigate(self, target: str) -> str:
-        """목적지 도착을 흉내 내고 ARRIVED를 반환한다."""
+        """지원 목적지면 도착을 흉내 내고 ARRIVED, 아니면 FAILED 를 반환한다."""
+        if target not in contract.NAVIGATION_TARGETS:
+            self.last_reason_code = contract.REASON_UNKNOWN_TARGET
+            return contract.STATUS_FAILED
+        self.last_reason_code = None
         self._wait()
         return contract.STATUS_ARRIVED
 

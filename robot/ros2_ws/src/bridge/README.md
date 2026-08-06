@@ -150,14 +150,24 @@ python3 -m bridge.mqtt_client
 남습니다.
 
 ```text
-결과 발행: type=NAVIGATION_RESULT, scenarioId=..., status=ARRIVED
-결과 발행: type=SPEAK_RESULT,      scenarioId=..., status=DONE
+결과 발행: type=NAVIGATION_RESULT, scenarioId=..., commandId=..., outcome=SUCCEEDED/ARRIVED/None
+결과 발행: type=SPEAK_RESULT,      scenarioId=..., commandId=..., outcome=SUCCEEDED/SPOKEN/None
 ```
 
-- 같은 `scenarioId`가 그대로 돌아오면(echo-back) 계약이 맞다는 뜻입니다.
-- **주의:** 지금은 mock 드라이버이므로 `ARRIVED`/`DONE`은 실제 이동·발화가 아니라
-  즉시 성공을 흉내 낸 값입니다. 이 테스트가 확인하는 건 "백엔드 ↔ 브릿지 통신
-  배선과 메시지 형식이 맞는가"이며, 실제 이동은 아래 3번에서 확인합니다.
+- 같은 `scenarioId`와 `commandId`가 그대로 돌아오면(echo-back, 둘 다 **최상위**
+  필드) 계약이 맞다는 뜻입니다. (v1 정합 이전에는 `payload.scenarioId` +
+  `payload.status` 형태였습니다 — 그 형식은 더 이상 나가지 않습니다.)
+- **주의:** 지금은 mock 드라이버이므로 성공은 실제 이동·발화가 아니라 즉시
+  성공을 흉내 낸 값입니다. 단, mock 도 v1 계약의 세 목적지(`ENTRANCE`/
+  `LIVING_ROOM`/`DEFAULT`) 밖의 target 은 `FAILED`를 돌려줍니다 — 아무
+  target 에나 성공하던 예전 동작이 아닙니다. 이 테스트가 확인하는 건
+  "백엔드 ↔ 브릿지 통신 배선과 메시지 형식이 맞는가"이며, 실제 이동은
+  아래 3번에서 확인합니다.
+
+**ROS2 노드 경로(`ros2 launch bridge mqtt_bridge.launch.py`)로 실브로커에
+붙이려면** `use_tls:=true ca_certs:=... tls_insecure:=...` 인자를 추가하세요.
+과거에는 이 launch 경로가 TLS 파라미터를 아예 선언하지 않아 실브로커 접속이
+원천적으로 불가능했습니다(위 `python3 -m bridge.mqtt_client` 경로만 가능).
 
 보안 주의: 여기서 받은 계정/비밀번호는 로그인 정보입니다. Git 저장소나 공개
 채팅에 올리지 말고, 실행 명령에도 직접 입력하지 말고 필요할 때마다 각자

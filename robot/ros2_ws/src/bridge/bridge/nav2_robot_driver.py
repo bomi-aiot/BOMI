@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -59,9 +60,14 @@ class Nav2RobotDriver(RobotDriver):
         (navigation_node가 추가된 상태). waypoint_file - room_waypoints.yaml
         경로. frame_id - 목표 pose의 좌표계(기본 "map"). goal_timeout_seconds -
         도착 대기 최대 시간(초).
-    주의: 이 드라이버의 메서드는 단일 스레드(paho MQTT 콜백 스레드)에서 순차
-        호출된다고 가정한다. paho 루프는 메시지를 순차 처리하므로 navigate()가
-        블로킹하는 동안 같은 스레드에서 cancel()이 동시에 진입하지 않는다.
+
+    스레드 모델 (v1 개편에서 변경)
+        navigate()/speak() 는 브릿지의 **워커 스레드**에서, cancel() 은 **수신
+        (paho 콜백) 스레드**에서 불린다 — 그래야 주행 중에 CANCEL 이 실제로
+        목표를 멈출 수 있다. 규칙은 하나다: **spin 은 오직 navigate() 를 부른
+        스레드에서만 한다.** cancel() 은 취소 요청을 던지기만 하고(spin 없음),
+        그 응답은 navigate() 쪽 spin 루프가 처리한다. 같은 executor 를 두
+        스레드가 spin 하는 순간 rclpy 가 깨진다 — 그 금지가 이 설계의 전부다.
     """
 
     def __init__(
@@ -90,7 +96,16 @@ class Nav2RobotDriver(RobotDriver):
 
         # 진행 중인 Nav2 목표 핸들. 목표가 없으면 None이다. 완료/실패/취소 시
         # 반드시 None으로 정리해 다음 명령에서 재사용되지 않게 한다.
+        # cancel()(수신 스레드)과 navigate()(워커 스레드)가 함께 만지므로
+        # 락으로 보호한다.
         self._active_goal_handle: Any | None = None
+        self._goal_lock = threading.Lock()
+
+        # 브릿지가 실패 결과의 reasonCode 로 읽어 가는 값(선택 규약).
+        # 실패 지점마다 백엔드 허용 enum(contract.REASON_*) 중 가장 가까운
+        # 원인을 남긴다 — 백엔드는 enum 밖 값을 통째로 폐기하므로 자유 문장을
+        # 넣으면 안 된다.
+        self.last_reason_code: str | None = None
 
     def navigate(self, target: str) -> str:
         """목적지로 주행하고 계약 상태(ARRIVED 또는 FAILED)를 반환한다.
@@ -103,12 +118,15 @@ class Nav2RobotDriver(RobotDriver):
             타임아웃, 결과 실패, 예외를 모두 FAILED로 처리한다. 하드웨어나
             Nav2가 없다는 이유로 가짜 ARRIVED를 만들지 않는다.
         """
+        self.last_reason_code = None
+
         waypoint_name = resolve_waypoint_name(target)
         if waypoint_name is None:
             self._logger.warning(
                 f"Unsupported navigation target '{target}'; "
                 "not sending a Nav2 goal"
             )
+            self.last_reason_code = contract.REASON_UNKNOWN_TARGET
             return contract.STATUS_FAILED
 
         try:
@@ -119,17 +137,19 @@ class Nav2RobotDriver(RobotDriver):
             self._logger.error(
                 f"Failed to load waypoint '{waypoint_name}': {error}"
             )
+            self.last_reason_code = contract.REASON_INTERNAL_ERROR
             return contract.STATUS_FAILED
 
         try:
             return self._navigate_to_waypoint(waypoint)
         except Exception as error:
-            # 예외가 MQTT 처리 스레드로 새어 나가 브릿지 전체를 멈추지 않도록
+            # 예외가 실행 스레드로 새어 나가 브릿지 전체를 멈추지 않도록
             # 드라이버 경계에서 잡는다. 원인을 남기고 진행 중 목표를 정리한다.
             self._logger.error(
                 f"Navigation failed with an unexpected error: {error}"
             )
             self._cancel_active_goal_quietly()
+            self.last_reason_code = contract.REASON_INTERNAL_ERROR
             return contract.STATUS_FAILED
 
     def speak(self, text: str) -> str:
@@ -137,29 +157,43 @@ class Nav2RobotDriver(RobotDriver):
 
         Nav2 드라이버는 주행만 담당한다. SPEAK 실행 수단이 없으므로 가짜
         성공(DONE) 대신 FAILED를 돌려주고 그 사실을 로그로 남긴다.
+
+        last_reason_code 를 여기서 명시적으로 설정한다 — 안 하면 직전
+        navigate() 호출이 남긴 값을 브릿지가 잘못 읽어 갈 수 있다(이 값은
+        navigate() 진입 시에만 초기화되고 speak() 는 건드리지 않았었다).
         """
         self._logger.warning(
             "Nav2RobotDriver does not support speak; reporting FAILED"
         )
+        self.last_reason_code = contract.REASON_INTERNAL_ERROR
         return contract.STATUS_FAILED
 
     def cancel(self) -> str:
         """진행 중인 Nav2 목표가 있으면 취소를 요청하고 CANCELLED를 반환한다.
 
-        역할: 진행 중 목표가 없으면 안전하게 CANCELLED를 돌려주고, 있으면 Nav2에
-            취소를 요청한다.
+        ★ 다른 스레드(수신 스레드)에서 불린다. 여기서는 취소 요청을 **던지기만**
+        하고 spin 하지 않는다 — 응답 처리와 결과 정리는 navigate() 를 돌리고
+        있는 워커 스레드의 spin 루프 몫이다. 그래서 이 함수는 즉시 돌아오고,
+        주행 중이던 navigate() 는 목표가 CANCELED 로 끝나는 것을 보고
+        STATUS_CANCELLED 를 반환하게 된다.
+
         반환값: 항상 contract.STATUS_CANCELLED.
         실패: 취소 요청 자체가 실패해도 예외를 밖으로 던지지 않고 로그만 남긴다.
-        주의: 취소 뒤 이전 목표 핸들을 정리해 다음 명령에서 재사용되지 않게 한다.
         """
-        goal_handle = self._active_goal_handle
+        with self._goal_lock:
+            goal_handle = self._active_goal_handle
         if goal_handle is None:
             self._logger.info(
                 "Cancel requested but no navigation goal is active"
             )
             return contract.STATUS_CANCELLED
 
-        self._request_goal_cancellation(goal_handle)
+        try:
+            # fire-and-forget. 취소 응답 future 는 워커의 spin 이 소화한다.
+            goal_handle.cancel_goal_async()
+            self._logger.info("Cancel request sent for the active goal")
+        except Exception as error:
+            self._logger.warning(f"Failed to send cancel request: {error}")
         return contract.STATUS_CANCELLED
 
     def shutdown(self) -> None:
@@ -192,6 +226,7 @@ class Nav2RobotDriver(RobotDriver):
             self._logger.error(
                 "Nav2 action server was not available before timeout"
             )
+            self.last_reason_code = contract.REASON_EXECUTION_TIMEOUT
             return contract.STATUS_FAILED
 
         goal_message = NavigateToPose.Goal()
@@ -204,14 +239,17 @@ class Nav2RobotDriver(RobotDriver):
             self._logger.error(
                 "Timed out while waiting for the goal to be accepted"
             )
+            self.last_reason_code = contract.REASON_EXECUTION_TIMEOUT
             return contract.STATUS_FAILED
 
         goal_handle = send_goal_future.result()
         if goal_handle is None or not goal_handle.accepted:
             self._logger.warning("Nav2 rejected the navigation goal")
+            self.last_reason_code = contract.REASON_INTERNAL_ERROR
             return contract.STATUS_FAILED
 
-        self._active_goal_handle = goal_handle
+        with self._goal_lock:
+            self._active_goal_handle = goal_handle
         result_future = goal_handle.get_result_async()
 
         if not self._spin_until_complete(result_future, deadline):
@@ -219,23 +257,35 @@ class Nav2RobotDriver(RobotDriver):
                 "Navigation did not finish before timeout; cancelling goal"
             )
             self._cancel_active_goal_quietly()
+            self.last_reason_code = contract.REASON_EXECUTION_TIMEOUT
             return contract.STATUS_FAILED
 
         # 결과를 받았으므로 진행 중 목표를 정리한다.
-        self._active_goal_handle = None
+        with self._goal_lock:
+            self._active_goal_handle = None
 
         result = result_future.result()
         if result is None:
             self._logger.error("Navigation result was empty")
+            self.last_reason_code = contract.REASON_INTERNAL_ERROR
             return contract.STATUS_FAILED
 
         if result.status == GoalStatus.STATUS_SUCCEEDED:
             self._logger.info(f"Navigation succeeded: reached {waypoint.name}")
             return contract.STATUS_ARRIVED
 
+        if result.status == GoalStatus.STATUS_CANCELED:
+            # 수신 스레드의 cancel() 이 요청한 취소가 여기서 관측된다.
+            # 브릿지가 outcome=CANCELLED 로 번역한다.
+            self._logger.info("Navigation goal was cancelled")
+            return contract.STATUS_CANCELLED
+
+        # ABORTED 등 — Nav2 가 목표를 포기한 경우다. 가장 흔한 원인은 경로
+        # 계획 실패(장애물·미지 영역)라 PATH_BLOCKED 로 보고한다.
         self._logger.warning(
             f"Navigation finished without success: status={result.status}"
         )
+        self.last_reason_code = contract.REASON_PATH_BLOCKED
         return contract.STATUS_FAILED
 
     def _wait_for_action_server(self, deadline: float) -> bool:
@@ -261,20 +311,16 @@ class Nav2RobotDriver(RobotDriver):
         return future.done()
 
     def _cancel_active_goal_quietly(self) -> None:
-        """진행 중 목표가 있으면 조용히 취소를 요청하고 핸들을 정리한다."""
-        goal_handle = self._active_goal_handle
-        self._active_goal_handle = None
+        """진행 중 목표가 있으면 조용히 취소를 요청하고 핸들을 정리한다.
+
+        navigate() 를 부른 스레드(= spin 을 소유한 스레드)에서만 호출한다.
+        여기서는 취소 응답을 짧게 기다려도 안전하다.
+        """
+        with self._goal_lock:
+            goal_handle = self._active_goal_handle
+            self._active_goal_handle = None
         if goal_handle is None:
             return
-        self._request_goal_cancellation(goal_handle)
-
-    def _request_goal_cancellation(self, goal_handle: Any) -> None:
-        """목표 취소를 요청하고 취소 응답을 짧게 기다린다.
-
-        취소 요청 자체가 실패해도 예외를 밖으로 던지지 않는다. 어떤 경우에도
-        진행 중 목표 핸들을 정리해 다음 명령에서 재사용되지 않게 한다.
-        """
-        self._active_goal_handle = None
         try:
             cancel_future = goal_handle.cancel_goal_async()
             cancel_deadline = time.monotonic() + _CANCEL_RESULT_WAIT_SECONDS

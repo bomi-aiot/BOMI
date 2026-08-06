@@ -61,7 +61,15 @@ class MqttBridgeRunner:
             if tls_insecure:
                 self._client.tls_insecure_set(True)
 
-        self._bridge = MqttBridge(robot_id, driver or MockRobotDriver(), self._publish)
+        # async_execution=True: 실행(주행 최대 120초)을 워커 스레드로 넘겨
+        # paho 콜백 스레드를 비워 둔다. 그래야 CANCEL 이 즉시 처리되고
+        # keepalive(기본 60초) PINGREQ 가 끊기지 않는다.
+        self._bridge = MqttBridge(
+            robot_id,
+            driver or MockRobotDriver(),
+            self._publish,
+            async_execution=True,
+        )
         self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message
 
@@ -88,6 +96,7 @@ class MqttBridgeRunner:
 
     def stop(self) -> None:
         """백그라운드 루프를 멈추고 브로커 연결을 종료한다."""
+        self._bridge.stop()
         self._client.loop_stop()
         self._client.disconnect()
 

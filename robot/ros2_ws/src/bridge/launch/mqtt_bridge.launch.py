@@ -15,6 +15,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -24,6 +25,11 @@ def generate_launch_description() -> LaunchDescription:
     broker_port = LaunchConfiguration("broker_port")
     driver_type = LaunchConfiguration("driver_type")
     goal_timeout_seconds = LaunchConfiguration("goal_timeout_seconds")
+    use_tls = LaunchConfiguration("use_tls")
+    ca_certs = LaunchConfiguration("ca_certs")
+    tls_insecure = LaunchConfiguration("tls_insecure")
+    username = LaunchConfiguration("username")
+    password = LaunchConfiguration("password")
 
     return LaunchDescription(
         [
@@ -40,6 +46,17 @@ def generate_launch_description() -> LaunchDescription:
                 default_value="120.0",
                 description="Max seconds to wait for a Nav2 goal to finish",
             ),
+            # 실브로커(i15e102.p.ssafy.io:8883)에 붙으려면 이 셋이 필요하다.
+            # 과거엔 노드가 TLS 파라미터를 선언하지 않아 launch 경로로는 실브로커
+            # 접속이 원천 불가능했다 — mqtt_bridge_node.py 참고.
+            DeclareLaunchArgument(
+                "use_tls", default_value="false",
+                description="Enable TLS (required for the real EC2 broker on 8883)",
+            ),
+            DeclareLaunchArgument("ca_certs", default_value=""),
+            DeclareLaunchArgument("tls_insecure", default_value="false"),
+            DeclareLaunchArgument("username", default_value=""),
+            DeclareLaunchArgument("password", default_value=""),
             Node(
                 package="bridge",
                 executable="mqtt_bridge",
@@ -52,6 +69,15 @@ def generate_launch_description() -> LaunchDescription:
                         "broker_port": broker_port,
                         "driver_type": driver_type,
                         "goal_timeout_seconds": goal_timeout_seconds,
+                        # 문자열 substitution 을 bool 로 명시 변환한다 — 안 하면
+                        # rclpy 가 declare_parameter(..., False) 의 기본 타입과
+                        # 문자열 "false" 를 맞춰 보다 ParameterTypeException 을
+                        # 던진다(core 의 다른 launch 파일과 같은 패턴).
+                        "use_tls": ParameterValue(use_tls, value_type=bool),
+                        "ca_certs": ca_certs,
+                        "tls_insecure": ParameterValue(tls_insecure, value_type=bool),
+                        "username": username,
+                        "password": password,
                     }
                 ],
             ),
