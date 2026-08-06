@@ -99,5 +99,11 @@ def test_navigate_command_round_trips_over_real_broker() -> None:
     envelope = json.loads(payload)
     assert envelope["type"] == contract.RESULT_NAVIGATION
     assert envelope["robotId"] == ROBOT_ID
-    assert envelope["payload"]["scenarioId"] == "scenario-e2e-7"  # echo-back
-    assert envelope["payload"]["status"] == contract.STATUS_ARRIVED
+    # v1: 상관관계 ID 는 최상위 echo-back, payload 는 세 필드뿐이다.
+    assert envelope["scenarioId"] == "scenario-e2e-7"
+    assert envelope["commandId"] == "cmd-e2e-1"
+    assert envelope["payload"] == {
+        "outcome": contract.OUTCOME_SUCCEEDED,
+        "resultCode": contract.CODE_ARRIVED,
+        "reasonCode": None,
+    }

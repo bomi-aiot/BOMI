@@ -150,20 +150,30 @@ python3 -m bridge.mqtt_client
 남습니다.
 
 ```text
-결과 발행: type=NAVIGATION_RESULT, scenarioId=..., status=ARRIVED
-결과 발행: type=SPEAK_RESULT,      scenarioId=..., status=DONE
+결과 발행: type=NAVIGATION_RESULT, scenarioId=..., commandId=..., outcome=SUCCEEDED/ARRIVED/None
+결과 발행: type=SPEAK_RESULT,      scenarioId=..., commandId=..., outcome=SUCCEEDED/SPOKEN/None
 ```
 
-- 같은 `scenarioId`가 그대로 돌아오면(echo-back) 계약이 맞다는 뜻입니다.
-- **주의:** 지금은 mock 드라이버이므로 `ARRIVED`/`DONE`은 실제 이동·발화가 아니라
-  즉시 성공을 흉내 낸 값입니다. 이 테스트가 확인하는 건 "백엔드 ↔ 브릿지 통신
-  배선과 메시지 형식이 맞는가"이며, 실제 이동은 아래 3번에서 확인합니다.
+- 같은 `scenarioId`와 `commandId`가 그대로 돌아오면(echo-back, 둘 다 **최상위**
+  필드) 계약이 맞다는 뜻입니다. (v1 정합 이전에는 `payload.scenarioId` +
+  `payload.status` 형태였습니다 — 그 형식은 더 이상 나가지 않습니다.)
+- **주의:** 지금은 mock 드라이버이므로 성공은 실제 이동·발화가 아니라 즉시
+  성공을 흉내 낸 값입니다. 단, mock 도 v1 계약의 세 목적지(`ENTRANCE`/
+  `LIVING_ROOM`/`DEFAULT`) 밖의 target 은 `FAILED`를 돌려줍니다 — 아무
+  target 에나 성공하던 예전 동작이 아닙니다. 이 테스트가 확인하는 건
+  "백엔드 ↔ 브릿지 통신 배선과 메시지 형식이 맞는가"이며, 실제 이동은
+  아래 3번에서 확인합니다.
+
+**ROS2 노드 경로(`ros2 launch bridge mqtt_bridge.launch.py`)로 실브로커에
+붙이려면** `use_tls:=true ca_certs:=... tls_insecure:=...` 인자를 추가하세요.
+과거에는 이 launch 경로가 TLS 파라미터를 아예 선언하지 않아 실브로커 접속이
+원천적으로 불가능했습니다(위 `python3 -m bridge.mqtt_client` 경로만 가능).
 
 보안 주의: 여기서 받은 계정/비밀번호는 로그인 정보입니다. Git 저장소나 공개
 채팅에 올리지 말고, 실행 명령에도 직접 입력하지 말고 필요할 때마다 각자
 터미널에서 입력하세요.
 
-## 3. 주행 드라이버 (Mock / Nav2)
+## 3. 주행 드라이버 (Mock / Nav2 / Timed / Forward-test)
 
 주행 실행 드라이버는 ROS 2 노드의 `driver_type` 파라미터로 고릅니다.
 
@@ -171,7 +181,13 @@ python3 -m bridge.mqtt_client
 | --- | --- |
 | `mock` (기본값) | 실제 주행 없이 즉시 `ARRIVED` 반환. 통신·상태 검증용 |
 | `nav2` | 목적지 이름을 좌표로 바꿔 Nav2 `NavigateToPose`로 실제 주행 |
+| `timed` | 지도 없이 `/cmd_vel`로 정해진 시간(기본 2초)만 직진. Nav2 병목 우회용 임시 수단 |
 | `forward_test` | 유효한 NAVIGATE마다 `/cmd_vel_backend_test`로 0.08 m/s를 2초간 발행한 뒤 정지 |
+
+- `timed`와 `forward_test`는 **목적지를 구분하지 않습니다.** 계약 왕복·대화·DB
+  종결 검증 전용이며, 주행 품질의 근거로 쓰면 안 됩니다. 둘의 차이는 출력
+  토픽입니다 — `timed`는 `/cmd_vel`로 곧장, `forward_test`는 전용 토픽으로 보내
+  `twist_mux` 우선순위 아래에 둡니다(조이스틱이 항상 이깁니다).
 
 - 기본값은 `mock`입니다. 잘못된 값이면 조용히 넘어가지 않고 노드 시작이 실패합니다.
 - `nav2`는 ROS 2 노드 실행 경로에서만 쓰이며, Nav2가 먼저 활성화돼 있어야 합니다.
@@ -180,6 +196,36 @@ python3 -m bridge.mqtt_client
 - 도착 타임아웃은 `goal_timeout_seconds`(초, 기본 120)로 설정합니다.
 
 설계 근거는 `docs/decisions/0001-nav2-driver-owns-action-client.md`를 참고하세요.
+
+### 도착 후 사람 접근 (선택, 킬 스위치 — CLAUDE.md §3a)
+
+보미야 호출로 거실 waypoint 에 도착한 뒤, 어르신 앞 약 0.5m 까지 마지막
+몇 걸음을 좁히는 기능입니다. 기본값은 **꺼짐**입니다 — V4 실기에서 처음
+검증되므로, 불안정하면 파라미터 하나로 "거실 좌표 도착까지"의 검증된
+동작으로 되돌릴 수 있어야 합니다.
+
+| 파라미터 | 기본값 | 의미 |
+| --- | --- | --- |
+| `approach_enabled` | `false` | 킬 스위치. 꺼져 있으면 도착 훅이 아무 일도 하지 않습니다 |
+| `approach_duration_seconds` | `15.0` | 추종을 켜 두는 시간 상한(초) |
+| `approach_enable_topic` | `/person_following/enable` | `person_follower`(core) 를 켜고 끄는 `std_msgs/Bool` 토픽 |
+
+`LIVING_ROOM` NAVIGATE 가 `SUCCEEDED`/`ARRIVED` 로 끝난 직후에만 발동합니다
+(`ENTRANCE`·`DEFAULT` 는 대상이 아닙니다 — `bridge/approach.py` 참고).
+`person_follower`(core) 는 이 스위치와 무관하게 항상 떠 있어야 하며, 접근
+대본에서는 `output_topic:=/cmd_vel start_enabled:=false` 로 띄워
+Nav2 유휴 시간에만 bridge 가 짧게 켭니다:
+
+```bash
+ros2 launch core person_following.launch.py \
+  output_topic:=/cmd_vel start_enabled:=false
+
+ros2 launch bridge mqtt_bridge.launch.py \
+  driver_type:=nav2 approach_enabled:=true
+```
+
+`vision_udp_bridge`(core, UDP:5005 수신)와 `bomi_vision.udp_main`(ai_vision,
+카메라 → UDP 송신)도 이 체인에 필요합니다 — 둘 다 별도 실행입니다.
 
 ### 시뮬레이션에서 실제 이동 확인 (선택, WSL)
 
@@ -210,8 +256,9 @@ mosquitto_pub -h localhost -t 'bomi/v1/robot/robot-01/commands' -m '{
   "payload":{"target":"ENTRANCE"}}'
 ```
 
-RViz에서 로봇이 `entrance`로 이동하고, `.../results`에 `status`가 `ARRIVED`(성공)
-또는 `FAILED`로 발행되면 정상입니다.
+RViz에서 로봇이 `entrance`로 이동하고, `.../results`에 `payload.outcome`이
+`SUCCEEDED`(성공, `resultCode: ARRIVED`) 또는 `FAILED`(`resultCode: NOT_ARRIVED`
++ `reasonCode`)로 발행되면 정상입니다.
 
 ## 4. Raspberry Pi → Backend → Robot 통신 주행 테스트
 
@@ -247,8 +294,10 @@ mosquitto_pub -h localhost -t 'bomi/v1/robot/robot-01/commands' -q 1 -m '{
 ```
 
 `linear.x=0.08`, `angular.z=0.0`이 약 10Hz로 2초간 보이고 마지막에 둘 다
-0인 메시지가 나와야 합니다. 결과 토픽에는 같은 `scenarioId`와
-`NAVIGATION_RESULT`, `ARRIVED`가 발행됩니다.
+0인 메시지가 나와야 합니다. 결과 토픽에는 `NAVIGATION_RESULT`가 최상위
+`scenarioId`/`commandId` echo-back과 함께
+`payload: {"outcome":"SUCCEEDED","resultCode":"ARRIVED","reasonCode":null}`
+형태로 발행됩니다.
 
 실차에서는 로봇 바퀴를 바닥에서 띄우고 위 토픽을 먼저 확인한 뒤에만 다음
 드라이버를 별도 터미널에서 실행합니다.

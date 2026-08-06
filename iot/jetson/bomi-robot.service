@@ -1,0 +1,17 @@
+[Unit]
+Description=Bomi Robot Software (ROS2 nodes + MQTT bridge) - auto start on Jetson boot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ssafy
+WorkingDirectory=/home/ssafy/S15P11E102/robot/ros2_ws
+# TODO: 로봇 소프트웨어(ROS2 노드 + MQTT 브릿지) 구현 완료 후 채울 것
+# 예상 형태: /bin/bash -c "source install/setup.bash && ros2 launch bomi_core <launch파일명>"
+ExecStart=
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

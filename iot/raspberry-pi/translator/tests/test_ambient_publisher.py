@@ -27,8 +27,8 @@ def test_valid_observation_publishes_contract_event() -> None:
     assert event["occurredAt"] == "2026-08-04T12:00:00+00:00"
     assert event["payload"] == {
         "location": "LIVING_ROOM",
-        "temperature": 26.0,
-        "humidity": 58.0,
+        "temperatureC": 26.0,
+        "humidityPercent": 58.0,
     }
 
 

@@ -1,0 +1,37 @@
+# Profile "docs": renders and validates the OpenAPI documents without a real database.
+#
+# Why this no longer excludes DataSource/JPA autoconfiguration
+#   It used to, and that worked while the only controller was /api/health. But every
+#   documented endpoint eventually needs a service, and every service needs
+#   repositories — so excluding JPA meant each new controller broke this profile with
+#   "No qualifying bean of type ...Repository". The profile is meant to prove the API
+#   docs are valid, not to assert that the app has no persistence layer.
+#
+#   So it now starts the full context against an in-memory database instead. Same
+#   approach as application-datajpa.yml, which the @DataJpaTest slices already use.
+spring:
+  config:
+    activate:
+      on-profile: docs
+  datasource:
+    url: jdbc:h2:mem:bomi-docs;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      # Flyway's V*.sql are PostgreSQL dialect and would break on H2, so Hibernate
+      # generates the schema here. Nothing in this profile reads real data.
+      ddl-auto: create-drop
+    open-in-view: false
+  flyway:
+    enabled: false
+
+management:
+  health:
+    db:
+      enabled: false
+
+bomi:
+  mqtt:
+    enabled: false

@@ -3,11 +3,11 @@
 from datetime import datetime, timezone
 import json
 import threading
+import time
 
 from bridge import contract
 from bridge.forward_test_robot_driver import ForwardTestRobotDriver
 from bridge.mqtt_bridge import MqttBridge
-from bridge.mqtt_client import SingleFlightExecutor
 import pytest
 
 
@@ -190,14 +190,25 @@ def test_shutdown_stops_motion_and_releases_waiter() -> None:
 
 
 def test_bridge_publishes_result_only_after_forward_stop() -> None:
+    """전진이 끝나기 전에는 결과가 나가지 않고, MQTT 수신 스레드도 막히지 않는다.
+
+    ``async_execution=True`` 는 운영 경로(:class:`MqttBridgeRunner`)와 같은
+    설정이다. on_command 는 워커에 넘기고 즉시 돌아오며, 결과 발행은 timer 가
+    정지(0)를 발행한 뒤에야 일어난다.
+    """
     driver, node, clock = _create_driver()
-    executor = SingleFlightExecutor()
     results: list[tuple[str, str]] = []
+    lock = threading.Lock()
+
+    def collect(topic: str, payload: str) -> None:
+        with lock:
+            results.append((topic, payload))
+
     bridge = MqttBridge(
         "robot-01",
         driver,
-        lambda topic, payload: results.append((topic, payload)),
-        submit_navigation=executor.submit,
+        collect,
+        async_execution=True,
         now=lambda: datetime(2026, 8, 6, tzinfo=timezone.utc),
     )
     command = json.dumps(
@@ -212,21 +223,34 @@ def test_bridge_publishes_result_only_after_forward_stop() -> None:
         }
     )
 
-    bridge.on_command(command)
-    assert node.publisher.first_message.wait(timeout=1.0)
-    assert results == []
+    try:
+        bridge.on_command(command)
+        assert node.publisher.first_message.wait(timeout=1.0)
+        with lock:
+            assert results == [], "전진이 끝나기 전에 결과가 나가면 안 된다"
 
-    clock.value = 2.0
-    node.timer.callback()
-    executor.shutdown()
+        clock.value = 2.0
+        node.timer.callback()
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            with lock:
+                if results:
+                    break
+            time.sleep(0.01)
+    finally:
+        bridge.stop()
 
     assert node.publisher.messages[-1] == pytest.approx((0.0, 0.0))
+    assert results, "정지 후에는 결과가 발행돼야 한다"
     topic, payload = results[0]
     envelope = json.loads(payload)
     assert topic == contract.robot_results_topic("robot-01")
     assert envelope["type"] == contract.RESULT_NAVIGATION
-    assert envelope["payload"]["scenarioId"] == "scenario-integration"
-    assert envelope["payload"]["status"] == contract.STATUS_ARRIVED
+    # v1: 상관관계 ID 는 최상위, payload 는 outcome/resultCode/reasonCode.
+    assert envelope["scenarioId"] == "scenario-integration"
+    assert envelope["payload"]["outcome"] == contract.OUTCOME_SUCCEEDED
+    assert envelope["payload"]["resultCode"] == contract.CODE_ARRIVED
 
 
 @pytest.mark.parametrize(

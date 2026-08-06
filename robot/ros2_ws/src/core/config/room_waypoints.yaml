@@ -14,6 +14,21 @@ waypoints:
     y: 0.012
     yaw: 3.14
 
+  # ★ 아래 두 개는 실측 전 임시값이다 (시연 장소에서 지도 생성 후 반드시 교체).
+  # living_room: 백엔드 NAVIGATE(LIVING_ROOM) 의 목적지 — 보미야 호출·복약·
+  #   온습도 시나리오가 전부 여기로 온다. 임시로 sofa 좌표를 복사해 두었다
+  #   (배선 검증용 — 시연 대본상 어르신이 소파에 앉으므로 방향은 맞다).
+  # default: 대화 종료 후 복귀 지점(NAVIGATE(DEFAULT)). 임시로 window 좌표.
+  - name: living_room
+    x: 0.178
+    y: 1.722
+    yaw: 0.0
+
+  - name: default
+    x: -0.665
+    y: 0.012
+    yaw: 3.14
+
 loop: true
 waypoint_delay_sec: 5.0
 loop_delay_sec: 30.0

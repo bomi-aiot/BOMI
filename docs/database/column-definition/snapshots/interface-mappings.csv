@@ -1,0 +1,29 @@
+﻿계약 필드,방향,의미,DB 매핑,저장 여부,메모
+robotId,Robot/App ↔ Backend,대상 로봇의 device 식별자,robot.device_id,저장,topic·envelope·Guardian REST robotId는 같은 deviceId이며 robot.id(UUID)와 구분
+scenarioId,Backend ↔ Robot/AI,시나리오 상관관계,scenario.id,저장,UUID 표준 문자열
+시작 eventId,IoT → Backend,시나리오 시작 사건,scenario.external_event_id,저장,같은 사건 재전송은 같은 값
+기타 eventId·commandId·sequence,Robot/IoT ↔ Backend,통신 멱등·순서 키,매핑 없음,미저장,호출 전용 상관 필드는 별도 행처럼 저장하며 그 외 수신 원장·Outbox는 없음
+sessionId,App/Robot ↔ Backend,온보딩 진행,onboarding_session.id,저장,양 채널이 같은 세션 재개
+questionSetVersion,Backend → App/Robot,질문 계약 버전,onboarding_session.question_set_version,저장,onboarding-question-set-v1.json
+questionCode,App/Robot → Backend,질문 식별,onboarding_answer.question_code,저장,양 채널 동일 코드
+answerValue,App/Robot → Backend,정규화 답변,onboarding_answer.answer_value,저장,질문별 동일 JSON Schema
+sourceConversationId,Robot/Backend,근거 대화,onboarding_answer/fact_candidate/memory/care_record.source_conversation_id,조건부 저장,conversation.id
+sourceMessageId,Robot/Backend,근거 발화,onboarding_answer/fact_candidate/care_record.source_message_id,조건부 저장,conversation_message.id 논리 참조이며 자동 SET NULL이 없어 삭제 전 서비스·배치가 참조를 해소해야 함
+최종 대화 텍스트,Robot/AI → Backend,한 번의 발화,conversation_message.content,저장,음성·전체 프롬프트 미저장
+대화 요약,Backend/AI,대화·일간 문맥 압축,conversation_summary.content,저장,CONVERSATION 또는 DAILY
+확인 전 추출 사실,App/AI → Backend,재질의·확인 대상,fact_candidate.proposed_value,임시 저장,confirmed_value만 최종 반영
+temperatureC,Robot/IoT → Backend,최신 실내 온도,robot.ambient_temperature_c,최신값 저장,과거 관측 역덮어쓰기 금지
+humidityPercent,Robot/IoT → Backend,최신 실내 습도,robot.ambient_humidity_percent,최신값 저장,온도·관측시각과 함께 갱신
+WAKE_WORD_DETECTED.eventId,AI → Backend,호출 최초 이벤트 멱등 키,"wake_word_trigger_receipt.event_id, scenario.external_event_id",저장,호출 전용 receipt PK와 수락 시나리오에 같은 값을 저장
+WAKE_WORD_DETECTED.occurredAt/keyword/confidence,AI → Backend,호출 확정 최소 문맥,wake_word_trigger_receipt 및 scenario.trigger_context,저장,원본 음성·전체 STT는 저장하지 않음
+NAVIGATE.commandId/target,Backend → Robot,현재 이동 결과 상관관계,scenario.active_navigation_command_id/active_navigation_target,조건부 저장,최종 결과 반영 뒤 함께 null
+NAVIGATION_RESULT.resultCode/reasonCode,Robot → Backend,호출 이동 종료 코드,scenario.completion_result_code/completion_reason_code,조건부 저장,상관 검증을 통과한 최종 결과만 반영
+WALK_REQUESTED eventId/requestId,AI/App → Backend,산책 요청 멱등 키,walk_request_receipt.request_id; START는 scenario.external_event_id,저장,ingress와 함께 범위를 정하고 전역 UNIQUE는 두지 않음
+WALK_REQUESTED action/source,AI/App → Backend,START·STOP 및 VOICE·APP,walk_request_receipt.action/source; scenario.trigger_context,저장,REST source는 서버가 APP으로 고정
+WALK_REQUESTED conversationId/occurredAt,AI → Backend,선택 대화 상관 ID와 요청 시각,walk_request_receipt 및 scenario.trigger_context,조건부 저장,새 Conversation이나 음성 전문을 만들지 않음
+FOLLOW_START commandId,Backend → Robot,추종 시작 상관 키,scenario.follow_start_command_id/requested_at,저장,STARTED 뒤에도 산책 종료까지 유지
+FOLLOW_STOP commandId,Backend → Robot,추종 종료 상관 키,scenario.follow_stop_command_id/requested_at,저장,START ID와 다른 값이며 같은 Scenario 사용
+FOLLOW_RESULT eventId/commandId,Robot → Backend,반영 결과와 명령 상관 키,scenario.last_follow_result_event_id/last_follow_command_id,조건부 저장,저장된 START·STOP ID와 Robot·Scenario 일치 후 반영
+FOLLOW_RESULT resultCode/reasonCode,Robot → Backend,추종 상태·종료 원인,scenario.last_follow_result_code/last_follow_reason_code 및 completion 코드,조건부 저장,SUCCEEDED reason은 null; 실패 사유는 확정 enum
+Guardian walk response,Backend → App,accepted·scenarioId·status·reasonCode,walk_request_receipt의 최초 처리 결정,재생,중복 요청도 최초 응답 상태를 결정적으로 반환
+Backend synthetic FOLLOW timeout,Backend 내부,ACK·최대 산책 시간 만료 안전 종료,scenario.last_follow_result_event_id/command_id/result_code/reason_code/result_at,저장,timeout- eventId와 EXECUTION_TIMEOUT으로 Robot FOLLOW_RESULT와 구분
