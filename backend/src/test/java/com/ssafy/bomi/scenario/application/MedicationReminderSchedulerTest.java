@@ -56,13 +56,19 @@ class MedicationReminderSchedulerTest {
     private final UUID medicationId = UUID.randomUUID();
     private final UUID scheduleId = UUID.randomUUID();
     private final UUID robotUuid = UUID.randomUUID();
+    private Robot robot;
 
     private MedicationReminderScheduler schedulerAt(String isoLocalDateTime) {
         Clock fixed = Clock.fixed(
             ZonedDateTime.of(java.time.LocalDateTime.parse(isoLocalDateTime), KST).toInstant(), KST);
         MedicationReminderScheduler scheduler = new MedicationReminderScheduler(
             careRecordRepository, scenarioRepository, robotRepository, commandPublisher,
-            new ScenarioStartGuard(scenarioRepository, appUserRepository), properties, fixed);
+            new ScenarioRobotStartPolicy(
+                new ScenarioStartGuard(scenarioRepository, appUserRepository),
+                robotRepository,
+                scenarioRepository),
+            properties,
+            fixed);
 
         when(appUserRepository.findByIdForUpdate(any()))
             .thenReturn(Optional.of(mock(AppUser.class)));
@@ -98,9 +104,9 @@ class MedicationReminderSchedulerTest {
             .thenReturn(List.of(schedule));
         when(careRecordRepository.findById(medicationId)).thenReturn(Optional.of(medication));
 
-        Robot robot = Robot.create(seniorId, "robot-01");
+        robot = Robot.create(seniorId, "robot-01");
         ReflectionTestUtils.setField(robot, "id", robotUuid);
-        when(robotRepository.findBySeniorId(seniorId)).thenReturn(Optional.of(robot));
+        when(robotRepository.findBySeniorIdForUpdate(seniorId)).thenReturn(Optional.of(robot));
     }
 
     @Test
@@ -190,9 +196,22 @@ class MedicationReminderSchedulerTest {
     }
 
     @Test
+    void safeStopDefersMedicationWithoutScenarioOrCommand() {
+        seedMedication(true);
+        robot.changeMode(com.ssafy.bomi.robot.domain.RobotMode.SAFE_STOP);
+
+        schedulerAt("2026-08-05T07:55:00").tick();
+
+        assertThat(robot.getCurrentMode())
+            .isEqualTo(com.ssafy.bomi.robot.domain.RobotMode.SAFE_STOP);
+        verify(scenarioRepository, never()).save(any());
+        verifyNoInteractions(commandPublisher);
+    }
+
+    @Test
     void missingRobotIsDroppedWithoutThrowing() {
         seedMedication(true);
-        when(robotRepository.findBySeniorId(seniorId)).thenReturn(Optional.empty());
+        when(robotRepository.findBySeniorIdForUpdate(seniorId)).thenReturn(Optional.empty());
 
         schedulerAt("2026-08-05T07:55:00").tick(); // must not throw
 

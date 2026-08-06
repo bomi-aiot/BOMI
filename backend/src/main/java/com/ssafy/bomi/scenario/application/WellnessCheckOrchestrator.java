@@ -52,7 +52,7 @@ public class WellnessCheckOrchestrator {
     private final ScenarioRepository scenarioRepository;
     private final RobotRepository robotRepository;
     private final RobotCommandPublisher commandPublisher;
-    private final ScenarioStartGuard startGuard;
+    private final ScenarioRobotStartPolicy startPolicy;
     private final ObservationProperties observationProperties;
     private final WellnessProperties wellnessProperties;
 
@@ -60,14 +60,14 @@ public class WellnessCheckOrchestrator {
         ScenarioRepository scenarioRepository,
         RobotRepository robotRepository,
         RobotCommandPublisher commandPublisher,
-        ScenarioStartGuard startGuard,
+        ScenarioRobotStartPolicy startPolicy,
         ObservationProperties observationProperties,
         WellnessProperties wellnessProperties
     ) {
         this.scenarioRepository = scenarioRepository;
         this.robotRepository = robotRepository;
         this.commandPublisher = commandPublisher;
-        this.startGuard = startGuard;
+        this.startPolicy = startPolicy;
         this.observationProperties = observationProperties;
         this.wellnessProperties = wellnessProperties;
     }
@@ -96,15 +96,18 @@ public class WellnessCheckOrchestrator {
             return;
         }
 
-        var blocked = startGuard.check(
-            seniorId, ScenarioType.WELLNESS_CHECK, wellnessProperties.cooldown());
-        if (blocked.isPresent()) {
+        var admission = startPolicy.admitBySenior(
+            seniorId,
+            ScenarioType.WELLNESS_CHECK,
+            wellnessProperties.cooldown(),
+            ScenarioRobotStartPolicy.ModePolicy.IDLE_ONLY);
+        if (!admission.allowed()) {
             log.info("Wellness check suppressed ({}): seniorId={}, temp={}, humidity={}",
-                blocked.get(), seniorId, temperature, humidity);
+                admission.blockReason(), seniorId, temperature, humidity);
             return;
         }
 
-        Robot robot = robotRepository.findBySeniorId(seniorId).orElse(null);
+        Robot robot = admission.robot();
         if (robot == null) {
             // 예외를 던지면 ack 가 생략되어 브로커가 무한 재전송한다(A-3과 같은 원리).
             // 로봇 미배정은 재전송으로 해결되는 문제가 아니므로 경고 후 폐기한다.

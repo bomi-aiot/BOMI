@@ -14,8 +14,9 @@ import java.util.List;
  * talk spends latency the two-second turn budget does not have and pollutes the
  * prompt with text nobody asked about (CLAUDE.md §8, §16).</p>
  *
- * <p>The corpus itself is not built yet — its source and chunking are still open
- * (CLAUDE.md §24) — so the default implementation reports unavailable.</p>
+ * <p>The MVP implementation reads a small versioned corpus bundled with the service and
+ * preserves source, chunk, citation and URL metadata. It is deliberately separate from
+ * personal-memory vectors: public policy text has a different lifecycle and authority.</p>
  */
 public interface DocumentCorpusSearch {
 
@@ -24,11 +25,35 @@ public interface DocumentCorpusSearch {
      *
      * @param title human-readable source label, e.g. a programme name
      * @param content the chunk text that will be pasted into the prompt
-     * @param sourceRef where it came from, so an answer can be traced back
+     * @param source publisher or source system
+     * @param version source snapshot or policy version
+     * @param chunkId stable chunk identifier
+     * @param citation short human-readable citation label
+     * @param url authoritative source URL
      */
-    record DocumentHit(String title, String content, String sourceRef) {}
+    record DocumentHit(
+        String title,
+        String content,
+        String source,
+        String version,
+        String chunkId,
+        String citation,
+        String url
+    ) {}
 
-    List<DocumentHit> search(String query, int limit);
+    /** Completed result or a machine-readable degradation reason. */
+    record SearchResult(
+        List<DocumentHit> hits,
+        boolean used,
+        String fallbackReason,
+        long latencyMs
+    ) {
+        public SearchResult {
+            hits = List.copyOf(hits);
+        }
+    }
+
+    SearchResult search(String query, int limit);
 
     /** Whether a real corpus is wired up. Reported to the caller verbatim. */
     boolean isAvailable();

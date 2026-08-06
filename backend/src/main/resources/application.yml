@@ -20,10 +20,23 @@ spring:
     # set this true so Flyway baselines the current state instead of failing.
     baseline-on-migrate: false
 management:
+  prometheus:
+    metrics:
+      export:
+        enabled: true
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics,prometheus
+  endpoint:
+    prometheus:
+      access: unrestricted
+    health:
+      show-details: always
+      status:
+        order: down,out-of-service,degraded,unknown,up
+        http-mapping:
+          degraded: 200
 
 springdoc:
   api-docs:
@@ -45,6 +58,10 @@ springdoc:
         - /api/v1/confirmation-requests/**
         - /api/v1/elders/**
         - /api/v1/known-persons/**
+    - group: bomi-operator
+      display-name: "[BE-Operator] 운영자 안전 복구 API"
+      paths-to-match:
+        - /api/v1/operator/**
     - group: bomi-backend
       display-name: "[BE-All] 백엔드 전체 API"
       packages-to-scan: com.ssafy.bomi
@@ -67,7 +84,7 @@ springdoc:
     # 가치는 유지하고 파괴적 실행만 막는다.
     supported-submit-methods:
       - get
-    # group-configs 의 세 그룹은 springdoc 이 display-name 으로 자동 등록한다.
+    # group-configs 의 네 그룹은 springdoc 이 display-name 으로 자동 등록한다.
     # 여기에 다시 적으면 드롭다운에 같은 항목이 두 번 뜬다. 정적 YAML 만 적는다.
     urls:
       - name: "[AI-Vision] 인식 요청 API (계약·미구현)"
@@ -144,6 +161,12 @@ bomi:
     dimensions: ${QDRANT_DIMENSIONS:4096}
     timeout-millis: ${QDRANT_TIMEOUT_MILLIS:1500}
 
+  # 번들된 공공 복지 문서 코퍼스. 네트워크·임베딩 호출 없이 검색되며, 각 청크는
+  # 출처·버전·인용·URL을 보존한다. 정책 스냅샷을 교체하거나 긴급 롤백할 때만 끈다.
+  document-corpus:
+    enabled: ${DOCUMENT_CORPUS_ENABLED:true}
+    resource: ${DOCUMENT_CORPUS_RESOURCE:classpath:rag/welfare-corpus.json}
+
   # 임베딩 모델 (S15P11E102-218).
   #
   # ★ 기본값이 전부 꺼짐이다. 백엔드에서 유일하게 과금되는 외부 API 이고, 프로젝트
@@ -216,3 +239,9 @@ bomi:
   #   통과해야 한다. 배포에서 실제 값을 채우는 것은 별도 결정이다.
   robot-channel:
     shared-secret: ${ROBOT_SHARED_SECRET:}
+
+  # Safety-critical operator mutations are fail-closed. When either value is empty,
+  # /api/v1/operator/** returns 503 instead of exposing an unauthenticated mutation.
+  operator-channel:
+    shared-secret: ${OPERATOR_SHARED_SECRET:}
+    operator-id: ${OPERATOR_ID:}

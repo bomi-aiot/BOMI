@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ssafy.bomi.fact.application.ConversationFactIntakeService;
+import com.ssafy.bomi.fact.application.FactCandidateCancellationService;
 import com.ssafy.bomi.fact.domain.FactCandidate;
 import com.ssafy.bomi.fact.domain.FactOperation;
 import com.ssafy.bomi.fact.domain.FactTargetDomain;
@@ -35,6 +36,7 @@ class RobotFactIntakeControllerTest {
     @Autowired ObjectMapper objectMapper;
 
     @MockitoBean ConversationFactIntakeService service;
+    @MockitoBean FactCandidateCancellationService cancellationService;
 
     private final UUID seniorId = UUID.randomUUID();
     private final UUID conversationId = UUID.randomUUID();

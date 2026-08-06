@@ -70,12 +70,14 @@ class WakeWordCallConcurrencyTest {
         });
         ScenarioStartGuard startGuard =
             new ScenarioStartGuard(scenarioRepository, appUserRepository);
+        ScenarioRobotStartPolicy startPolicy = new ScenarioRobotStartPolicy(
+            startGuard, robotRepository, scenarioRepository);
         orchestrator = new WakeWordCallOrchestrator(
             scenarioRepository,
             receiptRepository,
             robotRepository,
             publisher,
-            startGuard,
+            startPolicy,
             clock);
     }
 

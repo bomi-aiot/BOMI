@@ -18,12 +18,42 @@ import java.util.UUID;
  * content here would make it possible — easy, even — to answer a turn straight from a
  * payload that was written before the senior changed their mind about sharing.</p>
  *
- * <p><b>Every method may be a no-op.</b> When no store is configured, or the embedding model
- * has no API key, {@link #isAvailable()} is false and writes are dropped. That is not a
- * silent failure: the row keeps {@code embedding_status = PENDING}, so the sync job
- * reindexes it the moment the store comes back (V5 exists for exactly this).</p>
+ * <p><b>Writes never pretend to succeed.</b> When no store is configured, the vector has the
+ * wrong dimension, or Qdrant rejects the request, {@link #upsert} returns an explicit
+ * {@link VectorWriteStatus}. The caller may only mark PostgreSQL {@code SYNCED} after
+ * {@link VectorWriteStatus#STORED}. This keeps the derived-index bookkeeping truthful and
+ * makes a later reindex possible.</p>
  */
 public interface VectorStore {
+
+    /**
+     * Result of one vector write.
+     *
+     * <p>{@code UNAVAILABLE} and {@code RETRYABLE_FAILURE} leave PostgreSQL due for a later
+     * run. {@code DIMENSION_MISMATCH} is not retryable until configuration is corrected, so
+     * the sync service isolates that row as {@code FAILED} instead of paying for it every
+     * schedule tick.</p>
+     */
+    enum VectorWriteStatus {
+        STORED(false),
+        UNAVAILABLE(true),
+        RETRYABLE_FAILURE(true),
+        DIMENSION_MISMATCH(false);
+
+        private final boolean retryable;
+
+        VectorWriteStatus(boolean retryable) {
+            this.retryable = retryable;
+        }
+
+        public boolean stored() {
+            return this == STORED;
+        }
+
+        public boolean retryable() {
+            return retryable;
+        }
+    }
 
     /**
      * One candidate: an id and how close it was. Never any content.
@@ -32,6 +62,31 @@ public interface VectorStore {
      * @param score higher is closer. Cosine similarity, so 0.0–1.0 for normalized vectors
      */
     record VectorHit(UUID id, double score) {}
+
+    /** One vector-query execution, separate from an empty successful result. */
+    enum VectorSearchStatus {
+        COMPLETED,
+        UNAVAILABLE,
+        FAILED,
+        DIMENSION_MISMATCH
+    }
+
+    /**
+     * Result of one vector query.
+     *
+     * <p>An empty {@code hits} list with {@code COMPLETED} means Qdrant was searched and
+     * found no neighbours. The other statuses mean no trustworthy conclusion can be drawn
+     * from an empty list.</p>
+     */
+    record VectorSearchResult(List<VectorHit> hits, VectorSearchStatus status) {
+        public VectorSearchResult {
+            hits = List.copyOf(hits);
+        }
+
+        public boolean completed() {
+            return status == VectorSearchStatus.COMPLETED;
+        }
+    }
 
     /**
      * Makes sure the collections exist with the right dimension.
@@ -50,7 +105,8 @@ public interface VectorStore {
      *     Not a privacy control — see {@link #search} — but without it every query would
      *     score every senior's memories against each other
      */
-    void upsert(VectorCollection collection, UUID id, UUID seniorId, float[] vector);
+    VectorWriteStatus upsert(VectorCollection collection, UUID id, UUID seniorId,
+        float[] vector);
 
     /**
      * Finds the ids whose vectors are closest to {@code queryVector}.
@@ -61,9 +117,9 @@ public interface VectorStore {
      * and that check is the actual boundary (see {@code ConversationContextService}).</p>
      *
      * @param limit ask for more than needed; the authoritative filter will remove some
-     * @return possibly empty, never null. Empty when the store is unavailable
+     * @return an explicit execution status plus possibly-empty hits
      */
-    List<VectorHit> search(VectorCollection collection, UUID seniorId, float[] queryVector,
+    VectorSearchResult search(VectorCollection collection, UUID seniorId, float[] queryVector,
         int limit);
 
     /** Removes one vector, e.g. when its row was superseded or deleted. */

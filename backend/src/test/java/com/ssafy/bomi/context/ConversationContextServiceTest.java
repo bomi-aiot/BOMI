@@ -2,6 +2,11 @@ package com.ssafy.bomi.context;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.ssafy.bomi.activity.domain.DailyActivityMetric;
 import com.ssafy.bomi.activity.repository.DailyActivityMetricRepository;
@@ -34,6 +39,8 @@ import com.ssafy.bomi.user.domain.AppUser;
 import com.ssafy.bomi.user.domain.ConsentStatus;
 import com.ssafy.bomi.user.repository.AppUserRepository;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -48,9 +55,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.test.web.servlet.MockMvc;
 
 /**
  * Verifies the completion conditions of S15P11E102-203 against a real PostgreSQL.
@@ -71,6 +81,7 @@ import org.springframework.transaction.annotation.Transactional;
         "spring.jpa.open-in-view=false",
         "bomi.mqtt.enabled=false"
     })
+@AutoConfigureMockMvc
 @Transactional
 class ConversationContextServiceTest {
 
@@ -86,6 +97,8 @@ class ConversationContextServiceTest {
     @Autowired private CareRecordRepository careRecordRepository;
     @Autowired private DailyActivityMetricRepository metricRepository;
     @Autowired private KnownPersonRepository knownPersonRepository;
+    @Autowired private MockMvc mockMvc;
+    @PersistenceContext private EntityManager entityManager;
 
     private AppUser senior;
 
@@ -256,6 +269,31 @@ class ConversationContextServiceTest {
         assertThat(context.profile().sleepTime()).isNull();
         assertThat(context.profile().chronicPainArea()).isNull();
         assertThat(context.profile().preferredHospital()).isNull();
+    }
+
+    // ── S15P11E102-347: 자택 주소 — "오늘 날씨 어때?"의 기본 지역 ─────────────
+
+    /** 주소가 채워지면 문맥의 프로필에 실려야 한다(완료 조건). 로봇의 지역 폴백이
+     *  정확히 이 키(address)를 읽는다 — 로봇 CLAUDE.md §30. */
+    @Test
+    void profileCarriesHomeAddress() {
+        senior.changeHomeAddress("부산광역시 부산진구");
+        appUserRepository.save(senior);
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().address()).isEqualTo("부산광역시 부산진구");
+    }
+
+    /** 주소가 없는 어르신은 지금과 동일하게(오류 없이, 로봇은 지역을 되물으며)
+     *  동작한다(완료 조건). 모르는 값을 지어내지 않는다. */
+    @Test
+    void missingHomeAddressYieldsNullWithoutError() {
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("", null, null, null, false, null));
+
+        assertThat(context.profile().address()).isNull();
     }
 
     // ── S15P11E102-253: 상위 동의 없이는 질문 자체를 만들지 않는다 ────────────
@@ -593,29 +631,105 @@ class ConversationContextServiceTest {
 
     @Test
     void unavailableSemanticSearchIsReportedRatherThanHidden() {
+        saveMemory("무릎이 아프다", List.of("무릎"), (short) 3);
         ConversationContextResponse context = contextService.assemble(
             senior.getId(), new ConversationContextRequest("무릎", null, null, null, false, null));
 
         assertThat(context.availability().semanticSearch()).isFalse();
         assertThat(context.availability().notes())
             .anySatisfy(note -> assertThat(note).contains("semantic search unavailable"));
+        assertThat(context.retrieval().semanticRequested()).isTrue();
+        assertThat(context.retrieval().semanticUsed()).isFalse();
+        assertThat(context.retrieval().fallbackReason()).isEqualTo("semantic_unavailable");
+        assertThat(context.retrieval().hitCount()).isZero();
+        assertThat(context.retrieval().latencyMs()).isZero();
+        assertThat(context.retrieval().embeddingLatencyMs()).isZero();
+        assertThat(context.retrieval().vectorSearchLatencyMs()).isZero();
     }
 
     @Test
-    void documentsAreEmptyUnlessRequestedAndUnavailabilityIsReported() {
+    void noCandidatesIsNotReportedAsAFailedSemanticSearch() {
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("무릎", null, null, null, false, null));
+
+        assertThat(context.retrieval().semanticRequested()).isFalse();
+        assertThat(context.retrieval().semanticUsed()).isFalse();
+        assertThat(context.retrieval().fallbackReason()).isEqualTo("no_candidates");
+    }
+
+    @Test
+    void documentsAreSearchedOnlyWhenRequestedAndCarryTraceableMetadata() {
         ConversationContextResponse withoutFlag = contextService.assemble(
             senior.getId(), new ConversationContextRequest("복지", null, null, null, false, null));
         ConversationContextResponse withFlag = contextService.assemble(
             senior.getId(), new ConversationContextRequest("복지", null, null, null, true, null));
 
         assertThat(withoutFlag.documents()).isEmpty();
+        assertThat(withoutFlag.retrieval().documentRequested()).isFalse();
+        assertThat(withoutFlag.availability().documentCorpus()).isTrue();
         assertThat(withoutFlag.availability().notes())
             .noneSatisfy(note -> assertThat(note).contains("document corpus"));
 
-        assertThat(withFlag.documents()).isEmpty();
-        assertThat(withFlag.availability().documentCorpus()).isFalse();
+        assertThat(withFlag.documents()).isNotEmpty()
+            .allSatisfy(document -> {
+                assertThat(document.source()).isEqualTo("복지로");
+                assertThat(document.version()).isNotBlank();
+                assertThat(document.chunkId()).startsWith("bokjiro-");
+                assertThat(document.citation()).isNotBlank();
+                assertThat(document.url()).startsWith("https://www.bokjiro.go.kr/");
+            });
+        assertThat(withFlag.availability().documentCorpus()).isTrue();
+        assertThat(withFlag.retrieval().documentRequested()).isTrue();
+        assertThat(withFlag.retrieval().documentUsed()).isTrue();
+        assertThat(withFlag.retrieval().documentFallbackReason()).isNull();
+        assertThat(withFlag.retrieval().documentHitCount())
+            .isEqualTo(withFlag.documents().size());
         assertThat(withFlag.availability().notes())
-            .anySatisfy(note -> assertThat(note).contains("document corpus"));
+            .noneSatisfy(note -> assertThat(note).contains("document corpus"));
+    }
+
+    @Test
+    void welfareQuestionCarriesCorpusEvidenceThroughTheRealHttpEndpoint() throws Exception {
+        mockMvc.perform(post("/api/v1/seniors/{seniorId}/conversation-context", senior.getId())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                    {
+                      "query": "복지제도 알려줘",
+                      "includeDocuments": true
+                    }
+                    """))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.availability.documentCorpus").value(true))
+            .andExpect(jsonPath("$.retrieval.documentRequested").value(true))
+            .andExpect(jsonPath("$.retrieval.documentUsed").value(true))
+            .andExpect(jsonPath("$.retrieval.documentHitCount").value(3))
+            .andExpect(jsonPath("$.documents[0].source").value("복지로"))
+            .andExpect(jsonPath("$.documents[0].version").isNotEmpty())
+            .andExpect(jsonPath("$.documents[0].chunkId").isNotEmpty())
+            .andExpect(jsonPath("$.documents[0].citation").isNotEmpty())
+            .andExpect(jsonPath("$.documents[0].url").value(
+                org.hamcrest.Matchers.startsWith("https://www.bokjiro.go.kr/")));
+    }
+
+    @Test
+    void ragHealthAndPrometheusExposeTheSameRuntimePath() throws Exception {
+        saveMemory("복지관 산책을 좋아함", List.of("복지관", "산책"), (short) 3);
+        contextService.assemble(senior.getId(), new ConversationContextRequest(
+            "복지제도 알려줘", null, null, null, true, null));
+
+        mockMvc.perform(get("/actuator/health/rag"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("UP"))
+            .andExpect(jsonPath("$.details.semanticMode").value("keyword_fallback"))
+            .andExpect(jsonPath("$.details.documentCorpusAvailable").value(true));
+        mockMvc.perform(get("/actuator/prometheus"))
+            .andExpect(status().isOk())
+            .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                "bomi_rag_retrieval_requests_total")))
+            .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                "bomi_rag_retrieval_stage_latency")))
+            .andExpect(content().string(org.hamcrest.Matchers.containsString(
+                "bomi_embedding_rows")));
     }
 
     // ── 재정렬: 중요도와 최근성이 실제로 작동하는가 ──────────────────────────
@@ -648,6 +762,44 @@ class ConversationContextServiceTest {
         // '아무것도 기억하지 못하는' 상태가 된다.
         assertThat(context.memories()).extracting(ConversationContextResponse.MemoryItem::id)
             .contains(unrelated.getId());
+    }
+
+    @Test
+    void koreanParticlesDoNotBreakKeywordFallback() {
+        Memory unrelated = saveMemory("손자가 다녀갔다", List.of(), (short) 3);
+        Memory related = saveMemory("무릎이 자주 아프다", List.of(), (short) 3);
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest(
+                "무릎은 오늘 어떠세요", null, 3, null, false, null));
+
+        assertThat(context.availability().semanticSearch()).isFalse();
+        assertThat(context.memories()).extracting(ConversationContextResponse.MemoryItem::id)
+            .startsWith(related.getId())
+            .contains(unrelated.getId());
+    }
+
+    @Test
+    void anOldMemoryRemainsEligibleButReceivesARecencyPenalty() {
+        Memory old = saveMemory("무릎 운동을 했다", List.of("무릎"), (short) 3);
+        Memory recent = saveMemory("무릎 찜질을 했다", List.of("무릎"), (short) 3);
+        entityManager.createNativeQuery(
+                "UPDATE memory SET first_observed_at = :observedAt WHERE id = :id")
+            .setParameter("observedAt", OffsetDateTime.now().minusDays(180))
+            .setParameter("id", old.getId())
+            .executeUpdate();
+        entityManager.flush();
+        entityManager.clear();
+
+        ConversationContextResponse context = contextService.assemble(
+            senior.getId(), new ConversationContextRequest("무릎", null, 3, null, false, null));
+
+        Map<UUID, Double> scores = context.memories().stream().collect(
+            java.util.stream.Collectors.toMap(
+                ConversationContextResponse.MemoryItem::id,
+                ConversationContextResponse.MemoryItem::score));
+        assertThat(scores).containsKeys(old.getId(), recent.getId());
+        assertThat(scores.get(recent.getId())).isGreaterThan(scores.get(old.getId()));
     }
 
     // ── S15P11E102-262: 최근에 쓴 기억은 감점된다 (같은 회상 반복 방지) ─────────

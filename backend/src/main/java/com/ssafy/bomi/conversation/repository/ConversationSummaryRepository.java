@@ -14,6 +14,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface ConversationSummaryRepository extends JpaRepository<ConversationSummary, UUID> {
 
+    long countByEmbeddingStatus(EmbeddingStatus status);
+
     /** Recent summaries for the guardian dashboard (S15P11E102-221). */
     List<ConversationSummary> findTop5BySeniorIdOrderByGeneratedAtDesc(UUID seniorId);
 

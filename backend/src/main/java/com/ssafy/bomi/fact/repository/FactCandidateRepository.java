@@ -41,6 +41,15 @@ public interface FactCandidateRepository extends JpaRepository<FactCandidate, UU
             UUID seniorId, Collection<FactCandidateStatus> statuses);
 
     /**
+     * "기억하지 마" — 한 대화에서 나온 미확정 후보 전부 (S15P11E102-348).
+     *
+     * <p>로봇은 서버가 배정한 후보 id 를 모르므로 취소의 단위는 대화다. 상태
+     * 목록은 호출부(FactCandidateCancellationService)가 미확정 단계만 넘긴다.</p>
+     */
+    List<FactCandidate> findBySeniorIdAndConversationIdAndStatusIn(
+            UUID seniorId, UUID conversationId, Collection<FactCandidateStatus> statuses);
+
+    /**
      * The candidate produced by a given onboarding answer.
      *
      * <p>Answers are upserted, so their candidate is updated in place rather than

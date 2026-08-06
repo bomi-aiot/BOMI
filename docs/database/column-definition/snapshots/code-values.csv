@@ -111,6 +111,7 @@ fact_candidate.status,CONFIRMED,후보 처리 상태: CONFIRMED,fact_candidate.s
 fact_candidate.status,MATERIALIZED,후보 처리 상태: MATERIALIZED,fact_candidate.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
 fact_candidate.status,REJECTED,후보 처리 상태: REJECTED,fact_candidate.status의 상태·분기 판단,검색·반영에서 제외
 fact_candidate.status,EXPIRED,후보 처리 상태: EXPIRED,fact_candidate.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.status,CANCELLED_BY_SENIOR,어르신 요청 취소,어르신 본인이 '기억하지 마'로 닫은 미확정 후보. 재질의·확인요청·검색·반영에서 제외한다. REJECTED(보호자·시스템 거절)와 구분한다 — 누가 왜 닫았는지가 T4 신뢰의 근거다.,
 fact_candidate.clarification_reason,MISSING_REQUIRED_FIELD,재질의 사유: MISSING_REQUIRED_FIELD,fact_candidate.clarification_reason의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
 fact_candidate.clarification_reason,AMBIGUOUS_VALUE,재질의 사유: AMBIGUOUS_VALUE,fact_candidate.clarification_reason의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
 fact_candidate.clarification_reason,LOW_RECOGNITION_CONFIDENCE,재질의 사유: LOW_RECOGNITION_CONFIDENCE,fact_candidate.clarification_reason의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음

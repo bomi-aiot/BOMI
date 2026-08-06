@@ -47,7 +47,9 @@ class MqttInboundMessageParserTest {
               "payload": {
                 "outcome": "SUCCEEDED",
                 "resultCode": "ARRIVED",
-                "reasonCode": null
+                "reasonCode": null,
+                "location": "LIVING_ROOM",
+                "message": "arrived"
               }
             }
             """.formatted(scenarioId);
@@ -57,6 +59,7 @@ class MqttInboundMessageParserTest {
 
         assertThat(message.requireScenarioId()).isEqualTo(scenarioId);
         assertThat(message.requireCommandId()).isEqualTo("cmd-nav-01");
+        assertThat(message.payload().path("location").asText()).isEqualTo("LIVING_ROOM");
         assertThat(message.legacyContract()).isFalse();
     }
 
@@ -100,6 +103,92 @@ class MqttInboundMessageParserTest {
             "bomi/v1/robot/robot-01/results", payload, 1, false))
             .isInstanceOf(MqttContractViolationException.class)
             .hasMessageContaining("must not mix");
+    }
+
+    @Test
+    void rejectsV1NavigationResultFieldsOutsideTheFinalSchema() {
+        UUID scenarioId = UUID.randomUUID();
+        String correlation = "\"commandId\": \"cmd-nav-01\", \"scenarioId\": \""
+            + scenarioId + "\"";
+
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-01/results",
+            v1NavigationResult(correlation,
+                "\"outcome\": \"SUCCEEDED\", \"resultCode\": \"ARRIVED\", "
+                    + "\"reasonCode\": null",
+                "\"conversationId\": \"" + UUID.randomUUID() + "\""),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("unsupported field 'conversationId'");
+
+        for (String invalidPayload : new String[] {
+            "\"outcome\": \"SUCCEEDED\", \"resultCode\": \"ARRIVED\", "
+                + "\"reasonCode\": null, \"pose\": {}",
+            "\"outcome\": \"SUCCEEDED\", \"resultCode\": \"ARRIVED\", "
+                + "\"reasonCode\": null, \"location\": \"KITCHEN\"",
+            "\"outcome\": \"FAILED\", \"resultCode\": \"NOT_ARRIVED\", "
+                + "\"reasonCode\": \"PATH_BLOCKED\", \"location\": \"ENTRANCE\"",
+            "\"outcome\": \"SUCCEEDED\", \"resultCode\": \"ARRIVED\", "
+                + "\"reasonCode\": null, \"message\": 7"
+        }) {
+            assertThatThrownBy(() -> parser.parse(
+                "bomi/v1/robot/robot-01/results",
+                v1NavigationResult(correlation, invalidPayload, null),
+                1,
+                false))
+                .isInstanceOf(MqttContractViolationException.class);
+        }
+    }
+
+    @Test
+    void requiresFinalV1NavigationResultCorrelationAndResultFields() {
+        UUID scenarioId = UUID.randomUUID();
+        String validPayload = "\"outcome\": \"SUCCEEDED\", "
+            + "\"resultCode\": \"ARRIVED\", \"reasonCode\": null";
+
+        for (String invalidResult : new String[] {
+            v1NavigationResult("\"commandId\": \"cmd-nav-01\"", validPayload, null),
+            v1NavigationResult("\"scenarioId\": \"" + scenarioId + "\"",
+                validPayload, null),
+            v1NavigationResult(
+                "\"commandId\": \"cmd-nav-01\", \"scenarioId\": \"not-a-uuid\"",
+                validPayload, null),
+            v1NavigationResult(
+                "\"commandId\": \"   \", \"scenarioId\": \"" + scenarioId + "\"",
+                validPayload, null),
+            v1NavigationResult(
+                "\"commandId\": \"cmd-nav-01\", \"scenarioId\": \"" + scenarioId + "\"",
+                validPayload, null).replace("\"robotId\": \"robot-01\",", ""),
+            v1NavigationResult(
+                "\"commandId\": \"cmd-nav-01\", \"scenarioId\": \"" + scenarioId + "\"",
+                validPayload, null).replace("\"eventId\": \"evt-nav-v1\",", ""),
+            v1NavigationResult(
+                "\"commandId\": \"cmd-nav-01\", \"scenarioId\": \"" + scenarioId + "\"",
+                "\"outcome\": \"DONE\", \"resultCode\": \"ARRIVED\", "
+                    + "\"reasonCode\": null", null),
+            v1NavigationResult(
+                "\"commandId\": \"cmd-nav-01\", \"scenarioId\": \"" + scenarioId + "\"",
+                "\"outcome\": \"SUCCEEDED\", \"resultCode\": \"RUNNING\", "
+                    + "\"reasonCode\": null", null),
+            v1NavigationResult(
+                "\"commandId\": \"cmd-nav-01\", \"scenarioId\": \"" + scenarioId + "\"",
+                "\"outcome\": \"FAILED\", \"resultCode\": \"NOT_ARRIVED\"", null)
+        }) {
+            assertThatThrownBy(() -> parser.parse(
+                "bomi/v1/robot/robot-01/results", invalidResult, 1, false))
+                .isInstanceOf(MqttContractViolationException.class);
+        }
+
+        assertThatThrownBy(() -> parser.parse(
+            "bomi/v1/robot/robot-02/results",
+            v1NavigationResult(
+                "\"commandId\": \"cmd-nav-01\", \"scenarioId\": \"" + scenarioId + "\"",
+                validPayload, null),
+            1,
+            false))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("does not match");
     }
 
     @Test
@@ -579,6 +668,24 @@ class MqttInboundMessageParserTest {
               "payload": {%s}
             }
             """.formatted(extra, payloadFields);
+    }
+
+    private static String v1NavigationResult(
+        String correlationFields,
+        String payloadFields,
+        String extraTopLevelField
+    ) {
+        String extra = extraTopLevelField == null ? "" : ",\n" + extraTopLevelField;
+        return """
+            {
+              "eventId": "evt-nav-v1",
+              %s,
+              "robotId": "robot-01",
+              "type": "NAVIGATION_RESULT",
+              "occurredAt": "2026-08-05T10:30:00+09:00",
+              "payload": {%s}%s
+            }
+            """.formatted(correlationFields, payloadFields, extra);
     }
 
     private static String walkRequested(String extraTopLevelField, String payloadFields) {
