@@ -14,6 +14,15 @@ waypoints:
     y: 0.012
     yaw: 3.14
 
+  # 충전소 도킹 위치. 실측값이 아니라 지도 원점(0, 0, 0)으로 절차적으로
+  # 정의한다 — 재매핑할 때 로봇을 충전소에 도킹한 채로 SLAM을 시작하면
+  # 원점이 곧 충전소가 된다. bridge의 contract.TARGET_DEFAULT가 이 이름으로
+  # 매핑된다(robot/ros2_ws/src/bridge/bridge/waypoint_lookup.py).
+  - name: charging
+    x: 0.0
+    y: 0.0
+    yaw: 0.0
+
 loop: true
 waypoint_delay_sec: 5.0
 loop_delay_sec: 30.0

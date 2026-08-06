@@ -17,10 +17,12 @@ from core.waypoint_route import Waypoint, load_patrol_route
 # 계약(contract)에 정의된 목적지만 여기에 명시적으로 나열한다. 문자열 대소문자
 # 변환으로 임의 목적지를 자동 허용하지 않기 위해, 지원 목적지를 표로 직접
 # 관리한다.
-# 주의: contract.TARGET_DEFAULT("DEFAULT")의 실제 위치가 코드나 문서에서 아직
-# 확정되지 않았다. 임의 지점(sofa 등)에 연결하지 않고 미지원으로 남겨 둔다.
+# contract.TARGET_DEFAULT("DEFAULT")는 충전소 도킹 위치를 가리킨다. 그 좌표는
+# 실측값이 아니라 지도 원점(0, 0, 0)으로 절차적으로 정의한다 — 재매핑 시
+# 로봇을 충전소에 도킹한 채로 SLAM을 시작하면 원점이 곧 충전소가 된다.
 _SUPPORTED_TARGET_TO_WAYPOINT_NAME = {
     contract.TARGET_ENTRANCE: "entrance",
+    contract.TARGET_DEFAULT: "charging",
 }
 
 

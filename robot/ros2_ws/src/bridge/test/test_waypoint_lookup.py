@@ -28,6 +28,10 @@ waypoints:
     x: 0.178
     y: 1.722
     yaw: 0.0
+  - name: charging
+    x: 0.0
+    y: 0.0
+    yaw: 0.0
 """
 
 
@@ -35,9 +39,9 @@ def test_entrance_target_maps_to_entrance_waypoint_name() -> None:
     assert resolve_waypoint_name(contract.TARGET_ENTRANCE) == "entrance"
 
 
-def test_default_target_is_not_supported() -> None:
-    # DEFAULT의 실제 위치가 확정되지 않아 임의 지점에 연결하지 않는다.
-    assert resolve_waypoint_name(contract.TARGET_DEFAULT) is None
+def test_default_target_maps_to_charging_waypoint_name() -> None:
+    # DEFAULT는 충전소 도킹 위치(지도 원점)를 가리킨다.
+    assert resolve_waypoint_name(contract.TARGET_DEFAULT) == "charging"
 
 
 def test_unknown_target_is_not_supported() -> None:
@@ -57,6 +61,17 @@ def test_load_waypoint_reads_entrance_coordinates(tmp_path) -> None:
     assert waypoint.x == pytest.approx(-0.226)
     assert waypoint.y == pytest.approx(-1.520)
     assert waypoint.yaw == pytest.approx(1.57)
+
+
+def test_load_waypoint_reads_charging_coordinates(tmp_path) -> None:
+    path = _write_waypoints(tmp_path, _VALID_WAYPOINTS)
+
+    waypoint = load_waypoint(path, "charging")
+
+    assert waypoint.name == "charging"
+    assert waypoint.x == pytest.approx(0.0)
+    assert waypoint.y == pytest.approx(0.0)
+    assert waypoint.yaw == pytest.approx(0.0)
 
 
 def test_load_waypoint_missing_name_raises_key_error(tmp_path) -> None:

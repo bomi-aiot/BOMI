@@ -20,6 +20,10 @@ waypoints:
     x: -0.226
     y: -1.520
     yaw: 1.57
+  - name: charging
+    x: 0.0
+    y: 0.0
+    yaw: 0.0
 """
 
 
@@ -228,7 +232,9 @@ def test_unsupported_target_does_not_send_goal(tmp_path) -> None:
     client = _FakeActionClient(server_ready=True)
     driver = _make_driver(tmp_path, client)
 
-    assert driver.navigate(contract.TARGET_DEFAULT) == contract.STATUS_FAILED
+    # "KITCHEN"은 계약에 없는 목적지다. DEFAULT는 charging으로 매핑되어
+    # 더 이상 미지원 사례가 아니므로 여기서는 쓰지 않는다.
+    assert driver.navigate("KITCHEN") == contract.STATUS_FAILED
     assert client.sent_goals == []
 
 
