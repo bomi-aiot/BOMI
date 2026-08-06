@@ -20,16 +20,28 @@ def generate_launch_description() -> LaunchDescription:
         "person_following.yaml",
     )
 
+    input_topic = LaunchConfiguration("input_topic")
     output_topic = LaunchConfiguration("output_topic")
+    scan_topic = LaunchConfiguration("scan_topic")
     use_lidar = LaunchConfiguration("use_lidar")
     start_enabled = LaunchConfiguration("start_enabled")
 
     return LaunchDescription(
         [
             DeclareLaunchArgument(
+                "input_topic",
+                default_value="/vision/follow_result",
+                description="비전 추종 결과를 구독할 토픽",
+            ),
+            DeclareLaunchArgument(
                 "output_topic",
                 default_value="/cmd_vel_follow",
                 description="사람 추종 속도 명령을 발행할 토픽",
+            ),
+            DeclareLaunchArgument(
+                "scan_topic",
+                default_value="/scan",
+                description="LiDAR LaserScan을 구독할 토픽",
             ),
             DeclareLaunchArgument(
                 "use_lidar",
@@ -55,7 +67,9 @@ def generate_launch_description() -> LaunchDescription:
                 parameters=[
                     parameter_file,
                     {
+                        "input_topic": input_topic,
                         "output_topic": output_topic,
+                        "scan_topic": scan_topic,
                         "use_lidar": ParameterValue(
                             use_lidar,
                             value_type=bool,
