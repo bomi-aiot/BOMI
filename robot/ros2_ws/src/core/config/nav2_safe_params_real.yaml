@@ -185,8 +185,13 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      # robot/docs/hardware-control.md 실측 전 초안. #8에서 확정.
-      robot_radius: 0.31
+      # 2026-08-07 실측 근거로 0.31 -> 0.30. description/models/bomi_robot/
+      # model.sdf 의 본체 박스(0.45 x 0.32)에서 계산한 외접 반경이 0.276m 이고,
+      # 0.31 로는 bomi_real_13 지도의 통행 가능 영역이 5조각으로 갈라져 현관이
+      # 본진과 단절됐다(planner 가 경로를 못 만들고 controller 가 419개 궤적을
+      # 전부 거절). 0.30 에서 현관이 본진에 붙는다. 모델 반경 대비 2.4cm 여유를
+      # 남기려고 0.28 이 아니라 0.30 을 골랐다.
+      robot_radius: 0.30
       plugins: ["static_layer", "voxel_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
@@ -225,7 +230,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_link
       use_sim_time: False
-      robot_radius: 0.31
+      robot_radius: 0.30
       resolution: 0.05
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
