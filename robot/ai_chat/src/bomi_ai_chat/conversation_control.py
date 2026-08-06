@@ -26,6 +26,12 @@ from bomi_ai_chat import policy
 # 한다. 고정 문구이므로 필요하면 미리 합성해 캐싱할 수 있다.
 WAKE_ACK_MESSAGE = "네, 말씀하세요."
 
+# 이동 중 침묵(policy.WAKE_MOVEMENT_WAIT_TIMEOUT_SEC)이 켜져 있을 때 쓰는 호출
+# 응답. WAKE_ACK_MESSAGE 와 달리 "지금부터 듣는다"가 아니라 "이동한 뒤에
+# 듣는다"를 알린다 — 이 문구 다음에는 실제로 마이크를 열지 않고 도착을
+# 기다리므로, "말씀하세요"라고 해 놓고 안 듣는 것은 거짓 신호다.
+WAKE_ACK_MOVING_MESSAGE = "네, 지금 갈게요."
+
 
 class SessionState(str, Enum):
     """웨이크워드로 열리는 '리슨 세션'의 상태.

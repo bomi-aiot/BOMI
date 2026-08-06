@@ -280,6 +280,19 @@ class Settings:
     mqtt_username: str | None
     mqtt_password: str | None
 
+    # 보미야 호출 뒤 "이동 중 침묵"을 켤 것인가 (CLAUDE.md §3a, policy.
+    # WAKE_MOVEMENT_WAIT_TIMEOUT_SEC).
+    #
+    # 왜 별도 스위치가 필요한가
+    #   이 동작은 백엔드가 NAVIGATE(LIVING_ROOM) 을 실제로 발행하고 bridge 가
+    #   그 결과를 v1 로 회신할 때만 의미가 있다. 로봇/브릿지 없이 노트북에서
+    #   대화만 개발·테스트하는 흔한 경우, 이 값이 켜져 있으면 매 "보미야"마다
+    #   ARRIVED 를 절대 못 받고 policy.WAKE_MOVEMENT_WAIT_TIMEOUT_SEC(45초)를
+    #   그냥 날린 뒤에야 대화가 시작된다 — 개발 루프를 조용히 45배 느리게
+    #   만드는 사고다. 그래서 기본값은 꺼짐이고, 실제 시연/실기 환경에서만
+    #   명시적으로 켠다.
+    wake_movement_wait_enabled: bool
+
     @classmethod
     def from_env(
         cls,
@@ -441,6 +454,8 @@ class Settings:
             ),
             mqtt_username=_optional_env("MQTT_USERNAME"),
             mqtt_password=_optional_env("MQTT_PASSWORD"),
+            wake_movement_wait_enabled=_bool_env(
+                "WAKE_MOVEMENT_WAIT_ENABLED", False),
         )
 
     def validate_mqtt(self) -> None:

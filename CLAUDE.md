@@ -66,6 +66,22 @@
 - `ingress.backend_command` 의 체크포인트 오염 버그 수정(2026-08-06 랭그래프 분석 P1-b) —
   빈 명령이 이전 턴의 intent/user_input 을 재사용하지 않도록 명시적으로 비운다.
 
+`ai_chat` 쪽 배선 완료 항목 (2-6, 이동 중 침묵):
+- `navigation_watch.py` — `NavigationArrivalWatcher`. bridge 가 발행하는
+  `robot/{id}/results` 를 엿들어 v1 `NAVIGATION_RESULT`/`SUCCEEDED`/`ARRIVED`
+  만 신호(`threading.Event`)로 세운다. 백엔드·bridge 계약 무접촉(기존 결과
+  토픽을 구독만 한다).
+- `bootstrap.py` — `runtime.navigation_watcher` 가 있으면 웨이크 직후
+  `WAKE_ACK_MOVING_MESSAGE`("네, 지금 갈게요.")만 말하고, 도착 신호를
+  `policy.WAKE_MOVEMENT_WAIT_TIMEOUT_SEC`(45초) 까지 기다린 뒤에야 리슨을
+  연다. 타임아웃이어도 그 자리에서 대화를 연다(침묵 고착 방지).
+- **옵트인 (`WAKE_MOVEMENT_WAIT_ENABLED`, 기본 꺼짐)** — 로봇/브릿지 없는
+  개발 환경에서 매 "보미야"가 45초씩 느려지는 사고를 막는다. 시연/실기
+  env 에서만 명시적으로 켠다.
+- 실기 미검증 항목: §6 의 `wake.interrupt_check` 항목과 동일한 이유로,
+  `sd.InputStream` 콜백 스레드가 실제로 어떻게 반응하는지는 V3 단계에서
+  처음 확인한다.
+
 **백엔드는 `SPEAK` 를 절대 발행하지 않는다** (main 전체 grep 0건). 대화는 전부
 `START_CONVERSATION` 이고, bridge 는 이동만 담당한다.
 

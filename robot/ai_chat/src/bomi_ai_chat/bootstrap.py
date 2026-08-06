@@ -57,6 +57,10 @@ class Runtime:
     # 손 넘김 큐. 큐가 비어 있지 않으면 메인 루프가 웨이크워드 대기 대신 이
     # 대화를 먼저 진행한다 — 이유는 run_conversation_loop 의 주석 참고.
     backend_conversation_queue: queue.Queue | None = field(default=None)
+    # 이동 중 침묵(§3a)이 켜져 있을 때만 만들어지는 도착 감시자
+    # (navigation_watch.NavigationArrivalWatcher). None 이면 이 기능이
+    # 꺼져 있다는 뜻 — 웨이크 흐름은 기존 WAKE_ACK_MESSAGE 로 그대로 동작한다.
+    navigation_watcher: Any = None
 
     def shutdown(self, *, wait_for_speech_sec: float = 0.0) -> None:
         """백그라운드 스레드를 정리한다. 실패해도 종료를 막지 않는다.
@@ -85,6 +89,7 @@ class Runtime:
         for name, closer in (
             ("door subscriber", getattr(self.door_subscriber, "stop", None)),
             ("ai command subscriber", getattr(self.ai_command_subscriber, "stop", None)),
+            ("navigation arrival watcher", getattr(self.navigation_watcher, "stop", None)),
             ("scheduler", getattr(self.scheduler, "shutdown", None)),
         ):
             if closer is None:
@@ -161,6 +166,7 @@ def build_runtime(
         runtime.door_subscriber = _start_door_subscriber(senior_id, app, settings)
         runtime.ai_command_subscriber = _start_ai_command_subscriber(
             settings, backend_conversation_queue)
+        runtime.navigation_watcher = _start_navigation_watcher(settings)
     return runtime
 
 
@@ -329,6 +335,31 @@ def _start_ai_command_subscriber(settings: Settings, pending_queue: queue.Queue)
     return subscriber
 
 
+def _start_navigation_watcher(settings: Settings):
+    """이동 중 침묵(§3a)의 도착 감시자를 시작한다.
+
+    `settings.wake_movement_wait_enabled` 가 꺼져 있으면 조용히 None —
+    이건 "고장"이 아니라 이 기능 자체가 옵트인이기 때문이다(경고 로그를
+    남기지 않는다. build_navigation_arrival_watcher 안에서 이미 켜져
+    있는데 다른 전제가 빠진 경우만 경고한다).
+    """
+    from bomi_ai_chat.navigation_watch import build_navigation_arrival_watcher
+
+    try:
+        watcher = build_navigation_arrival_watcher(settings)
+        if watcher is None:
+            return None
+        watcher.start()
+    except Exception:  # noqa: BLE001 - 브로커가 없다고 대화까지 막지 않는다
+        logger.exception("could not start the navigation arrival watcher; "
+                         "wake-triggered movement will always use the "
+                         "movement-wait timeout")
+        return None
+
+    logger.info("navigation arrival watcher started")
+    return watcher
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 입력 루프
 # ─────────────────────────────────────────────────────────────────────────────
@@ -450,7 +481,27 @@ def run_conversation_loop(
                         event_publisher.publish_wake_word()
                     except Exception:  # noqa: BLE001 - 시나리오는 부가, 대화가 본체다
                         logger.warning("wake-word publish failed", exc_info=True)
-                _speak_ack(tts, audio_out)          # 호출 응답 1회 (블로킹)
+
+                if runtime.navigation_watcher is not None:
+                    # 이동 중 침묵(§3a): 짧은 응답만 하고, 실제 리슨은 도착
+                    # (또는 타임아웃) 뒤에 연다. 모터 소음 속에서 마이크를
+                    # 열지 않으므로 ASR 오인식 리스크가 그만큼 사라진다.
+                    from bomi_ai_chat import conversation_control, policy
+
+                    runtime.navigation_watcher.reset()
+                    _speak_ack(tts, audio_out,
+                              message=conversation_control.WAKE_ACK_MOVING_MESSAGE)
+                    arrived = runtime.navigation_watcher.wait_for_arrival(
+                        policy.WAKE_MOVEMENT_WAIT_TIMEOUT_SEC)
+                    if not arrived:
+                        logger.warning(
+                            "ARRIVED not observed within %.0fs; starting the "
+                            "conversation anyway (silence would be worse)",
+                            policy.WAKE_MOVEMENT_WAIT_TIMEOUT_SEC,
+                        )
+                else:
+                    _speak_ack(tts, audio_out)      # 호출 응답 1회 (블로킹)
+
                 turns, _end_reason = _run_graph_conversation(
                     runtime, audio_in, stt, turns, max_turns)
             else:
@@ -502,8 +553,13 @@ def warm_up_intent_router() -> None:
         logger.warning("could not prepare intent router rules", exc_info=True)
 
 
-def _speak_ack(tts, audio_out) -> None:
-    """호출 응답(WAKE_ACK_MESSAGE, 현재 "네, 말씀하세요.")을 블로킹으로 재생한다.
+def _speak_ack(tts, audio_out, *, message: str | None = None) -> None:
+    """호출 응답을 블로킹으로 재생한다.
+
+    기본 문구는 WAKE_ACK_MESSAGE("네, 말씀하세요.")다. 이동 중 침묵(§3a)이
+    켜져 있으면 호출부가 WAKE_ACK_MOVING_MESSAGE("네, 지금 갈게요.")를
+    넘긴다 — 그 다음에는 실제로 마이크를 열지 않으므로 문구가 그 사실과
+    맞아야 한다.
 
     실패해도 대화를 막지 않는다 — 인사는 곁가지다. 재생이 블로킹이므로 이 함수가
     끝난 뒤에 녹음이 시작된다. tts 나 audio_out 이 없으면 조용히 넘어간다.
@@ -512,8 +568,9 @@ def _speak_ack(tts, audio_out) -> None:
         return
     from bomi_ai_chat import conversation_control
 
+    text = message or conversation_control.WAKE_ACK_MESSAGE
     try:
-        audio_out.play(tts.synthesize(conversation_control.WAKE_ACK_MESSAGE))
+        audio_out.play(tts.synthesize(text))
     except Exception:  # noqa: BLE001 - 호출 응답 실패가 대화를 막으면 안 된다
         logger.exception("failed to speak wake ack")
 
