@@ -78,7 +78,7 @@ Windows에서는 `gradlew.bat bootRun`을 사용합니다. 상태 확인은 `GET
 
 ### 5. Robot / IoT
 
-Robot은 Ubuntu 22.04 및 ROS 2 Humble 환경에서 `robot/README.md`를 따릅니다. IoT Python 의존성은 대상 장치에서 `pip install -r iot/requirements.txt`로 설치합니다.
+Robot은 Ubuntu 22.04 및 ROS 2 Humble 환경에서 `robot/README.md`를 따릅니다. IoT 번역기는 대상 장치에서 `pip install -r iot/raspberry-pi/translator/requirements.txt`로 의존성을 설치합니다.
 
 ## 디렉터리 책임
 
