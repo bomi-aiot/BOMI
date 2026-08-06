@@ -73,6 +73,39 @@ def test_parse_rejects_overlong_command_id() -> None:
         contract.parse_command(_valid_command_json(commandId="x" * 65))
 
 
+def test_navigation_targets_match_confirmed_contract() -> None:
+    assert contract.NAVIGATION_TARGETS == {
+        contract.TARGET_ENTRANCE,
+        contract.TARGET_DEFAULT,
+        contract.TARGET_LIVING_ROOM,
+    }
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "not-a-time",
+        "2026-07-28T10:02:00",  # 시간대 없음 — 시계 비교가 불가능하다
+    ],
+)
+def test_parse_rejects_invalid_or_timezone_less_expires_at(value: str) -> None:
+    with pytest.raises(contract.ContractError):
+        contract.parse_command(_valid_command_json(expiresAt=value))
+
+
+def test_parse_accepts_utc_z_suffix_expires_at() -> None:
+    """★ ``Z`` 표기도 받아야 한다 — 젯슨의 Python 3.10 은 이걸 못 읽는다.
+
+    contract 가 직접 ``+00:00`` 으로 바꿔 주지 않으면 UTC 로 표기된 명령이
+    전부 형식 오류로 거절된다.
+    """
+    command = contract.parse_command(
+        _valid_command_json(expiresAt="2026-07-28T01:02:00Z")
+    )
+    before = datetime(2026, 7, 28, 1, 0, 0, tzinfo=timezone.utc)
+    assert contract.command_expired(command, now=lambda: before) is False
+
+
 def test_parse_rejects_malformed_expires_at() -> None:
     """★ expiresAt 이 ISO-8601 이 아니면 파싱 단계에서 거절한다.
 
