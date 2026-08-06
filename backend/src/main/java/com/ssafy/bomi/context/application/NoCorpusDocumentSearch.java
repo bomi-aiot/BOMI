@@ -1,26 +1,24 @@
 package com.ssafy.bomi.context.application;
 
-import java.util.List;
 import org.springframework.stereotype.Component;
 
 /**
- * Stand-in used until the reference document corpus exists (CLAUDE.md §24).
+ * Explicit fallback used when the bundled reference document corpus is disabled or fails.
  *
  * <p>Returns nothing and reports unavailable, so a caller asking for documents
  * learns that none could be searched instead of concluding the corpus had no answer.
  * Those two are very different: the first should make the robot ask a clarifying
  * question, the second should make it say it does not know.</p>
  *
- * <p>To replace it, annotate the real implementation {@code @Primary} or delete this
- * class. See {@link NoVectorStoreMemorySearch} for why this is not
- * {@code @ConditionalOnMissingBean}.</p>
+ * <p>{@link ClasspathDocumentCorpusSearch} is {@code @Primary}; this bean remains as the
+ * documented no-corpus contract and a safe implementation for isolated wiring.</p>
  */
 @Component
 public class NoCorpusDocumentSearch implements DocumentCorpusSearch {
 
     @Override
-    public List<DocumentHit> search(String query, int limit) {
-        return List.of();
+    public SearchResult search(String query, int limit) {
+        return new SearchResult(java.util.List.of(), false, "document_corpus_unavailable", 0);
     }
 
     @Override

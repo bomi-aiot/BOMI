@@ -1,10 +1,12 @@
 # BOMI MVP 데이터 모델
 
-> PostgreSQL (pgvector 미사용) + 외부 벡터 스토어 Qdrant / 물리 테이블 17개·컬럼 253개
+> PostgreSQL (pgvector 미사용) + 외부 벡터 스토어 Qdrant / 물리 테이블 18개·컬럼 263개
 >
 > 범위: 앱·로봇 온보딩, Raw 대화, 대화 요약, 장기 기억, 재실·일간 활동·주변 인물, 호출·산책, 민감정보 확인·PRIMARY 협의
 >
-> 제외: ERD Cloud 기록, durable Outbox·감사·범용 이벤트 원장
+> 제외: ERD Cloud 기록, durable Outbox·범용 audit log·범용 이벤트 원장
+>
+> 산출물 기준: XLSX·CSV는 V1~V16의 17테이블·253컬럼 기준이며, 이 문서의 18테이블·263컬럼은 여기에 V17 `robot_mode_recovery_audit` 1테이블·10컬럼을 합친 현재 Flyway 기준이다.
 
 ## 1. 데이터 경계
 
@@ -19,14 +21,15 @@
 | 일간 활동 집계 | `daily_activity_metric` | 어르신의 현지 날짜 하루 집계 | `(senior_id, metric_date)`당 하나, NULL은 0과 다름 |
 | 주변 인물 | `known_person` | 어르신 주변 인물 한 명 | 이름·관계·생존 여부를 구조화해 대화 회피 정책에 사용 |
 | 제어 요청 영수증 | `wake_word_trigger_receipt`, `walk_request_receipt` | 호출·산책 요청 하나의 최초 처리 결정 | QoS 1·HTTP 재시도와 Backend 재시작 뒤에도 최초 결정을 재생 |
+| Robot mode 복구 감사 | `robot_mode_recovery_audit` | 인증된 운영자의 mode 복구 또는 멱등 no-op 한 건 | 누가 언제 어떤 Robot을 어느 mode에서 `IDLE`로 복구했는지 보존 |
 
 개인화·관계·돌봄 영역의 최종 조회 원본은 `app_user`, `care_relationship`, `memory`, `care_record`다. 재실·일간 활동·회피 인물은 각각 `occupancy_event`, `daily_activity_metric`, `known_person`을 원본으로 조회한다. Raw, 요약, 후보, 온보딩 답변은 근거·처리 데이터다.
 
 ## 2. 최종 테이블
 
-`app_user`, `care_relationship`, `robot`, `onboarding_session`, `onboarding_answer`, `scenario`, `conversation`, `conversation_message`, `conversation_summary`, `fact_candidate`, `memory`, `care_record`, `occupancy_event`, `daily_activity_metric`, `known_person`, `wake_word_trigger_receipt`, `walk_request_receipt`.
+`app_user`, `care_relationship`, `robot`, `onboarding_session`, `onboarding_answer`, `scenario`, `conversation`, `conversation_message`, `conversation_summary`, `fact_candidate`, `memory`, `care_record`, `occupancy_event`, `daily_activity_metric`, `known_person`, `wake_word_trigger_receipt`, `walk_request_receipt`, `robot_mode_recovery_audit`.
 
-이번 단계에서는 `memory_evidence`, `memory_retrieval_log`, `care_coordination_event`, `onboarding_question`, `outbox_message`, `audit_log`를 만들지 않는다. 최근 Raw·일간 Raw·최근 요약 전용 테이블도 만들지 않는다.
+이번 단계에서는 `memory_evidence`, `memory_retrieval_log`, `care_coordination_event`, `onboarding_question`, `outbox_message`, 범용 `audit_log`를 만들지 않는다. `robot_mode_recovery_audit`는 물리 안전 확인 뒤의 제한된 mode 복구만 기록하며 범용 감사 로그로 확장하지 않는다. 최근 Raw·일간 Raw·최근 요약 전용 테이블도 만들지 않는다.
 
 ## 3. ERD
 
@@ -57,6 +60,7 @@ erDiagram
         TIME sleep_time
         TEXT chronic_pain_area
         TEXT preferred_hospital
+        TEXT home_address
     }
     CARE_RELATIONSHIP {
         UUID id PK
@@ -319,6 +323,18 @@ erDiagram
         VARCHAR scenario_status
         TIMESTAMPTZ created_at
     }
+    ROBOT_MODE_RECOVERY_AUDIT {
+        UUID id PK
+        UUID robot_id
+        VARCHAR robot_device_id
+        VARCHAR operator_id
+        VARCHAR previous_mode
+        VARCHAR target_mode
+        VARCHAR disposition
+        BOOLEAN physical_safety_confirmed
+        VARCHAR reason
+        TIMESTAMPTZ recovered_at
+    }
 
     APP_USER ||--o{ CARE_RELATIONSHIP : senior
     APP_USER ||--o{ CARE_RELATIONSHIP : guardian
@@ -348,9 +364,12 @@ erDiagram
     APP_USER o|--o{ KNOWN_PERSON : guardian_link
     SCENARIO o|--o| WAKE_WORD_TRIGGER_RECEIPT : accepted_trigger
     SCENARIO o|--o{ WALK_REQUEST_RECEIPT : walk_request
+    ROBOT ||--o{ ROBOT_MODE_RECOVERY_AUDIT : recovery_history
 ```
 
-Mermaid의 `VARCHAR_ARRAY`는 PostgreSQL `varchar(255)[]`, `DOUBLE`은 `double precision` 표현이다. V1~V16에는 물리 FK가 없다. 따라서 도표의 `FK` 표시와 관계선은 raw UUID 컬럼의 논리 참조를 읽기 위한 표기이며, 참조 무결성·삭제 전파를 DB가 강제한다는 뜻이 아니다. `fact_candidate.target_entity_id`, `materialized_target_id`, `wake_word_trigger_receipt.scenario_id`, `walk_request_receipt.scenario_id`도 서비스가 검증하는 논리 참조다.
+Mermaid의 `VARCHAR_ARRAY`는 PostgreSQL `varchar(255)[]`, `DOUBLE`은 `double precision` 표현이다. V1~V17에는 물리 FK가 없다. 따라서 도표의 `FK` 표시와 관계선은 raw UUID 컬럼의 논리 참조를 읽기 위한 표기이며, 참조 무결성·삭제 전파를 DB가 강제한다는 뜻이 아니다. `fact_candidate.target_entity_id`, `materialized_target_id`, `wake_word_trigger_receipt.scenario_id`, `walk_request_receipt.scenario_id`, `robot_mode_recovery_audit.robot_id`도 서비스가 검증하는 논리 참조다.
+
+`robot_mode_recovery_audit`는 운영자가 `physicalSafetyConfirmed=true`와 사유를 제출하고 복구 정책을 통과한 요청만 추가형으로 기록한다. `target_mode`는 `IDLE`로 고정하며 `previous_mode`, 서버 설정의 `operator_id`, Robot의 UUID와 device ID, 처리 시각을 보존한다. DB CHECK는 물리 안전 확인, 비어 있지 않은 식별자·사유, `RECOVERED`/`NO_OP_ALREADY_IDLE`와 이전 mode의 조합을 강제하고, `(robot_id, recovered_at DESC)` 인덱스로 Robot별 최근 복구 이력을 조회한다. 이 API와 이력은 실제 E-stop 해제나 모터 정지를 대신하지 않으며 MQTT 명령을 만들지 않는다.
 
 `WAKE_WORD_CALL`의 `scenario.external_event_id`는 반드시 실제 MQTT `eventId`여야 한다. 이 타입에만 적용되는 CHECK와 부분 UNIQUE 인덱스로 null 및 중복을 막되, 다른 시나리오 타입의 `external_event_id` 전체를 전역 UNIQUE로 만들지는 않는다. 시나리오 시작은 `app_user` 시니어 행을 공용 잠금으로 사용하고, DB의 시니어별 활성 시나리오 부분 UNIQUE 인덱스를 최종 방어선으로 둔다.
 
@@ -390,7 +409,7 @@ AND 요청자에게 visibility 허용
 
 의미 유사도, `importance` 1~5, 최근 확인·사용 시각으로 재정렬하고 상위 3~10개만 문맥에 쓴다. 변경은 새 기억과 `superseded_by_id`로 표현한다. `source_candidate_id` 유일성으로 중복 반영을 막는다.
 
-Raw 삭제 전에는 필요한 요약 생성, 활성 후보 해소, 확정 사실의 최종 반영, 보존기간 만료를 모두 확인한다. `onboarding_answer.source_message_id`, `fact_candidate.source_message_id`, `care_record.source_message_id`는 `conversation_message.id`의 논리 참조다. V1~V16에는 물리 FK와 `ON DELETE SET NULL`이 없으므로, Raw 삭제 시 근거 ID를 비우는 보존 규칙은 서비스·배치에서 보장해야 한다.
+Raw 삭제 전에는 필요한 요약 생성, 활성 후보 해소, 확정 사실의 최종 반영, 보존기간 만료를 모두 확인한다. `onboarding_answer.source_message_id`, `fact_candidate.source_message_id`, `care_record.source_message_id`는 `conversation_message.id`의 논리 참조다. V1~V17에는 물리 FK와 `ON DELETE SET NULL`이 없으므로, Raw 삭제 시 근거 ID를 비우는 보존 규칙은 서비스·배치에서 보장해야 한다.
 
 ## 5. 앱·로봇 공용 온보딩
 
@@ -466,7 +485,7 @@ V7 이전에는 시각이 `details` 안에 네 가지 규약으로 흩어져 있
 
 ### 재실 이벤트와 일간 활동 (`occupancy_event` V3, `daily_activity_metric` V4·V6)
 
-`occupancy_event`는 재실 변경 한 번을 추가형 이력으로 보존한다. `direction`은 `IN`/`OUT` 또는 NULL, `source`는 `DOOR_SENSOR`/`SPEECH`/`HEARTBEAT_TIMEOUT`, `resulting_occupancy`는 `HOME`/`AWAY`/`UNKNOWN`이다. PK는 `id`, 명시 인덱스는 `(senior_id, occurred_at)`의 `idx_occupancy_event_senior_occurred`다. `senior_id`와 선택 `robot_id`는 논리 참조이고, V1~V16에 FK·UNIQUE·CHECK·DB default는 없다. 코드 enum은 문자열로 저장하지만 DB CHECK로 사전을 강제하지는 않는다.
+`occupancy_event`는 재실 변경 한 번을 추가형 이력으로 보존한다. `direction`은 `IN`/`OUT` 또는 NULL, `source`는 `DOOR_SENSOR`/`SPEECH`/`HEARTBEAT_TIMEOUT`, `resulting_occupancy`는 `HOME`/`AWAY`/`UNKNOWN`이다. PK는 `id`, 명시 인덱스는 `(senior_id, occurred_at)`의 `idx_occupancy_event_senior_occurred`다. `senior_id`와 선택 `robot_id`는 논리 참조이고, V1~V17에 FK·UNIQUE·CHECK·DB default는 없다. 코드 enum은 문자열로 저장하지만 DB CHECK로 사전을 강제하지는 않는다.
 
 `daily_activity_metric`은 `(senior_id, metric_date)` 하루의 복약·식사·물·수면·기분·대화·외출·지남력 반복 횟수와 요약 발송 시각을 집계한다. PK는 `id`, `uq_daily_activity_metric_day(senior_id, metric_date)`로 하루 한 행을 보장하며 별도 명시 인덱스는 없다. 지표 컬럼의 NULL은 0이 아니라 “측정하지 못함”이다. enum·물리 FK·CHECK·DB default는 없다.
 
@@ -513,6 +532,8 @@ PK는 `id`, 명시 인덱스는 `idx_known_person_senior(senior_id)`다. `senior
 | `walk_request_receipt.action` | `START`, `STOP` |
 | `walk_request_receipt.source` | `VOICE`, `APP` |
 | `walk_request_receipt.disposition` | `RECEIVED`, `ACCEPTED`, `NO_OP_ALREADY_STOPPING`, `REJECTED_NO_ACTIVE_WALK`, `REJECTED_UNKNOWN_ROBOT`, `REJECTED_INACTIVE_ROBOT`, `REJECTED_UNASSIGNED_ROBOT`, `REJECTED_SAFE_STOP`, `REJECTED_REST_GUARD`, `REJECTED_ACTIVE_SCENARIO`, `REJECTED_BUSY_MODE`, `REJECTED_REQUEST_ID_REUSED`, `REJECTED_MQTT_UNAVAILABLE` |
+| `robot_mode_recovery_audit.disposition` | `RECOVERED`, `NO_OP_ALREADY_IDLE` |
+| `robot_mode_recovery_audit.target_mode` | `IDLE` |
 | `conversation.status` | `OPEN`, `COMPLETED`, `FAILED`, `CANCELLED` |
 | `conversation_message.role` | `SENIOR`, `ROBOT` |
 | `conversation_summary.summary_type` | `CONVERSATION`, `DAILY` |
@@ -523,7 +544,7 @@ PK는 `id`, 명시 인덱스는 `idx_known_person_senior(senior_id)`다. `senior
 | `fact_candidate.target_domain` | `PROFILE`, `CARE_RELATIONSHIP`, `MEMORY`, `CARE_RECORD` |
 | `fact_candidate.operation` | `CREATE`, `UPDATE`, `CANCEL` |
 | `fact_candidate.risk_level` | `NORMAL`, `SENSITIVE`, `HIGH` |
-| `fact_candidate.status` | `CAPTURED`, `NEEDS_CLARIFICATION`, `NEEDS_CONFIRMATION`, `COORDINATION_REQUIRED`, `CONFIRMED`, `MATERIALIZED`, `REJECTED`, `EXPIRED` |
+| `fact_candidate.status` | `CAPTURED`, `NEEDS_CLARIFICATION`, `NEEDS_CONFIRMATION`, `COORDINATION_REQUIRED`, `CONFIRMED`, `MATERIALIZED`, `REJECTED`, `EXPIRED`, `CANCELLED_BY_SENIOR` |
 | `fact_candidate.clarification_reason` | `MISSING_REQUIRED_FIELD`, `AMBIGUOUS_VALUE`, `LOW_RECOGNITION_CONFIDENCE`, `CONFLICT_WITH_EXISTING_DATA`, `SENSITIVE_INFORMATION_CONFIRMATION` |
 | `fact_candidate.coordination_status` | `NOT_REQUIRED`, `COORDINATION_REQUIRED`, `WAITING_PRIMARY_GUARDIAN`, `WAITING_SENIOR`, `AGREED`, `DISAGREED`, `SENIOR_UNREACHABLE`, `GUARDIAN_OVERRIDE_CONFIRMED`, `COMPLETED` |
 | `fact_candidate.senior_position` | `NOT_REQUESTED`, `PENDING`, `AGREED`, `DISAGREED`, `UNREACHABLE` |
@@ -532,7 +553,7 @@ PK는 `id`, 명시 인덱스는 `idx_known_person_senior(senior_id)`다. `senior
 | `care_relationship.care_management_permission_status` | `NOT_ASKED`, `GRANTED`, `DENIED`, `REVOKED` |
 | `care_record.status` | `ACTIVE`, `COMPLETED`, `CANCELLED`, `SUPERSEDED` |
 
-전체 기존 코드값은 Excel `07_코드정의`가 기준이다.
+V1~V16의 기존 코드값은 Excel `07_코드정의`가 기준이다. V17의 `robot_mode_recovery_audit.disposition`과 `target_mode`는 이 표와 V17 migration의 CHECK가 현재 기준이며, 다음 전체 컬럼정의서 동기화 때 Excel·CSV에 함께 반영한다.
 
 ## 11. 33개 시나리오 검증
 
@@ -615,4 +636,4 @@ Qdrant (senior_id 필터 + 유사도) -> 후보 id
 - 무배포 질문 편집이 필요할 때 `onboarding_question`
 - 호출·산책 외 메시지의 재시작 안전 멱등이 필요할 때 범용 수신 원장
 - DB 커밋과 MQTT 발행을 하나의 전달 생명주기로 묶는 durable Outbox
-- 감사 요구가 확정될 때 `audit_log`
+- 다른 운영 변경까지 감사해야 할 때 범용 `audit_log`

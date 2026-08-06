@@ -30,13 +30,42 @@ public interface MemorySemanticSearch {
     record SemanticHit(UUID memoryId, double similarity) {}
 
     /**
+     * One query embedding applied to both personal-memory and conversation-summary indexes.
+     *
+     * @param semanticUsed at least one requested Qdrant collection completed its search
+     * @param fallbackReason stable machine-readable degradation reason, or {@code null}
+     * @param latencyMs embedding plus vector-search wall time
+     * @param embeddingLatencyMs query-embedding wall time
+     * @param vectorSearchLatencyMs all requested vector-collection searches wall time
+     */
+    record SearchResult(
+        List<SemanticHit> memoryHits,
+        List<SemanticHit> summaryHits,
+        boolean semanticUsed,
+        String fallbackReason,
+        long latencyMs,
+        long embeddingLatencyMs,
+        long vectorSearchLatencyMs
+    ) {
+        public SearchResult {
+            memoryHits = List.copyOf(memoryHits);
+            summaryHits = List.copyOf(summaryHits);
+        }
+
+        public SearchResult(List<SemanticHit> memoryHits, List<SemanticHit> summaryHits,
+            boolean semanticUsed, String fallbackReason, long latencyMs) {
+            this(memoryHits, summaryHits, semanticUsed, fallbackReason, latencyMs, 0, 0);
+        }
+    }
+
+    /**
      * Finds memories whose meaning is closest to {@code query}.
      *
      * @param limit an upper bound on candidates; the caller asks for more than it
      *     needs because the authoritative filter will remove some
      * @return possibly empty, never {@code null}
      */
-    List<SemanticHit> search(UUID seniorId, String query, int limit);
+    SearchResult search(UUID seniorId, String query, int memoryLimit, int summaryLimit);
 
     /**
      * Whether a real vector store is wired up.

@@ -161,6 +161,10 @@ services:
       EMBEDDING_SYNC_ENABLED: ${EMBEDDING_SYNC_ENABLED:-false}
       # 한 실행에 과금되는 호출 수의 상한. 잔액이 작으므로 재배포 없이 줄일 수 있어야 한다.
       EMBEDDING_SYNC_BATCH_SIZE: ${EMBEDDING_SYNC_BATCH_SIZE:-30}
+      # 번들 문서 코퍼스는 네트워크 없이 로드한다. 장애 시 기억 검색과 대화는 계속되지만
+      # 정보 질문에는 document_corpus_unavailable 근거가 반환된다.
+      DOCUMENT_CORPUS_ENABLED: ${DOCUMENT_CORPUS_ENABLED:-true}
+      DOCUMENT_CORPUS_RESOURCE: ${DOCUMENT_CORPUS_RESOURCE:-classpath:rag/welfare-corpus.json}
       # 대화 요약 생성형 LLM — Gemini, GMS 경유 (S15P11E102-254). 백엔드의 두 번째(현재
       # 마지막) 과금 외부 API. UPSTAGE_API_KEY 가 겪은 것과 똑같은 실패 모양이다 —
       # 키만 넘기고 LLM_ENABLED 를 빠뜨리면 application.yml 기본값(false)이 조용히 이겨
@@ -177,6 +181,9 @@ services:
       # 여기 넘기지 않으면 production.env 에 값을 적어도 컨테이너에 도달하지
       # 않는다(EMBEDDING_ENABLED 가 겪은 것과 같은 실패 모양, S15P11E102-218).
       ROBOT_SHARED_SECRET: ${ROBOT_SHARED_SECRET:-}
+      # Separate fail-closed credential and server-owned audit identity for operator recovery.
+      OPERATOR_SHARED_SECRET: ${OPERATOR_SHARED_SECRET:-}
+      OPERATOR_ID: ${OPERATOR_ID:-}
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:8080/actuator/health"]
       interval: 10s

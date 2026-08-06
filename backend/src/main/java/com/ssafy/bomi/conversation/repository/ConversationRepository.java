@@ -18,6 +18,10 @@ public interface ConversationRepository extends JpaRepository<Conversation, UUID
 
     Optional<Conversation> findByScenarioId(UUID scenarioId);
 
+    /** Resolves the owning Scenario without attaching a stale Conversation before locking. */
+    @Query("select c.scenarioId from Conversation c where c.id = :id")
+    Optional<UUID> findScenarioIdById(@Param("id") UUID id);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select c from Conversation c where c.id = :id")
     Optional<Conversation> findByIdForUpdate(@Param("id") UUID id);

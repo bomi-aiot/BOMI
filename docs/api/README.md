@@ -12,7 +12,8 @@ OpenAPI와 AsyncAPI의 브라우저 렌더링용 스펙 파일은 Spring Boot �
 | --- | --- | --- |
 | Backend — 로봇·AI 채널 | 로봇(`ai_chat`)이 호출하는 REST API | Swagger UI → `[BE-Robot] 로봇·AI 채널 API` |
 | Backend — 가디언웹 채널 | 가디언웹이 호출하는 REST API | Swagger UI → `[BE-Guardian] 가디언웹 채널 API` |
-| Backend — 전체 | 위 두 채널과 운영용 엔드포인트 전부 | Swagger UI → `[BE-All] 백엔드 전체 API` |
+| Backend — 운영자 채널 | 현장 안전 확인 뒤 Robot mode를 복구하는 제한 API | Swagger UI → `[BE-Operator] 운영자 채널 API` |
+| Backend — 전체 | 위 세 채널과 운영용 엔드포인트 전부 | Swagger UI → `[BE-All] 백엔드 전체 API` |
 | AI Vision | 인식 요청·결과 Callback 계약 | Swagger UI → `[AI-Vision] ...` (**미구현 계약**) |
 | AI Chat (대화·음성) | 문장·TTS 생성 계약 | Swagger UI → `[AI-Chat] ...` (**미구현 계약**) |
 | IoT·Robot·AI 주행 | MQTT 토픽과 메시지 계약 | AsyncAPI 뷰어 `/asyncapi/mqtt/` |
@@ -63,11 +64,36 @@ https://i15e102.p.ssafy.io/docs/
 /openapi/bomi-mqtt.asyncapi.json
 ```
 
-Swagger UI의 `Try it out` 은 **켜져 있습니다.** 로봇·가디언웹 채널 API는 브라우저에서 바로 호출할 수 있으며 **실제 데이터가 바뀝니다.** 쓰기 메서드는 무엇을 건드리는지 확인하고 누르십시오. 이 서비스에는 인증이 없으므로 문서 주소를 아는 사람은 누구나 같은 일을 할 수 있습니다 — 발표 기간 한정으로 감수한 결정입니다.
+Swagger UI의 `Try it out`은 **GET에만 허용됩니다.** POST·PUT·PATCH·DELETE 계약은 문서에 보이지만 실행 버튼은 비활성입니다. 운영자 Robot mode 복구 API는 별도 shared-secret 인증이 필요한 POST이며, 실물 환경에서는 Swagger가 아니라 통제된 운영 도구로만 호출합니다.
 
 MQTT와 WebSocket은 HTTP가 아니라 브라우저에서 발행·구독 시험을 할 수 없습니다. 두 페이지는 계약 열람 전용입니다.
 
 배포 문서는 배포된 Backend 이미지에 포함된 파일이므로, 최신 Git 변경은 Backend가 다시 배포된 뒤 반영됩니다.
+
+### 운영자 Robot mode 복구 API
+
+```http
+POST /api/v1/operator/robots/{deviceId}/mode-recoveries
+X-Operator-Shared-Secret: <운영 환경의 별도 secret>
+Content-Type: application/json
+
+{
+  "physicalSafetyConfirmed": true,
+  "reason": "현장 점검 후 이동 경로와 모터 상태 확인"
+}
+```
+
+이 API는 다음 조건을 모두 만족할 때 Robot mode를 `IDLE`로만 복구합니다.
+
+- Robot이 등록·활성 상태이고 어르신이 배정되어 있음
+- 활성 Scenario가 없음
+- 현재 mode가 `SAFE_STOP`, 또는 활성 Scenario 없이 남은 비정상 `SCENARIO_ACTIVE`
+- 현장 담당자가 실제 장치의 안전을 확인했고 `physicalSafetyConfirmed=true`로 요청함
+- 감사 이력에 남길 비어 있지 않은 `reason`이 있음
+
+이미 `IDLE`이면 멱등 no-op입니다. 복구는 MQTT 이동·취소 명령을 발행하지 않으며 서버의 `OPERATOR_ID`를 감사 이력에 기록합니다. 배포 환경의 `OPERATOR_SHARED_SECRET` 또는 `OPERATOR_ID`가 비어 있으면 fail-closed로 `503`을 반환하고, `X-Operator-Shared-Secret`이 일치하지 않으면 `401`을 반환합니다.
+
+> **실물 환경에서 Swagger `Try it out`으로 이 API를 호출하지 않습니다.** 먼저 Robot 담당자가 현장에서 물리 안전을 확인해야 합니다. 이 API는 실제 E-stop 해제, 모터 정지 또는 이동 경로 안전 확인을 대신하지 않습니다. 활성 Scenario가 있으면 mode를 강제로 바꾸지 말고 시나리오를 정상 종료하거나 원인을 조사합니다.
 
 ## 4. 스펙 목록
 
@@ -75,6 +101,7 @@ MQTT와 WebSocket은 HTTP가 아니라 브라우저에서 발행·구독 시험�
 | --- | --- | --- | --- |
 | 로봇·AI 채널 API | OpenAPI (자동생성) | Robot·AI → Spring Boot | 컨트롤러 코드 |
 | 가디언웹 채널 API | OpenAPI (자동생성) | 가디언웹 → Spring Boot | 컨트롤러 코드 |
+| 운영자 채널 API | OpenAPI (자동생성) | 인증된 운영자 → Spring Boot | 컨트롤러 코드 |
 | AI Vision 인식 요청 | OpenAPI (수기) | Spring Boot → AI Vision | [`vision-ai.openapi.yaml`](../../backend/src/main/resources/static/openapi/vision-ai.openapi.yaml) |
 | AI Vision 결과 Callback | OpenAPI (수기) | AI Vision → Spring Boot | [`vision-callback.openapi.yaml`](../../backend/src/main/resources/static/openapi/vision-callback.openapi.yaml) |
 | 대화·음성 생성 | OpenAPI (수기) | Spring Boot·Robot → 대화·음성 AI | [`voice-ai.openapi.yaml`](../../backend/src/main/resources/static/openapi/voice-ai.openapi.yaml) |
@@ -238,6 +265,7 @@ AsyncAPI 뷰어가 렌더링하는 기계 판독 스펙의 원본은 YAML 하나
 /v3/api-docs/swagger-config
 /v3/api-docs/bomi-robot
 /v3/api-docs/bomi-guardian
+/v3/api-docs/bomi-operator
 /v3/api-docs/bomi-backend
 /openapi/vision-ai.openapi.yaml
 /openapi/vision-callback.openapi.yaml

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assumptions.abort;
 
 import com.ssafy.bomi.vector.application.VectorCollection;
 import com.ssafy.bomi.vector.application.VectorStore.VectorHit;
+import com.ssafy.bomi.vector.application.VectorStore.VectorWriteStatus;
 import com.ssafy.bomi.vector.config.QdrantProperties;
 import java.util.List;
 import java.util.UUID;
@@ -92,8 +93,9 @@ class QdrantVectorStoreIntegrationTest {
         UUID id = UUID.randomUUID();
 
         for (VectorCollection collection : VectorCollection.values()) {
-            store.upsert(collection, id, senior, unitVector(0));
-            List<VectorHit> hits = store.search(collection, senior, unitVector(0), 1);
+            assertThat(store.upsert(collection, id, senior, unitVector(0)))
+                .isEqualTo(VectorWriteStatus.STORED);
+            List<VectorHit> hits = store.search(collection, senior, unitVector(0), 1).hits();
             assertThat(hits)
                 .as("%s 컬렉션이 4096차원 업서트를 받아들여야 한다", collection.collectionName())
                 .isNotEmpty();
@@ -111,9 +113,12 @@ class QdrantVectorStoreIntegrationTest {
         UUID senior = UUID.randomUUID();
         UUID id = UUID.randomUUID();
 
-        store.upsert(VectorCollection.MEMORY, id, senior, new float[] {1.0f, 0.0f});
+        assertThat(store.upsert(VectorCollection.MEMORY, id, senior,
+            new float[] {1.0f, 0.0f}))
+            .isEqualTo(VectorWriteStatus.DIMENSION_MISMATCH);
 
-        assertThat(store.search(VectorCollection.MEMORY, senior, unitVector(0), 5)).isEmpty();
+        assertThat(store.search(VectorCollection.MEMORY, senior, unitVector(0), 5).hits())
+            .isEmpty();
     }
 
     // ── 완료 조건: 저장 → 검색 왕복 ─────────────────────────────────────────
@@ -129,7 +134,8 @@ class QdrantVectorStoreIntegrationTest {
         store.upsert(VectorCollection.MEMORY, near, senior, unitVector(0));
         store.upsert(VectorCollection.MEMORY, far, senior, unitVector(1));
 
-        List<VectorHit> hits = store.search(VectorCollection.MEMORY, senior, unitVector(0), 5);
+        List<VectorHit> hits = store.search(VectorCollection.MEMORY, senior,
+            unitVector(0), 5).hits();
 
         assertThat(hits).extracting(VectorHit::id).containsExactly(near, far);
         assertThat(hits.get(0).score())
@@ -159,7 +165,7 @@ class QdrantVectorStoreIntegrationTest {
         store.upsert(VectorCollection.MEMORY, myPoint, mine, unitVector(0));
         store.upsert(VectorCollection.MEMORY, theirPoint, theirs, unitVector(0));
 
-        assertThat(store.search(VectorCollection.MEMORY, mine, unitVector(0), 10))
+        assertThat(store.search(VectorCollection.MEMORY, mine, unitVector(0), 10).hits())
             .extracting(VectorHit::id)
             .containsExactly(myPoint);
 
@@ -183,13 +189,15 @@ class QdrantVectorStoreIntegrationTest {
         UUID id = UUID.randomUUID();
 
         store.upsert(VectorCollection.MEMORY, id, senior, unitVector(0));
-        assertThat(store.search(VectorCollection.MEMORY, senior, unitVector(0), 5)).isNotEmpty();
+        assertThat(store.search(VectorCollection.MEMORY, senior, unitVector(0), 5).hits())
+            .isNotEmpty();
 
         store.delete(VectorCollection.MEMORY, id);
-        assertThat(store.search(VectorCollection.MEMORY, senior, unitVector(0), 5)).isEmpty();
+        assertThat(store.search(VectorCollection.MEMORY, senior, unitVector(0), 5).hits())
+            .isEmpty();
 
         store.upsert(VectorCollection.MEMORY, id, senior, unitVector(0));
-        assertThat(store.search(VectorCollection.MEMORY, senior, unitVector(0), 5))
+        assertThat(store.search(VectorCollection.MEMORY, senior, unitVector(0), 5).hits())
             .extracting(VectorHit::id).containsExactly(id);
 
         store.delete(VectorCollection.MEMORY, id);
@@ -208,7 +216,8 @@ class QdrantVectorStoreIntegrationTest {
         store.upsert(VectorCollection.MEMORY, id, senior, unitVector(0));
         store.upsert(VectorCollection.MEMORY, id, senior, unitVector(1));
 
-        List<VectorHit> hits = store.search(VectorCollection.MEMORY, senior, unitVector(1), 10);
+        List<VectorHit> hits = store.search(VectorCollection.MEMORY, senior,
+            unitVector(1), 10).hits();
         assertThat(hits).hasSize(1);
         assertThat(hits.get(0).score()).isCloseTo(1.0, org.assertj.core.data.Offset.offset(0.001));
 
@@ -231,7 +240,7 @@ class QdrantVectorStoreIntegrationTest {
 
         store.ensureCollections();
 
-        assertThat(store.search(VectorCollection.MEMORY, senior, unitVector(0), 5))
+        assertThat(store.search(VectorCollection.MEMORY, senior, unitVector(0), 5).hits())
             .extracting(VectorHit::id).containsExactly(id);
 
         store.delete(VectorCollection.MEMORY, id);

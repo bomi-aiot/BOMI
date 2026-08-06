@@ -2,6 +2,8 @@ package com.ssafy.bomi.embedding.infrastructure;
 
 import com.ssafy.bomi.embedding.application.EmbeddingClient;
 import com.ssafy.bomi.embedding.config.EmbeddingProperties;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import java.util.List;
@@ -9,6 +11,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
@@ -39,12 +42,15 @@ public class UpstageEmbeddingClient implements EmbeddingClient {
 
     private final EmbeddingProperties properties;
     private final RestClient restClient;
+    private final MeterRegistry meterRegistry;
 
     /** Billed calls made since boot. Logged so a runaway loop is visible in the log. */
     private final AtomicLong callCount = new AtomicLong();
 
-    public UpstageEmbeddingClient(EmbeddingProperties properties) {
+    @Autowired
+    public UpstageEmbeddingClient(EmbeddingProperties properties, MeterRegistry meterRegistry) {
         this.properties = properties;
+        this.meterRegistry = meterRegistry;
 
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         Duration timeout = Duration.ofMillis(properties.getTimeoutMillis());
@@ -55,6 +61,11 @@ public class UpstageEmbeddingClient implements EmbeddingClient {
             .baseUrl(properties.getBaseUrl())
             .requestFactory(factory)
             .build();
+    }
+
+    /** Test-friendly constructor; production wiring supplies the actuator registry. */
+    public UpstageEmbeddingClient(EmbeddingProperties properties) {
+        this(properties, null);
     }
 
     @PostConstruct
@@ -110,6 +121,8 @@ public class UpstageEmbeddingClient implements EmbeddingClient {
         }
 
         long callNumber = callCount.incrementAndGet();
+        long startedAt = System.nanoTime();
+        String kind = model.equals(properties.getQueryModel()) ? "query" : "passage";
         try {
             EmbeddingResponse response = restClient.post()
                 .uri("/embeddings")
@@ -129,13 +142,30 @@ public class UpstageEmbeddingClient implements EmbeddingClient {
             }
             log.debug("embedded {} chars with {} (billed call #{})", text.length(), model,
                 callNumber);
+            recordCall(kind, "success", startedAt);
             return vector;
         } catch (EmbeddingFailedException error) {
+            recordCall(kind, "error", startedAt);
             throw error;
         } catch (Exception error) {
+            recordCall(kind, "error", startedAt);
             throw new EmbeddingFailedException(
                 "embedding call #%d to %s failed".formatted(callNumber, model), error);
         }
+    }
+
+    private void recordCall(String kind, String outcome, long startedAt) {
+        if (meterRegistry == null) {
+            return;
+        }
+        meterRegistry.counter("bomi.embedding.billed.calls",
+            "kind", kind, "outcome", outcome).increment();
+        Timer.builder("bomi.embedding.call.latency")
+            .description("Metered Upstage embedding call latency")
+            .tag("kind", kind)
+            .tag("outcome", outcome)
+            .register(meterRegistry)
+            .record(java.time.Duration.ofNanos(System.nanoTime() - startedAt));
     }
 
     private float[] firstVector(EmbeddingResponse response, String model) {
