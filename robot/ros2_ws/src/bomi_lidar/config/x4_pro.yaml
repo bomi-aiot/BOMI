@@ -29,7 +29,20 @@ ydlidar_ros2_driver_node:
     abnormal_check_count: 4
     fixed_resolution: true
     reversion: false
-    inverted: false
+
+    # inverted:
+    #   스캔 각도 방향을 반전한다(LidarPropInverted).
+    #   false로 두면 스캔이 좌우로 뒤집혀, 로봇이 왼쪽으로 돌 때 스캔 속
+    #   세상은 오른쪽으로 돈다. 정지 상태에서는 방 모양이 그럴듯해 보이지만
+    #   회전하는 순간 SLAM이 odometry와 반대 방향의 정합을 시도해 지도가
+    #   회전마다 돌아간 채로 겹쳐 쌓인다.
+    #
+    #   2026-08-06 실측(제자리 26초 회전, 연속 스캔 상관으로 실제 회전각을
+    #   구해 자이로 적분과 비교):
+    #     inverted: false -> 라이다 -384.8°, 자이로 +377.0° (게인 -0.980)
+    #     inverted: true  -> 라이다 +361.2°, 자이로 +362.1° (게인 +1.002)
+    #   같은 벤더의 params/X4.yaml도 true를 쓴다.
+    inverted: true
     auto_reconnect: true
     support_motor_dtr: false
     angle_max: 180.0
