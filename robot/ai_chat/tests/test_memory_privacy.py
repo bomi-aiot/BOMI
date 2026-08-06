@@ -5,11 +5,13 @@
        진짜여야 한다. 인텐트 분류 결과에 따라 지켜지는 비밀은 비밀이 아니다)
     2. 시나리오 K: "기억하지 마" → 이 대화의 추출 대기 행이 지워지고, 이후
        발화도 봉인으로 추출되지 않는다
-    3. 정직한 한계: 이미 서버로 제출된(extracted=1) 행은 지우지 않는다 —
-       지울 수 없는 것을 지웠다고 말하지 않는다 (서버 취소는 BE 티켓 대기)
+    3. 정직한 한계: 이미 서버로 제출된(extracted=1) 행은 로컬에서 지우지 않는다 —
+       대신 서버 취소 요청이 큐잉되어 백엔드의 /cancel 로 전달된다 (S15P11E102-348)
     4. 프로필의 대화 성향·만성 통증 부위가 프롬프트에 실린다 (Phase 3)
     5. 프로필 주소가 오면 "오늘 날씨 어때?"가 그 지역으로 조회된다 (시나리오 C
        의 로봇 쪽 절반 — 계약에 주소가 없는 동안은 기존 되묻기 유지)
+    6. 서버 취소 큐: forget 이 큐잉하고, flush 가 성공 시에만 지우며, 실패 행은
+       남아 재시도된다 — "지웠어요"가 네트워크 단절에 지지 않는다
 
 참고
     CLAUDE.md §9(T4)·§30, docs/natural-conversation/implementation-plan.md P1-B1·P1-A5
@@ -19,7 +21,8 @@ import pytest
 
 from bomi_ai_chat.graph import context as context_node
 from bomi_ai_chat.graph import ingress
-from bomi_ai_chat.localstore import db, emotion, extraction
+from bomi_ai_chat.jobs import ticks
+from bomi_ai_chat.localstore import cancellations, db, emotion, extraction
 from bomi_ai_chat.prompts.builder import build_prompt
 
 SENIOR = "senior-1"
@@ -128,6 +131,79 @@ def test_forget_without_a_conversation_id_is_a_safe_noop(frozen_clock):
     ingress.note_interaction(reactive_state("기억하지 마", conversation_id=None))
 
     assert extraction.pending_count(SENIOR) == 1
+
+
+# ── 2b. 서버 취소 큐 (S15P11E102-348 로봇 절반) ─────────────────────────────
+
+
+class RecordingCancelClient:
+    def __init__(self, *, fail=False):
+        self.fail = fail
+        self.calls: list[tuple[str, str]] = []
+
+    def cancel_conversation(self, senior_id, conversation_id):
+        if self.fail:
+            raise RuntimeError("backend down")
+        self.calls.append((senior_id, conversation_id))
+
+
+def test_forget_queues_the_server_cancel(frozen_clock):
+    """★ "기억하지 마"는 로컬 삭제에 더해 서버 취소를 큐잉한다.
+
+    이미 서버로 제출된 후보는 로컬 삭제가 닿지 못한다 — 서버의 /cancel 절반이
+    있어야 약속이 온전해진다. 턴 경로에서 HTTP 를 부르지 않는 이유는 지연
+    예산(§16)과 네트워크 단절 시 유실 방지다.
+    """
+    frozen_clock(start=NOW)
+
+    ingress.note_interaction(reactive_state("아까 아들 이야기는 기억하지 마"))
+
+    assert cancellations.pending_count(SENIOR) == 1
+
+
+def test_the_flush_delivers_and_marks_done(frozen_clock):
+    frozen_clock(start=NOW)
+    cancellations.enqueue(SENIOR, CONV)
+    client = RecordingCancelClient()
+
+    sent = ticks._flush_cancel_requests(SENIOR, client)
+
+    assert sent == 1
+    assert client.calls == [(SENIOR, CONV)]
+    assert cancellations.pending_count(SENIOR) == 0
+
+
+def test_a_failed_delivery_stays_queued_for_retry(frozen_clock):
+    """★ 네트워크가 끊긴 순간의 "지웠어요"가 거짓말이 되지 않는다 — 행이 남아
+    다음 flush 가 재시도한다. 서버 쪽이 멱등이라 중복 전송은 안전하다."""
+    frozen_clock(start=NOW)
+    cancellations.enqueue(SENIOR, CONV)
+
+    sent = ticks._flush_cancel_requests(SENIOR, RecordingCancelClient(fail=True))
+
+    assert sent == 0
+    assert cancellations.pending_count(SENIOR) == 1, "실패한 요청을 잃으면 안 된다"
+
+
+def test_a_repeat_forget_after_done_requeues(frozen_clock):
+    """처리 완료된 대화에 새 요청이 오면 다시 대기로 돌아간다 — 그 사이 새 후보가
+    제출됐을 수 있고, 어르신의 새 요청은 그것까지 지우라는 뜻이다."""
+    frozen_clock(start=NOW)
+    cancellations.enqueue(SENIOR, CONV)
+    ticks._flush_cancel_requests(SENIOR, RecordingCancelClient())
+    assert cancellations.pending_count(SENIOR) == 0
+
+    cancellations.enqueue(SENIOR, CONV)
+
+    assert cancellations.pending_count(SENIOR) == 1
+
+
+def test_duplicate_forget_requests_collapse_into_one_row(frozen_clock):
+    frozen_clock(start=NOW)
+    cancellations.enqueue(SENIOR, CONV)
+    cancellations.enqueue(SENIOR, CONV)
+
+    assert cancellations.pending_count(SENIOR) == 1
 
 
 # ── 3. Phase 3: 프로필 필드가 실제로 쓰인다 ─────────────────────────────────

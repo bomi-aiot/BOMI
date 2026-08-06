@@ -375,6 +375,35 @@ CREATE INDEX IF NOT EXISTS idx_extraction_job_pending
     WHERE extracted = 0
 """
 
+# "기억하지 마"의 서버 절반 요청 큐 (S15P11E102-348).
+#
+# 왜 큐인가 — ingress._honor_privacy_requests 는 턴 경로 위라 블로킹 HTTP 를
+# 부를 수 없고(§16 지연 예산), 네트워크가 끊긴 순간의 요청을 잃으면 "지웠어요"가
+# 거짓말이 된다. 그래서 로컬 삭제(extraction.forget_conversation)와 함께 이 큐에
+# 적고, 배경 틱(jobs/ticks.extraction_flush)이 백엔드의
+# POST /api/v1/robot/fact-candidates/cancel 로 보낸다. 서버 쪽이 멱등이라
+# 중복 전송은 안전하다.
+#
+# UNIQUE(senior_id, conversation_id): 같은 대화에 대한 반복 요청은 행 하나로
+# 접힌다. 이미 done=1 인 대화에 새 요청이 오면 enqueue 가 done=0 으로 되돌린다
+# (그 사이 새 후보가 제출됐을 수 있다).
+_FACT_CANCEL_REQUEST = """
+CREATE TABLE IF NOT EXISTS fact_cancel_request (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    senior_id       TEXT    NOT NULL,
+    conversation_id TEXT    NOT NULL,
+    done            INTEGER NOT NULL DEFAULT 0,
+    created_at      REAL    NOT NULL,
+    UNIQUE (senior_id, conversation_id)
+)
+"""
+
+_FACT_CANCEL_REQUEST_INDEX = """
+CREATE INDEX IF NOT EXISTS idx_fact_cancel_request_pending
+    ON fact_cancel_request (created_at)
+    WHERE done = 0
+"""
+
 
 def init_runtime(connection: sqlite3.Connection) -> None:
     """운영 상태 DB 의 표를 만든다. 멱등하다."""
@@ -396,6 +425,8 @@ def init_runtime(connection: sqlite3.Connection) -> None:
     connection.execute(_CONSENT_REQUEST_INDEX)
     connection.execute(_EXTRACTION_JOB)
     connection.execute(_EXTRACTION_JOB_INDEX)
+    connection.execute(_FACT_CANCEL_REQUEST)
+    connection.execute(_FACT_CANCEL_REQUEST_INDEX)
 
 
 def _add_missing_columns(
