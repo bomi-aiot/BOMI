@@ -334,7 +334,13 @@ def _parse_iso_datetime(value: str) -> datetime | None:
 
     백엔드는 항상 오프셋(+09:00 등)을 붙여 보낸다. 오프셋이 없는 값은
     시계 비교가 무의미하므로 파싱 실패로 취급한다.
+
+    끝의 ``Z``(UTC)는 ``+00:00`` 으로 바꿔서 넘긴다 — 젯슨(Ubuntu 22.04)의
+    Python 3.10 ``fromisoformat`` 은 ``Z`` 를 못 읽어서, 이 변환이 없으면
+    UTC 표기로 온 명령이 전부 "형식 오류"로 거절된다.
     """
+    if isinstance(value, str) and value.endswith("Z"):
+        value = value[:-1] + "+00:00"
     try:
         parsed = datetime.fromisoformat(value)
     except (TypeError, ValueError):
