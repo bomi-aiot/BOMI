@@ -73,6 +73,7 @@ class RobotOnboardingServiceTest {
     @Autowired private FactCandidateRepository candidateRepository;
     @Autowired private CareRecordRepository careRecordRepository;
     @Autowired private MemoryRepository memoryRepository;
+    @Autowired private com.ssafy.bomi.person.repository.KnownPersonRepository knownPersonRepository;
 
     private AppUser senior;
     private final UUID robotId = UUID.randomUUID();
@@ -532,6 +533,63 @@ class RobotOnboardingServiceTest {
 
         assertThat(confirmed.materialized()).isTrue();
         assertThat(reloadSenior().getPreferredHospital()).isEqualTo("행복내과의원");
+    }
+
+    // ── S15P11E102-353: 최초 입력 필수 데이터의 남은 구멍 세 개 ──────────────
+
+    /** 자택 주소 — 로봇의 날씨 기본 지역 폴백(347)이 읽는 값. 민감 항목이라
+     *  확인(confirm=true) 후에만 실체화된다. */
+    @Test
+    void aConfirmedHomeAddressReachesAppUserImmediately() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+        Map<String, Object> value = Map.of("homeAddress", "부산광역시 부산진구");
+
+        onboardingService.submitAnswer(session.getId(), "HOME_ADDRESS", value, false, null, null);
+        AnswerResult confirmed = onboardingService.submitAnswer(
+            session.getId(), "HOME_ADDRESS", value, true, null, null);
+
+        assertThat(confirmed.materialized()).isTrue();
+        assertThat(reloadSenior().getHomeAddress()).isEqualTo("부산광역시 부산진구");
+    }
+
+    /** 조용한 시간 — 두 시각을 한 질문으로 받아 쌍으로 저장한다. 기본값(22:00~07:00)
+     *  대신 어르신의 실제 취침 리듬이 게이트·사다리에 반영되는 유일한 통로다. */
+    @Test
+    void confirmedQuietHoursReachAppUserAsAPair() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+
+        AnswerResult result = onboardingService.submitAnswer(session.getId(), "QUIET_HOURS",
+            Map.of("quietHoursStart", "21:00", "quietHoursEnd", "06:30"), true, null, null);
+
+        assertThat(result.materialized()).isTrue();
+        assertThat(reloadSenior().getQuietHoursStart()).isEqualTo(java.time.LocalTime.of(21, 0));
+        assertThat(reloadSenior().getQuietHoursEnd()).isEqualTo(java.time.LocalTime.of(6, 30));
+    }
+
+    /** 가까운 가족 — known_person 회피 명부에 실체화된다. 고인 여부를 밝히지 않으면
+     *  null("모름")로 남고, 모름은 회피 대상으로 취급된다(false 로 지어내지 않는다). */
+    @Test
+    void aConfirmedCloseFamilyMemberLandsInKnownPerson() {
+        OnboardingSession session = onboardingService.startOrResume(senior.getId(), robotId);
+        grant(session, "PERSONALIZATION_CONSENT");
+        Map<String, Object> value = Map.of("displayName", "민수", "relationship", "아들");
+
+        onboardingService.submitAnswer(session.getId(), "CLOSE_FAMILY", value, false, null, null);
+        AnswerResult confirmed = onboardingService.submitAnswer(
+            session.getId(), "CLOSE_FAMILY", value, true, null, null);
+
+        assertThat(confirmed.materialized()).isTrue();
+        var people = knownPersonRepository.findAll().stream()
+            .filter(p -> p.getSeniorId().equals(senior.getId())).toList();
+        assertThat(people).hasSize(1);
+        assertThat(people.get(0).getDisplayName()).isEqualTo("민수");
+        assertThat(people.get(0).getRelationship()).isEqualTo("아들");
+        assertThat(people.get(0).getIsDeceased()).isNull();
+        assertThat(people.get(0).isAvoidTarget())
+            .as("고인 여부를 모르면 보수적으로 회피 대상이어야 한다")
+            .isTrue();
     }
 
     @Test
