@@ -85,7 +85,7 @@ docker compose \
   up -d postgres
 ```
 
-## 4. 상태 및 pgvector 확인
+## 4. 상태 확인 (pgvector 는 켜지 않습니다)
 
 ```bash
 docker compose \
@@ -103,7 +103,32 @@ docker compose \
   "SELECT extversion FROM pg_extension WHERE extname = '\''vector'\'';"'
 ```
 
-정상이라면 컨테이너 상태는 `healthy`, 확장 버전은 `0.8.5`로 출력됩니다.
+정상이라면 컨테이너 상태는 `healthy`이고, **확장 버전은 아무것도 출력되지 않습니다(빈 줄).**
+
+`0.8.5`가 출력되면 누군가 `CREATE EXTENSION vector`를 실행한 것입니다. 의도된 상태가 아닙니다 — S15P11E102-218에서 의미 검색을 Qdrant로 옮겼고, pgvector는 4096차원을 인덱싱할 수 없습니다(상한은 `vector` 2,000 / `halfvec` 4,000). 켜져 있으면 검색 경로가 둘이 되고 그중 하나는 인덱스 없는 순차 스캔입니다. `infra/docker/postgres/init/001-enable-vector.sql`에 경위가 적혀 있습니다.
+
+이미지가 `pgvector/pgvector`인 것은 그대로입니다. 운영 중 PostgreSQL 이미지를 바꾸는 것이 확장 하나를 끄는 것보다 위험하기 때문입니다.
+
+### Qdrant 상태 확인
+
+```bash
+docker compose \
+  --env-file /home/ubuntu/bomi/secrets/production.env \
+  -f infra/compose.prod.yml \
+  ps qdrant
+
+docker inspect --format='{{.State.Health.Status}}' bomi-qdrant
+```
+
+`healthy`여야 합니다. 컬렉션은 백엔드가 기동할 때 만듭니다(`memory`, `conversation_summary`, 각각 4096차원). 호스트 포트를 열지 않으므로 대시보드는 밖에서 볼 수 없습니다. 안에서 확인하려면:
+
+```bash
+docker exec bomi-qdrant bash -c \
+  "exec 3<>/dev/tcp/127.0.0.1/6333 && \
+   printf 'GET /collections HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && cat <&3"
+```
+
+이미지에 `curl`·`wget`·`nc`가 없어서 `bash`의 `/dev/tcp`를 씁니다. `/bin/sh`는 dash이므로 `sh -c`로는 동작하지 않습니다.
 
 DB 포트가 호스트에 공개되지 않았는지도 확인합니다.
 
@@ -425,7 +450,97 @@ crontab -l
 
 갱신 로그는 `/home/ubuntu/bomi/logs/certbot-renew.log`에서 확인합니다.
 
+## 가디언 API 접근 제어 (S15P11E102-310)
+
+> **2026-08-05 현재 이 절의 `auth_basic` 은 꺼져 있습니다.** htpasswd 파일이 운영
+> 호스트에 아직 없는 상태에서 릴리즈를 진행해야 했고, 필수(`:?`) 선언을 살려 두면
+> 파일이 생기기 전까지 배포 자체가 막혀 개발 단계의 병목이 됩니다. `bomi.conf`의
+> `auth_basic` 두 줄, `compose.prod.yml`의 볼륨 마운트, `deploy-common.sh`의
+> `require_absolute_path` 를 모두 주석 처리했습니다 — 아래 다섯 접두어는 지금
+> **공개 도메인에 무인증으로 열려 있습니다.** 후속 작업으로 남겨 두었습니다. 아래
+> 절차는 그대로 유효하며, 되살릴 때 파일 생성 후 주석 처리한 세 곳을 함께 되돌립니다.
+
+`/api/v1/guardian`, `/memories`, `/care-records`, `/confirmation-requests`, `/elders` 다섯
+접두어는 어르신의 기억·돌봄기록·복약 스케줄을 반환하거나 수정합니다. 가디언웹은
+브라우저에서 직접 호출하는 SPA라서 로봇 채널(S15P11E102-307)처럼 공유 비밀을 번들에
+넣을 수 없습니다 — 브라우저 번들 안의 비밀은 비밀이 아니기 때문입니다.
+
+**이번 티켓의 범위는 단기 완화까지입니다.** `infra/nginx/conf.d/bomi.conf`가 위 다섯
+접두어만 별도 `location`으로 쪼개 `auth_basic`을 겁니다. 세션·로그인 같은 진짜 인증은
+범위 밖이며 언제 넣을지는 이 티켓에서 결정하지 않습니다. 로봇 채널(`/api/v1/robot/**`,
+`/api/v1/seniors/**`)은 이 변경과 무관하게 기존 `location /api/` 캐치올을 그대로 타고,
+그쪽 인증은 307이 애플리케이션 레이어에서 별도로 붙입니다 — 두 메커니즘을 섞지 않습니다.
+
+### 1. htpasswd 파일 생성 (최초 1회, 이후 자격 증명 변경 시 재실행)
+
+htpasswd 파일 자체(해시된 자격 증명)는 저장소에 커밋하지 않습니다. EC2에서 직접
+생성해 `production.env`가 가리키는 경로에 둡니다.
+
+```bash
+sudo install -d -o ubuntu -g ubuntu -m 700 /home/ubuntu/bomi/secrets
+docker run --rm httpd:2.4-alpine htpasswd -Bbn <가디언용 아이디> '<가디언용 비밀번호>' \
+  > /home/ubuntu/bomi/secrets/guardian.htpasswd
+chmod 600 /home/ubuntu/bomi/secrets/guardian.htpasswd
+```
+
+`production.env`에 다음 값이 있어야 합니다(예제는 `production.env.example` 참고).
+
+```dotenv
+NGINX_GUARDIAN_HTPASSWD_FILE=/home/ubuntu/bomi/secrets/guardian.htpasswd
+```
+
+이 값이 없으면 `compose.prod.yml`의 `${NGINX_GUARDIAN_HTPASSWD_FILE:?...}`가 compose를
+바로 실패시킵니다 — nginx가 무인증으로 조용히 뜨는 것보다 배포가 막히는 편이
+안전하다는 판단입니다.
+
+### 2. 실행 중인 컨테이너가 이 설정을 실제로 마운트했는지 확인 (CLAUDE.md §26)
+
+설정 파일을 고쳤다는 사실과 그 설정이 실제로 반영됐다는 사실은 다릅니다. 배포 후
+반드시 컨테이너 내부에서 확인합니다.
+
+```bash
+# compose.prod.yml 의 nginx 서비스가 ./nginx/conf.d 를 :ro 로 마운트하는 볼륨과
+# guardian.htpasswd 마운트가 실제로 붙었는지 확인합니다.
+docker inspect bomi-nginx --format '{{ range .Mounts }}{{ .Source }} -> {{ .Destination }} ({{ .Mode }}){{ "\n" }}{{ end }}'
+
+# 컨테이너 안의 파일 내용이 저장소의 bomi.conf 와 같은지 직접 비교합니다.
+docker exec bomi-nginx cat /etc/nginx/conf.d/bomi.conf | diff - infra/nginx/conf.d/bomi.conf \
+  && echo "OK: 컨테이너가 마운트한 설정이 저장소 파일과 같다"
+
+# guardian.htpasswd 도 마운트됐는지(내용 출력 없이 존재만) 확인합니다.
+docker exec bomi-nginx test -f /etc/nginx/guardian.htpasswd && echo "OK: htpasswd mounted"
+```
+
+### 3. 문법 검사와 실제 접근 차단 확인 (본문 기준, 상태 코드만으로 판단하지 않음)
+
+```bash
+docker exec bomi-nginx nginx -t
+```
+
+가디언 경로는 자격 증명 없이 401을, 자격 증명이 있으면 정상 응답을 반환해야 합니다.
+로봇 채널은 이 변경으로 동작이 바뀌지 않아야 합니다.
+
+```bash
+# 무인증 — 401 이어야 한다 (guardian.htpasswd 를 만들기 전이면 nginx 자체가 안 뜬다).
+curl -i https://i15e102.p.ssafy.io/api/v1/care-records/medications | head -1
+
+# 자격 증명 포함 — 상태 코드가 아니라 본문으로 확인한다. SPA 폴백이 200 에 index.html
+# 을 실어 보내 배포 성공으로 오인된 사고가 이 팀에 실제로 있었다(CLAUDE.md §26).
+curl -su '<가디언용 아이디>:<가디언용 비밀번호>' \
+  https://i15e102.p.ssafy.io/api/v1/care-records/medications
+
+# 로봇 채널은 영향받지 않아야 한다 — 이 요청은 401 이 아니라 로봇 채널 자체의
+# 인증 규칙(307)을 따른다.
+curl -i https://i15e102.p.ssafy.io/api/v1/robot/conversation-events | head -1
+
+# Swagger 문서에서 DELETE/PUT Try it out 버튼이 사라졌는지는 응답 본문으로 본다.
+curl -s https://i15e102.p.ssafy.io/v3/api-docs/swagger-config | grep -o '"supportedSubmitMethods":\[[^]]*\]'
+# -> "supportedSubmitMethods":["get"] 이어야 한다.
+```
+
 ## Mosquitto 주의사항
 
-현재 Mosquitto 설정은 로컬 개발 편의를 위해 익명 접속을 허용합니다. 운영 환경에
-배포하기 전에 사용자 인증, ACL, TLS를 적용해야 합니다.
+`docker/mosquitto/config/mosquitto.conf`는 로컬 개발용 설정입니다. 운영 배포는
+별도 파일인 `compose.mqtt.prod.yml`과 `docker/mosquitto/production/`을 사용하며,
+익명 접속 차단, 사용자별 ACL, MQTTS(8883)를 적용합니다. 최초 EC2 설정과 Jenkins
+Job 등록 절차는 `scripts/deploy/MQTT_DEPLOYMENT.md`를 따릅니다.

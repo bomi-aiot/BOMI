@@ -1,0 +1,65 @@
+pipeline {
+    agent { node { label 'built-in'; customWorkspace '/home/ubuntu/bomi/data/jenkins/workspace/bomi-mqtt-production' } }
+    options { disableConcurrentBuilds(); skipDefaultCheckout(true); timestamps(); timeout(time: 15, unit: 'MINUTES') }
+    parameters { booleanParam(name: 'FORCE_DEPLOY', defaultValue: false, description: '변경 경로와 관계없이 MQTT Broker를 다시 배포합니다.') }
+    stages {
+        stage('Checkout be-main') {
+            steps {
+                script {
+                    def scmVars = checkout scm
+                    env.GIT_COMMIT = scmVars.GIT_COMMIT ?: sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                    env.GIT_PREVIOUS_SUCCESSFUL_COMMIT = scmVars.GIT_PREVIOUS_SUCCESSFUL_COMMIT ?: ''
+                    echo "SCM checkout: current=${env.GIT_COMMIT}, previousSuccessful=${env.GIT_PREVIOUS_SUCCESSFUL_COMMIT ?: 'none'}"
+                }
+            }
+        }
+        stage('Validate') {
+            steps {
+                sh '''bash -n \
+                    scripts/ci/has-changes.sh \
+                    scripts/deploy/deploy-mqtt.sh \
+                    scripts/deploy/verify-mqtt.sh \
+                    scripts/deploy/renew-certificates.sh
+                    docker compose \
+                        --env-file infra/mqtt.env.example \
+                        -f infra/compose.mqtt.prod.yml \
+                        --profile tools config --quiet'''
+            }
+        }
+        stage('Detect MQTT Changes') {
+            steps {
+                script {
+                    int status = sh(
+                        returnStatus: true,
+                        script: '''FORCE_DEPLOY="$FORCE_DEPLOY" bash scripts/ci/has-changes.sh \
+                            infra/compose.mqtt.prod.yml \
+                            infra/docker/mosquitto \
+                            infra/mqtt.env.example \
+                            ci/Jenkinsfile.mqtt \
+                            scripts/ci/has-changes.sh \
+                            scripts/deploy/deploy-mqtt.sh \
+                            scripts/deploy/verify-mqtt.sh \
+                            scripts/deploy/renew-certificates.sh'''
+                    )
+                    if (status == 0) {
+                        env.MQTT_DEPLOY_REQUIRED = 'true'
+                    } else if (status == 1) {
+                        env.MQTT_DEPLOY_REQUIRED = 'false'
+                    } else {
+                        error("MQTT change detection failed with status ${status}")
+                    }
+                    echo "MQTT deployment required=${env.MQTT_DEPLOY_REQUIRED}"
+                }
+            }
+        }
+        stage('Deploy MQTT Broker') {
+            when { expression { env.MQTT_DEPLOY_REQUIRED?.toBoolean() } }
+            steps {
+                sh '''BOMI_SOURCE_DIR="$WORKSPACE" \
+                    BOMI_RELEASE_BRANCH=be-main \
+                    scripts/deploy/deploy-mqtt.sh'''
+            }
+        }
+    }
+    post { success { echo "MQTT pipeline succeeded: commit=${env.GIT_COMMIT}, deployed=${env.MQTT_DEPLOY_REQUIRED}" }; failure { echo "MQTT deployment failed: ${env.BUILD_URL}" } }
+}

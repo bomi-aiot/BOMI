@@ -1,0 +1,23 @@
+# Spring Boot: receive IoT/robot events and publish robot commands.
+user bomi-backend
+topic read bomi/v1/iot/+/events
+topic read bomi/v1/robot/+/events
+topic write bomi/v1/robot/+/commands
+topic write bomi/v1/ai/+/commands
+topic read bomi/v1/robot/+/status
+topic read bomi/v1/robot/+/results
+
+# Raspberry Pi sensor gateway: publish normalized entrance events only.
+user bomi-iot-gateway
+topic write bomi/v1/iot/+/events
+
+# Jetson/Robot MQTT bridge: consume commands and publish events/status/results.
+user bomi-jetson
+topic read bomi/v1/robot/+/commands
+topic read bomi/v1/ai/+/commands
+topic write bomi/v1/robot/+/events
+topic write bomi/v1/robot/+/status
+topic write bomi/v1/robot/+/results
+
+user bomi-healthcheck
+topic readwrite bomi/v1/system/healthcheck/#

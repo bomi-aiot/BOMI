@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "wmic": "^1.1.1"
+  }
+}
