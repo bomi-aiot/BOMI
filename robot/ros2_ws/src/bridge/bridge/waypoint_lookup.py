@@ -20,8 +20,14 @@ from core.waypoint_route import Waypoint, load_patrol_route
 # contract.TARGET_DEFAULT("DEFAULT")는 충전소 도킹 위치를 가리킨다. 그 좌표는
 # 실측값이 아니라 지도 원점(0, 0, 0)으로 절차적으로 정의한다 — 재매핑 시
 # 로봇을 충전소에 도킹한 채로 SLAM을 시작하면 원점이 곧 충전소가 된다.
+# contract.TARGET_LIVING_ROOM("LIVING_ROOM")은 sofa를 가리킨다. 별도의
+# living_room 웨이포인트를 두지 않는 이유는, 그 좌표가 sofa와 같은 지점이기
+# 때문이다 — 시연 대본에서 어르신이 소파에 앉으므로 보미야 호출·복약·온습도
+# 시나리오의 목적지가 곧 소파다. 같은 지점을 두 이름으로 두면 재매핑 때 한쪽만
+# 갱신되어 조용히 어긋난다.
 _SUPPORTED_TARGET_TO_WAYPOINT_NAME = {
     contract.TARGET_ENTRANCE: "entrance",
+    contract.TARGET_LIVING_ROOM: "sofa",
     contract.TARGET_DEFAULT: "charging",
 }
 

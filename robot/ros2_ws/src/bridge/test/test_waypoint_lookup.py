@@ -44,6 +44,61 @@ def test_default_target_maps_to_charging_waypoint_name() -> None:
     assert resolve_waypoint_name(contract.TARGET_DEFAULT) == "charging"
 
 
+def test_living_room_target_maps_to_sofa_waypoint_name() -> None:
+    # LIVING_ROOM은 sofa와 같은 지점이다(보미야 호출·복약·온습도의 목적지).
+    assert resolve_waypoint_name(contract.TARGET_LIVING_ROOM) == "sofa"
+
+
+def test_every_contract_navigation_target_resolves() -> None:
+    """계약이 정의한 목적지 전부가 매핑표에 있는지 전수 검사한다.
+
+    목적지를 하나씩만 검사하면 표에서 빠진 목적지를 알아챌 수 없다. 실제로
+    LIVING_ROOM이 표에서 빠진 채 머지되어 보미야 호출·복약·온습도 시나리오가
+    전부 FAILED로 떨어진 적이 있다. 계약을 단일 출처로 삼는다.
+    """
+    unresolved = [
+        target
+        for target in sorted(contract.NAVIGATION_TARGETS)
+        if resolve_waypoint_name(target) is None
+    ]
+
+    assert unresolved == []
+
+
+def test_every_resolved_waypoint_name_exists_in_shipped_config() -> None:
+    """매핑표가 가리키는 이름이 실제 room_waypoints.yaml에 있는지 확인한다.
+
+    표에 목적지가 있어도 가리키는 웨이포인트 이름이 좌표 파일에 없으면 주행
+    시점에 KeyError로 실패한다. 좌표 파일과 매핑표는 서로 다른 패키지에서
+    따로 수정되므로, 둘이 어긋난 상태로 커밋되는 것을 여기서 막는다.
+    """
+    config = (
+        Path(__file__).resolve().parents[2]
+        / "core"
+        / "config"
+        / "room_waypoints.yaml"
+    )
+    resolved = [
+        (target, resolve_waypoint_name(target))
+        for target in sorted(contract.NAVIGATION_TARGETS)
+    ]
+    missing = [
+        f"{target} -> {name}"
+        for target, name in resolved
+        if name is not None and not _has_waypoint(config, name)
+    ]
+
+    assert missing == []
+
+
+def _has_waypoint(config: Path, waypoint_name: str) -> bool:
+    try:
+        load_waypoint(config, waypoint_name)
+    except KeyError:
+        return False
+    return True
+
+
 def test_unknown_target_is_not_supported() -> None:
     assert resolve_waypoint_name("KITCHEN") is None
 
