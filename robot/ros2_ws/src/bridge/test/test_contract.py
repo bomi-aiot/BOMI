@@ -73,6 +73,52 @@ def test_parse_rejects_overlong_command_id() -> None:
         contract.parse_command(_valid_command_json(commandId="x" * 65))
 
 
+@pytest.mark.parametrize(
+    "command_type", [contract.CMD_FOLLOW_START, contract.CMD_FOLLOW_STOP]
+)
+def test_parse_accepts_follow_commands(command_type: str) -> None:
+    command = contract.parse_command(
+        _valid_command_json(type=command_type, payload={})
+    )
+    assert command.type == command_type
+
+
+def test_navigation_targets_match_confirmed_contract() -> None:
+    assert contract.NAV_TARGETS == {
+        contract.TARGET_ENTRANCE,
+        contract.TARGET_DEFAULT,
+        contract.TARGET_LIVING_ROOM,
+    }
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("occurredAt", "not-a-time"),
+        ("expiresAt", "2026-07-28T10:02:00"),
+    ],
+)
+def test_parse_rejects_invalid_or_timezone_less_timestamp(
+    field: str,
+    value: str,
+) -> None:
+    with pytest.raises(contract.ContractError):
+        contract.parse_command(_valid_command_json(**{field: value}))
+
+
+def test_expiration_uses_timezone_aware_instants() -> None:
+    command = contract.parse_command(_valid_command_json())
+
+    assert contract.is_command_expired(
+        command,
+        now=lambda: datetime(2026, 7, 28, 1, 1, tzinfo=timezone.utc),
+    ) is False
+    assert contract.is_command_expired(
+        command,
+        now=lambda: datetime(2026, 7, 28, 1, 3, tzinfo=timezone.utc),
+    ) is True
+
+
 def test_build_result_envelope_matches_backend_contract() -> None:
     fixed = datetime(2026, 7, 28, 1, 0, 0, tzinfo=timezone.utc)
     envelope = contract.build_result_envelope(

@@ -68,17 +68,32 @@ def iot_events_topic(sensor_id: str) -> str:
 CMD_NAVIGATE = "NAVIGATE"
 CMD_SPEAK = "SPEAK"
 CMD_CANCEL = "CANCEL"
-COMMAND_TYPES = frozenset({CMD_NAVIGATE, CMD_SPEAK, CMD_CANCEL})
+CMD_FOLLOW_START = "FOLLOW_START"
+CMD_FOLLOW_STOP = "FOLLOW_STOP"
+COMMAND_TYPES = frozenset(
+    {
+        CMD_NAVIGATE,
+        CMD_SPEAK,
+        CMD_CANCEL,
+        CMD_FOLLOW_START,
+        CMD_FOLLOW_STOP,
+    }
+)
 
 # --- 결과 타입 (백엔드가 허용하는 ROBOT_RESULT 타입) ---
 RESULT_NAVIGATION = "NAVIGATION_RESULT"
 RESULT_SPEAK = "SPEAK_RESULT"
 RESULT_CANCEL = "CANCEL_RESULT"
+RESULT_FOLLOW = "FOLLOW_RESULT"
 
 # --- payload 필드/값 (백엔드 HomecomingContract) ---
 NAV_TARGET_KEY = "target"
 TARGET_ENTRANCE = "ENTRANCE"
 TARGET_DEFAULT = "DEFAULT"
+TARGET_LIVING_ROOM = "LIVING_ROOM"
+NAV_TARGETS = frozenset(
+    {TARGET_ENTRANCE, TARGET_DEFAULT, TARGET_LIVING_ROOM}
+)
 SPEAK_TEXT_KEY = "text"
 PAYLOAD_KEY = "payload"
 RESULT_SCENARIO_ID_KEY = "scenarioId"
@@ -89,6 +104,8 @@ STATUS_ARRIVED = "ARRIVED"
 STATUS_FAILED = "FAILED"
 STATUS_DONE = "DONE"
 STATUS_CANCELLED = "CANCELLED"
+STATUS_STARTED = "STARTED"
+STATUS_STOPPED = "STOPPED"
 
 # --- 상태 타입 (백엔드가 허용하는 ROBOT_STATUS 타입) ---
 STATUS_TYPE_REST_STATE_CHANGED = "REST_STATE_CHANGED"
@@ -154,8 +171,8 @@ def parse_command(raw: str | bytes) -> RobotCommand:
     command_type = _require_text(body, "type")
     if command_type not in COMMAND_TYPES:
         raise ContractError(f"지원하지 않는 명령 타입입니다: {command_type}")
-    occurred_at = _require_text(body, "occurredAt")
-    expires_at = _require_text(body, "expiresAt")
+    occurred_at = _require_timestamp(body, "occurredAt")
+    expires_at = _require_timestamp(body, "expiresAt")
 
     payload = body.get(PAYLOAD_KEY)
     if not isinstance(payload, dict):
@@ -170,6 +187,43 @@ def parse_command(raw: str | bytes) -> RobotCommand:
         expires_at=expires_at,
         payload=payload,
     )
+
+
+def parse_timestamp(value: str) -> datetime:
+    """
+    시간대가 포함된 ISO 8601 문자열을 UTC 기준 시각으로 변환한다.
+
+    입력값: ``2026-08-05T14:00:00+09:00`` 또는 끝이 ``Z``인 문자열.
+    반환값: UTC 시간대가 지정된 ``datetime``.
+    실패: 형식이 잘못됐거나 시간대가 없으면 ``ContractError``를 발생시킨다.
+    """
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as error:
+        raise ContractError("시간 값이 유효한 ISO 8601 형식이 아닙니다") from error
+
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ContractError("시간 값에는 시간대 정보가 필요합니다")
+    return parsed.astimezone(timezone.utc)
+
+
+def is_command_expired(
+    command: RobotCommand,
+    *,
+    now: Callable[[], datetime] | None = None,
+) -> bool:
+    """
+    현재 시각이 명령의 ``expiresAt``을 지났는지 판정한다.
+
+    테스트에서는 ``now``를 주입할 수 있다. 주입된 시각에도 시간대 정보가
+    필요하며, 경계 시각과 같은 경우에는 아직 만료되지 않은 것으로 본다.
+    """
+    clock = now or (lambda: datetime.now(timezone.utc))
+    current = clock()
+    if current.tzinfo is None or current.utcoffset() is None:
+        raise ValueError("now must return a timezone-aware datetime")
+    return current.astimezone(timezone.utc) > parse_timestamp(command.expires_at)
 
 
 def build_result_envelope(
@@ -225,6 +279,15 @@ def _require_text(body: dict[str, Any], field: str) -> str:
     value = body.get(field)
     if not isinstance(value, str) or not value.strip():
         raise ContractError(f"필드 '{field}'는 비어 있지 않은 문자열이어야 합니다")
+    return value
+
+
+def _require_timestamp(body: dict[str, Any], field: str) -> str:
+    value = _require_text(body, field)
+    try:
+        parse_timestamp(value)
+    except ContractError as error:
+        raise ContractError(f"필드 '{field}'의 시간 형식이 잘못되었습니다") from error
     return value
 
 

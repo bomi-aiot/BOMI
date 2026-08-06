@@ -22,23 +22,57 @@ def generate_launch_description() -> LaunchDescription:
     robot_id = LaunchConfiguration("robot_id")
     broker_host = LaunchConfiguration("broker_host")
     broker_port = LaunchConfiguration("broker_port")
+    username = LaunchConfiguration("username")
+    password = LaunchConfiguration("password")
+    use_tls = LaunchConfiguration("use_tls")
+    ca_certs = LaunchConfiguration("ca_certs")
+    tls_insecure = LaunchConfiguration("tls_insecure")
     driver_type = LaunchConfiguration("driver_type")
     goal_timeout_seconds = LaunchConfiguration("goal_timeout_seconds")
+    test_forward_speed_m_s = LaunchConfiguration("test_forward_speed_m_s")
+    test_forward_duration_sec = LaunchConfiguration("test_forward_duration_sec")
+    test_publish_rate_hz = LaunchConfiguration("test_publish_rate_hz")
+    test_cmd_vel_topic = LaunchConfiguration("test_cmd_vel_topic")
 
     return LaunchDescription(
         [
             DeclareLaunchArgument("robot_id", default_value="robot-01"),
             DeclareLaunchArgument("broker_host", default_value="localhost"),
             DeclareLaunchArgument("broker_port", default_value="1883"),
+            DeclareLaunchArgument("username", default_value=""),
+            DeclareLaunchArgument("password", default_value=""),
+            DeclareLaunchArgument("use_tls", default_value="false"),
+            DeclareLaunchArgument("ca_certs", default_value=""),
+            DeclareLaunchArgument("tls_insecure", default_value="false"),
             DeclareLaunchArgument(
                 "driver_type",
                 default_value="mock",
-                description="Robot driver to use: mock or nav2",
+                description="Robot driver: mock, nav2 or forward_test",
             ),
             DeclareLaunchArgument(
                 "goal_timeout_seconds",
                 default_value="120.0",
                 description="Max seconds to wait for a Nav2 goal to finish",
+            ),
+            DeclareLaunchArgument(
+                "test_forward_speed_m_s",
+                default_value="0.08",
+                description="Forward-test linear speed in m/s",
+            ),
+            DeclareLaunchArgument(
+                "test_forward_duration_sec",
+                default_value="2.0",
+                description="Forward-test movement duration in seconds",
+            ),
+            DeclareLaunchArgument(
+                "test_publish_rate_hz",
+                default_value="10.0",
+                description="Forward-test Twist publish rate in Hz",
+            ),
+            DeclareLaunchArgument(
+                "test_cmd_vel_topic",
+                default_value="/cmd_vel_backend_test",
+                description="Forward-test twist_mux input topic",
             ),
             Node(
                 package="bridge",
@@ -50,8 +84,17 @@ def generate_launch_description() -> LaunchDescription:
                         "robot_id": robot_id,
                         "broker_host": broker_host,
                         "broker_port": broker_port,
+                        "username": username,
+                        "password": password,
+                        "use_tls": use_tls,
+                        "ca_certs": ca_certs,
+                        "tls_insecure": tls_insecure,
                         "driver_type": driver_type,
                         "goal_timeout_seconds": goal_timeout_seconds,
+                        "test_forward_speed_m_s": test_forward_speed_m_s,
+                        "test_forward_duration_sec": test_forward_duration_sec,
+                        "test_publish_rate_hz": test_publish_rate_hz,
+                        "test_cmd_vel_topic": test_cmd_vel_topic,
                     }
                 ],
             ),

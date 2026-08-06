@@ -45,8 +45,8 @@ def _command(command_type: str, **payload) -> str:
             "scenarioId": "scenario-e2e-7",
             "robotId": ROBOT_ID,
             "type": command_type,
-            "occurredAt": "2026-07-28T10:00:00+09:00",
-            "expiresAt": "2026-07-28T10:02:00+09:00",
+            "occurredAt": "2026-08-05T10:00:00+09:00",
+            "expiresAt": "2099-12-31T23:59:59+09:00",
             "payload": payload,
         }
     )

@@ -14,6 +14,9 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import OrderedDict
+from datetime import datetime
+import threading
 from typing import Callable
 
 from bridge import contract
@@ -23,15 +26,40 @@ logger = logging.getLogger(__name__)
 
 # 발행 콜백 형태: (topic, payload_json) -> None
 PublishFn = Callable[[str, str], None]
+SubmitFn = Callable[[Callable[[], None]], bool]
+DEFAULT_RECENT_COMMAND_LIMIT = 256
 
 
 class MqttBridge:
     """백엔드 MQTT 명령과 로봇 동작 사이의 통역 코어다."""
 
-    def __init__(self, robot_id: str, driver: RobotDriver, publish: PublishFn) -> None:
+    def __init__(
+        self,
+        robot_id: str,
+        driver: RobotDriver,
+        publish: PublishFn,
+        *,
+        submit_navigation: SubmitFn | None = None,
+        now: Callable[[], datetime] | None = None,
+        recent_command_limit: int = DEFAULT_RECENT_COMMAND_LIMIT,
+    ) -> None:
+        """
+        브릿지 의존성과 중복 명령 보관 한도를 설정한다.
+
+        ``submit_navigation``은 NAVIGATE 작업을 MQTT callback 밖에서 실행한다.
+        생략하면 기존처럼 현재 스레드에서 즉시 실행하므로 순수 단위 테스트에서
+        별도 스레드가 필요 없다. 최근 commandId는 정해진 개수만 보관한다.
+        """
+        if recent_command_limit <= 0:
+            raise ValueError("recent_command_limit must be positive")
         self._robot_id = robot_id
         self._driver = driver
         self._publish = publish
+        self._submit_navigation = submit_navigation or self._run_immediately
+        self._now = now
+        self._recent_command_limit = recent_command_limit
+        self._recent_command_ids: OrderedDict[str, None] = OrderedDict()
+        self._command_lock = threading.Lock()
 
     @property
     def commands_topic(self) -> str:
@@ -78,7 +106,7 @@ class MqttBridge:
         try:
             command = contract.parse_command(raw_payload)
         except contract.ContractError as error:
-            logger.warning("계약 위반 명령을 버립니다: %s", error)
+            logger.warning("Invalid command ignored: %s", error)
             return
 
         if command.robot_id != self._robot_id:
@@ -87,23 +115,125 @@ class MqttBridge:
             )
             return
 
+        logger.info(
+            "Received command: commandId=%s scenarioId=%s type=%s target=%s",
+            command.command_id,
+            command.scenario_id,
+            command.type,
+            command.target,
+        )
+
+        if not self._remember_command_id(command.command_id):
+            logger.warning(
+                "Duplicate command ignored: commandId=%s scenarioId=%s",
+                command.command_id,
+                command.scenario_id,
+            )
+            return
+
+        if contract.is_command_expired(command, now=self._now):
+            logger.warning(
+                "Expired command ignored: commandId=%s scenarioId=%s",
+                command.command_id,
+                command.scenario_id,
+            )
+            if command.type == contract.CMD_NAVIGATE:
+                self._publish_result(
+                    contract.RESULT_NAVIGATION,
+                    command.scenario_id,
+                    contract.STATUS_FAILED,
+                )
+            return
+
         if command.type == contract.CMD_NAVIGATE:
             self._handle_navigate(command)
         elif command.type == contract.CMD_SPEAK:
             self._handle_speak(command)
         elif command.type == contract.CMD_CANCEL:
             self._handle_cancel(command)
+        elif command.type == contract.CMD_FOLLOW_START:
+            self._handle_follow(command, start=True)
+        elif command.type == contract.CMD_FOLLOW_STOP:
+            self._handle_follow(command, start=False)
         else:  # parse_command이 이미 걸러내지만 방어적으로 둔다
             logger.warning("처리할 수 없는 명령 타입입니다: %s", command.type)
 
     def _handle_navigate(self, command: contract.RobotCommand) -> None:
         target = command.target
-        if not target:
-            logger.warning("NAVIGATE 명령에 target이 없어 FAILED로 처리합니다")
-            status = contract.STATUS_FAILED
-        else:
+        if not isinstance(target, str) or target not in contract.NAV_TARGETS:
+            logger.warning(
+                "Unknown navigation target: commandId=%s scenarioId=%s target=%s",
+                command.command_id,
+                command.scenario_id,
+                target,
+            )
+            self._publish_result(
+                contract.RESULT_NAVIGATION,
+                command.scenario_id,
+                contract.STATUS_FAILED,
+            )
+            return
+
+        def task() -> None:
+            self._execute_navigate(command, target)
+
+        try:
+            accepted = self._submit_navigation(task)
+        except Exception as error:
+            logger.error(
+                "Navigation task submission failed: commandId=%s error=%s",
+                command.command_id,
+                error,
+            )
+            accepted = False
+
+        if not accepted:
+            logger.warning(
+                "Navigation command rejected while busy: commandId=%s "
+                "scenarioId=%s",
+                command.command_id,
+                command.scenario_id,
+            )
+            self._publish_result(
+                contract.RESULT_NAVIGATION,
+                command.scenario_id,
+                contract.STATUS_FAILED,
+            )
+
+    def _execute_navigate(
+        self,
+        command: contract.RobotCommand,
+        target: str,
+    ) -> None:
+        """승인된 NAVIGATE를 드라이버에서 실행하고 완료 결과를 발행한다."""
+        try:
             status = self._driver.navigate(target)
-        self._publish_result(contract.RESULT_NAVIGATION, command.scenario_id, status)
+        except Exception as error:
+            logger.error(
+                "Navigation execution failed: commandId=%s scenarioId=%s error=%s",
+                command.command_id,
+                command.scenario_id,
+                error,
+            )
+            try:
+                self._driver.cancel()
+            except Exception as cancel_error:
+                logger.error("Emergency stop failed: %s", cancel_error)
+            status = contract.STATUS_FAILED
+
+        self._publish_result(
+            contract.RESULT_NAVIGATION,
+            command.scenario_id,
+            status,
+        )
+        logger.info(
+            "Navigation test completed: commandId=%s scenarioId=%s "
+            "target=%s status=%s",
+            command.command_id,
+            command.scenario_id,
+            target,
+            status,
+        )
 
     def _handle_speak(self, command: contract.RobotCommand) -> None:
         status = self._driver.speak(command.text or "")
@@ -112,6 +242,18 @@ class MqttBridge:
     def _handle_cancel(self, command: contract.RobotCommand) -> None:
         status = self._driver.cancel()
         self._publish_result(contract.RESULT_CANCEL, command.scenario_id, status)
+
+    def _handle_follow(
+        self,
+        command: contract.RobotCommand,
+        *,
+        start: bool,
+    ) -> None:
+        """추종 명령을 드라이버 경계로 전달하되 전진 테스트와 분리한다."""
+        status = (
+            self._driver.follow_start() if start else self._driver.follow_stop()
+        )
+        self._publish_result(contract.RESULT_FOLLOW, command.scenario_id, status)
 
     def _publish_result(self, result_type: str, scenario_id: str, status: str) -> None:
         envelope = contract.build_result_envelope(
@@ -127,3 +269,20 @@ class MqttBridge:
             scenario_id,
             status,
         )
+
+    def _remember_command_id(self, command_id: str) -> bool:
+        """최근 commandId를 유한한 크기로 보관하고 중복 여부를 반환한다."""
+        with self._command_lock:
+            if command_id in self._recent_command_ids:
+                return False
+
+            self._recent_command_ids[command_id] = None
+            if len(self._recent_command_ids) > self._recent_command_limit:
+                self._recent_command_ids.popitem(last=False)
+            return True
+
+    @staticmethod
+    def _run_immediately(task: Callable[[], None]) -> bool:
+        """단위 테스트와 기존 직접 사용 경로에서 작업을 즉시 실행한다."""
+        task()
+        return True

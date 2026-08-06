@@ -4,11 +4,8 @@
 그래서 하드웨어와 Nav2가 준비되면 주입하는 구현 **한 곳만** 바꾸면 실물로
 전환된다. 이것이 이 프로젝트의 핵심 설계 제약이다.
 
-현재 필요한 구현은 ``MockRobotDriver`` 하나다. 실물 구현(가칭 Nav2RobotDriver)은
-하드웨어와 Nav2가 준비된 시점에 이 파일에 함께 추가한다. 실물은 강현의
-``NavigateToPose`` 액션 클라이언트 패턴(S15P11E102-79)을 이식해 Nav2를 직접
-호출한다(``docs/decisions/0001-nav2-driver-owns-action-client.md`` 참고).
-미리 빈 골격을 두지 않는다(로봇 ``AGENTS.md`` 규칙).
+현재 Mock, Nav2와 MQTT 전진 통신 테스트 드라이버를 선택할 수 있다. 구현별 ROS 2
+자원은 각 모듈에 두고 이 파일은 공통 경계와 선택 규칙만 담당한다.
 """
 
 from __future__ import annotations
@@ -33,6 +30,22 @@ class RobotDriver(ABC):
     @abstractmethod
     def cancel(self) -> str:
         """진행 중인 동작을 취소하고 결과 상태(CANCELLED)를 반환한다."""
+
+    def follow_start(self) -> str:
+        """
+        사람 추종 시작 지원 여부를 결과 상태로 반환한다.
+
+        실제 추종 제어 연결은 별도 기능이므로 기본 구현은 FAILED를 반환한다.
+        """
+        return contract.STATUS_FAILED
+
+    def follow_stop(self) -> str:
+        """
+        사람 추종 중지 지원 여부를 결과 상태로 반환한다.
+
+        실제 추종 제어 연결은 별도 기능이므로 기본 구현은 FAILED를 반환한다.
+        """
+        return contract.STATUS_FAILED
 
     def shutdown(self) -> None:
         """드라이버가 보유한 자원을 정리한다.
@@ -79,6 +92,7 @@ class MockRobotDriver(RobotDriver):
 # Mock으로 넘어가지 않도록, 허용값을 여기서 명시적으로 제한한다.
 DRIVER_TYPE_MOCK = "mock"
 DRIVER_TYPE_NAV2 = "nav2"
+DRIVER_TYPE_FORWARD_TEST = "forward_test"
 
 
 def create_driver(
@@ -86,6 +100,7 @@ def create_driver(
     *,
     create_mock: Callable[[], RobotDriver],
     create_nav2: Callable[[], RobotDriver],
+    create_forward_test: Callable[[], RobotDriver],
 ) -> RobotDriver:
     """driver_type 값에 따라 알맞은 드라이버를 생성한다.
 
@@ -93,8 +108,9 @@ def create_driver(
         실제 생성은 주입된 팩터리(create_mock/create_nav2)가 담당한다. 덕분에 이
         함수 자체는 ROS 2에 의존하지 않아 단위 테스트할 수 있고, Nav2 드라이버는
         nav2가 선택된 경우에만 생성된다.
-    입력값: driver_type - "mock" 또는 "nav2". create_mock/create_nav2 - 각각
-        Mock, Nav2 드라이버를 만들어 돌려주는 인자 없는 함수.
+    입력값: driver_type - "mock", "nav2" 또는 "forward_test".
+        create_mock/create_nav2/create_forward_test - 각 드라이버를 만들어 돌려주는
+        인자 없는 함수.
     반환값: 선택된 RobotDriver 구현.
     실패: 허용하지 않는 driver_type이면 ValueError를 던진다. 조용히 Mock으로
         대체하지 않는다.
@@ -103,7 +119,10 @@ def create_driver(
         return create_mock()
     if driver_type == DRIVER_TYPE_NAV2:
         return create_nav2()
+    if driver_type == DRIVER_TYPE_FORWARD_TEST:
+        return create_forward_test()
     raise ValueError(
         f"unknown driver_type '{driver_type}'; "
-        f"use '{DRIVER_TYPE_MOCK}' or '{DRIVER_TYPE_NAV2}'"
+        f"use '{DRIVER_TYPE_MOCK}', '{DRIVER_TYPE_NAV2}' or "
+        f"'{DRIVER_TYPE_FORWARD_TEST}'"
     )

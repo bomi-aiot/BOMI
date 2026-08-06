@@ -11,8 +11,11 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import os
+import threading
+from typing import Callable
 
 import paho.mqtt.client as mqtt
 
@@ -22,6 +25,52 @@ from bridge.robot_driver import MockRobotDriver, RobotDriver
 logger = logging.getLogger(__name__)
 
 DEFAULT_QOS = 1
+
+
+class SingleFlightExecutor:
+    """
+    동시에 하나의 NAVIGATE 작업만 받는 비차단 실행기다.
+
+    ``submit``은 작업을 전용 스레드에 넘기고 즉시 반환한다. 실행 중 새 작업은
+    큐에 쌓지 않고 False로 거부하여 이동 시간이 연장되거나 겹치지 않게 한다.
+    """
+
+    def __init__(self) -> None:
+        self._executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="mqtt-navigation",
+        )
+        self._lock = threading.Lock()
+        self._busy = False
+        self._closed = False
+
+    def submit(self, task: Callable[[], None]) -> bool:
+        """실행 중인 작업이 없으면 task를 예약하고 승인 여부를 반환한다."""
+        with self._lock:
+            if self._closed or self._busy:
+                return False
+            self._busy = True
+
+        try:
+            self._executor.submit(self._run, task)
+        except Exception:
+            with self._lock:
+                self._busy = False
+            raise
+        return True
+
+    def shutdown(self) -> None:
+        """새 작업을 막고 현재 작업이 안전하게 끝날 때까지 기다린다."""
+        with self._lock:
+            self._closed = True
+        self._executor.shutdown(wait=True, cancel_futures=True)
+
+    def _run(self, task: Callable[[], None]) -> None:
+        try:
+            task()
+        finally:
+            with self._lock:
+                self._busy = False
 
 
 class MqttBridgeRunner:
@@ -40,10 +89,16 @@ class MqttBridgeRunner:
         use_tls: bool = False,
         ca_certs: str | None = None,
         tls_insecure: bool = False,
+        nonblocking_navigation: bool = False,
     ) -> None:
         self._robot_id = robot_id
         self._host = host
         self._port = port
+        self._driver = driver or MockRobotDriver()
+        self._navigation_executor = (
+            SingleFlightExecutor() if nonblocking_navigation else None
+        )
+        self._stopped = False
 
         self._client = mqtt.Client(
             client_id=client_id or f"bomi-robot-bridge-{robot_id}",
@@ -61,7 +116,16 @@ class MqttBridgeRunner:
             if tls_insecure:
                 self._client.tls_insecure_set(True)
 
-        self._bridge = MqttBridge(robot_id, driver or MockRobotDriver(), self._publish)
+        self._bridge = MqttBridge(
+            robot_id,
+            self._driver,
+            self._publish,
+            submit_navigation=(
+                self._navigation_executor.submit
+                if self._navigation_executor is not None
+                else None
+            ),
+        )
         self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message
 
@@ -87,8 +151,14 @@ class MqttBridgeRunner:
         self._client.loop_start()
 
     def stop(self) -> None:
-        """백그라운드 루프를 멈추고 브로커 연결을 종료한다."""
+        """명령 수신을 멈추고 드라이버 정지 후 브로커 연결을 종료한다."""
+        if self._stopped:
+            return
+        self._stopped = True
         self._client.loop_stop()
+        self._driver.shutdown()
+        if self._navigation_executor is not None:
+            self._navigation_executor.shutdown()
         self._client.disconnect()
 
 
