@@ -82,6 +82,19 @@
   `sd.InputStream` 콜백 스레드가 실제로 어떻게 반응하는지는 V3 단계에서
   처음 확인한다.
 
+`iot` 쪽 배선 완료 항목 (2-4, 온습도 정합 — 이거 없으면 온습도 안부는 0%):
+- `translator/contract.py` — payload 필드명 `temperature`/`humidity` →
+  `temperatureC`/`humidityPercent`. 백엔드 `ObservationContract` 가 정확히
+  이 두 키만 읽고, 없으면 `optionalDecimal` 이 예외 없이 null 을 돌려준다 —
+  그래서 온습도 이벤트는 도착은 했지만 임계 판정에서 **로그도 없이** 조용히
+  제외되고 있었다.
+- `dht11_main.py`, `config/dht11.env.example` — `SENSOR_ID` 기본값
+  `living-room-ambient` → `ambient-sensor-01`(백엔드
+  `bomi.observation.ambient-sensor-to-senior` 등록값과 일치). 필드명이
+  맞아도 sourceId 가 안 맞으면 여전히 폐기된다.
+- 시연 트리거: `publish_event.py ambient --temp 31`(§4·§5) 또는 실센서 +
+  드라이기로 30°C 이상 만들기.
+
 **백엔드는 `SPEAK` 를 절대 발행하지 않는다** (main 전체 grep 0건). 대화는 전부
 `START_CONVERSATION` 이고, bridge 는 이동만 담당한다.
 

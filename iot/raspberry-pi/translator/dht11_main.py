@@ -31,7 +31,11 @@ def main() -> None:
     port = env_int("MQTT_PORT", 1883)
     qos = int(os.environ.get("MQTT_QOS", "1"))
     interval = env_int("READ_INTERVAL_SECONDS", 30)
-    source_id = os.environ.get("SENSOR_ID", "living-room-ambient")
+    # ★ 백엔드 application.yml 의 bomi.observation.ambient-sensor-to-senior
+    #   에 등록된 값과 정확히 같아야 한다. 예전 기본값 "living-room-ambient"
+    #   는 그 표에 없어 이벤트가 도착해도 어르신에게 매핑되지 않고 조용히
+    #   폐기됐다(S15P11E102 통합 스프린트 2-4).
+    source_id = os.environ.get("SENSOR_ID", "ambient-sensor-01")
     location = os.environ.get("LOCATION", "LIVING_ROOM")
 
     client = mqtt.Client(

@@ -21,10 +21,13 @@ def test_iot_events_topic_rejects_unsafe_id() -> None:
 
 
 def test_ambient_payload_uses_contract_field_names() -> None:
+    """★ temperatureC/humidityPercent — 백엔드 ObservationContract 와 정확히
+    일치해야 한다. 예전 temperature/humidity 는 백엔드가 조용히 null 로
+    읽어 온습도 안부 시나리오가 한 번도 발동하지 않게 만들던 값이다."""
     assert contract.ambient_payload("LIVING_ROOM", 26.0, 58.0) == {
         "location": "LIVING_ROOM",
-        "temperature": 26.0,
-        "humidity": 58.0,
+        "temperatureC": 26.0,
+        "humidityPercent": 58.0,
     }
 
 

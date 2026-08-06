@@ -36,8 +36,14 @@ TYPE_AMBIENT_ENVIRONMENT_OBSERVED = "AMBIENT_ENVIRONMENT_OBSERVED"
 
 # --- payload 필드/값 ---
 LOCATION_KEY = "location"
-TEMPERATURE_KEY = "temperature"
-HUMIDITY_KEY = "humidity"
+# ★ 백엔드 ObservationContract 가 정확히 이 두 키로 읽는다(temperatureC,
+#   humidityPercent). 예전엔 temperature/humidity 였는데, 백엔드는 그 값을
+#   optionalDecimal 로 읽어 키가 없으면 예외 없이 null 을 돌려준다 — 그래서
+#   온습도 이벤트는 도착은 했지만 온도·습도가 둘 다 null 로 읽혀 임계 판정에서
+#   조용히 제외됐다(로그도 안 남는다, S15P11E102 통합 스프린트 2-4). 필드명
+#   하나가 온습도 안부 시나리오 전체를 죽이고 있었다.
+TEMPERATURE_KEY = "temperatureC"
+HUMIDITY_KEY = "humidityPercent"
 
 # 백엔드 토픽/식별자 안전 규칙: [A-Za-z0-9._-] 1~64자
 _SAFE_ID = re.compile(r"[A-Za-z0-9._-]{1,64}")
