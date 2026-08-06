@@ -83,6 +83,19 @@ def test_dropped_scan_does_not_move_interval_reference():
     assert gate.judge(NORMAL_POINTS, NORMAL_INCREMENT, 100.1) is None
 
 
+def test_stopped_clock_does_not_block_every_scan():
+    """
+    stamp가 멈춰 있어도 스캔을 전부 버리지 않는다.
+
+    use_sim_time을 켰는데 /clock이 없으면 stamp가 계속 0으로 온다. 그때
+    간격 기준으로 전부 버리면 SLAM에 스캔이 한 장도 가지 않는다.
+    """
+    gate = make_gate()
+
+    for _ in range(5):
+        assert gate.judge(NORMAL_POINTS, NORMAL_INCREMENT, 0.0) is None
+
+
 def test_interval_check_can_be_disabled():
     """간격 기준을 0으로 두면 각도 범위만 본다."""
     gate = make_gate(minimum_interval_sec=0.0)

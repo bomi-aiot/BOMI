@@ -88,7 +88,11 @@ class ScanGate:
         if self._last_passed_sec is not None:
             elapsed = stamp_sec - self._last_passed_sec
 
-            if 0.0 <= elapsed < self._minimum_interval_sec:
+            # 간격이 정확히 0이면 통과시킨다. 시각이 멈춰 있는 상황
+            # (use_sim_time을 켰는데 /clock이 없는 경우처럼 stamp가 계속
+            # 0인 상태)에서 전부 버리면 SLAM에 스캔이 한 장도 안 간다.
+            # 걸러지지 않는 편이 아무것도 못 받는 편보다 안전하다.
+            if 0.0 < elapsed < self._minimum_interval_sec:
                 return REASON_INTERVAL
 
         self._last_passed_sec = stamp_sec
@@ -142,11 +146,18 @@ class ScanSanitizer(Node):
         self._dropped = {REASON_SPAN: 0, REASON_INTERVAL: 0}
         self._last_report_sec: float | None = None
 
+        # 발행은 LiDAR 드라이버가 쓰던 기본 QoS(RELIABLE, 깊이 10)를 그대로
+        # 쓴다. BEST_EFFORT로 발행하면 RELIABLE로 구독하는 다운스트림에는
+        # 스캔이 한 장도 전달되지 않는다. RELIABLE 발행은 BEST_EFFORT
+        # 구독자에게도 전달되므로 이 조합이 양쪽 모두에 안전하다.
         self._publisher = self.create_publisher(
             LaserScan,
             output_topic,
-            qos_profile_sensor_data,
+            10,
         )
+
+        # 구독은 반대로 BEST_EFFORT가 안전하다. 발행자가 RELIABLE이든
+        # BEST_EFFORT든 받을 수 있다.
         self._subscription = self.create_subscription(
             LaserScan,
             input_topic,
