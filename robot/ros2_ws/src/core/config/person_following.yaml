@@ -1,0 +1,27 @@
+person_follower:
+  ros__parameters:
+    input_topic: /vision/follow_result
+    output_topic: /cmd_vel_follow
+    scan_topic: /scan
+
+    linear_speed: 0.15
+    angular_speed: 0.5
+
+    command_timeout_sec: 1.0
+    target_confirm_sec: 0.5
+    lost_timeout_sec: 1.0
+
+    multiple_observation_sec: 3.0
+    single_recovery_sec: 1.0
+
+    use_lidar: true
+    require_lidar_before_motion: true
+
+    person_stop_distance_m: 0.5
+    person_resume_distance_m: 1.0
+    emergency_stop_distance_m: 0.3
+
+    obstacle_check_half_angle_deg: 20.0
+    person_check_half_angle_deg: 8.0
+
+    lidar_timeout_sec: 0.5

@@ -1,0 +1,19 @@
+# 실제 LiDAR와 RF2O 오도메트리를 사용하는 온라인 2D 지도 생성 설정.
+# 시뮬레이션 설정과 분리하며, 실측 전 임의 튜닝값을 추가하지 않는다.
+slam_toolbox:
+  ros__parameters:
+    use_sim_time: false
+    mode: mapping
+    map_frame: map
+    odom_frame: odom
+    base_frame: base_link
+    scan_topic: /scan
+
+    # X4-PRO의 측정 가능 범위에 맞춘다. 기본값(0.0~25.0 m)은 센서 사양을
+    # 벗어나 slam_toolbox가 실행 시 경고를 남기고, 하한이 0이면 로봇 몸체와
+    # 배선에 반사된 근거리 노이즈가 장애물로 기록된다.
+    # 상한은 bomi_lidar/config/x4_pro.yaml의 range_max와 같은 값이다.
+    # 하한은 range_min(0.12 m)에 여유를 둔 값이며, LiDAR 주변이 트여 있음을
+    # 확인하면 0.12까지 내릴 수 있다.
+    min_laser_range: 0.15
+    max_laser_range: 10.0
