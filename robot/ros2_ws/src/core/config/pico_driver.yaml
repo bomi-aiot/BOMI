@@ -1,0 +1,29 @@
+pico_driver:
+  ros__parameters:
+    serial_port: /dev/ttyACM0
+    handshake_timeout_sec: 1.0
+    startup_response_timeout_sec: 5.0
+
+    cmd_vel_topic: /cmd_vel
+    odom_topic: /odom
+    imu_topic: /imu
+    odom_frame_id: odom
+    base_frame_id: base_link
+    imu_frame_id: base_link
+    publish_tf: true
+
+    # robot/docs/hardware-control.md `## 7 확정한 값`과 같은 값이다.
+    track_width_m: 0.257
+    distance_per_rev_m: 0.1929
+    max_target_rev_s: 0.8
+    left_front_cpr: 979
+    right_front_cpr: 979
+
+    control_hz: 20.0
+    cmd_vel_timeout_sec: 0.5
+    telemetry_timeout_sec: 1.0
+
+    # 실측 보정 전 잠정값. robot/docs/pico-serial-protocol.md `## 9` 참고.
+    angular_velocity_variance: 0.05
+    pose_covariance_diagonal: [0.05, 0.05, 1000000.0, 1000000.0, 1000000.0, 0.2]
+    twist_covariance_diagonal: [0.05, 1000000.0, 1000000.0, 1000000.0, 1000000.0, 0.2]

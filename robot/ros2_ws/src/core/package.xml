@@ -1,0 +1,64 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd"
+  schematypens="http://www.w3.org/2001/XMLSchema"?>
+
+<package format="3">
+  <name>core</name>
+  <version>0.0.0</version>
+  <description>TODO: Package description</description>
+
+  <maintainer email="gcodms56@gmail.com">
+    cho-eunchae
+  </maintainer>
+
+  <license>Apache-2.0</license>
+
+  <!-- core Python 노드에서 직접 사용하는 의존성 -->
+  <depend>rclpy</depend>
+  <depend>action_msgs</depend>
+  <depend>ament_index_python</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>lifecycle_msgs</depend>
+  <depend>nav2_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>tf2_ros</depend>
+
+  <!-- Pico H 시리얼 통신에 필요한 실행 의존성 -->
+  <exec_depend>python3-serial</exec_depend>
+
+  <!-- 로봇 수동 조작에 필요한 실행 의존성 -->
+  <exec_depend>twist_mux</exec_depend>
+  <exec_depend>joy_linux</exec_depend>
+  <exec_depend>teleop_twist_joy</exec_depend>
+
+  <!-- ROS 2 launch 실행에 필요한 의존성 -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+
+  <!-- 자율주행 및 설정 파일 처리에 필요한 실행 의존성 -->
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>nav2_common</exec_depend>
+  <exec_depend>mapping</exec_depend>
+  <exec_depend>bomi_lidar</exec_depend>
+  <exec_depend>simulation</exec_depend>
+
+  <!-- Gazebo 시뮬레이션 및 시각화에 필요한 실행 의존성 -->
+  <exec_depend>gazebo_ros</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>turtlebot3_gazebo</exec_depend>
+
+  <!-- 테스트 의존성 -->
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

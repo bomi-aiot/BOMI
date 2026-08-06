@@ -1,0 +1,13 @@
+# 키보드와 조이스틱의 속도 명령 중 하나를 선택하는 설정
+twist_mux:
+  ros__parameters:
+    topics:
+      keyboard:
+        topic: /cmd_vel_keyboard
+        timeout: 0.5
+        priority: 50
+
+      joystick:
+        topic: /cmd_vel_joy
+        timeout: 0.5
+        priority: 100
