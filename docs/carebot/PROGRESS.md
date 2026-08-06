@@ -1080,6 +1080,7 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 
 | 시점 | 내용 |
 |---|---|
+| 348-AI 푸시 후 (2026-08-06) | **"기억하지 마"의 서버 절반 배선.** BE 의 `POST /api/v1/robot/fact-candidates/cancel`(39fd56d 머지)을 로봇이 실제로 부르게 했다. 턴 경로에서 HTTP 를 부르면 지연 예산(§16)을 깨고 단절 시 요청을 잃으므로, `localstore/cancellations.py`(신규 큐, UNIQUE 로 중복 접힘·done 후 재요청 시 재대기)에 적고 `extraction_flush` 가 **추출 킬스위치보다 먼저** 보낸다 — 추출이 꺼져 있어도 "지웠어요" 약속은 지켜져야 한다. 실패 행은 남아 재시도(서버 멱등). 신규 테스트 5건, `725 passed`. **실서버 왕복은 UNVERIFIED** |
 | 349 푸시 후 (2026-08-06) | **웨이크워드 감지 MQTT 발행.** be-develop 에 머지된 보미야 호출 시나리오(335)의 `WakeWordDetectedHandler` 가 로봇의 `WAKE_WORD_DETECTED` 이벤트를 기다리는데 로봇은 발행 코드가 0건이었다 — "만들어 놓고 아무도 안 부르는" 유형(226과 동형). `robot_events.py` 신설: 토픽 `bomi/v1/robot/{robotId}/events`, 봉투 `type/eventId/occurredAt/payload{keyword,confidence}` (계약의 권위는 be-develop 파서). `run_conversation_loop` 가 `wait_for_wake()` 직후 1회 발행하고, 발행 실패·브로커 부재·MQTT 꺼짐은 전부 대화를 막지 않는다(시나리오는 부가, 대화가 본체). 신규 테스트 8건. **실브로커·BE 오케스트레이터까지의 실통합은 UNVERIFIED — 실기 확인 항목** |
 | 205 푸시 후 | 최초 작성. 200~205 반영 |
 | 206 푸시 후 | 206 추가. §2.3 에서 `handle_schedule` 구현으로 "약 먹었어"가 정상 처리됨을 반영. 복약 알림 미투입 공백 신규 기록 |

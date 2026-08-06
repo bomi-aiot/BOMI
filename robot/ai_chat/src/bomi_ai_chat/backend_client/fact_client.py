@@ -139,3 +139,39 @@ class BackendFactClient:
                 raise FactSubmissionError(
                     f"fact candidate submission failed: {error}"
                 ) from error
+
+    def cancel_conversation(self, senior_id: str, conversation_id: str) -> None:
+        """"기억하지 마" — 이 대화의 미확정 후보를 서버에서도 닫는다 (S15P11E102-348).
+
+        로컬 절반(localstore.extraction.forget_conversation)은 아직 안 보낸 대기
+        행을 지우고, 이 호출이 이미 제출된 후보를 닫는다 — 둘이 합쳐져야 약속이
+        온전히 지켜진다. 서버 쪽이 대화 단위·멱등이라(0건 취소도 200) 재시도
+        중복 전송이 안전하다.
+
+        실패하면 FactSubmissionError 를 올린다 — 제출과 같은 방향이다. 여기서
+        삼키면 호출부(jobs/ticks)가 큐 행을 done 으로 착각해 지우고, 그 취소는
+        다시는 시도되지 않는다.
+        """
+        url = f"{self.base_url}/api/v1/robot/fact-candidates/cancel"
+        try:
+            request_with_retry(
+                "POST",
+                url,
+                service="robot-fact-cancel",
+                timeout_seconds=self.timeout_seconds,
+                max_attempts=self.max_attempts,
+                backoff_seconds=self.backoff_seconds,
+                max_backoff_seconds=self.max_backoff_seconds,
+                session=self._session,
+                json={"seniorId": senior_id, "conversationId": conversation_id},
+            )
+        except (ExternalServiceError, OSError) as error:
+            if is_auth_failure(error):
+                logger.warning(
+                    "AUTH FAILURE: backend rejected the shared secret (status=%s) "
+                    "while cancelling fact candidates. Check BACKEND_SHARED_SECRET.",
+                    error.status_code,
+                )
+            raise FactSubmissionError(
+                f"fact candidate cancellation failed: {error}"
+            ) from error
