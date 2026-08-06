@@ -17,14 +17,12 @@ from core.waypoint_route import Waypoint, load_patrol_route
 # 계약(contract)에 정의된 목적지만 여기에 명시적으로 나열한다. 문자열 대소문자
 # 변환으로 임의 목적지를 자동 허용하지 않기 위해, 지원 목적지를 표로 직접
 # 관리한다.
-# v1 계약의 세 목적지를 전부 지원한다. LIVING_ROOM 은 보미야 호출·복약·온습도
-# 시나리오의 목적지이고, DEFAULT 는 대화 종료 후 복귀 지점이다. 좌표 자체는
-# room_waypoints.yaml 에 있으며 living_room/default 는 실측 전 임시값이다
-# (해당 파일 주석 참고).
+# contract.TARGET_DEFAULT("DEFAULT")는 충전소 도킹 위치를 가리킨다. 그 좌표는
+# 실측값이 아니라 지도 원점(0, 0, 0)으로 절차적으로 정의한다 — 재매핑 시
+# 로봇을 충전소에 도킹한 채로 SLAM을 시작하면 원점이 곧 충전소가 된다.
 _SUPPORTED_TARGET_TO_WAYPOINT_NAME = {
     contract.TARGET_ENTRANCE: "entrance",
-    contract.TARGET_LIVING_ROOM: "living_room",
-    contract.TARGET_DEFAULT: "default",
+    contract.TARGET_DEFAULT: "charging",
 }
 
 
