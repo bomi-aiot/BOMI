@@ -1,23 +1,68 @@
-# Spring Boot: receive IoT/robot events and publish robot commands.
+# ⚠️ 시연 스프린트 한시 완화 (2026-08-07, hotfix/scenario-integration)
+#
+# 무엇을 바꿨나
+#   계정별 토픽 화이트리스트를 걷어내고, 인증된 계정이면 bomi/v1/# 전체를
+#   읽고 쓸 수 있게 했다. 인증 자체는 그대로다 — mosquitto.conf 의
+#   allow_anonymous false 와 password_file 은 건드리지 않았으므로 계정 없이는
+#   여전히 붙지 못한다.
+#
+# 왜 바꿨나
+#   이 ACL 이 하루 동안 시연 준비를 세 번 막았고, 매번 원인 파악에 몇 시간이
+#   걸렸다. MQTT 는 ACL 로 거부해도 **클라이언트에게 아무 에러를 주지 않는다** —
+#   발행은 그냥 사라지고 구독은 조용히 무시된다. 게다가 우리 코드는 paho 의
+#   on_subscribe granted QoS(거부 시 128)를 확인하지 않아서, 막혀도 로그에는
+#   "subscribed" 가 정상으로 찍힌다. 즉 이 파일의 오류는 **관측 불가능한
+#   형태로** 시스템을 죽인다.
+#
+#   실제로 막혔던 것들:
+#     - bomi-jetson 이 robot/+/events 를 못 써서 웨이크워드가 통째로 유실
+#     - bomi-backend 가 robot/+/events 를 못 읽어 시나리오가 시작되지 않음
+#     - bomi-jetson 이 robot/+/results 를 못 읽어 "이동 중 침묵" 이 매번
+#       45초 타임아웃까지 감 (2-6 의 도착 감지가 이 토픽을 엿듣는다)
+#     - bomi-jetson 이 iot/+/events 를 못 읽어 현관 재실 감지가 무력화
+#
+#   토픽이 하나 늘 때마다 이 파일을 같이 고쳐야 하는데, 안 고쳐도 아무도
+#   모른다는 것이 문제의 핵심이다. 시연까지 며칠뿐이라 그 위험을 없앤다.
+#
+# 언제 되돌리나
+#   시연이 끝나면 아래 "복구용 원본" 을 기준으로 최소 권한으로 되돌린다.
+#   그때는 반드시 robot/+/results 의 bomi-jetson read 를 포함시켜야 한다
+#   (원본에 빠져 있던 항목이다). 되돌리기 전에 on_subscribe 확인 로직을
+#   먼저 넣는 편이 낫다 — 그래야 다음 번 누락이 관측 가능해진다.
+
 user bomi-backend
-topic read bomi/v1/iot/+/events
-topic read bomi/v1/robot/+/events
-topic write bomi/v1/robot/+/commands
-topic write bomi/v1/ai/+/commands
-topic read bomi/v1/robot/+/status
-topic read bomi/v1/robot/+/results
+topic readwrite bomi/v1/#
 
-# Raspberry Pi sensor gateway: publish normalized entrance events only.
 user bomi-iot-gateway
-topic write bomi/v1/iot/+/events
+topic readwrite bomi/v1/#
 
-# Jetson/Robot MQTT bridge: consume commands and publish events/status/results.
 user bomi-jetson
-topic read bomi/v1/robot/+/commands
-topic read bomi/v1/ai/+/commands
-topic write bomi/v1/robot/+/events
-topic write bomi/v1/robot/+/status
-topic write bomi/v1/robot/+/results
+topic readwrite bomi/v1/#
 
 user bomi-healthcheck
-topic readwrite bomi/v1/system/healthcheck/#
+topic readwrite bomi/v1/#
+
+# ── 복구용 원본 (시연 후 이 내용으로 되돌린다) ───────────────────────────
+#
+# user bomi-backend
+# topic read bomi/v1/iot/+/events
+# topic read bomi/v1/robot/+/events
+# topic write bomi/v1/robot/+/commands
+# topic write bomi/v1/ai/+/commands
+# topic read bomi/v1/robot/+/status
+# topic read bomi/v1/robot/+/results
+#
+# user bomi-iot-gateway
+# topic write bomi/v1/iot/+/events
+#
+# user bomi-jetson
+# topic read bomi/v1/robot/+/commands
+# topic read bomi/v1/ai/+/commands
+# topic read bomi/v1/robot/+/results      ← 원본에 없던 항목. 반드시 포함할 것
+# topic read bomi/v1/iot/+/events         ← 원본에 없던 항목. 현관 재실 감지용
+# topic write bomi/v1/robot/+/events
+# topic write bomi/v1/robot/+/status
+# topic write bomi/v1/robot/+/results
+#
+# user bomi-healthcheck
+# topic readwrite bomi/v1/system/healthcheck/#
