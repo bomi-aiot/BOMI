@@ -1,43 +1,10 @@
 pipeline {
     agent { node { label 'built-in'; customWorkspace '/home/ubuntu/bomi/data/jenkins/workspace/bomi-backend-production' } }
     options { disableConcurrentBuilds(); skipDefaultCheckout(true); timestamps(); timeout(time: 15, unit: 'MINUTES') }
-    parameters { booleanParam(name: 'FORCE_DEPLOY', defaultValue: false, description: '변경 경로와 관계없이 Backend를 다시 배포합니다.') }
     stages {
-        stage('Checkout be-main') {
-            steps {
-                script {
-                    def scmVars = checkout scm
-                    env.GIT_COMMIT = scmVars.GIT_COMMIT ?: sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
-                    env.GIT_PREVIOUS_SUCCESSFUL_COMMIT = scmVars.GIT_PREVIOUS_SUCCESSFUL_COMMIT ?: ''
-                    echo "SCM checkout: current=${env.GIT_COMMIT}, previousSuccessful=${env.GIT_PREVIOUS_SUCCESSFUL_COMMIT ?: 'none'}"
-                }
-            }
-        }
-        stage('Validate') { steps { sh 'bash -n scripts/ci/has-changes.sh scripts/deploy/deploy-common.sh scripts/deploy/deploy-backend.sh' } }
-        stage('Detect Backend Changes') {
-            steps {
-                script {
-                    int status = sh(
-                        returnStatus: true,
-                        script: '''FORCE_DEPLOY="$FORCE_DEPLOY" bash scripts/ci/has-changes.sh \
-                            backend \
-                            infra/compose.prod.yml \
-                            scripts/deploy/deploy-backend.sh \
-                            scripts/deploy/deploy-common.sh'''
-                    )
-                    if (status == 0) {
-                        env.BACKEND_DEPLOY_REQUIRED = 'true'
-                    } else if (status == 1) {
-                        env.BACKEND_DEPLOY_REQUIRED = 'false'
-                    } else {
-                        error("Backend change detection failed with status ${status}")
-                    }
-                    echo "Backend deployment required=${env.BACKEND_DEPLOY_REQUIRED}"
-                }
-            }
-        }
+        stage('Checkout be-main') { steps { checkout scm } }
+        stage('Validate') { steps { sh 'bash -n scripts/deploy/deploy-common.sh scripts/deploy/deploy-backend.sh' } }
         stage('Deploy Backend') {
-            when { expression { env.BACKEND_DEPLOY_REQUIRED?.toBoolean() } }
             steps {
                 sh '''BOMI_SOURCE_DIR="$WORKSPACE" \
                     BOMI_RELEASE_BRANCH=be-main \
@@ -45,5 +12,5 @@ pipeline {
             }
         }
     }
-    post { success { echo "Backend pipeline succeeded: commit=${env.GIT_COMMIT}, deployed=${env.BACKEND_DEPLOY_REQUIRED}" }; failure { echo "Backend deployment failed: ${env.BUILD_URL}" } }
+    post { success { echo "Backend deployment succeeded: ${env.GIT_COMMIT}" }; failure { echo "Backend deployment failed: ${env.BUILD_URL}" } }
 }
