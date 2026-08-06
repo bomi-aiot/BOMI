@@ -30,6 +30,10 @@ def generate_launch_description() -> LaunchDescription:
     tls_insecure = LaunchConfiguration("tls_insecure")
     driver_type = LaunchConfiguration("driver_type")
     goal_timeout_seconds = LaunchConfiguration("goal_timeout_seconds")
+    waypoint_file = LaunchConfiguration("waypoint_file")
+    nav_action_name = LaunchConfiguration("nav_action_name")
+    nav_frame_id = LaunchConfiguration("nav_frame_id")
+    approach_enable_topic = LaunchConfiguration("approach_enable_topic")
     test_forward_speed_m_s = LaunchConfiguration("test_forward_speed_m_s")
     test_forward_duration_sec = LaunchConfiguration("test_forward_duration_sec")
     test_publish_rate_hz = LaunchConfiguration("test_publish_rate_hz")
@@ -81,6 +85,34 @@ def generate_launch_description() -> LaunchDescription:
                 "goal_timeout_seconds",
                 default_value="120.0",
                 description="Max seconds to wait for a Nav2 goal to finish",
+            ),
+            # 노드는 waypoint_file 을 예전부터 받았지만 launch 가 노출하지
+            # 않아서, launch 경로로는 설치본(share/core/config)의 좌표만 쓸 수
+            # 있었다. 그래서 좌표를 고친 뒤 colcon build 를 빼먹으면 옛 좌표로
+            # 주행하고, 실패해도 원인이 드러나지 않았다. 소스 트리의 YAML 을
+            # 직접 가리킬 수 있게 노출한다(빈 값이면 종전대로 설치본 사용).
+            DeclareLaunchArgument(
+                "waypoint_file",
+                default_value="",
+                description=(
+                    "room_waypoints.yaml path for the nav2 driver. "
+                    "Empty uses the installed core config."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "nav_action_name",
+                default_value="navigate_to_pose",
+                description="Nav2 NavigateToPose action name",
+            ),
+            DeclareLaunchArgument(
+                "nav_frame_id",
+                default_value="map",
+                description="Frame the goal pose is expressed in",
+            ),
+            DeclareLaunchArgument(
+                "approach_enable_topic",
+                default_value="/person_following/enable",
+                description="Topic that switches person-following on or off",
             ),
             # driver_type:=forward_test — 백엔드 → MQTT → 모터 배선만 확인하는
             # 통신 테스트. 전용 토픽으로 발행해 twist_mux 아래에 두므로 조이스틱이
@@ -140,6 +172,10 @@ def generate_launch_description() -> LaunchDescription:
                         "tls_insecure": ParameterValue(tls_insecure, value_type=bool),
                         "goal_timeout_seconds": ParameterValue(
                             goal_timeout_seconds, value_type=float),
+                        "waypoint_file": waypoint_file,
+                        "nav_action_name": nav_action_name,
+                        "nav_frame_id": nav_frame_id,
+                        "approach_enable_topic": approach_enable_topic,
                         "test_forward_speed_m_s": ParameterValue(
                             test_forward_speed_m_s, value_type=float),
                         "test_forward_duration_sec": ParameterValue(

@@ -206,21 +206,29 @@ class ScanSanitizer(Node):
         self._last_report_sec = stamp_sec
 
         dropped_total = sum(self._dropped.values())
-        level = (
-            self.get_logger().warning
-            if dropped_total > 0
-            else self.get_logger().info
-        )
         point_count = len(message.ranges)
         span_deg = math.degrees(
             ScanGate.span_rad(point_count, message.angle_increment)
         )
-        level(
+        summary = (
             f"스캔 {elapsed:.1f}초: 통과 {self._passed}, "
             f"각도 범위 이상 {self._dropped[REASON_SPAN]}, "
             f"간격 과밀 {self._dropped[REASON_INTERVAL]} "
             f"(마지막 스캔 {point_count}점, {span_deg:.1f}°)"
         )
+        # rclpy 는 호출 위치(call site)마다 severity 를 캐시하므로, 한 지점에서
+        # info 와 warning 을 번갈아 부르면 "Logger severity cannot be changed
+        # between calls" 예외를 던진다. 그 예외가 구독 콜백에서 올라와 노드를
+        # 죽인다. 2026-08-07 실기에서 실제로 그렇게 됐다 — 스캔이 전부 정상인
+        # 동안은 info 만 불려 6분간 멀쩡했고, 처음으로 이상 스캔을 걸러내려는
+        # 순간 warning 으로 바뀌며 위생 노드가 죽었다. /scan 이 끊겨 slam_toolbox
+        # 가 굶었고, 그 뒤로 지도가 갱신되지 않았다(사람은 계속 몰고 있었다).
+        # severity 별로 호출 위치를 분리해 둔다. level 변수에 담아 한 줄로
+        # 합치면 같은 버그가 되살아난다.
+        if dropped_total > 0:
+            self.get_logger().warning(summary)
+        else:
+            self.get_logger().info(summary)
 
         self._passed = 0
         self._dropped = {REASON_SPAN: 0, REASON_INTERVAL: 0}

@@ -315,9 +315,11 @@ def generate_launch_description() -> LaunchDescription:
             ),
             DeclareLaunchArgument(
                 "robot_radius",
-                default_value="0.31",
+                default_value="0.30",
                 description=(
-                    "costmap이 쓰는 로봇 반경(m). 실측 전 초안 값이다."
+                    "costmap이 쓰는 로봇 반경(m). 모델 외접 반경 0.276m에 "
+                    "여유를 둔 값. RewrittenYaml이 params 파일 값을 이 인자로 "
+                    "덮어쓰므로, YAML만 고치면 반영되지 않는다."
                 ),
             ),
             joystick,

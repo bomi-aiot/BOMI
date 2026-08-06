@@ -4,10 +4,13 @@ waypoints:
     y: 1.722
     yaw: 0.0
 
+  # 2026-08-07 bomi_real_14 지도에서 실측(서랍을 넣고 재매핑한 지도).
+  # 로봇을 현관 앞에 세우고 slam_toolbox의 map->base_link TF를 읽었다.
+  # 좌표계는 bomi_real_14 기준이므로 재매핑하면 무효가 된다.
   - name: entrance
-    x: -0.226
-    y: -1.520
-    yaw: 1.57
+    x: 0.525
+    y: -0.038
+    yaw: 1.381
 
   - name: window
     x: -0.665
