@@ -39,7 +39,7 @@ public class WakeWordCallOrchestrator {
     private final WakeWordTriggerReceiptRepository receiptRepository;
     private final RobotRepository robotRepository;
     private final RobotCommandPublisher commandPublisher;
-    private final ScenarioStartGuard startGuard;
+    private final ScenarioRobotStartPolicy startPolicy;
     private final Clock clock;
 
     public WakeWordCallOrchestrator(
@@ -47,14 +47,14 @@ public class WakeWordCallOrchestrator {
         WakeWordTriggerReceiptRepository receiptRepository,
         RobotRepository robotRepository,
         RobotCommandPublisher commandPublisher,
-        ScenarioStartGuard startGuard,
+        ScenarioRobotStartPolicy startPolicy,
         Clock clock
     ) {
         this.scenarioRepository = scenarioRepository;
         this.receiptRepository = receiptRepository;
         this.robotRepository = robotRepository;
         this.commandPublisher = commandPublisher;
-        this.startGuard = startGuard;
+        this.startPolicy = startPolicy;
         this.clock = clock;
     }
 
@@ -80,31 +80,11 @@ public class WakeWordCallOrchestrator {
             return;
         }
 
-        Robot observedRobot = robotRepository.findByDeviceId(robotDeviceId).orElse(null);
-        if (observedRobot == null) {
-            WakeWordTriggerReceipt receipt = claimReceipt(
-                eventId, robotDeviceId, occurredAt, keyword, confidence);
-            receipt.reject(WakeWordTriggerDisposition.REJECTED_UNKNOWN_ROBOT);
-            log.warn("Wake word from unknown robot; dropping: robotId={}, eventId={}",
-                robotDeviceId, eventId);
-            return;
-        }
-
-        UUID admissionSeniorId = observedRobot.getSeniorId();
-        if (admissionSeniorId == null) {
-            WakeWordTriggerReceipt receipt = claimReceipt(
-                eventId, robotDeviceId, occurredAt, keyword, confidence);
-            receipt.reject(WakeWordTriggerDisposition.REJECTED_UNASSIGNED_ROBOT);
-            log.warn("Wake word from unassigned robot; dropping: robotId={}, eventId={}",
-                robotDeviceId, eventId);
-            return;
-        }
-
-        // All scenario types acquire the senior mutex first. This makes a losing
-        // cross-type trigger persist its rejection instead of rolling back at the
-        // active-scenario unique index. Robot mode writers lock the Robot second.
-        var blocked = startGuard.check(
-            admissionSeniorId, ScenarioType.WAKE_WORD_CALL, Duration.ZERO);
+        var admission = startPolicy.admitByDevice(
+            robotDeviceId,
+            ScenarioType.WAKE_WORD_CALL,
+            Duration.ZERO,
+            ScenarioRobotStartPolicy.ModePolicy.IDLE_OR_REST_GUARD);
 
         // A transaction may have committed while this one waited for the senior lock.
         previous = receiptRepository.findById(eventId).orElse(null);
@@ -113,53 +93,16 @@ public class WakeWordCallOrchestrator {
             return;
         }
 
-        Robot robot = robotRepository.findByDeviceIdForUpdate(robotDeviceId).orElse(null);
         WakeWordTriggerReceipt receipt = claimReceipt(
             eventId, robotDeviceId, occurredAt, keyword, confidence);
-        if (robot == null) {
-            receipt.reject(WakeWordTriggerDisposition.REJECTED_UNKNOWN_ROBOT);
-            log.warn("Wake word robot disappeared during admission; dropping: "
-                    + "robotId={}, eventId={}", robotDeviceId, eventId);
+        if (!admission.allowed()) {
+            receipt.reject(wakeDisposition(admission.blockReason()));
+            log.warn("Wake-word movement suppressed ({}): robotId={}, eventId={}",
+                admission.blockReason(), robotDeviceId, eventId);
             return;
         }
-        if (!robot.isActive()) {
-            receipt.reject(WakeWordTriggerDisposition.REJECTED_INACTIVE_ROBOT);
-            log.warn("Wake word from inactive robot; dropping: robotId={}, eventId={}",
-                robotDeviceId, eventId);
-            return;
-        }
+        Robot robot = admission.robot();
         UUID seniorId = robot.getSeniorId();
-        if (seniorId == null || !seniorId.equals(admissionSeniorId)) {
-            receipt.reject(WakeWordTriggerDisposition.REJECTED_UNASSIGNED_ROBOT);
-            log.warn("Wake word robot assignment changed during admission; dropping: "
-                    + "robotId={}, eventId={}", robotDeviceId, eventId);
-            return;
-        }
-        if (blocked.orElse(null) == ScenarioStartGuard.BlockReason.SENIOR_NOT_FOUND) {
-            receipt.reject(WakeWordTriggerDisposition.REJECTED_UNASSIGNED_ROBOT);
-            log.warn("Wake word references an unregistered assigned senior; dropping: "
-                    + "robotId={}, seniorId={}, eventId={}", robotDeviceId, seniorId, eventId);
-            return;
-        }
-        if (robot.getCurrentMode() == RobotMode.SAFE_STOP) {
-            receipt.reject(WakeWordTriggerDisposition.REJECTED_SAFE_STOP);
-            log.warn("Wake-word movement suppressed while robot is SAFE_STOP: robotId={}, eventId={}",
-                robotDeviceId, eventId);
-            return;
-        }
-
-        if (blocked.isPresent()) {
-            receipt.reject(WakeWordTriggerDisposition.REJECTED_ACTIVE_SCENARIO);
-            log.info("Wake-word movement suppressed ({}): seniorId={}, robotId={}, eventId={}",
-                blocked.get(), seniorId, robotDeviceId, eventId);
-            return;
-        }
-        if (robot.getCurrentMode() == RobotMode.SCENARIO_ACTIVE) {
-            receipt.reject(WakeWordTriggerDisposition.REJECTED_BUSY_MODE);
-            log.warn("Wake-word movement suppressed for robot with stale busy mode: "
-                    + "robotId={}, eventId={}", robotDeviceId, eventId);
-            return;
-        }
 
         Scenario scenario = Scenario.create(
             seniorId, robot.getId(), ScenarioType.WAKE_WORD_CALL, eventId);
@@ -215,14 +158,14 @@ public class WakeWordCallOrchestrator {
             throw new MqttContractViolationException(
                 "Wake-word result router received a non-wake scenario");
         }
+        if (legacyContract) {
+            throw new MqttContractViolationException(
+                "WAKE_WORD_CALL requires v1 NAVIGATION_RESULT correlation fields");
+        }
         if (scenario.isTerminated()) {
             log.info("Late wake-word navigation result ignored: scenarioId={}, status={}",
                 scenarioId, scenario.getFinalStatus());
             return;
-        }
-        if (legacyContract) {
-            throw new MqttContractViolationException(
-                "WAKE_WORD_CALL requires v1 NAVIGATION_RESULT correlation fields");
         }
         if (scenario.getFinalStatus() != ScenarioStatus.NAVIGATING) {
             log.warn("Wake-word navigation result ignored in status {}: scenarioId={}",
@@ -330,6 +273,21 @@ public class WakeWordCallOrchestrator {
         if (value == null || value.isBlank()) {
             throw new IllegalArgumentException(field + " must not be blank");
         }
+    }
+
+    private static WakeWordTriggerDisposition wakeDisposition(
+        ScenarioRobotStartPolicy.BlockReason reason
+    ) {
+        return switch (reason) {
+            case UNKNOWN_ROBOT, UNREGISTERED_ROBOT ->
+                WakeWordTriggerDisposition.REJECTED_UNKNOWN_ROBOT;
+            case INACTIVE_ROBOT -> WakeWordTriggerDisposition.REJECTED_INACTIVE_ROBOT;
+            case UNASSIGNED_ROBOT -> WakeWordTriggerDisposition.REJECTED_UNASSIGNED_ROBOT;
+            case SAFE_STOP -> WakeWordTriggerDisposition.REJECTED_SAFE_STOP;
+            case ACTIVE_SCENARIO_EXISTS, COOLDOWN_ACTIVE ->
+                WakeWordTriggerDisposition.REJECTED_ACTIVE_SCENARIO;
+            case REST_GUARD, BUSY_MODE -> WakeWordTriggerDisposition.REJECTED_BUSY_MODE;
+        };
     }
 
     private WakeWordTriggerReceipt claimReceipt(

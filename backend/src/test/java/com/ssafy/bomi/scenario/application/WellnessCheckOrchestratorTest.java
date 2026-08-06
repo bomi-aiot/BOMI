@@ -44,6 +44,7 @@ class WellnessCheckOrchestratorTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private WellnessCheckOrchestrator orchestrator;
+    private Robot robot;
 
     private final UUID seniorId = UUID.randomUUID();
     private final UUID robotUuid = UUID.randomUUID();
@@ -54,7 +55,10 @@ class WellnessCheckOrchestratorTest {
         observationProperties.setAmbientSensorToSenior(Map.of(sensorId, seniorId));
         orchestrator = new WellnessCheckOrchestrator(
             scenarioRepository, robotRepository, commandPublisher,
-            new ScenarioStartGuard(scenarioRepository, appUserRepository),
+            new ScenarioRobotStartPolicy(
+                new ScenarioStartGuard(scenarioRepository, appUserRepository),
+                robotRepository,
+                scenarioRepository),
             observationProperties, wellnessProperties);
 
         when(appUserRepository.findByIdForUpdate(any()))
@@ -67,9 +71,9 @@ class WellnessCheckOrchestratorTest {
             }
             return s;
         });
-        Robot robot = Robot.create(seniorId, "robot-01");
+        robot = Robot.create(seniorId, "robot-01");
         ReflectionTestUtils.setField(robot, "id", robotUuid);
-        when(robotRepository.findBySeniorId(seniorId)).thenReturn(Optional.of(robot));
+        when(robotRepository.findBySeniorIdForUpdate(seniorId)).thenReturn(Optional.of(robot));
     }
 
     private ObjectNode ambient(Double temp, Double humidity) {
@@ -169,6 +173,18 @@ class WellnessCheckOrchestratorTest {
     }
 
     @Test
+    void safeStopSuppressesWellnessCheckWithoutScenarioOrCommand() {
+        robot.changeMode(com.ssafy.bomi.robot.domain.RobotMode.SAFE_STOP);
+
+        orchestrator.onAmbientObserved(sensorId, ambient(31.0, 50.0));
+
+        assertThat(robot.getCurrentMode())
+            .isEqualTo(com.ssafy.bomi.robot.domain.RobotMode.SAFE_STOP);
+        verify(scenarioRepository, never()).save(any());
+        verifyNoInteractions(commandPublisher);
+    }
+
+    @Test
     void recentCompletionWithinCooldownSuppresses() {
         when(scenarioRepository.existsBySeniorIdAndScenarioTypeAndFinalStatusAndUpdatedAtAfter(
             eq(seniorId), eq(ScenarioType.WELLNESS_CHECK), any(), any()))
@@ -184,7 +200,7 @@ class WellnessCheckOrchestratorTest {
     void missingRobotIsDroppedWithoutThrowing() {
         // 예외가 새어 나가면 브로커가 무한 재전송한다. 시드 미투입 등으로 로봇이
         // 없으면 경고 후 폐기해야 한다.
-        when(robotRepository.findBySeniorId(seniorId)).thenReturn(Optional.empty());
+        when(robotRepository.findBySeniorIdForUpdate(seniorId)).thenReturn(Optional.empty());
 
         orchestrator.onAmbientObserved(sensorId, ambient(31.0, 50.0)); // must not throw
 

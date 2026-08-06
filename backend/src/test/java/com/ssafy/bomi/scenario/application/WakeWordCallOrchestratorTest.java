@@ -65,12 +65,17 @@ class WakeWordCallOrchestratorTest {
     private final AtomicReference<Scenario> scenarioStore = new AtomicReference<>();
 
     private Robot robot;
+    private RobotRepository.LockCandidate candidate;
     private WakeWordCallOrchestrator orchestrator;
 
     @BeforeEach
     void setUp() {
         robot = Robot.create(seniorId, DEVICE_ID);
         ReflectionTestUtils.setField(robot, "id", robotId);
+        candidate = mock(RobotRepository.LockCandidate.class);
+        when(candidate.getSeniorId()).thenReturn(seniorId);
+        when(robotRepository.findLockCandidateByDeviceId(DEVICE_ID))
+            .thenReturn(Optional.of(candidate));
         when(robotRepository.findByDeviceId(DEVICE_ID)).thenReturn(Optional.of(robot));
         when(robotRepository.findByDeviceIdForUpdate(DEVICE_ID)).thenReturn(Optional.of(robot));
         when(robotRepository.findByIdForUpdate(robotId)).thenReturn(Optional.of(robot));
@@ -100,7 +105,7 @@ class WakeWordCallOrchestratorTest {
             receiptRepository,
             robotRepository,
             commandPublisher,
-            startGuard,
+            new ScenarioRobotStartPolicy(startGuard, robotRepository, scenarioRepository),
             clock);
     }
 
@@ -212,6 +217,25 @@ class WakeWordCallOrchestratorTest {
     }
 
     @Test
+    void legacyNavigationResultIsRejectedAfterWakeScenarioTerminates() {
+        orchestrator.onWakeWordDetected(
+            DEVICE_ID, EVENT_ID, OCCURRED_AT, KEYWORD, CONFIDENCE);
+        RobotCommand command = publishedCommand();
+        orchestrator.onNavigationResult(
+            scenarioId, DEVICE_ID, command.commandId(), false,
+            "SUCCEEDED", "ARRIVED", null);
+
+        assertThatThrownBy(() -> orchestrator.onNavigationResult(
+            scenarioId, DEVICE_ID, null, true,
+            "SUCCEEDED", "ARRIVED", null))
+            .isInstanceOf(MqttContractViolationException.class)
+            .hasMessageContaining("requires v1");
+
+        assertThat(scenarioStore.get().getFinalStatus()).isEqualTo(ScenarioStatus.COMPLETED);
+        verify(commandPublisher, times(1)).publish(any());
+    }
+
+    @Test
     void safeStopRejectsAndDurablyRemembersTheEvent() {
         robot.changeMode(RobotMode.SAFE_STOP);
 
@@ -229,6 +253,7 @@ class WakeWordCallOrchestratorTest {
 
     @Test
     void unknownInactiveAndUnassignedRobotsAreRejectedWithoutCommands() {
+        when(robotRepository.findLockCandidateByDeviceId(DEVICE_ID)).thenReturn(Optional.empty());
         when(robotRepository.findByDeviceId(DEVICE_ID)).thenReturn(Optional.empty());
         when(robotRepository.findByDeviceIdForUpdate(DEVICE_ID)).thenReturn(Optional.empty());
         orchestrator.onWakeWordDetected(
@@ -237,6 +262,8 @@ class WakeWordCallOrchestratorTest {
             .isEqualTo(WakeWordTriggerDisposition.REJECTED_UNKNOWN_ROBOT);
 
         resetDurableReceipt();
+        when(robotRepository.findLockCandidateByDeviceId(DEVICE_ID))
+            .thenReturn(Optional.of(candidate));
         when(robotRepository.findByDeviceId(DEVICE_ID)).thenReturn(Optional.of(robot));
         when(robotRepository.findByDeviceIdForUpdate(DEVICE_ID)).thenReturn(Optional.of(robot));
         robot.deactivate();

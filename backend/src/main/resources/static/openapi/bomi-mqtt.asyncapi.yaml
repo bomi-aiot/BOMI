@@ -1456,6 +1456,7 @@ components:
     ResultEnvelope:
       type: object
       required: [eventId, commandId, scenarioId, robotId, type, occurredAt, payload]
+      additionalProperties: false
       properties:
         eventId:
           $ref: "#/components/schemas/EventId"

@@ -28,6 +28,9 @@ public interface ScenarioRepository extends JpaRepository<Scenario, UUID> {
      */
     boolean existsBySeniorIdAndFinalStatusIn(UUID seniorId, Collection<ScenarioStatus> statuses);
 
+    /** Detects an active scenario attached to the same physical Robot, even if data is inconsistent. */
+    boolean existsByRobotIdAndFinalStatusIn(UUID robotId, Collection<ScenarioStatus> statuses);
+
     /**
      * 이 어르신에게 같은 타입의 시나리오가 주어진 상태로 {@code after} 이후에
      * 갱신된 적이 있는가.

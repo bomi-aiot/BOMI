@@ -232,12 +232,15 @@ class WalkOrchestratorConcurrencyTest {
     }
 
     private WalkOrchestrator newOrchestrator() {
+        ScenarioStartGuard startGuard =
+            new ScenarioStartGuard(scenarioRepository, appUserRepository);
         return new WalkOrchestrator(
             scenarioRepository,
             receiptRepository,
             robotRepository,
             List.of(publisher),
-            new ScenarioStartGuard(scenarioRepository, appUserRepository),
+            startGuard,
+            new ScenarioRobotStartPolicy(startGuard, robotRepository, scenarioRepository),
             new WalkTimeoutProperties(),
             clock);
     }
