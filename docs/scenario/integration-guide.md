@@ -1,118 +1,143 @@
-# 로봇·IoT 파트 통합 가이드 — 내 코드를 검증된 파이프라인에 꽂기
+# Robot·IoT 통합 가이드
 
-> 배경: 시나리오 ①⑤의 백엔드 전 구간이 로컬에서 E2E 검증됨 ([`local-e2e-report.md`](./local-e2e-report.md)).
-> 실센서 자리는 발사기, 실로봇 자리는 robot-sim이라는 대역이 맡고 있다.
-> **이 문서는 그 대역 자리에 당신 코드를 꽂아 자기 파트를 검증하는 방법이다.**
-> 갈아끼우기 = 코드 수정이 아니라 "그 대역 프로그램 대신 내 프로그램을 켜는 것".
-> 브로커가 가운데 있으므로 브랜치·언어·OS가 달라도 된다.
+> 최종 메시지 기준은 [`scenario-contract-v1.md`](../mqtt/scenario-contract-v1.md)와
+> [`bomi-mqtt.asyncapi.yaml`](../../backend/src/main/resources/static/openapi/bomi-mqtt.asyncapi.yaml)이다.
+> 과거 draft, legacy envelope, 오래된 simulator 출력은 구현 기준으로 사용하지 않는다.
 
-공통 준비 (아무 PC 1대, be-develop 기준):
+## 실물 연동 전 안전 수칙
 
-```bash
-docker compose up -d                # 브로커(1883) + DB
-docker compose exec -T postgres psql -U bomi -d bomi < scripts/dev/seed-kim-sunja.sql
-# 백엔드 실행: MQTT_ENABLED=true 환경변수 필수
-pip install paho-mqtt               # 발사기/robot-sim 용
+- **실물 Robot Bridge와 `robot-sim`을 같은 `robotId`로 동시에 실행하지 않는다.** 둘 다 같은 명령을 구독하면 실물 로봇이 의도하지 않게 움직일 수 있다.
+- 실물 Broker에서 `scripts/dev/publish_event.py`, 수동 MQTT publish 또는 Swagger `Try it out`으로 이동 시나리오를 시작하지 않는다.
+- 실제 E-stop과 모터 정지는 Robot의 물리 안전 계층이 담당한다. Backend의 mode 또는 복구 API는 이를 대신하지 않는다.
+- 실물 시험 전 사람과 장애물을 이동 범위에서 치우고, Robot 담당자가 물리 E-stop을 즉시 조작할 수 있는 상태인지 확인한다.
+
+## Robot Bridge 계약
+
+### Backend 명령 구독
+
+토픽:
+
+```text
+bomi/v1/robot/{robotId}/commands
 ```
 
----
+Backend 명령의 `commandId`, `scenarioId`, `robotId`는 최상위 필드다. Bridge는 다음 명령을 최종 v1 형식으로 처리한다.
 
-## A. 로봇 담당용 — robot-sim 자리에 내 브릿지 꽂기
+| 명령 | payload | 의미 |
+| --- | --- | --- |
+| `NAVIGATE` | `{"target":"ENTRANCE|LIVING_ROOM|DEFAULT"}` | 지정 waypoint로 이동 |
+| `FOLLOW_START` | `{}` | 사람 따라가기 시작 |
+| `FOLLOW_STOP` | `{}` | 사람 따라가기 중지 |
 
-### 구성
+QoS 1에서는 같은 명령이 다시 도착할 수 있으므로 Bridge는 `commandId` 기준으로 중복 실행을 막아야 한다. 만료된 `expiresAt`의 명령도 실행하지 않는다.
 
+### Robot 결과 발행
+
+토픽:
+
+```text
+bomi/v1/robot/{robotId}/results
 ```
-[발사기(제공)] → [백엔드(제공)] → [★ 당신의 브릿지 + Nav2]
-```
 
-robot-sim을 켜지 말고, 당신의 우분투/ROS 환경에서 브릿지를 켠다.
-브로커 주소만 위 공통 준비를 한 PC의 IP:1883 로 지정 (같은 공유기/네트워크면 됨).
+`scenarioId`와 `commandId`는 원 명령의 값을 그대로 **최상위 필드에** 반환한다. `payload`에 넣거나 legacy `status` 필드로 대체하지 않는다.
 
-### 당신이 받게 될 메시지 (구독: `bomi/v1/robot/bomi-AA001/commands`)
+정상 도착 예시:
 
 ```json
-{ "commandId": "...", "scenarioId": "<UUID>", "robotId": "bomi-AA001",
-  "type": "NAVIGATE", "occurredAt": "...", "expiresAt": "...(+2분)",
-  "payload": { "target": "ENTRANCE" } }
-```
-
-- `type`: `NAVIGATE`(target: `ENTRANCE`/`DEFAULT`/`LIVING_ROOM`) 또는 `SPEAK`(payload.text)
-- target → 좌표 변환은 로봇 소유 (`named_waypoints.yaml`, 계약 v1.0 안건 3)
-
-### 당신이 보내야 할 메시지 (발행: `bomi/v1/robot/bomi-AA001/results`)
-
-도착(또는 실패) 시:
-
-```json
-{ "eventId": "<새 UUID>", "type": "NAVIGATION_RESULT", "occurredAt": "<지금, 오프셋 포함>",
+{
+  "eventId": "evt-nav-result-001",
   "robotId": "bomi-AA001",
-  "payload": { "scenarioId": "<받은 값 그대로!>", "status": "ARRIVED" } }
+  "type": "NAVIGATION_RESULT",
+  "occurredAt": "2026-08-05T10:30:10+09:00",
+  "scenarioId": "fc768674-3266-47bb-8348-1a7d222c84bd",
+  "commandId": "cmd-nav-001",
+  "payload": {
+    "outcome": "SUCCEEDED",
+    "resultCode": "ARRIVED",
+    "reasonCode": null
+  }
+}
 ```
 
-- ★ **scenarioId를 받은 그대로 되돌려주는 것(echo)이 계약의 핵심.** 없으면 백엔드가 결과를 연결 못 한다.
-- `status`: `ARRIVED` | `FAILED`. QoS 1, retain=false.
-- 정확한 형식이 궁금하면 robot-sim 소스(`scripts/dev/publish_event.py`의 `run_robot_sim`)가 곧 정답지다.
-
-### 테스트 절차와 성공 판정
-
-1. 당신의 브릿지 켬 (robot-sim은 끔)
-2. 백엔드 PC에서: `python scripts/dev/publish_event.py door`
-3. ✅ 성공 = 로봇(또는 시뮬)이 ENTRANCE로 이동 → ARRIVED 발행 → 백엔드 로그에 대화 전이
-4. 이어서 `conv-end --scenario <로그의 id>` → NAVIGATE(DEFAULT) 수신 → 복귀 → 백엔드 로그 completed
-5. `ambient --temp 32` 로 LIVING_ROOM 이동도 확인 (시나리오 ①)
-
-### 자주 걸리는 것
-
-- 명령이 안 옴 → robotId가 `bomi-AA001`인지 (시드 기준), 브로커 IP/방화벽
-- 결과 보냈는데 백엔드 무반응 → payload 안 `scenarioId` echo 누락 또는 `robotId`가 토픽과 불일치 (불일치 시 백엔드가 **조용히 폐기**함)
-- 같은 명령이 두 번 옴 → QoS 1 정상 동작. commandId로 중복 무시 권장
-
----
-
-## B. IoT 담당용 — 발사기 자리에 내 센서 코드 꽂기
-
-### 구성
-
-```
-[★ 당신의 발행 코드] → [백엔드(제공)] → [robot-sim(제공)]
-```
-
-robot-sim은 켜둔다 (그래야 시나리오가 끝까지 돈다).
-
-### 당신이 보내야 할 메시지
-
-문 열림 (발행: `bomi/v1/iot/door_sensor/events`):
+산책 추종 시작·중지 결과도 같은 상관관계 규칙을 사용한다.
 
 ```json
-{ "eventId": "<매 사건마다 새 UUID>", "type": "DOOR_OPENED",
-  "occurredAt": "2026-08-05T10:30:00+09:00", "sourceId": "door_sensor",
-  "payload": { "location": "ENTRANCE" } }
+{
+  "eventId": "evt-follow-result-001",
+  "robotId": "bomi-AA001",
+  "type": "FOLLOW_RESULT",
+  "occurredAt": "2026-08-05T10:31:00+09:00",
+  "scenarioId": "9724acfb-2f59-475b-bb03-f4f533486065",
+  "commandId": "cmd-follow-start-001",
+  "payload": {
+    "outcome": "SUCCEEDED",
+    "resultCode": "STARTED",
+    "reasonCode": null
+  }
+}
 ```
 
-온습도 (발행: `bomi/v1/iot/ambient-sensor-01/events`):
+- `outcome`: `SUCCEEDED`, `FAILED`, `CANCELLED`, `TIMED_OUT`
+- `NAVIGATION_RESULT.resultCode`: `ARRIVED`, `NOT_ARRIVED`
+- `FOLLOW_RESULT.resultCode`: `STARTED`, `STOPPED`, `UNCHANGED`
+- 성공이면 `reasonCode=null`, 성공이 아니면 v1의 안정 reason code를 사용한다.
+- 토픽의 `{robotId}`와 본문의 `robotId`가 다르거나 상관관계 ID가 원 명령과 다르면 Backend가 결과를 적용하지 않는다.
+- QoS 1, retain=false를 사용한다.
+
+## IoT 이벤트 계약
+
+IoT 생산자는 `bomi/v1/iot/{sourceId}/events`로 최종 v1 envelope를 발행한다. `eventId`는 새 사건마다 새로 만들고 같은 사건의 재전송에서만 재사용한다. `sourceId`는 토픽과 본문이 같아야 하며 `occurredAt`은 타임존 오프셋을 포함한 ISO 8601 값이어야 한다.
+
+문 열림 예시:
 
 ```json
-{ "eventId": "...", "type": "AMBIENT_ENVIRONMENT_OBSERVED",
-  "occurredAt": "...", "sourceId": "ambient-sensor-01",
-  "payload": { "temperatureC": 32.0, "humidityPercent": 50.0,
-               "comfortAssessment": "UNCOMFORTABLE", "observedAt": "..." } }
+{
+  "eventId": "evt-door-001",
+  "sourceId": "door_sensor",
+  "type": "DOOR_OPENED",
+  "occurredAt": "2026-08-05T10:30:00+09:00",
+  "payload": {"location":"ENTRANCE"}
+}
 ```
 
-지켜야 할 것 (하나라도 어기면 백엔드가 **에러 없이 조용히 폐기**하므로 주의):
+온습도 예시:
 
-- `sourceId` == 토픽의 센서ID. 센서ID를 바꾸면 **백엔드 설정 등록 필요 → 백엔드 담당에게 알려줄 것**
-- `occurredAt`은 타임존 오프셋 포함 ISO-8601 (`+09:00`)
-- `eventId`는 사건마다 새로, 재전송 시에만 동일 유지 / QoS 1 / retain=false
-- 정답지: `python scripts/dev/publish_event.py door --dry-run` 출력과 내 코드 출력을 비교
+```json
+{
+  "eventId": "evt-ambient-001",
+  "sourceId": "ambient-sensor-01",
+  "type": "AMBIENT_ENVIRONMENT_OBSERVED",
+  "occurredAt": "2026-08-05T10:30:00+09:00",
+  "payload": {
+    "temperatureC": 32.0,
+    "humidityPercent": 50.0,
+    "comfortAssessment": "UNCOMFORTABLE",
+    "observedAt": "2026-08-05T10:30:00+09:00"
+  }
+}
+```
 
-### 테스트 절차와 성공 판정
+## 운영자 Robot mode 복구
 
-1. robot-sim 켬
-2. 당신의 코드로 문 열림 발행 (실제 센서를 손으로 열어도 됨)
-3. ✅ 성공 = 백엔드 로그 `Homecoming started` + robot-sim 창에 `NAVIGATE {target: ENTRANCE}` 수신
-4. 온습도는 32°C 이상으로 발행 → `Wellness check started` (30°C 미만이면 기록만 되고 로봇 안 움직임 — 정상)
-5. 연속 발행 시 `suppressed (ACTIVE_SCENARIO_EXISTS/COOLDOWN_ACTIVE)` 로그 = 중복 방지가 일하는 것. 버그 아님
+Robot 담당자가 물리적으로 안전함을 확인했고 활성 시나리오가 없는데 mode만 `SAFE_STOP` 또는 `SCENARIO_ACTIVE`에 남았을 때에만 다음 API를 사용한다.
 
----
+```http
+POST /api/v1/operator/robots/{deviceId}/mode-recoveries
+X-Operator-Shared-Secret: <운영 환경의 별도 secret>
+Content-Type: application/json
 
-문의: 백엔드(시나리오 라우팅) 담당에게. 계약 원문: [`../mqtt/scenario-contract-draft.md`](../mqtt/scenario-contract-draft.md)
+{
+  "physicalSafetyConfirmed": true,
+  "reason": "현장 점검 후 이동 경로와 모터 상태 확인"
+}
+```
+
+복구 조건:
+
+- 등록되고 활성화됐으며 어르신이 배정된 Robot
+- 활성 Scenario 0건
+- 현재 mode가 `SAFE_STOP`, 또는 활성 Scenario가 없는데 남아 있는 비정상 `SCENARIO_ACTIVE`
+- `physicalSafetyConfirmed=true`와 비어 있지 않은 `reason`
+- 복구 목표는 `IDLE`만 허용하며 이미 `IDLE`이면 멱등 no-op
+
+이 API는 MQTT 이동·취소 명령을 발행하지 않고 mode만 복구하며 감사 이력을 남긴다. 서버의 `OPERATOR_SHARED_SECRET` 또는 `OPERATOR_ID`가 비어 있으면 요청은 fail-closed로 거절된다. 활성 Scenario가 있거나 현장 안전 확인을 할 수 없다면 SQL이나 API로 강제 복구하지 말고 Robot 담당자와 먼저 원인을 해결한다.

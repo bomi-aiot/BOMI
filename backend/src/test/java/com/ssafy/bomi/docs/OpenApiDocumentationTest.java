@@ -97,6 +97,7 @@ class OpenApiDocumentationTest {
         assertThat(config).contains(PRIMARY_GROUP_NAME);
         assertThat(config).contains("/v3/api-docs/bomi-robot");
         assertThat(config).contains("/v3/api-docs/bomi-guardian");
+        assertThat(config).contains("/v3/api-docs/bomi-operator");
         assertThat(config).contains("/v3/api-docs/bomi-backend");
         for (OpenApiSpec spec : SPECS) {
             assertThat(config).contains(spec.name());
@@ -160,6 +161,43 @@ class OpenApiDocumentationTest {
             // S15P11E102-260: 명부(known_person) 등록·수정 화면도 가디언웹이 호출한다.
             .contains("/api/v1/known-persons");
         assertThat(guardian).doesNotContain("/api/v1/robot/");
+
+        String operator = mockMvc.perform(get("/v3/api-docs/bomi-operator"))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+        assertThat(operator)
+            .contains("/api/v1/operator/robots/{deviceId}/mode-recoveries")
+            .doesNotContain("/api/v1/robot/")
+            .doesNotContain("/api/v1/guardian/");
+    }
+
+    @Test
+    void operatorRecoveryPostIsDocumentedAsAuthenticatedSafetyMutation() throws Exception {
+        String operator = mockMvc.perform(get("/v3/api-docs/bomi-operator"))
+            .andExpect(status().isOk())
+            .andReturn().getResponse().getContentAsString();
+
+        Map<String, Object> recoveryPath = com.jayway.jsonpath.JsonPath.read(
+            operator, "$.paths['/api/v1/operator/robots/{deviceId}/mode-recoveries']"
+        );
+        assertThat(recoveryPath).containsKey("post");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> post = (Map<String, Object>) recoveryPath.get("post");
+        assertThat(post.get("tags")).isEqualTo(List.of("Operator Robot Recovery"));
+        assertThat(post.get("security").toString()).contains("operatorSharedSecret");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> responses = (Map<String, Object>) post.get("responses");
+        assertThat(responses).containsKeys("200", "400", "401", "404", "409", "503");
+
+        Map<String, Object> securityScheme = com.jayway.jsonpath.JsonPath.read(
+            operator, "$.components.securitySchemes.operatorSharedSecret"
+        );
+        assertThat(securityScheme)
+            .containsEntry("type", "apiKey")
+            .containsEntry("in", "header")
+            .containsEntry("name", "X-Operator-Shared-Secret");
     }
 
     /** Guardian WALK is a live POST operation, not merely a matching path prefix. */
