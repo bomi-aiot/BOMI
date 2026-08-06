@@ -1,0 +1,260 @@
+"""실물 로봇에서 저장된 지도로 Nav2 자율주행을 실행한다."""
+
+from pathlib import Path
+
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    TimerAction,
+)
+from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, NotSubstitution
+from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
+from nav2_common.launch import RewrittenYaml
+
+
+def generate_launch_description() -> LaunchDescription:
+    """실물 센서·AMCL·Nav2를 연결해 저장된 지도 위에서 자율주행하게 한다.
+
+    Pico가 /odom과 /imu를 발행하고, use_ekf가 true면 EKF가 이를 융합해
+    odom → base_link TF를 발행한다(mapping 때와 동일하게 Pico의 TF 발행은
+    끈다). AMCL이 map → odom TF를 발행해 map 프레임 기준 위치를 잡고,
+    그 위에서 controller_server/planner_server/bt_navigator가 목표
+    지점까지 주행한다.
+
+    속도·가속도 파라미터(nav2_safe_params_real.yaml)는 실측 튜닝 전
+    초안이다.
+    """
+
+    core_share = Path(get_package_share_directory("core"))
+    lidar_share = Path(get_package_share_directory("bomi_lidar"))
+    nav2_share = Path(get_package_share_directory("nav2_bringup"))
+
+    joystick_launch = core_share / "launch" / "joystick_teleop.launch.py"
+    pico_launch = core_share / "launch" / "pico_driver.launch.py"
+    lidar_launch = lidar_share / "launch" / "x4_pro.launch.py"
+
+    ekf_params = core_share / "config" / "ekf.yaml"
+    default_params = core_share / "config" / "nav2_safe_params_real.yaml"
+    safe_bt_xml = core_share / "behavior_trees" / "nav_to_pose_safe.xml"
+    rviz_config = core_share / "rviz" / "bomi_navigation.rviz"
+
+    use_sim_time = LaunchConfiguration("use_sim_time")
+    use_rviz = LaunchConfiguration("use_rviz")
+    use_ekf = LaunchConfiguration("use_ekf")
+    use_joystick = LaunchConfiguration("use_joystick")
+
+    map_file = LaunchConfiguration("map")
+    params_file = LaunchConfiguration("params_file")
+    cmd_vel_topic = LaunchConfiguration("cmd_vel_topic")
+    pico_port = LaunchConfiguration("pico_port")
+    lidar_port = LaunchConfiguration("lidar_port")
+    scan_topic = LaunchConfiguration("scan_topic")
+    base_frame = LaunchConfiguration("base_frame")
+    odom_frame = LaunchConfiguration("odom_frame")
+    robot_radius = LaunchConfiguration("robot_radius")
+
+    configured_params = RewrittenYaml(
+        source_file=params_file,
+        param_rewrites={
+            "base_frame_id": base_frame,
+            "default_nav_to_pose_bt_xml": str(safe_bt_xml),
+            "robot_radius": robot_radius,
+        },
+        convert_types=True,
+    )
+
+    joystick = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(str(joystick_launch)),
+        condition=IfCondition(use_joystick),
+        launch_arguments={
+            "cmd_vel_topic": cmd_vel_topic,
+        }.items(),
+    )
+
+    # AMCL이 map → odom TF를 발행하므로, mapping 때처럼 Pico의 TF 발행은
+    # EKF 사용 여부에 따라 결정한다(EKF on이면 EKF가 odom → base_link를
+    # 발행하고, off이면 Pico가 직접 발행한다). 어느 쪽이든 AMCL이 그 위에
+    # map → odom을 얹는다.
+    pico_driver = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(str(pico_launch)),
+        launch_arguments={
+            "serial_port": pico_port,
+            "publish_tf": NotSubstitution(use_ekf),
+        }.items(),
+    )
+
+    ekf = Node(
+        package="robot_localization",
+        executable="ekf_node",
+        name="ekf_filter_node",
+        condition=IfCondition(use_ekf),
+        output="screen",
+        parameters=[
+            str(ekf_params),
+            {
+                "use_sim_time": ParameterValue(
+                    use_sim_time,
+                    value_type=bool,
+                ),
+                "odom_frame": odom_frame,
+                "base_link_frame": base_frame,
+            },
+        ],
+    )
+
+    lidar = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(str(lidar_launch)),
+        launch_arguments={
+            "port": lidar_port,
+            "scan_topic": scan_topic,
+            "base_frame": base_frame,
+        }.items(),
+    )
+
+    localization = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            str(nav2_share / "launch" / "localization_launch.py")
+        ),
+        launch_arguments={
+            "namespace": "",
+            "map": map_file,
+            "params_file": configured_params,
+            "use_sim_time": use_sim_time,
+            "use_composition": "False",
+            "autostart": "True",
+            "use_respawn": "False",
+        }.items(),
+    )
+
+    navigation = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            str(nav2_share / "launch" / "navigation_launch.py")
+        ),
+        launch_arguments={
+            "namespace": "",
+            "params_file": configured_params,
+            "use_sim_time": use_sim_time,
+            "use_composition": "False",
+            "autostart": "True",
+            "use_respawn": "False",
+        }.items(),
+    )
+
+    rviz = Node(
+        package="rviz2",
+        executable="rviz2",
+        name="rviz2",
+        condition=IfCondition(use_rviz),
+        arguments=["-d", str(rviz_config)],
+        parameters=[
+            {
+                "use_sim_time": ParameterValue(
+                    use_sim_time,
+                    value_type=bool,
+                )
+            }
+        ],
+        output="screen",
+    )
+
+    # 센서·odom 노드가 먼저 자리를 잡을 시간을 준 뒤 AMCL·Nav2를 올린다.
+    # 초기 위치는 여기서 자동으로 넣지 않는다 — 로봇을 지도 위 어디에
+    # 세워뒀는지는 RViz "2D Pose Estimate"로 사람이 알려줘야 한다.
+    start_navigation = TimerAction(
+        period=3.0,
+        actions=[
+            localization,
+            navigation,
+            rviz,
+        ],
+    )
+
+    return LaunchDescription(
+        [
+            DeclareLaunchArgument(
+                "use_sim_time",
+                default_value="false",
+                description="실제 장비에서는 시스템 시간을 사용",
+            ),
+            DeclareLaunchArgument(
+                "use_rviz",
+                default_value="true",
+                description="RViz를 함께 실행할지 여부",
+            ),
+            DeclareLaunchArgument(
+                "use_ekf",
+                default_value="true",
+                description=(
+                    "엔코더와 자이로를 EKF로 융합할지 여부. "
+                    "false면 Pico가 odom → base_link TF를 직접 발행한다."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "use_joystick",
+                default_value="false",
+                description=(
+                    "조이스틱 수동 개입을 함께 켤지 여부. "
+                    "자율주행만 확인할 때는 false로 둔다."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "map",
+                description=(
+                    "Nav2가 쓸 map.yaml 경로. mapping_real.launch.py로 "
+                    "만든 지도를 지정한다(필수, 기본값 없음)."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "params_file",
+                default_value=str(default_params),
+                description="Nav2 파라미터 YAML 경로",
+            ),
+            DeclareLaunchArgument(
+                "cmd_vel_topic",
+                default_value="/cmd_vel",
+                description="조이스틱 명령과 Pico가 공유할 속도 토픽",
+            ),
+            DeclareLaunchArgument(
+                "pico_port",
+                default_value="/dev/ttyACM0",
+                description="Pico H USB CDC 장치 경로",
+            ),
+            DeclareLaunchArgument(
+                "lidar_port",
+                default_value="/dev/ttyUSB0",
+                description="YDLIDAR 시리얼 장치 경로",
+            ),
+            DeclareLaunchArgument(
+                "scan_topic",
+                default_value="/scan",
+                description="YDLIDAR와 AMCL/costmap이 공유할 LaserScan 토픽",
+            ),
+            DeclareLaunchArgument(
+                "base_frame",
+                default_value="base_link",
+                description="로봇 기준 프레임",
+            ),
+            DeclareLaunchArgument(
+                "odom_frame",
+                default_value="odom",
+                description="odom 부모 프레임",
+            ),
+            DeclareLaunchArgument(
+                "robot_radius",
+                default_value="0.31",
+                description=(
+                    "costmap이 쓰는 로봇 반경(m). 실측 전 초안 값이다."
+                ),
+            ),
+            joystick,
+            pico_driver,
+            ekf,
+            lidar,
+            start_navigation,
+        ]
+    )
