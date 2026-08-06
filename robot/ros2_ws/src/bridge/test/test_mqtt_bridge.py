@@ -49,6 +49,18 @@ def _make_bridge(robot_id: str = "robot-01", *, driver=None, async_execution=Fal
     return bridge, collector
 
 
+class _RecordingDriver(MockRobotDriver):
+    """실제 이동 대신 호출된 목적지를 기록한다 — "움직이지 않았음"의 증거."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.navigate_targets: list[str] = []
+
+    def navigate(self, target: str) -> str:
+        self.navigate_targets.append(target)
+        return contract.STATUS_ARRIVED
+
+
 def _command_json(
     command_type: str,
     robot_id: str = "robot-01",
@@ -147,6 +159,26 @@ def test_navigate_without_target_reports_failed_with_reason() -> None:
     assert envelope["payload"]["reasonCode"] == contract.REASON_UNKNOWN_TARGET
 
 
+@pytest.mark.parametrize("target", ["BEDROOM", "KITCHEN", "", None])
+def test_unknown_target_does_not_move_and_reports_failed(target) -> None:
+    """★ 계약 밖 target 은 드라이버를 부르기 전에 거절한다.
+
+    드라이버까지 내려가면 구현마다 판정이 갈린다(timed 드라이버는 목적지를
+    아예 보지 않아 "2초 직진 후 ARRIVED"를 돌려준다 — 존재하지 않는 방으로
+    갔다는 거짓 성공이 백엔드에 들어간다).
+    """
+    driver = _RecordingDriver()
+    bridge, collector = _make_bridge(driver=driver)
+
+    bridge.on_command(_command_json(contract.CMD_NAVIGATE, target=target))
+
+    assert driver.navigate_targets == []
+    envelope = json.loads(collector.messages[0][1])
+    assert envelope["payload"]["outcome"] == contract.OUTCOME_FAILED
+    assert envelope["payload"]["resultCode"] == contract.CODE_NOT_ARRIVED
+    assert envelope["payload"]["reasonCode"] == contract.REASON_UNKNOWN_TARGET
+
+
 def test_command_for_other_robot_is_ignored() -> None:
     bridge, collector = _make_bridge(robot_id="robot-01")
 
@@ -193,7 +225,7 @@ def test_unknown_target_reports_failed_even_on_mock_driver() -> None:
 
 def test_expired_command_is_not_executed_and_reports_command_expired() -> None:
     """★ expiresAt 이 지난 명령은 driver 를 호출하지 않고 즉시 실패 회신한다."""
-    driver = MockRobotDriver()
+    driver = _RecordingDriver()
     bridge, collector = _make_bridge(driver=driver)
 
     bridge.on_command(
@@ -204,6 +236,7 @@ def test_expired_command_is_not_executed_and_reports_command_expired() -> None:
         )
     )
 
+    assert driver.navigate_targets == [], "만료된 명령으로 로봇이 움직이면 안 된다"
     assert len(collector.messages) == 1
     envelope = json.loads(collector.messages[0][1])
     assert envelope["payload"]["outcome"] == contract.OUTCOME_FAILED
@@ -230,12 +263,14 @@ def test_non_expired_command_still_executes() -> None:
 
 def test_duplicate_command_id_is_not_re_executed() -> None:
     """★ QoS 1 재전송으로 같은 commandId 가 두 번 오면 두 번째는 무시한다."""
-    bridge, collector = _make_bridge()
+    driver = _RecordingDriver()
+    bridge, collector = _make_bridge(driver=driver)
     raw = _command_json(contract.CMD_NAVIGATE, target=contract.TARGET_LIVING_ROOM)
 
     bridge.on_command(raw)
     bridge.on_command(raw)  # 재전송 흉내
 
+    assert driver.navigate_targets == [contract.TARGET_LIVING_ROOM]
     assert len(collector.messages) == 1
 
 
@@ -325,13 +360,50 @@ def test_follow_commands_get_immediate_failed_stub(follow_type: str) -> None:
     즉시 FAILED 를 회신해 원인이 로그에 남고 백엔드 워치독 타임아웃을
     기다리지 않게 한다.
     """
-    bridge, collector = _make_bridge()
+    driver = _RecordingDriver()
+    bridge, collector = _make_bridge(driver=driver)
 
     bridge.on_command(_command_json(follow_type))
 
+    # 스텁은 회신만 한다 — 추종 명령이 주행을 시작하면 안 된다.
+    assert driver.navigate_targets == []
     envelope = json.loads(collector.messages[0][1])
     assert envelope["type"] == contract.RESULT_FOLLOW
     assert envelope["payload"]["outcome"] == contract.OUTCOME_FAILED
+
+
+# ── 드라이버가 예외로 죽어도 무응답이 되지 않는다 ────────────────────────────
+
+
+def test_driver_exception_still_replies_failed_and_stops_the_robot() -> None:
+    """★ navigate() 가 터져도 회신은 나가고 비상 정지를 시도한다.
+
+    회신 없이 끝나면 백엔드는 20분 워치독까지 기다렸다가 로봇을 SAFE_STOP
+    에 잠근다(CLAUDE.md §3). 게다가 예외 시점에는 바퀴가 도는 중일 수 있다.
+    """
+    class _ExplodingDriver(MockRobotDriver):
+        def __init__(self) -> None:
+            super().__init__()
+            self.cancelled = False
+
+        def navigate(self, target: str) -> str:
+            raise RuntimeError("driver exploded")
+
+        def cancel(self) -> str:
+            self.cancelled = True
+            return contract.STATUS_CANCELLED
+
+    driver = _ExplodingDriver()
+    bridge, collector = _make_bridge(driver=driver)
+
+    bridge.on_command(
+        _command_json(contract.CMD_NAVIGATE, target=contract.TARGET_LIVING_ROOM)
+    )
+
+    assert driver.cancelled is True, "예외 뒤에 비상 정지를 시도해야 한다"
+    envelope = json.loads(collector.messages[0][1])
+    assert envelope["payload"]["outcome"] == contract.OUTCOME_FAILED
+    assert envelope["payload"]["resultCode"] == contract.CODE_NOT_ARRIVED
 
 
 # ── 도착 훅 (사람 접근의 진입점) ─────────────────────────────────────────────

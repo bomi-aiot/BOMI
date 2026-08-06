@@ -28,11 +28,11 @@ v1 정합 개편(2026-08)에서 추가된 안전 규칙 — 인수인계 필수 
 from __future__ import annotations
 
 from collections import OrderedDict
+from datetime import datetime, timezone
 import json
 import logging
 import queue
 import threading
-from datetime import datetime, timezone
 from typing import Any, Callable
 
 from bridge import contract
@@ -201,6 +201,14 @@ class MqttBridge:
             )
             return
 
+        logger.info(
+            "명령 수신: commandId=%s scenarioId=%s type=%s target=%s",
+            command.command_id,
+            command.scenario_id,
+            command.type,
+            command.target,
+        )
+
         # 중복: 실행하지도, 다시 회신하지도 않는다. QoS 1 재전송은 정상이고
         # 백엔드는 같은 commandId 의 최종 상태를 이미 저장하고 있다.
         if command.command_id in self._seen:
@@ -264,8 +272,17 @@ class MqttBridge:
 
     def _handle_navigate(self, command: contract.RobotCommand) -> None:
         target = command.target
-        if not target:
-            logger.warning("NAVIGATE 명령에 target이 없어 FAILED로 처리합니다")
+        # 계약 밖의 target 은 드라이버를 부르지도 않는다. 드라이버마다 판정이
+        # 갈리면(mock 은 FAILED, timed 는 목적지를 아예 무시) 같은 명령에 다른
+        # 결과가 나오므로, 어휘 검사는 여기 한 곳에서 끝낸다.
+        if not isinstance(target, str) or target not in contract.NAVIGATION_TARGETS:
+            logger.warning(
+                "NAVIGATE 목적지가 계약 밖이라 FAILED 로 처리합니다: "
+                "commandId=%s scenarioId=%s target=%s",
+                command.command_id,
+                command.scenario_id,
+                target,
+            )
             self._publish_result(
                 contract.RESULT_NAVIGATION,
                 command,
@@ -274,7 +291,24 @@ class MqttBridge:
                 contract.REASON_UNKNOWN_TARGET,
             )
             return
-        status = self._driver.navigate(target)
+
+        # 드라이버가 예외로 죽어도 회신 없이 끝나면 안 된다(무응답 금지).
+        # 백엔드는 20분 워치독까지 기다렸다가 로봇을 SAFE_STOP 에 잠근다.
+        # 예외 뒤에는 바퀴가 도는 채로 남을 수 있으므로 비상 정지도 시도한다.
+        try:
+            status = self._driver.navigate(target)
+        except Exception:  # noqa: BLE001 - 어떤 실패든 결과는 회신한다
+            logger.exception(
+                "주행 실행 중 오류: commandId=%s scenarioId=%s",
+                command.command_id,
+                command.scenario_id,
+            )
+            try:
+                self._driver.cancel()
+            except Exception:  # noqa: BLE001 - 비상 정지 실패는 로그만 남긴다
+                logger.exception("비상 정지 실패: commandId=%s", command.command_id)
+            status = contract.STATUS_FAILED
+
         outcome, code = _NAVIGATE_STATUS_MAP.get(
             status, (contract.OUTCOME_FAILED, contract.CODE_NOT_ARRIVED)
         )
