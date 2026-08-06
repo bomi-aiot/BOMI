@@ -189,13 +189,26 @@ class Settings:
     #   경고 로그로 남는다.
     backend_shared_secret: str | None
 
-    # 이 로봇의 id. 배포된 기기마다 다르므로 policy 가 아니라 여기다.
+    # 이 로봇의 id (robot 테이블의 UUID). 배포된 기기마다 다르므로 policy 가 아니라 여기다.
     #
     # 왜 필요한가
     #   로봇에서 온보딩 세션을 '새로' 시작할 때 서버가 요구한다. 앱에서 시작한 세션을
     #   이어받을 때는 필요 없다. 미설정이면 로봇이 온보딩을 시작하지 못하고, 그 사실을
     #   로그로 남긴다(조용히 안 하지 않는다).
+    #
+    # ★ MQTT 토픽에는 이 값을 쓰지 않는다 — 그쪽은 robot_device_id 다. 두 값은 서로
+    #   다른 id 공간이고, 혼용은 실제로 있었던 사고다: MQTT 봉투에 UUID 를 넣으면
+    #   백엔드가 UNKNOWN_ROBOT 으로 '조용히' 차단해 시나리오가 한 번도 돌지 않는다.
     robot_id: str | None
+
+    # 이 로봇의 MQTT deviceId (robot 테이블의 device_id, 예: bomi-AA001).
+    #
+    # 왜 robot_id 와 분리하는가
+    #   백엔드 MQTT 계약의 {robotId} 는 UUID 가 아니라 deviceId 다
+    #   (ScenarioRobotStartPolicy 가 findLockCandidateByDeviceId 로 조회). 하나의
+    #   환경변수를 REST(UUID)와 MQTT(deviceId) 양쪽에 쓰던 것이 식별자 충돌의
+    #   원인이었다. 토픽·봉투를 만드는 모든 코드는 이 값을 쓴다.
+    robot_device_id: str | None
 
     # 이 로봇이 돌보는 어르신.
     #
@@ -411,6 +424,7 @@ class Settings:
             backend_timeout_seconds=_positive_float_env("BACKEND_TIMEOUT_SECONDS", 1.5),
             backend_shared_secret=_optional_env("BACKEND_SHARED_SECRET"),
             robot_id=_optional_env("ROBOT_ID"),
+            robot_device_id=_optional_env("ROBOT_DEVICE_ID"),
             senior_id=_optional_env("SENIOR_ID"),
             use_graph_runtime=_bool_env("USE_GRAPH_RUNTIME", True),
             t3_consent_enabled=_bool_env("T3_CONSENT_ENABLED", True),
