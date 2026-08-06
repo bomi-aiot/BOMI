@@ -103,6 +103,10 @@ class MockRobotDriver(RobotDriver):
 # Mock으로 넘어가지 않도록, 허용값을 여기서 명시적으로 제한한다.
 DRIVER_TYPE_MOCK = "mock"
 DRIVER_TYPE_NAV2 = "nav2"
+# 지도·좌표 없이 "정해진 시간 직진"으로 이동을 대체하는 임시 드라이버.
+# Nav2 병목을 우회해 계약 왕복·대화·DB 종결을 검증하기 위한 것이며,
+# 주행 품질은 보장하지 않는다(bridge/timed_drive_driver.py 참고).
+DRIVER_TYPE_TIMED = "timed"
 
 
 def create_driver(
@@ -110,15 +114,17 @@ def create_driver(
     *,
     create_mock: Callable[[], RobotDriver],
     create_nav2: Callable[[], RobotDriver],
+    create_timed: Callable[[], RobotDriver] | None = None,
 ) -> RobotDriver:
     """driver_type 값에 따라 알맞은 드라이버를 생성한다.
 
-    역할: 실행 환경이 고른 driver_type에 맞춰 Mock 또는 Nav2 드라이버를 만든다.
-        실제 생성은 주입된 팩터리(create_mock/create_nav2)가 담당한다. 덕분에 이
-        함수 자체는 ROS 2에 의존하지 않아 단위 테스트할 수 있고, Nav2 드라이버는
-        nav2가 선택된 경우에만 생성된다.
-    입력값: driver_type - "mock" 또는 "nav2". create_mock/create_nav2 - 각각
-        Mock, Nav2 드라이버를 만들어 돌려주는 인자 없는 함수.
+    역할: 실행 환경이 고른 driver_type에 맞춰 드라이버를 만든다. 실제 생성은
+        주입된 팩터리가 담당한다. 덕분에 이 함수 자체는 ROS 2에 의존하지 않아
+        단위 테스트할 수 있고, Nav2 드라이버는 nav2가 선택된 경우에만 생성된다.
+    입력값: driver_type - "mock", "nav2", "timed". create_mock/create_nav2/
+        create_timed - 각 드라이버를 만들어 돌려주는 인자 없는 함수.
+        create_timed 는 선택이며, 주입하지 않은 실행 경로에서 "timed" 를
+        고르면 ValueError 로 거절한다(조용히 다른 드라이버로 대체하지 않는다).
     반환값: 선택된 RobotDriver 구현.
     실패: 허용하지 않는 driver_type이면 ValueError를 던진다. 조용히 Mock으로
         대체하지 않는다.
@@ -127,7 +133,14 @@ def create_driver(
         return create_mock()
     if driver_type == DRIVER_TYPE_NAV2:
         return create_nav2()
+    if driver_type == DRIVER_TYPE_TIMED:
+        if create_timed is None:
+            raise ValueError(
+                f"driver_type '{DRIVER_TYPE_TIMED}' is not available on this "
+                "run path (no factory was provided)"
+            )
+        return create_timed()
     raise ValueError(
-        f"unknown driver_type '{driver_type}'; "
-        f"use '{DRIVER_TYPE_MOCK}' or '{DRIVER_TYPE_NAV2}'"
+        f"unknown driver_type '{driver_type}'; use "
+        f"'{DRIVER_TYPE_MOCK}', '{DRIVER_TYPE_NAV2}', or '{DRIVER_TYPE_TIMED}'"
     )

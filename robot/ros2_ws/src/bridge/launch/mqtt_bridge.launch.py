@@ -32,6 +32,10 @@ def generate_launch_description() -> LaunchDescription:
     password = LaunchConfiguration("password")
     approach_enabled = LaunchConfiguration("approach_enabled")
     approach_duration_seconds = LaunchConfiguration("approach_duration_seconds")
+    timed_drive_duration_seconds = LaunchConfiguration(
+        "timed_drive_duration_seconds")
+    timed_drive_linear_speed = LaunchConfiguration("timed_drive_linear_speed")
+    cmd_vel_topic = LaunchConfiguration("cmd_vel_topic")
 
     return LaunchDescription(
         [
@@ -41,7 +45,22 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument(
                 "driver_type",
                 default_value="mock",
-                description="Robot driver to use: mock or nav2",
+                description="Robot driver to use: mock, nav2, or timed",
+            ),
+            # driver_type:=timed — 지도·좌표 없이 "정해진 시간 직진"으로
+            # 이동을 대체한다. Nav2(지도 작성) 병목을 우회해 계약 왕복·대화·
+            # DB 종결까지 검증하기 위한 임시 수단이며, 목적지 구분이 없다.
+            DeclareLaunchArgument(
+                "timed_drive_duration_seconds", default_value="2.0",
+                description="How long one NAVIGATE drives forward (timed driver)",
+            ),
+            DeclareLaunchArgument(
+                "timed_drive_linear_speed", default_value="0.08",
+                description="Forward speed in m/s (timed driver). Start low.",
+            ),
+            DeclareLaunchArgument(
+                "cmd_vel_topic", default_value="/cmd_vel",
+                description="Velocity topic the timed driver publishes to",
             ),
             DeclareLaunchArgument(
                 "goal_timeout_seconds",
@@ -96,6 +115,11 @@ def generate_launch_description() -> LaunchDescription:
                             approach_enabled, value_type=bool),
                         "approach_duration_seconds": ParameterValue(
                             approach_duration_seconds, value_type=float),
+                        "timed_drive_duration_seconds": ParameterValue(
+                            timed_drive_duration_seconds, value_type=float),
+                        "timed_drive_linear_speed": ParameterValue(
+                            timed_drive_linear_speed, value_type=float),
+                        "cmd_vel_topic": cmd_vel_topic,
                     }
                 ],
             ),
