@@ -12,6 +12,13 @@
     docs/mqtt/topic-convention.md (봉투 규약), CLAUDE.md §11(현관), §24(미결 항목)
 """
 
+from bomi_ai_chat.contracts.ai_commands import (
+    AiCommandError,
+    StartConversationCommand,
+    build_conversation_ended,
+    build_conversation_started,
+    parse_start_conversation,
+)
 from bomi_ai_chat.contracts.door import (
     DOOR_EVENT_TYPES,
     DoorEvent,
@@ -24,4 +31,9 @@ __all__ = [
     "DoorEvent",
     "DoorEventError",
     "parse_door_event",
+    "AiCommandError",
+    "StartConversationCommand",
+    "build_conversation_ended",
+    "build_conversation_started",
+    "parse_start_conversation",
 ]

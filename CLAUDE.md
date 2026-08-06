@@ -45,12 +45,26 @@
 
 ```
 [ai_chat]  웨이크워드·대화·TTS.  발행: robot/{id}/events (WAKE_WORD, CONVERSATION_*)
-           구독: ai/{id}/commands (START_CONVERSATION), robot/{id}/results (도착 감지),
+           구독: ai/{id}/commands (START_CONVERSATION), robot/{id}/results (도착 감지, 2-6),
                  iot/+/events (현관, 기존)
 [bridge]   MQTT↔Nav2.  구독: robot/{id}/commands (NAVIGATE·CANCEL)
            발행: robot/{id}/results (NAVIGATION_RESULT v1)
 [vision]   사람 추적 → UDP:5005 → vision_udp_bridge → person_follower (접근 단계에만)
 ```
+
+`ai_chat` 쪽 배선 완료 항목 (2-3):
+- `contracts/ai_commands.py` — START_CONVERSATION 파싱, CONVERSATION_STARTED/ENDED 봉투
+- `ai_commands.py` — `AiCommandSubscriber`. paho 콜백 스레드에서 파싱·dedup·만료 확인·
+  CONVERSATION_STARTED 즉시 발행까지 끝내고, 실제 대화 진행은 `Runtime.
+  backend_conversation_queue` 로 메인 루프에 넘긴다(마이크는 한 스레드만 쥘 수 있어서)
+- `bootstrap.py` — 메인 루프가 `wake.wait_for_wake()` 대기 중에도 이 큐를 확인할 수
+  있도록 `WakeWordDetector.interrupt_check` 훅을 추가(§6 환경 함정 참고). 큐에 항목이
+  있으면 `_run_backend_conversation` 이 첫 문장을 `backend_command` 경로로 말하고,
+  이어지는 발화는 기존 `_run_graph_conversation`(보미야 세션과 동일 기계)을 그대로 탄다.
+  종료 사유(farewell/no_speech/interrupted/seed 실패)를 CONVERSATION_ENDED outcome 으로
+  옮긴다.
+- `ingress.backend_command` 의 체크포인트 오염 버그 수정(2026-08-06 랭그래프 분석 P1-b) —
+  빈 명령이 이전 턴의 intent/user_input 을 재사용하지 않도록 명시적으로 비운다.
 
 **백엔드는 `SPEAK` 를 절대 발행하지 않는다** (main 전체 grep 0건). 대화는 전부
 `START_CONVERSATION` 이고, bridge 는 이동만 담당한다.
@@ -178,6 +192,7 @@ TIMED_OUT)는 로봇 mode 를 `SAFE_STOP` 으로 만들고, 이후 모든 이동
 | 좌표 미실측 | `room_waypoints.yaml` 의 `living_room`·`default` 는 실측 전까지 임시값 — 파일 주석에 표기 |
 | **레거시 우회** | `USE_GRAPH_RUNTIME=false` 또는 `--legacy` 는 게이트·트리아지·침묵 감시·현관 연동을 **통째로 제거**한다. 시연 env 에서는 미설정 또는 true 고정 |
 | backend_command 체크포인트 오염 | 빈/잘못된 명령이 상태 키를 안 갱신하면 이전 `intent`/`user_input` 이 재사용될 수 있음 — 2-3 에서 진입 시 턴 로컬 상태 초기화로 방어 (연속 호출 회귀 테스트 포함) |
+| ⚠️ **마이크는 한 스레드만 쥔다 — `wake.interrupt_check`, 실기 미검증** | START_CONVERSATION 이 웨이크워드 대기 중에도 대화를 시작할 수 있어야 해서 `WakeWordDetector.wait_for_wake()` 에 1초 폴링 인터럽트 훅을 추가했다(2-3). 로직은 테스트로 검증했지만 **실제 `sd.InputStream` 콜백 스레드 동작은 젯슨에서 아직 확인 못 함** — V3 단계에서 반드시 실측(현관 인사 시나리오로 "보미야 없이 대화가 시작되는지" 확인) |
 
 ---
 

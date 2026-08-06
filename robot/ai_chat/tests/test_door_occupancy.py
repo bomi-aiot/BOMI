@@ -427,7 +427,34 @@ def test_empty_backend_command_says_nothing(frozen_clock):
 
     out = ingress.backend_command({"senior_id": SENIOR, "command": {"text": "   "}})
 
-    assert "user_input" not in out
+    # ★ 값이 아예 없는 게 아니라 명시적으로 None 이어야 한다 — 체크포인트에
+    # 남은 지난 턴의 intent/user_input 을 classify_intent 가 재사용하지
+    # 않도록 이번 턴이 직접 비운다(랭그래프 분석에서 발견된 오염 방지).
+    assert out["user_input"] is None
+    assert out["intent"] is None
+
+
+def test_empty_backend_command_clears_a_stale_checkpointed_intent(frozen_clock):
+    """★ 회귀: 빈 명령이 '이전 턴의' intent/user_input 을 재사용하게 두지 않는다.
+
+    checkpointer 가 물려주는 state 에 지난 backend_command 턴의 intent 가
+    남아 있어도, 이번 턴이 빈 명령이면 그 값을 지워야 한다. 안 그러면
+    classify_intent 가 "이미 분류됨"으로 착각해 지난 문구를 그대로 다시
+    말하게 된다.
+    """
+    frozen_clock(start=MORNING_UTC)
+
+    stale_state = {
+        "senior_id": SENIOR,
+        "intent": "greeting",
+        "user_input": "어제 남은 오래된 문구",
+        "command": {"text": "   "},  # 이번엔 말할 게 없다
+    }
+
+    out = ingress.backend_command(stale_state)
+
+    assert out["intent"] is None
+    assert out["user_input"] is None
 
 
 def test_greeting_handler_passes_the_backend_text_through(frozen_clock):

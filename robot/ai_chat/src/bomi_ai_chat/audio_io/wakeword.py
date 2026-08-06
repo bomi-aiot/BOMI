@@ -80,6 +80,18 @@ class WakeWordDetector:
         self.frame_samples = frame_samples
         # 지연 로드되는 openWakeWord 모델 인스턴스. None 이면 아직 안 올렸다는 뜻.
         self._model = None
+        # 웨이크 대기를 "보미야" 없이도 조기 종료시키는 훅(선택, 기본 None).
+        #
+        # 왜 필요한가 (S15P11E102 통합 스프린트, 2026-08)
+        #   현관 인사·복약 알림·온습도 안부는 backend 가 START_CONVERSATION 을
+        #   보내는 것으로 대화가 시작되고, 아무도 "보미야"를 부르지 않는다.
+        #   wait_for_wake() 가 계속 마이크를 쥐고 있으면 그 대화가 영원히
+        #   시작되지 못한다(대화는 마이크가 있어야 진행되고, 마이크는 한 번에
+        #   한 스레드만 열 수 있다). bootstrap.run_conversation_loop 가 backend
+        #   대화 큐가 찼을 때 이 속성에 콜백을 얹으면, 아래 대기 루프가 매초
+        #   확인해 조기 반환한다.
+        # 이 필드가 없어도(None) 기존 동작과 완전히 같다 — 순수 추가 기능이다.
+        self.interrupt_check = None
 
     def warm_up(self) -> None:
         """모델을 미리 로드한다(첫 감지 지연 방지).
@@ -141,6 +153,12 @@ class WakeWordDetector:
               없는 blocking get 은 인터럽트를 못 받는다).
             - 감지 순간 반환하며 스트림을 닫는다. 대기와 capture 는 '순차로'만 마이크를
               연다(동시에 열지 않는다).
+            - `self.interrupt_check` 가 설정돼 있고 참을 반환하면, "보미야"를
+              듣지 못했어도 스트림을 닫고 조기 반환한다. 호출부(bootstrap)가
+              반환 직후 그 사실을 큐로 직접 재확인한다 — 이 함수의 반환값만
+              봐서는 '진짜 감지'와 '조기 반환'을 구분할 수 없다(둘 다 그냥
+              반환한다). 그 구분이 필요 없게 설계했다: 호출부는 반환 즉시
+              큐를 보고, 있으면 그쪽을 먼저 처리한다.
         """
         model = self._ensure_model()
 
@@ -180,10 +198,17 @@ class WakeWordDetector:
             callback=_callback,
         ):
             while True:
+                if self.interrupt_check is not None and self.interrupt_check():
+                    # 백엔드 대화가 대기 중이다 — "보미야" 없이도 마이크를
+                    # 넘겨준다. 스트림은 이 with 블록을 벗어나며 닫힌다.
+                    LOGGER.info("wakeword wait interrupted by a pending backend "
+                                "conversation")
+                    return
                 try:
                     chunk = chunk_queue.get(timeout=1.0)
                 except queue.Empty:
-                    continue  # Ctrl+C 를 받을 수 있도록 잠깐씩 루프를 돈다
+                    continue  # Ctrl+C 를 받을 수 있도록, 그리고 위 인터럽트 확인을
+                    # 다시 하도록 잠깐씩 루프를 돈다
 
                 # 왼쪽 채널(처리된 빔)만 모노로 → 16k 로 리샘플 → 버퍼에 이어붙이기
                 mono = chunk[:, 0] if chunk.ndim > 1 else chunk

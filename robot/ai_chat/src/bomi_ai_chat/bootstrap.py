@@ -30,7 +30,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import queue
+from dataclasses import dataclass, field
 from typing import Any
 
 from bomi_ai_chat.config import Settings, get_settings
@@ -49,6 +50,13 @@ class Runtime:
     # 재생기(재생 상태를 표시)와 대화 루프(재생 끝날 때까지 대기)가 공유하는 에코 가드.
     # 응답 재생 중에 다음 리슨을 열지 않기 위한 근거(is_playing)를 여기서 읽는다.
     echo_guard: Any = None
+    # 백엔드 START_CONVERSATION 구독자(ai_commands.AiCommandSubscriber). 현관
+    # 인사·복약 알림·온습도 안부, 세 시나리오의 대화가 이 경로로 들어온다.
+    ai_command_subscriber: Any = None
+    # 위 구독자(paho 콜백 스레드)와 메인 루프(마이크를 쥔 유일한 스레드) 사이의
+    # 손 넘김 큐. 큐가 비어 있지 않으면 메인 루프가 웨이크워드 대기 대신 이
+    # 대화를 먼저 진행한다 — 이유는 run_conversation_loop 의 주석 참고.
+    backend_conversation_queue: queue.Queue | None = field(default=None)
 
     def shutdown(self, *, wait_for_speech_sec: float = 0.0) -> None:
         """백그라운드 스레드를 정리한다. 실패해도 종료를 막지 않는다.
@@ -76,6 +84,7 @@ class Runtime:
 
         for name, closer in (
             ("door subscriber", getattr(self.door_subscriber, "stop", None)),
+            ("ai command subscriber", getattr(self.ai_command_subscriber, "stop", None)),
             ("scheduler", getattr(self.scheduler, "shutdown", None)),
         ):
             if closer is None:
@@ -137,10 +146,21 @@ def build_runtime(
     _wire_backend_clients()
     _restore_runtime_state(app, senior_id)
 
-    runtime = Runtime(app=app, senior_id=senior_id, echo_guard=echo_guard)
+    # 백엔드 대화 명령(START_CONVERSATION)이 도착하면 이 큐를 거쳐 메인
+    # 루프로 전달된다. maxsize 는 ai_commands.QUEUE_MAX_SIZE 와 맞춘다 —
+    # 두 곳에 같은 숫자를 다른 이유로 들고 있지 않도록 여기서 그 상수를 쓴다.
+    from bomi_ai_chat.ai_commands import QUEUE_MAX_SIZE
+    backend_conversation_queue: queue.Queue = queue.Queue(maxsize=QUEUE_MAX_SIZE)
+
+    runtime = Runtime(
+        app=app, senior_id=senior_id, echo_guard=echo_guard,
+        backend_conversation_queue=backend_conversation_queue,
+    )
     if start_background:
         runtime.scheduler = _start_scheduler(senior_id, app)
         runtime.door_subscriber = _start_door_subscriber(senior_id, app, settings)
+        runtime.ai_command_subscriber = _start_ai_command_subscriber(
+            settings, backend_conversation_queue)
     return runtime
 
 
@@ -282,6 +302,33 @@ def _start_door_subscriber(senior_id: str, app, settings: Settings):
     return subscriber
 
 
+def _start_ai_command_subscriber(settings: Settings, pending_queue: queue.Queue):
+    """백엔드 대화 명령(START_CONVERSATION) 구독을 시작한다.
+
+    door 구독과 달리 그래프 `app` 을 주입하지 않는다 — 대화 진행은 메인 루프가
+    `pending_queue` 를 통해 직접 한다(bootstrap.py 모듈 docstring 의 스레드
+    경계 설명 참고). 이 구독자는 수신·ACK·중복 제거만 한다.
+
+    비활성이면 경고만 남기고 넘어간다 — 그러면 현관 인사·복약 알림·온습도
+    안부, 세 시나리오의 대화가 전혀 시작되지 않는다.
+    """
+    from bomi_ai_chat.ai_commands import build_ai_command_subscriber
+
+    try:
+        subscriber = build_ai_command_subscriber(
+            settings=settings, pending_queue=pending_queue)
+        if subscriber is None:
+            return None
+        subscriber.start()
+    except Exception:  # noqa: BLE001 - 브로커가 없다고 대화까지 막지 않는다
+        logger.exception("could not start the ai command subscriber; homecoming/"
+                         "medication/wellness conversations will never start")
+        return None
+
+    logger.info("ai command subscriber started")
+    return subscriber
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 입력 루프
 # ─────────────────────────────────────────────────────────────────────────────
@@ -359,11 +406,41 @@ def run_conversation_loop(
     while max_turns is None or turns < max_turns:
         try:
             if wake is not None:
+                # 백엔드 대화(START_CONVERSATION)를 웨이크워드 대기 도중에도
+                # 알아챌 수 있게, 대기를 인터럽트하는 콜백을 연결한다. 큐가
+                # 없는 실행(테스트, --once 등)에서는 아무 것도 하지 않는다 —
+                # 실제 WakeWordDetector 만 이 속성을 읽고, 다른 wake 대역
+                # 객체는 속성이 그냥 얹힐 뿐 아무 영향이 없다.
+                #
+                # ★ 왜 필요한가 (CLAUDE.md §3, 이동 중 침묵)
+                #   현관 인사·복약 알림·온습도 안부는 아무도 "보미야"를 부르지
+                #   않는다. wait_for_wake() 가 그 사이 계속 마이크를 쥐고
+                #   있으면 backend 대화가 영원히 시작되지 못한다. 인터럽트가
+                #   없으면 이 세 시나리오는 시연에서 절대 말을 하지 않는다.
+                if runtime.backend_conversation_queue is not None:
+                    wake.interrupt_check = _queue_has_item(
+                        runtime.backend_conversation_queue)
+
                 # "보미야" 대기 = SessionState.IDLE. 이 블로킹 호출이 곧 웨이크워드
                 # 게이트다 — 리턴하기 전에는 capture/STT/그래프 어디에도 닿지 않는다
                 # (시나리오 A: 웨이크워드 이전 발화 무반응).
                 # 대기 중 Ctrl+C = 프로그램 종료(아래 except 로 나감).
                 wake.wait_for_wake()
+
+                # wait_for_wake() 가 실제 "보미야" 때문에 돌아왔는지, 위
+                # interrupt_check 때문에 조기 반환했는지는 반환값만으로 구분할
+                # 수 없다(둘 다 그냥 반환) — 그래서 큐를 다시 직접 확인한다.
+                # 대기 중 인터럽트되지 않고 큐가 그 사이에 채워진 경우(드문
+                # 레이스)도 이 분기로 들어오는데, 그 경우 이번 한 번의 진짜
+                # "보미야"는 조용히 넘어간다 — 시연 대본에서는 발생하지 않고,
+                # 발생해도 다시 부르면 그만이다.
+                pending = _pop_pending_backend_conversation(runtime)
+                if pending is not None:
+                    turns, end_reason = _run_backend_conversation(
+                        runtime, audio_in, stt, turns, max_turns, pending)
+                    _publish_conversation_ended(runtime, pending, end_reason)
+                    continue
+
                 # 감지 사실을 백엔드에 알린다 (S15P11E102-349). paho 의 publish 는
                 # 큐잉이라 블로킹하지 않고, 실패는 발행자가 삼킨다 — 여기서 한 번 더
                 # 감싸는 이유는 가짜 발행자(테스트)나 미래의 구현 변경이 던져도
@@ -374,7 +451,8 @@ def run_conversation_loop(
                     except Exception:  # noqa: BLE001 - 시나리오는 부가, 대화가 본체다
                         logger.warning("wake-word publish failed", exc_info=True)
                 _speak_ack(tts, audio_out)          # 호출 응답 1회 (블로킹)
-                turns = _run_graph_conversation(runtime, audio_in, stt, turns, max_turns)
+                turns, _end_reason = _run_graph_conversation(
+                    runtime, audio_in, stt, turns, max_turns)
             else:
                 # 웨이크워드 없음(팀원 기본): 매 발화를 그냥 처리한다.
                 text, duration, _ = _listen(audio_in, stt)
@@ -457,7 +535,9 @@ def _advance(session, event: str):
         return session
 
 
-def _run_graph_conversation(runtime, audio_in, stt, turns: int, max_turns) -> int:
+def _run_graph_conversation(
+    runtime, audio_in, stt, turns: int, max_turns
+) -> tuple[int, str]:
     """'보미야'로 시작된 하나의 대화를 여러 발화로 이어간다(그래프 경로).
 
     세션 상태
@@ -478,6 +558,13 @@ def _run_graph_conversation(runtime, audio_in, stt, turns: int, max_turns) -> in
 
     각 발화는 run_user_turn 으로 그래프에 태운다 -> context_read(기억 조회) +
     memory_write(대화 저장)가 여기서 돈다.
+
+    반환값
+        (turns, end_reason). end_reason 은 "max_turns" | "interrupted" |
+        "no_speech" | "farewell" 중 하나다. 백엔드가 시작한 대화
+        (_run_backend_conversation)는 이 값을 CONVERSATION_ENDED.outcome 으로
+        옮긴다 — 웨이크워드로 시작한 대화는 백엔드가 모르는 대화이므로 이 값을
+        무시해도 된다.
     """
     from bomi_ai_chat import conversation_control, policy
     from bomi_ai_chat.graph.turn import run_user_turn
@@ -534,7 +621,131 @@ def _run_graph_conversation(runtime, audio_in, stt, turns: int, max_turns) -> in
         session = _advance(session, "session_closed")
     logger.info("SESSION_ENDED senior=%s reason=%s turns=%d",
                 runtime.senior_id, end_reason, turns)
-    return turns
+    return turns, end_reason
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 백엔드가 시작하는 대화 (START_CONVERSATION, CLAUDE.md §3)
+#
+# 현관 인사·복약 알림·온습도 안부, 세 시나리오가 여기를 지난다. 보미야 호출은
+# 로봇이 자체적으로 시작하므로 이 경로를 타지 않는다(계약 §2.2).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _queue_has_item(pending_queue: queue.Queue):
+    """`wake.interrupt_check` 에 넣을 콜백을 만든다. 큐가 비어 있지 않으면 True.
+
+    실제 WakeWordDetector.wait_for_wake() 는 1초마다 이 콜백을 확인해, True 면
+    마이크 스트림을 닫고 조기 반환한다(audio_io/wakeword.py 참고) — 그래야
+    아무도 "보미야"를 부르지 않아도 backend 대화가 시작될 수 있다.
+    """
+    return lambda: not pending_queue.empty()
+
+
+def _pop_pending_backend_conversation(runtime):
+    """대기 중인 backend 대화 명령을 하나 꺼낸다. 없으면 None.
+
+    큐가 아예 없는 실행(runtime.backend_conversation_queue is None — 테스트,
+    또는 MQTT 가 꺼진 실행)에서는 항상 None 이다.
+    """
+    pending_queue = runtime.backend_conversation_queue
+    if pending_queue is None:
+        return None
+    try:
+        return pending_queue.get_nowait()
+    except queue.Empty:
+        return None
+
+
+def _run_backend_conversation(
+    runtime, audio_in, stt, turns: int, max_turns, command
+) -> tuple[int, str]:
+    """백엔드가 시작한 대화 하나를 진행한다: 첫 문장 발화 -> 이어 듣기.
+
+    무엇을 하는가
+        `command.text` 를 backend_command 경로로 그래프에 태워 첫 문장을
+        말한다(handle_greeting — CLAUDE.md 구 §11 재정의: 문구 선택은
+        백엔드 몫, 로봇은 §14 를 지켜 말하기만 한다). 재생이 끝나면
+        _run_graph_conversation 을 그대로 재사용해 이어지는 발화를 듣는다 —
+        "보미야"로 연 대화든 백엔드가 연 대화든, LISTENING 이후는 완전히
+        같은 세션 기계를 탄다.
+
+    왜 run_user_turn 이 아니라 app.invoke(trigger_type="backend_command") 인가
+        run_user_turn 은 "user_utterance" 경로라 note_interaction/safety_triage
+        를 거친다. 이 문장은 어르신이 아니라 백엔드가 결정한 것이므로, 그
+        판정을 다시 거치면 안 된다(build.py 모듈 docstring: "백엔드 명령이
+        게이트를 건너뛰는 것이 의도다").
+
+    반환값
+        (turns, end_reason). end_reason 은 이 함수 자체에서 나는 "failed"
+        (첫 문장 발화가 예외로 실패)이거나, 이어지는
+        _run_graph_conversation 의 종료 사유를 그대로 물려받는다.
+
+    주의사항
+        - 첫 문장 발화가 실패해도 예외를 밖으로 던지지 않는다 — 호출부(메인
+          루프)가 죽으면 이후 모든 웨이크워드/백엔드 대화가 멈춘다.
+        - 이 함수가 실패해도 CONVERSATION_ENDED 는 호출부가 책임진다(반환된
+          end_reason 을 보고 발행한다) — 실패 상황에서도 백엔드에 뭔가는
+          알려야 5분 워치독까지 기다리지 않는다.
+    """
+    config = {"configurable": {"thread_id": runtime.senior_id}}
+    try:
+        runtime.app.invoke(
+            {
+                "trigger_type": "backend_command",
+                "senior_id": runtime.senior_id,
+                "command": {
+                    "text": command.text,
+                    # 그래프의 7개 인텐트 중 "greeting" 이 정확히 이 역할이다
+                    # (handle_greeting: "백엔드가 정한 문구를 발화로 옮긴다").
+                    # 백엔드의 intent(WELLNESS_CHECK 등)는 그 자체로는 그래프
+                    # 라우팅에 쓸 수 없는 값이라 origin 태그로만 남긴다.
+                    "intent": "greeting",
+                    "origin": f"scenario:{command.intent}",
+                },
+            },
+            config,
+        )
+    except Exception:  # noqa: BLE001 - 한 대화의 실패가 루프를 죽이면 안 된다
+        logger.exception(
+            "backend conversation seed turn failed (conversationId=%s)",
+            command.conversation_id,
+        )
+        return turns, "failed"
+
+    turns += 1
+    _wait_for_playback(runtime.echo_guard)
+    return _run_graph_conversation(runtime, audio_in, stt, turns, max_turns)
+
+
+def _publish_conversation_ended(runtime, command, end_reason: str) -> None:
+    """대화 종료를 백엔드에 알린다. 실패해도 예외를 올리지 않는다.
+
+    구독자가 없으면(MQTT 꺼짐, 시작 실패) 아무것도 하지 않는다 — 그 경우
+    애초에 CONVERSATION_STARTED 도 안 나갔을 것이므로 ENDED 를 보낼 이유가
+    없다(짝이 안 맞는 이벤트를 보내지 않는다).
+    """
+    subscriber = runtime.ai_command_subscriber
+    if subscriber is None:
+        return
+
+    from bomi_ai_chat.contracts import ai_commands as ai_contract
+
+    # _run_graph_conversation 의 end_reason -> CONVERSATION_ENDED.outcome.
+    # "failed" 는 _run_backend_conversation 자신이 만드는 값이다.
+    end_reason_to_outcome = {
+        "farewell": (ai_contract.OUTCOME_COMPLETED, None),
+        "max_turns": (ai_contract.OUTCOME_COMPLETED, None),
+        "no_speech": (ai_contract.OUTCOME_NO_RESPONSE, None),
+        "interrupted": (ai_contract.OUTCOME_CANCELLED, None),
+        "failed": (ai_contract.OUTCOME_FAILED, "INTERNAL_ERROR"),
+    }
+    outcome, reason_code = end_reason_to_outcome.get(
+        end_reason, (ai_contract.OUTCOME_COMPLETED, None))
+    try:
+        subscriber.publish_conversation_ended(command, outcome, reason_code)
+    except Exception:  # noqa: BLE001 - 발행 실패가 루프를 막으면 안 된다
+        logger.warning("failed to publish CONVERSATION_ENDED", exc_info=True)
 
 
 def _wait_for_playback(echo_guard, poll_sec: float = 0.05, max_wait_sec: float = 30.0) -> None:

@@ -606,6 +606,19 @@ def backend_command(state: ConvState) -> dict:
 
     if not text:
         logger.warning("backend command has no text; nothing to say")
+        # ★ 체크포인트 오염 방어 (2026-08 랭그래프 분석에서 발견).
+        #
+        #   여기서 아무 키도 안 돌려주면 끝이 아니다. checkpointer 는 thread_id
+        #   (=어르신 id)별로 이전 턴의 state 전체를 이번 턴에도 그대로 물려주므로,
+        #   intent/user_input 을 안 지우면 "지난번에 backend_command 가 남긴 값"이
+        #   그대로 남아 있다. classify_intent 의 "if state.get('intent'): return
+        #   {'is_medical_query': None}" 가드가 그 지난 값을 "이번 턴에 이미 분류
+        #   됐다"로 착각해 재분류를 건너뛰고, handle_greeting 은 그 지난 user_input
+        #   을 다시 말해 버린다 — 빈 명령 하나가 지난 문구를 재생하는 셈이다.
+        #   note_interaction 이 반응형 턴 시작마다 intent 를 지우는 것과 같은
+        #   이유로, backend_command 도 자기 진입마다 명시적으로 비워야 한다.
+        out["intent"] = None
+        out["user_input"] = None
         return out
 
     out.update({
