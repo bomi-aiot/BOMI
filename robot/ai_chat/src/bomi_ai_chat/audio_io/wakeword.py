@@ -38,6 +38,19 @@ from .sounddevice_backend import _resample_int16, _resolve_input_device
 
 LOGGER = logging.getLogger(__name__)
 
+#: 모델 확장자 → openWakeWord 추론 프레임워크. 확장자가 이 둘 중 어느 것도
+#: 아니면 onnx 로 본다 — 우리가 학습해 쓰는 모델이 .onnx 이고, 잘못 고르면
+#: 로딩 자체가 ValueError 로 죽어서 조용히 넘어갈 수 없다.
+_FRAMEWORK_BY_SUFFIX = {".onnx": "onnx", ".tflite": "tflite"}
+
+
+def _inference_framework_for(model_path: str) -> str:
+    """모델 파일 확장자에 맞는 openWakeWord 추론 프레임워크 이름을 고른다."""
+    for suffix, framework in _FRAMEWORK_BY_SUFFIX.items():
+        if model_path.lower().endswith(suffix):
+            return framework
+    return "onnx"
+
 
 class WakeWordDetector:
     """마이크를 상시 듣다가 '보미야'가 들리면 wait_for_wake()가 반환한다.
@@ -120,8 +133,22 @@ class WakeWordDetector:
         # alexa/jarvis 같은 '샘플 웨이크워드'까지 전부 받으므로, 매칭되지 않는 이름을
         # 넘겨 그 샘플 다운로드는 건너뛴다(전처리/VAD 는 함수가 항상 확인해 받는다).
         openwakeword.utils.download_models(model_names=["__bomi_features_only__"])
-        self._model = Model(wakeword_models=[self.model_path])
-        LOGGER.info("wakeword model loaded path=%s", self.model_path)
+        # 추론 프레임워크를 모델 확장자에서 정해 **명시적으로** 넘긴다.
+        # openWakeWord 의 기본값이 버전에 따라 다르다 — 젯슨에 깔린 버전은
+        # tflite 를 기본으로 잡아서 우리 .onnx 모델을 거부했다
+        #   ValueError: The tflite inference framework is selected,
+        #               but onnx models were provided!
+        # 기본값에 기대지 않으면 이 실패가 재발하지 않는다.
+        framework = _inference_framework_for(self.model_path)
+        self._model = Model(
+            wakeword_models=[self.model_path],
+            inference_framework=framework,
+        )
+        LOGGER.info(
+            "wakeword model loaded path=%s framework=%s",
+            self.model_path,
+            framework,
+        )
         return self._model
 
     def wait_for_wake(self) -> None:
