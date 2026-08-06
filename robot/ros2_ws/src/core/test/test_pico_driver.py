@@ -142,6 +142,60 @@ def test_pico_driver_integrates_odometry_from_telemetry(
     assert node._y_m == pytest.approx(0.0, abs=1e-9)
 
 
+def test_pico_driver_rate_limits_velocity_commands(pico_driver_node) -> None:
+    """
+    제어 주기마다 읽되 V 명령은 command_hz로 제한해서 보낸다.
+
+    펌웨어는 메인 루프 한 바퀴에 문자 하나만 읽으므로, 전송이 잦으면
+    USB 버퍼에 명령이 쌓여 조작 지연이 누적된다.
+    """
+    node, fake_serial = pico_driver_node
+
+    for _ in range(5):
+        node._on_control_tick()
+
+    sent = [line for line in fake_serial.written if line.startswith(b"V ")]
+
+    assert len(sent) == 1
+
+
+def test_pico_driver_rejects_command_rate_above_control_rate(
+    monkeypatch,
+) -> None:
+    """읽기 주기보다 빠른 전송 주기는 거부한다."""
+    fake_serial = FakeSerial("/dev/ttyACM0")
+
+    monkeypatch.setattr(
+        pico_driver_module.serial,
+        "Serial",
+        lambda port, timeout: fake_serial,
+    )
+
+    context = rclpy.Context()
+    rclpy.init(context=context)
+
+    try:
+        with pytest.raises(ValueError):
+            PicoDriver(
+                context=context,
+                parameter_overrides=[
+                    FAST_STARTUP_OVERRIDE,
+                    rclpy.parameter.Parameter(
+                        "control_hz",
+                        rclpy.parameter.Parameter.Type.DOUBLE,
+                        20.0,
+                    ),
+                    rclpy.parameter.Parameter(
+                        "command_hz",
+                        rclpy.parameter.Parameter.Type.DOUBLE,
+                        50.0,
+                    ),
+                ],
+            )
+    finally:
+        rclpy.shutdown(context=context)
+
+
 def test_pico_driver_rejects_wrong_protocol_version(monkeypatch) -> None:
     """proto가 1이 아니면 노드 생성이 실패하고 포트를 닫는다."""
     fake_serial = FakeSerial("/dev/ttyACM0")

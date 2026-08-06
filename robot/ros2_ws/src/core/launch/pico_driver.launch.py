@@ -7,6 +7,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -20,6 +21,7 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     serial_port = LaunchConfiguration("serial_port")
+    publish_tf = LaunchConfiguration("publish_tf")
 
     return LaunchDescription(
         [
@@ -28,6 +30,14 @@ def generate_launch_description() -> LaunchDescription:
                 default_value="/dev/ttyACM0",
                 description="Pico H가 잡히는 USB CDC 장치 경로",
             ),
+            DeclareLaunchArgument(
+                "publish_tf",
+                default_value="true",
+                description=(
+                    "odom → base_link TF를 직접 발행할지 여부. "
+                    "EKF를 함께 실행할 때는 false로 넘겨 TF 충돌을 막는다."
+                ),
+            ),
             Node(
                 package="core",
                 executable="pico_driver",
@@ -35,7 +45,13 @@ def generate_launch_description() -> LaunchDescription:
                 output="screen",
                 parameters=[
                     parameter_file,
-                    {"serial_port": serial_port},
+                    {
+                        "serial_port": serial_port,
+                        "publish_tf": ParameterValue(
+                            publish_tf,
+                            value_type=bool,
+                        ),
+                    },
                 ],
             ),
         ]

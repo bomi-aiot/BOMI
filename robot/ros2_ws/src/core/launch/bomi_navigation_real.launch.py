@@ -1,4 +1,4 @@
-"""실제 조이스틱, Pico, X4-PRO와 SLAM Toolbox를 함께 실행한다."""
+"""실물 로봇에서 저장된 지도로 Nav2 자율주행을 실행한다."""
 
 from pathlib import Path
 
@@ -8,69 +8,86 @@ from launch.actions import (
     DeclareLaunchArgument,
     GroupAction,
     IncludeLaunchDescription,
+    TimerAction,
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, NotSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from nav2_common.launch import RewrittenYaml
 
 
 def generate_launch_description() -> LaunchDescription:
-    """실제 로봇의 수동 주행과 온라인 지도 생성을 구성한다.
+    """실물 센서·AMCL·Nav2를 연결해 저장된 지도 위에서 자율주행하게 한다.
 
-    Pico가 /odom과 /imu를 발행하고, EKF가 둘을 융합해 odom → base_link TF를
-    발행한다. 이때 Pico의 TF 발행은 끈다. LiDAR 스캔만 쓰는 RF2O는 실행하지
-    않는다.
+    Pico가 /odom과 /imu를 발행하고, use_ekf가 true면 EKF가 이를 융합해
+    odom → base_link TF를 발행한다(mapping 때와 동일하게 Pico의 TF 발행은
+    끈다). AMCL이 map → odom TF를 발행해 map 프레임 기준 위치를 잡고,
+    그 위에서 controller_server/planner_server/bt_navigator가 목표
+    지점까지 주행한다.
+
+    속도·가속도 파라미터(nav2_safe_params_real.yaml)는 실측 튜닝 전
+    초안이다.
     """
 
-    mapping_share = Path(get_package_share_directory("mapping"))
     core_share = Path(get_package_share_directory("core"))
     lidar_share = Path(get_package_share_directory("bomi_lidar"))
+    nav2_share = Path(get_package_share_directory("nav2_bringup"))
 
     joystick_launch = core_share / "launch" / "joystick_teleop.launch.py"
     pico_launch = core_share / "launch" / "pico_driver.launch.py"
     lidar_launch = lidar_share / "launch" / "x4_pro.launch.py"
 
-    slam_params = mapping_share / "config" / "slam_toolbox_real.yaml"
     ekf_params = core_share / "config" / "ekf.yaml"
-    rviz_config = mapping_share / "rviz" / "mapping.rviz"
+    default_params = core_share / "config" / "nav2_safe_params_real.yaml"
+    safe_bt_xml = core_share / "behavior_trees" / "nav_to_pose_safe.xml"
+    rviz_config = core_share / "rviz" / "bomi_navigation.rviz"
 
     use_sim_time = LaunchConfiguration("use_sim_time")
     use_rviz = LaunchConfiguration("use_rviz")
     use_ekf = LaunchConfiguration("use_ekf")
-    use_scan_matching = LaunchConfiguration("use_scan_matching")
-    do_loop_closing = LaunchConfiguration("do_loop_closing")
+    use_joystick = LaunchConfiguration("use_joystick")
 
+    map_file = LaunchConfiguration("map")
+    params_file = LaunchConfiguration("params_file")
     cmd_vel_topic = LaunchConfiguration("cmd_vel_topic")
     pico_port = LaunchConfiguration("pico_port")
     lidar_port = LaunchConfiguration("lidar_port")
-
     scan_topic = LaunchConfiguration("scan_topic")
     raw_scan_topic = LaunchConfiguration("raw_scan_topic")
-    scan_span_tolerance_deg = LaunchConfiguration("scan_span_tolerance_deg")
+    scan_span_tolerance_deg = LaunchConfiguration(
+        "scan_span_tolerance_deg"
+    )
     scan_minimum_interval_sec = LaunchConfiguration(
         "scan_minimum_interval_sec"
     )
     base_frame = LaunchConfiguration("base_frame")
     odom_frame = LaunchConfiguration("odom_frame")
-    laser_frame = LaunchConfiguration("laser_frame")
-    laser_x = LaunchConfiguration("laser_x")
-    laser_y = LaunchConfiguration("laser_y")
-    laser_z = LaunchConfiguration("laser_z")
-    laser_roll = LaunchConfiguration("laser_roll")
-    laser_pitch = LaunchConfiguration("laser_pitch")
-    laser_yaw = LaunchConfiguration("laser_yaw")
+    robot_radius = LaunchConfiguration("robot_radius")
+
+    configured_params = RewrittenYaml(
+        source_file=params_file,
+        param_rewrites={
+            "base_frame_id": base_frame,
+            "default_nav_to_pose_bt_xml": str(safe_bt_xml),
+            "robot_radius": robot_radius,
+        },
+        convert_types=True,
+    )
 
     joystick = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(joystick_launch)),
+        condition=IfCondition(use_joystick),
         launch_arguments={
             "cmd_vel_topic": cmd_vel_topic,
         }.items(),
     )
 
-    # EKF가 odom → base_link TF를 발행하므로 Pico의 TF 발행을 끈다.
-    # 두 노드가 같은 변환을 발행하면 TF가 충돌한다.
+    # AMCL이 map → odom TF를 발행하므로, mapping 때처럼 Pico의 TF 발행은
+    # EKF 사용 여부에 따라 결정한다(EKF on이면 EKF가 odom → base_link를
+    # 발행하고, off이면 Pico가 직접 발행한다). 어느 쪽이든 AMCL이 그 위에
+    # map → odom을 얹는다.
     pico_driver = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(pico_launch)),
         launch_arguments={
@@ -79,8 +96,6 @@ def generate_launch_description() -> LaunchDescription:
         }.items(),
     )
 
-    # 엔코더의 직진 속도와 자이로의 회전 속도만 융합한다.
-    # 스키드 스티어는 회전에서 바퀴가 미끄러져 엔코더 회전각을 믿을 수 없다.
     ekf = Node(
         package="robot_localization",
         executable="ekf_node",
@@ -100,9 +115,9 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
-    # LiDAR는 원시 토픽으로 내고, 위생 노드가 성한 스캔만 scan_topic으로
-    # 넘긴다. 모터가 돌면 드라이버가 한 바퀴 경계를 놓쳐 각도 범위가 402°인
-    # 스캔을 섞어 보내므로 그대로 SLAM에 주면 회전마다 지도가 어긋난다.
+    # LiDAR는 원시 토픽으로 내고 위생 노드가 성한 스캔만 넘긴다. 모터가
+    # 돌면 드라이버가 한 바퀴 경계를 놓쳐 각도 범위가 402°인 스캔을 섞어
+    # 보내는데, 그대로 두면 AMCL과 코스트맵에 유령 장애물이 박힌다.
     # 근거와 실측값은 core/core/scan_sanitizer.py에 적혀 있다.
     # GroupAction으로 감싸 launch 인자가 부모 스코프로 새지 않게 한다.
     # 감싸지 않으면 여기 넘긴 scan_topic(=/scan_raw)이 부모의
@@ -116,13 +131,6 @@ def generate_launch_description() -> LaunchDescription:
                     "port": lidar_port,
                     "scan_topic": raw_scan_topic,
                     "base_frame": base_frame,
-                    "laser_frame": laser_frame,
-                    "laser_x": laser_x,
-                    "laser_y": laser_y,
-                    "laser_z": laser_z,
-                    "laser_roll": laser_roll,
-                    "laser_pitch": laser_pitch,
-                    "laser_yaw": laser_yaw,
                 }.items(),
             )
         ]
@@ -153,33 +161,33 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
-    slam_toolbox = Node(
-        package="slam_toolbox",
-        executable="async_slam_toolbox_node",
-        name="slam_toolbox",
-        output="screen",
-        parameters=[
-            str(slam_params),
-            {
-                "use_sim_time": ParameterValue(
-                    use_sim_time,
-                    value_type=bool,
-                ),
-                "scan_topic": scan_topic,
-                "base_frame": base_frame,
-                "odom_frame": odom_frame,
-                # 지도가 90°씩 돌아가 겹칠 때 원인을 나누기 위해 launch에서
-                # 켜고 끈다. 값의 뜻과 기본값 근거는 설정 파일에 적혀 있다.
-                "use_scan_matching": ParameterValue(
-                    use_scan_matching,
-                    value_type=bool,
-                ),
-                "do_loop_closing": ParameterValue(
-                    do_loop_closing,
-                    value_type=bool,
-                ),
-            },
-        ],
+    localization = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            str(nav2_share / "launch" / "localization_launch.py")
+        ),
+        launch_arguments={
+            "namespace": "",
+            "map": map_file,
+            "params_file": configured_params,
+            "use_sim_time": use_sim_time,
+            "use_composition": "False",
+            "autostart": "True",
+            "use_respawn": "False",
+        }.items(),
+    )
+
+    navigation = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            str(nav2_share / "launch" / "navigation_launch.py")
+        ),
+        launch_arguments={
+            "namespace": "",
+            "params_file": configured_params,
+            "use_sim_time": use_sim_time,
+            "use_composition": "False",
+            "autostart": "True",
+            "use_respawn": "False",
+        }.items(),
     )
 
     rviz = Node(
@@ -199,6 +207,18 @@ def generate_launch_description() -> LaunchDescription:
         output="screen",
     )
 
+    # 센서·odom 노드가 먼저 자리를 잡을 시간을 준 뒤 AMCL·Nav2를 올린다.
+    # 초기 위치는 여기서 자동으로 넣지 않는다 — 로봇을 지도 위 어디에
+    # 세워뒀는지는 RViz "2D Pose Estimate"로 사람이 알려줘야 한다.
+    start_navigation = TimerAction(
+        period=3.0,
+        actions=[
+            localization,
+            navigation,
+            rviz,
+        ],
+    )
+
     return LaunchDescription(
         [
             DeclareLaunchArgument(
@@ -216,24 +236,52 @@ def generate_launch_description() -> LaunchDescription:
                 default_value="true",
                 description=(
                     "엔코더와 자이로를 EKF로 융합할지 여부. "
-                    "false면 이전처럼 Pico가 odom → base_link TF를 발행한다."
+                    "false면 Pico가 odom → base_link TF를 직접 발행한다."
                 ),
             ),
             DeclareLaunchArgument(
-                "use_scan_matching",
-                default_value="true",
+                "raw_scan_topic",
+                default_value="/scan_raw",
                 description=(
-                    "SLAM이 스캔 매칭으로 odometry를 보정할지 여부. "
-                    "false면 지도는 odometry만 따라간다."
+                    "LiDAR 드라이버가 내는 원시 LaserScan 토픽. "
+                    "위생 노드가 이걸 받아 scan_topic으로 다시 낸다."
                 ),
             ),
             DeclareLaunchArgument(
-                "do_loop_closing",
+                "scan_span_tolerance_deg",
+                default_value="5.0",
+                description=(
+                    "스캔의 각도 범위가 360°에서 이만큼 벗어나면 버린다. "
+                    "360으로 주면 모두 통과시켜 위생 노드를 끈다."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "scan_minimum_interval_sec",
+                default_value="0.07",
+                description=(
+                    "직전 통과 스캔과 이 간격보다 붙어 오면 버린다. "
+                    "0으로 주면 간격 기준을 끈다."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "use_joystick",
                 default_value="false",
                 description=(
-                    "루프 클로저 사용 여부. 정사각형 공간에서는 90° 돌아간 "
-                    "후보가 잘못 채택되므로 기본값은 끔이다."
+                    "조이스틱 수동 개입을 함께 켤지 여부. "
+                    "자율주행만 확인할 때는 false로 둔다."
                 ),
+            ),
+            DeclareLaunchArgument(
+                "map",
+                description=(
+                    "Nav2가 쓸 map.yaml 경로. mapping_real.launch.py로 "
+                    "만든 지도를 지정한다(필수, 기본값 없음)."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "params_file",
+                default_value=str(default_params),
+                description="Nav2 파라미터 YAML 경로",
             ),
             DeclareLaunchArgument(
                 "cmd_vel_topic",
@@ -253,31 +301,7 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument(
                 "scan_topic",
                 default_value="/scan",
-                description="YDLIDAR와 SLAM이 공유할 LaserScan 토픽",
-            ),
-            DeclareLaunchArgument(
-                "raw_scan_topic",
-                default_value="/scan_raw",
-                description=(
-                    "LiDAR 드라이버가 내는 원시 LaserScan 토픽. "
-                    "위생 노드가 이걸 받아 scan_topic으로 다시 낸다."
-                ),
-            ),
-            DeclareLaunchArgument(
-                "scan_span_tolerance_deg",
-                default_value="5.0",
-                description=(
-                    "스캔의 각도 범위가 360°에서 이만큼 벗어나면 버린다. "
-                    "360으로 주면 모두 통과시켜 위생 노드를 사실상 끈다."
-                ),
-            ),
-            DeclareLaunchArgument(
-                "scan_minimum_interval_sec",
-                default_value="0.07",
-                description=(
-                    "직전 통과 스캔과 이 간격보다 붙어 오면 버린다. "
-                    "0으로 주면 간격 기준을 끈다."
-                ),
+                description="YDLIDAR와 AMCL/costmap이 공유할 LaserScan 토픽",
             ),
             DeclareLaunchArgument(
                 "base_frame",
@@ -287,43 +311,20 @@ def generate_launch_description() -> LaunchDescription:
             DeclareLaunchArgument(
                 "odom_frame",
                 default_value="odom",
-                description="Pico가 발행하는 odometry 부모 프레임",
+                description="odom 부모 프레임",
             ),
             DeclareLaunchArgument(
-                "laser_frame",
-                default_value="laser_frame",
-                description="LiDAR LaserScan과 정적 TF 프레임",
-            ),
-            DeclareLaunchArgument(
-                "laser_x", default_value="0.0",
-                description="base_link 기준 LiDAR 전방 위치(m)",
-            ),
-            DeclareLaunchArgument(
-                "laser_y", default_value="0.0",
-                description="base_link 기준 LiDAR 좌측 위치(m)",
-            ),
-            DeclareLaunchArgument(
-                "laser_z", default_value="0.0",
-                description="base_link 기준 LiDAR 높이(m)",
-            ),
-            DeclareLaunchArgument(
-                "laser_roll", default_value="0.0",
-                description="base_link 기준 LiDAR roll(rad)",
-            ),
-            DeclareLaunchArgument(
-                "laser_pitch", default_value="0.0",
-                description="base_link 기준 LiDAR pitch(rad)",
-            ),
-            DeclareLaunchArgument(
-                "laser_yaw", default_value="0.0",
-                description="base_link 기준 LiDAR yaw(rad)",
+                "robot_radius",
+                default_value="0.31",
+                description=(
+                    "costmap이 쓰는 로봇 반경(m). 실측 전 초안 값이다."
+                ),
             ),
             joystick,
             pico_driver,
+            ekf,
             lidar,
             scan_sanitizer,
-            ekf,
-            slam_toolbox,
-            rviz,
+            start_navigation,
         ]
     )

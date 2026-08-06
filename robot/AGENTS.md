@@ -21,6 +21,7 @@
 | `nav2_waypoint_patrol` | YAML 순찰 지점을 Nav2 `NavigateToPose` 목표로 순서대로 전송 |
 | `vision_udp_bridge` | AI 비전의 UDP 추적 결과를 `/vision/follow_result`로 발행 |
 | `person_follower` | 추적 결과와 LiDAR 스캔으로 속도 명령 생성, 근접 시 정지 |
+| `scan_sanitizer` | 각도 범위가 360°가 아닌 LaserScan을 버리고 나머지를 다시 발행 |
 
 실제 하드웨어 제어는 아직 Mock 단계다. 실제 모터 드라이버, Pico 통신, 하드웨어 YAML 설정, 명령 타임아웃과 비상 정지는 구현되지 않았다. `mock_motor_driver`도 메시지를 기록할 뿐 GPIO나 PWM을 제어하지 않는다.
 

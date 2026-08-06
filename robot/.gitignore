@@ -7,3 +7,4 @@
 **/ydlidar_ros2_driver/
 ros2_ws/src/rf2o_laser_odometry/
 !ros2_ws/src/mapping/config/*.yaml
+!ros2_ws/src/core/config/ekf.yaml
