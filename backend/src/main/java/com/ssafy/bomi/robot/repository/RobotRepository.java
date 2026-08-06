@@ -15,8 +15,22 @@ import org.springframework.data.repository.query.Param;
 
 public interface RobotRepository extends JpaRepository<Robot, UUID> {
 
+    /** Lightweight non-locking identity used before acquiring the shared senior mutex. */
+    interface LockCandidate {
+        UUID getId();
+
+        UUID getSeniorId();
+    }
+
     /** Resolves a robot by its MQTT device identifier (e.g. {@code "robot-01"}). */
     Optional<Robot> findByDeviceId(String deviceId);
+
+    /**
+     * Resolves only the keys needed to establish the senior-then-robot lock order.
+     * Returning a projection avoids attaching a stale Robot entity before the lock query.
+     */
+    @Query("select r.id as id, r.seniorId as seniorId from Robot r where r.deviceId = :deviceId")
+    Optional<LockCandidate> findLockCandidateByDeviceId(@Param("deviceId") String deviceId);
 
     /** Serializes scenario starts addressed to the same physical Robot. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
@@ -31,6 +45,11 @@ public interface RobotRepository extends JpaRepository<Robot, UUID> {
     /** Resolves the robot currently assigned to a senior. */
     Optional<Robot> findBySeniorId(UUID seniorId);
 
+    /** Locks the Robot assigned to a senior after the shared senior-row mutex is held. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from Robot r where r.seniorId = :seniorId")
+    Optional<Robot> findBySeniorIdForUpdate(@Param("seniorId") UUID seniorId);
+
     /** Resolves one authoritative Robot id without attaching a stale Robot snapshot. */
     @Query("select r.id from Robot r where r.seniorId = :seniorId")
     Optional<UUID> findIdBySeniorId(@Param("seniorId") UUID seniorId);
@@ -41,7 +60,7 @@ public interface RobotRepository extends JpaRepository<Robot, UUID> {
      * <p>A sensor observation must never write a stale {@code current_mode} back over a
      * concurrently committed scenario or SAFE_STOP transition.</p>
      */
-    @Modifying(flushAutomatically = true)
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
         update Robot r
            set r.ambientTemperatureC = :temperatureC,
@@ -57,7 +76,7 @@ public interface RobotRepository extends JpaRepository<Robot, UUID> {
     );
 
     /** Updates only occupancy snapshot columns, preserving concurrent mode changes. */
-    @Modifying(flushAutomatically = true)
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
         update Robot r
            set r.occupancyStatus = :status,

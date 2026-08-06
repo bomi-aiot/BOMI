@@ -47,7 +47,7 @@ public class HomecomingOrchestrator {
     private final RobotCommandPublisher commandPublisher;
     private final ConversationGateway conversationGateway;
     private final HomecomingProperties properties;
-    private final ScenarioStartGuard startGuard;
+    private final ScenarioRobotStartPolicy startPolicy;
     private final Clock clock;
 
     public HomecomingOrchestrator(
@@ -57,7 +57,7 @@ public class HomecomingOrchestrator {
         RobotCommandPublisher commandPublisher,
         ConversationGateway conversationGateway,
         HomecomingProperties properties,
-        ScenarioStartGuard startGuard,
+        ScenarioRobotStartPolicy startPolicy,
         Clock clock
     ) {
         this.scenarioRepository = scenarioRepository;
@@ -66,7 +66,7 @@ public class HomecomingOrchestrator {
         this.commandPublisher = commandPublisher;
         this.conversationGateway = conversationGateway;
         this.properties = properties;
-        this.startGuard = startGuard;
+        this.startPolicy = startPolicy;
         this.clock = clock;
     }
 
@@ -88,17 +88,17 @@ public class HomecomingOrchestrator {
             log.info("Homecoming without a greeting was ignored: seniorId={}", seniorId);
             return;
         }
-        var blocked = startGuard.check(seniorId, ScenarioType.HOMECOMING, Duration.ZERO);
-        if (blocked.isPresent()) {
-            log.info("Homecoming suppressed ({}): seniorId={}", blocked.get(), seniorId);
+        var admission = startPolicy.admitBySenior(
+            seniorId,
+            ScenarioType.HOMECOMING,
+            Duration.ZERO,
+            ScenarioRobotStartPolicy.ModePolicy.IDLE_ONLY);
+        if (!admission.allowed()) {
+            log.info("Homecoming suppressed ({}): seniorId={}",
+                admission.blockReason(), seniorId);
             return;
         }
-
-        Robot robot = robotRepository.findBySeniorId(seniorId).orElse(null);
-        if (robot == null) {
-            log.warn("No robot assigned to senior; dropping homecoming: seniorId={}", seniorId);
-            return;
-        }
+        Robot robot = admission.robot();
 
         Scenario scenario = Scenario.create(
             seniorId, robot.getId(), ScenarioType.HOMECOMING, sensorId);
@@ -219,7 +219,7 @@ public class HomecomingOrchestrator {
         ConversationIntent intent,
         OffsetDateTime occurredAt
     ) {
-        Scenario scenario = requireScenario(scenarioId);
+        Scenario scenario = requireScenarioForUpdate(scenarioId);
         Robot robot = requireRobot(scenario.getRobotId());
         requireMatchingRobot(robot, sourceRobotId);
         Conversation conversation = requireConversation(conversationId, scenario, commandId);
@@ -258,7 +258,7 @@ public class HomecomingOrchestrator {
         String reasonCode,
         OffsetDateTime occurredAt
     ) {
-        Scenario scenario = requireScenario(scenarioId);
+        Scenario scenario = requireScenarioForUpdate(scenarioId);
         Robot robot = requireRobot(scenario.getRobotId());
         requireMatchingRobot(robot, sourceRobotId);
         Conversation conversation = requireConversation(conversationId, scenario, null);
@@ -290,13 +290,21 @@ public class HomecomingOrchestrator {
     }
 
     private void timeOutConversation(UUID conversationId, boolean mustHaveStarted, String reasonCode) {
-        Conversation conversation = conversationRepository.findByIdForUpdate(conversationId).orElse(null);
+        UUID scenarioId = conversationRepository.findScenarioIdById(conversationId).orElse(null);
+        if (scenarioId == null) {
+            return;
+        }
+
+        // Every conversation lifecycle writer uses Scenario -> Robot -> Conversation.
+        // The scalar lookup above avoids attaching a stale Conversation before its turn to lock.
+        Scenario scenario = requireScenarioForUpdate(scenarioId);
+        Robot robot = requireRobot(scenario.getRobotId());
+        Conversation conversation = conversationRepository.findByIdForUpdate(conversationId)
+            .orElse(null);
         if (conversation == null || !conversation.isOpen()
             || conversation.hasAiStarted() != mustHaveStarted) {
             return;
         }
-        Scenario scenario = requireScenario(conversation.getScenarioId());
-        Robot robot = requireRobot(scenario.getRobotId());
         ScenarioStatus expected = mustHaveStarted
             ? ScenarioStatus.CONVERSING : ScenarioStatus.CHECKING_INTERACTION;
         if (scenario.getFinalStatus() != expected) {
@@ -311,6 +319,13 @@ public class HomecomingOrchestrator {
     }
 
     private void beginReturnToDefault(Scenario scenario, Robot robot) {
+        if (robot.getCurrentMode() == RobotMode.SAFE_STOP) {
+            scenario.fail(null, "SAFETY_STOP");
+            scenarioRepository.save(scenario);
+            log.warn("Return movement suppressed while Robot is SAFE_STOP: scenarioId={}",
+                scenario.getId());
+            return;
+        }
         scenario.decideReturn();
         scenario.returnToDefault();
         enqueueNavigate(scenario, robot, HomecomingContract.TARGET_DEFAULT);
@@ -333,8 +348,12 @@ public class HomecomingOrchestrator {
         scenarioRepository.save(scenario);
 
         // The robot physically reached DEFAULT, so AI failure alone must not leave SAFE_STOP.
-        robot.changeMode(RobotMode.IDLE);
-        robotRepository.save(robot);
+        // A physical SAFE_STOP or a rest observation made while the scenario was active is
+        // independent of this logical completion and must never be cleared here.
+        if (robot.getCurrentMode() == RobotMode.SCENARIO_ACTIVE) {
+            robot.changeMode(RobotMode.IDLE);
+            robotRepository.save(robot);
+        }
         log.info("Scenario finished after DEFAULT return: scenarioId={}, type={}, status={}",
             scenario.getId(), scenario.getScenarioType(), scenario.getFinalStatus());
     }
@@ -380,8 +399,8 @@ public class HomecomingOrchestrator {
         log.warn("Navigation ended scenario: scenarioId={}, status={}", scenarioId, terminalStatus);
     }
 
-    private Scenario requireScenario(UUID scenarioId) {
-        return scenarioRepository.findById(scenarioId)
+    private Scenario requireScenarioForUpdate(UUID scenarioId) {
+        return scenarioRepository.findByIdForUpdate(scenarioId)
             .orElseThrow(() -> new MqttContractViolationException(
                 "MQTT event references unknown scenarioId=" + scenarioId));
     }
@@ -408,7 +427,7 @@ public class HomecomingOrchestrator {
     }
 
     private Robot requireRobot(UUID robotId) {
-        return robotRepository.findById(robotId)
+        return robotRepository.findByIdForUpdate(robotId)
             .orElseThrow(() -> new IllegalStateException(
                 "Scenario references unknown robot: " + robotId));
     }
@@ -421,8 +440,23 @@ public class HomecomingOrchestrator {
     }
 
     private void syncRobotMode(Robot robot, Scenario scenario) {
-        robot.changeMode(RobotModePolicy.forScenario(scenario.getFinalStatus()));
-        robotRepository.save(robot);
+        RobotMode desired = RobotModePolicy.forScenario(scenario.getFinalStatus());
+        if (desired == RobotMode.SAFE_STOP) {
+            robot.changeMode(RobotMode.SAFE_STOP);
+            robotRepository.save(robot);
+            return;
+        }
+        if (desired == RobotMode.IDLE) {
+            if (robot.getCurrentMode() == RobotMode.SCENARIO_ACTIVE) {
+                robot.changeMode(RobotMode.IDLE);
+                robotRepository.save(robot);
+            }
+            return;
+        }
+        if (robot.getCurrentMode() == RobotMode.IDLE) {
+            robot.changeMode(RobotMode.SCENARIO_ACTIVE);
+            robotRepository.save(robot);
+        }
     }
 
     private void enqueueNavigate(Scenario scenario, Robot robot, String target) {

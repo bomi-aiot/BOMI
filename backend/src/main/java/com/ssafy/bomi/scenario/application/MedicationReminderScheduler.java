@@ -69,7 +69,7 @@ public class MedicationReminderScheduler {
     private final ScenarioRepository scenarioRepository;
     private final RobotRepository robotRepository;
     private final RobotCommandPublisher commandPublisher;
-    private final ScenarioStartGuard startGuard;
+    private final ScenarioRobotStartPolicy startPolicy;
     private final MedicationReminderProperties properties;
     private final Clock clock;
 
@@ -78,7 +78,7 @@ public class MedicationReminderScheduler {
         ScenarioRepository scenarioRepository,
         RobotRepository robotRepository,
         RobotCommandPublisher commandPublisher,
-        ScenarioStartGuard startGuard,
+        ScenarioRobotStartPolicy startPolicy,
         MedicationReminderProperties properties,
         Clock clock
     ) {
@@ -86,7 +86,7 @@ public class MedicationReminderScheduler {
         this.scenarioRepository = scenarioRepository;
         this.robotRepository = robotRepository;
         this.commandPublisher = commandPublisher;
-        this.startGuard = startGuard;
+        this.startPolicy = startPolicy;
         this.properties = properties;
         this.clock = clock;
     }
@@ -153,14 +153,18 @@ public class MedicationReminderScheduler {
         ZonedDateTime scheduledAt
     ) {
         UUID seniorId = schedule.getSeniorId();
-        var blocked = startGuard.check(seniorId, ScenarioType.MEDICATION_REMINDER, Duration.ZERO);
-        if (blocked.isPresent()) {
+        var admission = startPolicy.admitBySenior(
+            seniorId,
+            ScenarioType.MEDICATION_REMINDER,
+            Duration.ZERO,
+            ScenarioRobotStartPolicy.ModePolicy.IDLE_ONLY);
+        if (!admission.allowed()) {
             // 창이 열려 있는 동안 다음 틱이 재시도한다. 큐가 필요 없는 이유.
             log.info("Medication reminder deferred ({}): seniorId={}, slot={}",
-                blocked.get(), seniorId, slotKey);
+                admission.blockReason(), seniorId, slotKey);
             return;
         }
-        Robot robot = robotRepository.findBySeniorId(seniorId).orElse(null);
+        Robot robot = admission.robot();
         if (robot == null) {
             log.warn("No robot assigned to senior; dropping medication reminder: seniorId={}", seniorId);
             return;
