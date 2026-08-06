@@ -1,0 +1,7 @@
+interface:
+  display_name: "Apply LLM Project Patterns"
+  short_description: "강의의 실전 패턴을 실제 LLM 프로젝트에 적용"
+  default_prompt: "Use $apply-llm-project-patterns to implement and verify the requested LLM feature in this repository."
+
+policy:
+  allow_implicit_invocation: true
