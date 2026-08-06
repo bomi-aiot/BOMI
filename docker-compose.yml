@@ -18,21 +18,6 @@ services:
       timeout: 5s
       retries: 10
 
-  # 의미 검색 벡터 스토어 (S15P11E102-218). 4096차원이라 pgvector 로는 인덱스를
-  # 만들 수 없어서 분리했다 — 자세한 이유는 infra/compose.prod.yml 주석 참고.
-  #
-  # 개발에서는 6333(REST)을 열어 둔다. 대시보드로 컬렉션을 눈으로 확인할 수 있어야
-  # "왜 검색이 비었지"를 30초에 판단할 수 있다. 운영에서는 열지 않는다.
-  qdrant:
-    image: qdrant/qdrant:v1.18.3
-    container_name: bomi-qdrant
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:${QDRANT_HTTP_PORT:-6333}:6333"
-      - "127.0.0.1:${QDRANT_GRPC_PORT:-6334}:6334"
-    volumes:
-      - qdrant-data:/qdrant/storage
-
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: bomi-mosquitto
@@ -47,7 +32,6 @@ services:
 
 volumes:
   postgres-data:
-  qdrant-data:
   mosquitto-data:
   mosquitto-log:
 

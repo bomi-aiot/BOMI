@@ -7,71 +7,7 @@ Java 17 / Spring Boot / Gradle 기반 중앙 백엔드입니다.
 3. 이 디렉터리에서 `./gradlew bootRun`(Windows: `gradlew.bat bootRun`)을 실행합니다.
 4. `GET http://localhost:8080/api/health`로 상태를 확인합니다.
 
-## MQTT 구독·발행 스켈레톤
-
-Backend는 Spring Integration MQTT를 사용해 다음 토픽을 QoS 1로 구독할 수 있습니다.
-
-```text
-bomi/v1/iot/+/events
-bomi/v1/robot/+/events
-bomi/v1/robot/+/status
-bomi/v1/robot/+/results
-```
-
-Robot 명령은 `RobotCommandPublisher`를 통해
-`bomi/v1/robot/{robotId}/commands`로 발행하며 QoS 1, `retain=false`를 강제합니다.
-
-스켈레톤은 연결·JSON 계약 검증·수동 ACK·발행 경계까지만 제공합니다. 시나리오 상태
-전이, DB 멱등 처리와 온보딩 답변 저장은 후속 업무 처리기에서 구현해야 합니다. 실제
-업무 처리기 없이 메시지를 소비하지 않도록 MQTT는 기본적으로 비활성화되어 있습니다.
-
-로컬 Broker를 시작한 뒤 다음 환경변수를 설정해 명시적으로 활성화합니다.
-
-```dotenv
-MQTT_ENABLED=true
-MQTT_BROKER_HOST=localhost
-MQTT_BROKER_PORT=1883
-MQTT_CLIENT_ID_PREFIX=bomi-backend-local
-MQTT_USERNAME=
-MQTT_PASSWORD=
-```
-
-운영에서는 서비스별로 고유하고 재시작 후에도 유지되는 client ID prefix를 사용해야
-합니다. 실제 인증정보는 저장소에 커밋하지 않습니다. 운영 활성화 전에는 Backend의
-`bomi-mqtt-net` 연결, MQTT 환경변수 주입과 `robot/+/events` ACL 권한을 별도로
-완료해야 합니다.
-
-## API 계약과 Swagger UI
-
-AI Vision과 대화·음성 AI의 OpenAPI 계약은 `src/main/resources/static/openapi/`에서 관리합니다. 팀 공용 문서는 배포 Swagger UI를 기준으로 확인합니다.
-
-```text
-https://i15e102.p.ssafy.io/swagger-ui.html
-```
-
-Swagger UI 상단에서 사람 인식 요청, Vision 결과 Callback, 대화·음성 생성 명세를 선택할 수 있습니다. 계약 열람 전용이므로 `Try it out`은 비활성화되어 있습니다.
-
-배포 전 변경 내용을 로컬에서 확인하거나 PostgreSQL 없이 문서만 확인하려면 `docs` Profile로 실행합니다.
-
-Windows PowerShell:
-
-```powershell
-.\gradlew.bat bootRun --args="--spring.profiles.active=docs"
-```
-
-macOS 또는 Linux:
-
-```bash
-./gradlew bootRun --args='--spring.profiles.active=docs'
-```
-
-로컬 Swagger UI:
-
-```text
-http://localhost:8080/swagger-ui.html
-```
-
-상세한 명세 목록, 개별 YAML 주소와 계약 변경 규칙은 [`../docs/api/README.md`](../docs/api/README.md)를 참고합니다.
+MQTT 라이브러리와 접속 환경변수의 기반만 포함하며 실제 구독·발행 흐름은 후속 구현 대상입니다.
 
 ## Docker 이미지
 

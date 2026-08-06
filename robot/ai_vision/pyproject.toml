@@ -8,7 +8,10 @@ version = "0.1.0"
 description = "BOMI 돌봄 로봇의 사람 탐지, 추적 및 사용자 상태 분석을 담당하는 AI 비전 패키지"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
-dependencies = []
+dependencies = [
+"opencv-python>=4.10,<5.0",
+"ultralytics>=8.3,<9.0",
+]
 
 [project.optional-dependencies]
 dev = [
