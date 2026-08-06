@@ -305,7 +305,7 @@ def _honor_privacy_requests(
     if not wants_seal:
         return
 
-    from bomi_ai_chat.localstore import emotion, extraction
+    from bomi_ai_chat.localstore import cancellations, emotion, extraction
 
     conversation_id = effective_conversation_id or ""
     if conversation_id:
@@ -313,9 +313,13 @@ def _honor_privacy_requests(
         logger.info("T4_SEALED conversation=%s", conversation_id)
     if wants_forget and conversation_id:
         dropped = extraction.forget_conversation(senior_id, conversation_id)
+        # 서버 절반도 요청한다 (S15P11E102-348). 여기서 직접 HTTP 를 부르면 턴
+        # 지연 예산(§16)을 깨고 네트워크 단절 시 요청을 잃으므로, 로컬 큐에 적고
+        # 배경 틱(extraction_flush)이 백엔드 취소 엔드포인트로 보낸다.
+        cancellations.enqueue(senior_id, conversation_id)
         # 발화 원문은 로그에 싣지 않는다 — 지우라는 요청을 로그로 남기는 모순.
-        logger.info("MEMORY_FORGOTTEN conversation=%s pending_dropped=%d",
-                    conversation_id, dropped)
+        logger.info("MEMORY_FORGOTTEN conversation=%s pending_dropped=%d "
+                    "server_cancel=queued", conversation_id, dropped)
 
 
 def _persist_interaction(state: ConvState, now: float) -> None:
