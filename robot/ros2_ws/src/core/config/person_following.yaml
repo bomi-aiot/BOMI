@@ -17,8 +17,8 @@ person_follower:
     use_lidar: true
     require_lidar_before_motion: true
 
-    person_stop_distance_m: 0.5
-    person_resume_distance_m: 1.0
+    person_stop_distance_m: 0.4
+    person_resume_distance_m: 0.6
     emergency_stop_distance_m: 0.3
 
     obstacle_check_half_angle_deg: 20.0

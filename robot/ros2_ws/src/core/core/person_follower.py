@@ -20,7 +20,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
 
 from core.follow_state_machine import (
@@ -51,6 +51,17 @@ class PersonFollower(Node):
         )
         scan_topic = str(
             self.get_parameter("scan_topic").value
+        )
+        enable_topic = str(
+            self.get_parameter("enable_topic").value
+        )
+
+        # 추종 스위치. False 인 동안은 _publish_velocity 가 아무것도 발행하지
+        # 않는다(끄는 순간의 정지 1회는 스위치를 내리기 '전'에 내보낸다 —
+        # _enable_callback 참고). 발행 지점마다 조건을 흩뿌리는 대신 단일
+        # 초크포인트에서 막는다.
+        self._enabled = bool(
+            self.get_parameter("start_enabled").value
         )
 
         self._command_timeout_sec = float(
@@ -178,6 +189,25 @@ class PersonFollower(Node):
             self._reset_lock_callback,
         )
 
+        # 추종 켜기/끄기 (S15P11E102 통합 스프린트 2-5, "도착 후 사람 접근").
+        # bridge 의 ApproachController 가 거실 도착 직후 True, 시간 상한 뒤
+        # False 를 발행한다. 서비스가 아니라 토픽인 이유: 발행자(bridge 워커
+        # 스레드)가 응답을 기다리며 spin 할 필요가 없어야 하기 때문이다.
+        self._enable_subscription = self.create_subscription(
+            Bool,
+            enable_topic,
+            self._enable_callback,
+            10,
+        )
+
+        # 꺼진 채 시작하면 상태 머신도 DISABLED 로 맞춘다 — 안 맞추면
+        # 첫 enable 때 enable() 호출이 '이미 켜져 있던' 상태 머신을 리셋해
+        # 버리는 어긋남이 생긴다.
+        if not self._enabled:
+            self._state_machine.disable(
+                self._time_to_sec(self.get_clock().now())
+            )
+
         self._safety_timer = self.create_timer(
             0.1,
             self._check_timeouts,
@@ -187,7 +217,9 @@ class PersonFollower(Node):
             "사람 추종 노드를 시작했습니다. "
             f"비전 입력={input_topic}, "
             f"LiDAR 입력={scan_topic}, "
-            f"속도 출력={output_topic}"
+            f"속도 출력={output_topic}, "
+            f"시작 상태={'켜짐' if self._enabled else '꺼짐'} "
+            f"(스위치 토픽={enable_topic})"
         )
 
     def _declare_parameters(self) -> None:
@@ -203,6 +235,27 @@ class PersonFollower(Node):
         self.declare_parameter(
             "scan_topic",
             "/scan",
+        )
+
+        # 추종을 켜고 끄는 런타임 스위치 (S15P11E102 통합 스프린트 2-5).
+        #
+        # 왜 필요한가
+        #   "도착 후 사람 접근" 대본에서는 이 노드가 output_topic=/cmd_vel 로
+        #   직결된 채 상시 떠 있고, bridge 의 ApproachController 가 거실 도착
+        #   직후 잠깐 켰다가 시간 상한 뒤 끈다. 끔 = "발행 자체를 멈춤"이다 —
+        #   상태 머신의 DISABLED 에만 맡기면 매 프레임 정지 Twist 가 계속
+        #   나가서, /cmd_vel 을 공유하는 Nav2 주행을 0으로 짓밟는다.
+        #
+        # start_enabled 기본값이 True 인 이유: 기존 person_following.launch.py
+        # 사용자(출력 /cmd_vel_follow, 스위치 없던 시절)의 동작을 바꾸지
+        # 않는다. 접근 대본 launch 만 명시적으로 false 로 시작한다.
+        self.declare_parameter(
+            "start_enabled",
+            True,
+        )
+        self.declare_parameter(
+            "enable_topic",
+            "/person_following/enable",
         )
 
         self.declare_parameter(
@@ -766,11 +819,61 @@ class PersonFollower(Node):
             "track_id": track_id,
         }
 
+    def _enable_callback(self, message: Bool) -> None:
+        """추종 스위치를 켜거나 끈다 (2-5 도착 후 사람 접근).
+
+        끄기: 정지 1회를 **스위치를 내리기 전에** 발행한다 — 내린 뒤에는
+        _publish_velocity 초크포인트가 모든 발행을 막기 때문이다. 상태
+        머신도 DISABLED 로 보내 잔여 추적 후보를 지운다.
+
+        켜기: 상태 머신을 enable() 으로 WAITING_TARGET 에서 새로 시작한다.
+        비전 신호가 흐르고 있으면 target_confirm_sec(0.5초) 뒤부터
+        움직인다. 켠 시점의 낡은 비전 타임아웃이 곧바로 발화하지 않도록
+        타임아웃 플래그를 처리됨으로 되돌린다.
+
+        같은 값이 다시 오면 아무 일도 하지 않는다(멱등) — QoS 재전송이나
+        발행측의 방어적 재발행이 로그를 어지럽히지 않게 한다.
+        """
+        requested = bool(message.data)
+        if requested == self._enabled:
+            return
+
+        now_sec = self._time_to_sec(self.get_clock().now())
+        if requested:
+            self._enabled = True
+            decision = self._state_machine.enable(now_sec)
+            self._vision_timeout_handled = True
+            self._lidar_timeout_stop_sent = True
+            self.get_logger().info("사람 추종을 켭니다 (접근 단계 시작)")
+        else:
+            # 순서 중요: 정지 발행이 먼저, 스위치 내리기가 나중.
+            self._publish_stop("following_disabled")
+            self._enabled = False
+            decision = self._state_machine.disable(now_sec)
+            self.get_logger().info("사람 추종을 끕니다 (접근 단계 종료)")
+
+        self._log_state_change(
+            decision.state,
+            decision.reason,
+            decision.target_track_id,
+        )
+
     def _publish_velocity(
         self,
         velocity: VelocityCommand,
     ) -> None:
-        """계산된 속도를 geometry_msgs/Twist로 발행한다."""
+        """계산된 속도를 geometry_msgs/Twist로 발행한다.
+
+        ★ 추종 스위치가 꺼져 있으면 발행하지 않는다. 이 노드가
+        output_topic=/cmd_vel 로 직결된 접근 대본에서, 꺼진 상태의 매 프레임
+        정지 발행은 Nav2 주행 명령을 0으로 짓밟는다 — 발행 지점이 여럿이라
+        (비전 콜백·스캔 콜백·타임아웃 타이머) 여기 한 곳에서 막는 것이
+        빠뜨림이 없다. 끄는 순간의 마지막 정지 1회는 _enable_callback 이
+        스위치를 내리기 전에 이 함수를 통과시킨다.
+        """
+        if not self._enabled:
+            return
+
         twist = Twist()
         twist.linear.x = velocity.linear_x
         twist.angular.z = velocity.angular_z

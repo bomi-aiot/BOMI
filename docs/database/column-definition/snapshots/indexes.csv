@@ -1,0 +1,33 @@
+﻿인덱스명,대상,컬럼,고유,어떤 조회를 위한가,도입 시점
+idx_care_relationship_senior_status,care_relationship,"senior_id, status",N,시니어의 활성 보호자와 PRIMARY 조회,관계 구현 시
+idx_care_relationship_guardian_status,care_relationship,"guardian_id, status",N,보호자가 연결된 시니어 조회,보호자 앱 구현 시
+idx_onboarding_session_senior_started,onboarding_session,"senior_id, started_at DESC",N,최근·진행 중 세션 재개,온보딩 구현 시
+idx_conversation_senior_started,conversation,"senior_id, started_at DESC",N,시니어 최근 대화 목록,대화 구현 시
+idx_conversation_expiry,conversation,raw_messages_expires_at,N,Raw 보존 만료 후보 조회,보존 배치 구현 시
+idx_message_conversation_sequence,conversation_message,"conversation_id, sequence_no",Y,현재 대화 최근 N개·전체 순서 조회,메시지 구현 시
+idx_message_conversation_occurred,conversation_message,"conversation_id, occurred_at",N,대화 시간 범위 조회,메시지 구현 시
+idx_message_occurred,conversation_message,occurred_at,N,사용자 현지 오늘 메시지 UTC 범위 조회,일간 요약 구현 시
+idx_summary_senior_generated,conversation_summary,"senior_id, generated_at DESC",N,최근 생성 요약 조회,요약 구현 시
+idx_summary_conversation,conversation_summary,"conversation_id, summary_type",N,현재 대화 요약 조회,요약 구현 시
+idx_candidate_senior_status,fact_candidate,"senior_id, status, updated_at",N,시니어의 활성 재질의·확인 후보 조회,후보 구현 시
+idx_candidate_coordination,fact_candidate,"coordination_status, coordination_deadline_at",N,협의 대기·기한 초과 운영 조회,보호자 협의 구현 시
+idx_candidate_source_message,fact_candidate,source_message_id,N,Raw 삭제 전 활성 후보 확인,보존 배치 구현 시
+idx_memory_search_filter,memory,"senior_id, lifecycle_status, verification_status",N,키워드·벡터 검색 전 사용 가능 기억 필터,기억 검색 구현 시
+idx_memory_keywords,memory,keywords,N,이름·음식·장소 정확 키워드 검색,PostgreSQL GIN 검토
+idx_memory_last_used,memory,"senior_id, last_used_at",N,과도한 기억 반복 억제,대화 문맥 구현 시
+idx_care_record_senior_type_status,care_record,"senior_id, record_type, status",N,시니어의 현재 돌봄 사실 조회,돌봄 조회 구현 시
+idx_care_record_recipient,care_record,"recipient_guardian_id, record_type, status",N,보호자별 알림·공유 기록 조회,보호자 알림 구현 시
+uq_scenario_wake_word_event,scenario,external_event_id (WAKE_WORD_CALL만),Y,수락된 같은 WAKE eventId의 시나리오 중복 차단,V15
+uq_scenario_one_active_per_senior,scenario,senior_id (활성 상태만),Y,시니어당 활성 시나리오 하나를 DB 불변식으로 보장,V15
+ix_scenario_active_walk_robot,scenario,robot_id (WALK 활성 상태만),N,Robot의 재시작 안전 활성 WALK·STOP 조회,V16
+uq_walk_request_ingress_request,walk_request_receipt,"ingress, request_id",Y,Voice MQTT와 Guardian REST 요청의 범위별 멱등 조회,V16
+idx_occupancy_event_senior_occurred,occupancy_event,"senior_id, occurred_at",N,시니어 최근 재실 변화·외출 추세 조회,V3
+idx_memory_embedding_resync,memory,embedding_status (SYNCED 제외),N,재색인 필요한 장기 기억 배치 조회,V5
+idx_conversation_summary_embedding_resync,conversation_summary,embedding_status (SYNCED 제외),N,재색인 필요한 요약 배치 조회,V5
+ix_care_record_senior_type_occurred,care_record,"senior_id, record_type, occurred_at",N,시니어 돌봄 사실의 유형별 기간·추세 조회,V7
+ix_scenario_senior_status,scenario,"senior_id, final_status",N,시니어 활성 시나리오 입장 정책 조회,V8
+ix_scenario_senior_type_status_updated,scenario,"senior_id, scenario_type, final_status, updated_at",N,타입별 완료 쿨다운·최근 상태 조회,V8
+idx_known_person_senior,known_person,senior_id,N,대화 문맥의 시니어별 주요 인물 명부 조회,V10
+uq_fact_candidate_senior_message_fact_type,fact_candidate,"senior_id, source_message_id, fact_type (활성 후보만)",Y,같은 발화·사실 유형 후보 중복 생성 방지,V13
+ix_conversation_pending_ai_start,conversation,started_at (AI 시작 대기 OPEN만),N,START_CONVERSATION ack timeout 후보 조회,V14
+ix_conversation_active_ai,conversation,ai_started_at (AI 시작 확인 OPEN만),N,전체 대화 timeout 후보 조회,V14

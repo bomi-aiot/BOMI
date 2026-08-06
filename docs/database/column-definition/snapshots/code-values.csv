@@ -1,0 +1,221 @@
+﻿대상,코드값,뜻,언제 사용,주의
+app_user.user_type,SENIOR,사용자 유형: SENIOR,app_user.user_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.user_type,GUARDIAN,사용자 유형: GUARDIAN,app_user.user_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.status,ACTIVE,계정 상태: ACTIVE,app_user.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.status,SUSPENDED,계정 상태: SUSPENDED,app_user.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.status,WITHDRAWN,계정 상태: WITHDRAWN,app_user.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.onboarding_status,NOT_STARTED,온보딩 현재 projection: NOT_STARTED,app_user.onboarding_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.onboarding_status,IN_PROGRESS,온보딩 현재 projection: IN_PROGRESS,app_user.onboarding_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.onboarding_status,COMPLETED,온보딩 현재 projection: COMPLETED,app_user.onboarding_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.onboarding_status,DECLINED,온보딩 현재 projection: DECLINED,app_user.onboarding_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.personalization_consent_status,NOT_ASKED,목적별 동의 상태: NOT_ASKED,app_user.personalization_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.personalization_consent_status,GRANTED,목적별 동의 상태: GRANTED,app_user.personalization_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.personalization_consent_status,DENIED,목적별 동의 상태: DENIED,app_user.personalization_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.personalization_consent_status,REVOKED,목적별 동의 상태: REVOKED,app_user.personalization_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.health_data_consent_status,NOT_ASKED,목적별 동의 상태: NOT_ASKED,app_user.health_data_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.health_data_consent_status,GRANTED,목적별 동의 상태: GRANTED,app_user.health_data_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.health_data_consent_status,DENIED,목적별 동의 상태: DENIED,app_user.health_data_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.health_data_consent_status,REVOKED,목적별 동의 상태: REVOKED,app_user.health_data_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.schedule_consent_status,NOT_ASKED,목적별 동의 상태: NOT_ASKED,app_user.schedule_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.schedule_consent_status,GRANTED,목적별 동의 상태: GRANTED,app_user.schedule_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.schedule_consent_status,DENIED,목적별 동의 상태: DENIED,app_user.schedule_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.schedule_consent_status,REVOKED,목적별 동의 상태: REVOKED,app_user.schedule_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.guardian_sharing_consent_status,NOT_ASKED,목적별 동의 상태: NOT_ASKED,app_user.guardian_sharing_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.guardian_sharing_consent_status,GRANTED,목적별 동의 상태: GRANTED,app_user.guardian_sharing_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.guardian_sharing_consent_status,DENIED,목적별 동의 상태: DENIED,app_user.guardian_sharing_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+app_user.guardian_sharing_consent_status,REVOKED,목적별 동의 상태: REVOKED,app_user.guardian_sharing_consent_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_relationship.care_management_permission_status,NOT_ASKED,목적별 동의 상태: NOT_ASKED,care_relationship.care_management_permission_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_relationship.care_management_permission_status,GRANTED,목적별 동의 상태: GRANTED,care_relationship.care_management_permission_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_relationship.care_management_permission_status,DENIED,목적별 동의 상태: DENIED,care_relationship.care_management_permission_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_relationship.care_management_permission_status,REVOKED,목적별 동의 상태: REVOKED,care_relationship.care_management_permission_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_relationship.priority,PRIMARY,보호자 우선순위: PRIMARY,care_relationship.priority의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_relationship.priority,SECONDARY,보호자 우선순위: SECONDARY,care_relationship.priority의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_relationship.status,PENDING,관계 상태: PENDING,care_relationship.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_relationship.status,ACTIVE,관계 상태: ACTIVE,care_relationship.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_relationship.status,DISCONNECT_REQUESTED,관계 상태: DISCONNECT_REQUESTED,care_relationship.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_relationship.status,ENDED,관계 상태: ENDED,care_relationship.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_relationship.status,REVOKED,관계 상태: REVOKED,care_relationship.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+robot.current_mode,IDLE,로봇 모드: IDLE,robot.current_mode의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+robot.current_mode,SCENARIO_ACTIVE,로봇 모드: SCENARIO_ACTIVE,robot.current_mode의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+robot.current_mode,REST_GUARD,로봇 모드: REST_GUARD,robot.current_mode의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+robot.current_mode,SAFE_STOP,로봇 모드: SAFE_STOP,robot.current_mode의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+onboarding_session.started_channel,APP,최초 온보딩 채널: APP,onboarding_session.started_channel의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+onboarding_session.started_channel,ROBOT,최초 온보딩 채널: ROBOT,onboarding_session.started_channel의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+onboarding_session.status,IN_PROGRESS,온보딩 세션 상태: IN_PROGRESS,onboarding_session.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+onboarding_session.status,COMPLETED,온보딩 세션 상태: COMPLETED,onboarding_session.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+onboarding_session.status,DECLINED,온보딩 세션 상태: DECLINED,onboarding_session.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+onboarding_session.status,CANCELLED,온보딩 세션 상태: CANCELLED,onboarding_session.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+onboarding_session.status,EXPIRED,온보딩 세션 상태: EXPIRED,onboarding_session.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+onboarding_answer.answered_channel,APP,실제 답변 채널: APP,onboarding_answer.answered_channel의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+onboarding_answer.answered_channel,ROBOT,실제 답변 채널: ROBOT,onboarding_answer.answered_channel의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+onboarding_answer.verification_status,UNVERIFIED,확인 상태: UNVERIFIED,onboarding_answer.verification_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+onboarding_answer.verification_status,AUTO_ACCEPTED,확인 상태: AUTO_ACCEPTED,onboarding_answer.verification_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+onboarding_answer.verification_status,USER_CONFIRMED,확인 상태: USER_CONFIRMED,onboarding_answer.verification_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+onboarding_answer.verification_status,GUARDIAN_CONFIRMED,확인 상태: GUARDIAN_CONFIRMED,onboarding_answer.verification_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+onboarding_answer.verification_status,REJECTED,확인 상태: REJECTED,onboarding_answer.verification_status의 상태·분기 판단,검색·반영에서 제외
+memory.verification_status,UNVERIFIED,확인 상태: UNVERIFIED,memory.verification_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.verification_status,AUTO_ACCEPTED,확인 상태: AUTO_ACCEPTED,memory.verification_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.verification_status,USER_CONFIRMED,확인 상태: USER_CONFIRMED,memory.verification_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.verification_status,GUARDIAN_CONFIRMED,확인 상태: GUARDIAN_CONFIRMED,memory.verification_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.verification_status,REJECTED,확인 상태: REJECTED,memory.verification_status의 상태·분기 판단,검색·반영에서 제외
+scenario.scenario_type,HOMECOMING,시나리오 유형: HOMECOMING,scenario.scenario_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.scenario_type,WELLNESS_CHECK,시나리오 유형: WELLNESS_CHECK,scenario.scenario_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.scenario_type,MEDICATION_REMINDER,시나리오 유형: MEDICATION_REMINDER,scenario.scenario_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.scenario_type,WAKE_WORD_CALL,시나리오 유형: WAKE_WORD_CALL,scenario.scenario_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.scenario_type,FALL_RESPONSE,시나리오 유형: FALL_RESPONSE,scenario.scenario_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.scenario_type,MANUAL_INTERACTION,시나리오 유형: MANUAL_INTERACTION,scenario.scenario_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.final_status,RECEIVED,시나리오 진행·종료 상태: RECEIVED,scenario.final_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.final_status,NAVIGATING,시나리오 진행·종료 상태: NAVIGATING,scenario.final_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.final_status,MOVING_TO_ENTRANCE,시나리오 진행·종료 상태: MOVING_TO_ENTRANCE,scenario.final_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.final_status,CHECKING_INTERACTION,시나리오 진행·종료 상태: CHECKING_INTERACTION,scenario.final_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.final_status,CONVERSING,시나리오 진행·종료 상태: CONVERSING,scenario.final_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.final_status,RETURN_DECISION,시나리오 진행·종료 상태: RETURN_DECISION,scenario.final_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.final_status,RETURNING_TO_DEFAULT,시나리오 진행·종료 상태: RETURNING_TO_DEFAULT,scenario.final_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.final_status,COMPLETED,시나리오 진행·종료 상태: COMPLETED,scenario.final_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.final_status,FAILED,시나리오 진행·종료 상태: FAILED,scenario.final_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.final_status,CANCELLED,시나리오 진행·종료 상태: CANCELLED,scenario.final_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.final_status,TIMED_OUT,시나리오 진행·종료 상태: TIMED_OUT,scenario.final_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+wake_word_trigger_receipt.disposition,RECEIVED,웨이크 트리거 처리 결정: RECEIVED,동일 eventId 재수신의 영속 처리 결정,RECEIVED를 최종 성공으로 처리하지 않음
+wake_word_trigger_receipt.disposition,ACCEPTED,웨이크 트리거 처리 결정: ACCEPTED,동일 eventId 재수신의 영속 처리 결정,RECEIVED를 최종 성공으로 처리하지 않음
+wake_word_trigger_receipt.disposition,REJECTED_UNKNOWN_ROBOT,웨이크 트리거 처리 결정: REJECTED_UNKNOWN_ROBOT,동일 eventId 재수신의 영속 처리 결정,RECEIVED를 최종 성공으로 처리하지 않음
+wake_word_trigger_receipt.disposition,REJECTED_INACTIVE_ROBOT,웨이크 트리거 처리 결정: REJECTED_INACTIVE_ROBOT,동일 eventId 재수신의 영속 처리 결정,RECEIVED를 최종 성공으로 처리하지 않음
+wake_word_trigger_receipt.disposition,REJECTED_UNASSIGNED_ROBOT,웨이크 트리거 처리 결정: REJECTED_UNASSIGNED_ROBOT,동일 eventId 재수신의 영속 처리 결정,RECEIVED를 최종 성공으로 처리하지 않음
+wake_word_trigger_receipt.disposition,REJECTED_SAFE_STOP,웨이크 트리거 처리 결정: REJECTED_SAFE_STOP,동일 eventId 재수신의 영속 처리 결정,RECEIVED를 최종 성공으로 처리하지 않음
+wake_word_trigger_receipt.disposition,REJECTED_ACTIVE_SCENARIO,웨이크 트리거 처리 결정: REJECTED_ACTIVE_SCENARIO,동일 eventId 재수신의 영속 처리 결정,RECEIVED를 최종 성공으로 처리하지 않음
+wake_word_trigger_receipt.disposition,REJECTED_BUSY_MODE,웨이크 트리거 처리 결정: REJECTED_BUSY_MODE,동일 eventId 재수신의 영속 처리 결정,RECEIVED를 최종 성공으로 처리하지 않음
+conversation.status,OPEN,대화 상태: OPEN,conversation.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+conversation.status,COMPLETED,대화 상태: COMPLETED,conversation.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+conversation.status,FAILED,대화 상태: FAILED,conversation.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+conversation.status,CANCELLED,대화 상태: CANCELLED,conversation.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+conversation_message.role,SENIOR,발화자: SENIOR,conversation_message.role의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+conversation_message.role,ROBOT,발화자: ROBOT,conversation_message.role의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+conversation_summary.summary_type,CONVERSATION,요약 범위: CONVERSATION,conversation_summary.summary_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+conversation_summary.summary_type,DAILY,요약 범위: DAILY,conversation_summary.summary_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.source_type,ONBOARDING_ANSWER,후보 출처: ONBOARDING_ANSWER,fact_candidate.source_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.source_type,CONVERSATION_MESSAGE,후보 출처: CONVERSATION_MESSAGE,fact_candidate.source_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.target_domain,PROFILE,최종 대상 도메인: PROFILE,fact_candidate.target_domain의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.target_domain,CARE_RELATIONSHIP,최종 대상 도메인: CARE_RELATIONSHIP,fact_candidate.target_domain의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.target_domain,MEMORY,최종 대상 도메인: MEMORY,fact_candidate.target_domain의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.target_domain,CARE_RECORD,최종 대상 도메인: CARE_RECORD,fact_candidate.target_domain의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.operation,CREATE,요청 연산: CREATE,fact_candidate.operation의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.operation,UPDATE,요청 연산: UPDATE,fact_candidate.operation의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.operation,CANCEL,요청 연산: CANCEL,fact_candidate.operation의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.risk_level,NORMAL,후보 위험도: NORMAL,fact_candidate.risk_level의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.risk_level,SENSITIVE,후보 위험도: SENSITIVE,fact_candidate.risk_level의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.risk_level,HIGH,후보 위험도: HIGH,fact_candidate.risk_level의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.status,CAPTURED,후보 처리 상태: CAPTURED,fact_candidate.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.status,NEEDS_CLARIFICATION,후보 처리 상태: NEEDS_CLARIFICATION,fact_candidate.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.status,NEEDS_CONFIRMATION,후보 처리 상태: NEEDS_CONFIRMATION,fact_candidate.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.status,COORDINATION_REQUIRED,후보 처리 상태: COORDINATION_REQUIRED,fact_candidate.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.status,CONFIRMED,후보 처리 상태: CONFIRMED,fact_candidate.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.status,MATERIALIZED,후보 처리 상태: MATERIALIZED,fact_candidate.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.status,REJECTED,후보 처리 상태: REJECTED,fact_candidate.status의 상태·분기 판단,검색·반영에서 제외
+fact_candidate.status,EXPIRED,후보 처리 상태: EXPIRED,fact_candidate.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.status,CANCELLED_BY_SENIOR,어르신 요청 취소,어르신 본인이 '기억하지 마'로 닫은 미확정 후보. 재질의·확인요청·검색·반영에서 제외한다. REJECTED(보호자·시스템 거절)와 구분한다 — 누가 왜 닫았는지가 T4 신뢰의 근거다.,
+fact_candidate.clarification_reason,MISSING_REQUIRED_FIELD,재질의 사유: MISSING_REQUIRED_FIELD,fact_candidate.clarification_reason의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.clarification_reason,AMBIGUOUS_VALUE,재질의 사유: AMBIGUOUS_VALUE,fact_candidate.clarification_reason의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.clarification_reason,LOW_RECOGNITION_CONFIDENCE,재질의 사유: LOW_RECOGNITION_CONFIDENCE,fact_candidate.clarification_reason의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.clarification_reason,CONFLICT_WITH_EXISTING_DATA,재질의 사유: CONFLICT_WITH_EXISTING_DATA,fact_candidate.clarification_reason의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.clarification_reason,SENSITIVE_INFORMATION_CONFIRMATION,재질의 사유: SENSITIVE_INFORMATION_CONFIRMATION,fact_candidate.clarification_reason의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.coordination_status,NOT_REQUIRED,협의 상태: NOT_REQUIRED,fact_candidate.coordination_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.coordination_status,COORDINATION_REQUIRED,협의 상태: COORDINATION_REQUIRED,fact_candidate.coordination_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.coordination_status,WAITING_PRIMARY_GUARDIAN,협의 상태: WAITING_PRIMARY_GUARDIAN,fact_candidate.coordination_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.coordination_status,WAITING_SENIOR,협의 상태: WAITING_SENIOR,fact_candidate.coordination_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.coordination_status,AGREED,협의 상태: AGREED,fact_candidate.coordination_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.coordination_status,DISAGREED,협의 상태: DISAGREED,fact_candidate.coordination_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.coordination_status,SENIOR_UNREACHABLE,협의 상태: SENIOR_UNREACHABLE,fact_candidate.coordination_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.coordination_status,GUARDIAN_OVERRIDE_CONFIRMED,협의 상태: GUARDIAN_OVERRIDE_CONFIRMED,fact_candidate.coordination_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.coordination_status,COMPLETED,협의 상태: COMPLETED,fact_candidate.coordination_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.senior_position,NOT_REQUESTED,시니어 입장: NOT_REQUESTED,fact_candidate.senior_position의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.senior_position,PENDING,시니어 입장: PENDING,fact_candidate.senior_position의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.senior_position,AGREED,시니어 입장: AGREED,fact_candidate.senior_position의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.senior_position,DISAGREED,시니어 입장: DISAGREED,fact_candidate.senior_position의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.senior_position,UNREACHABLE,시니어 입장: UNREACHABLE,fact_candidate.senior_position의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.primary_guardian_decision,PENDING,PRIMARY 결정: PENDING,fact_candidate.primary_guardian_decision의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.primary_guardian_decision,CONFIRMED_EXISTING_VALUE,PRIMARY 결정: CONFIRMED_EXISTING_VALUE,fact_candidate.primary_guardian_decision의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.primary_guardian_decision,CONFIRMED_PROPOSED_VALUE,PRIMARY 결정: CONFIRMED_PROPOSED_VALUE,fact_candidate.primary_guardian_decision의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.primary_guardian_decision,REVISED_VALUE,PRIMARY 결정: REVISED_VALUE,fact_candidate.primary_guardian_decision의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.primary_guardian_decision,CANCELLED_CHANGE,PRIMARY 결정: CANCELLED_CHANGE,fact_candidate.primary_guardian_decision의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.unreachable_reason,NO_RESPONSE,연락 불가 사유: NO_RESPONSE,fact_candidate.unreachable_reason의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.unreachable_reason,PHONE_UNAVAILABLE,연락 불가 사유: PHONE_UNAVAILABLE,fact_candidate.unreachable_reason의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.unreachable_reason,TEMPORARY_HEALTH_CONDITION,연락 불가 사유: TEMPORARY_HEALTH_CONDITION,fact_candidate.unreachable_reason의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.unreachable_reason,COMMUNICATION_DIFFICULTY,연락 불가 사유: COMMUNICATION_DIFFICULTY,fact_candidate.unreachable_reason의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+fact_candidate.unreachable_reason,OTHER,연락 불가 사유: OTHER,fact_candidate.unreachable_reason의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.memory_type,PERSONAL_RELATIONSHIP,장기 기억 유형: PERSONAL_RELATIONSHIP,memory.memory_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.memory_type,PREFERENCE,장기 기억 유형: PREFERENCE,memory.memory_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.memory_type,HOBBY,장기 기억 유형: HOBBY,memory.memory_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.memory_type,DAILY_ROUTINE,장기 기억 유형: DAILY_ROUTINE,memory.memory_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.memory_type,LIFE_EVENT,장기 기억 유형: LIFE_EVENT,memory.memory_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.memory_type,FAMILY_MEMORY,장기 기억 유형: FAMILY_MEMORY,memory.memory_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.memory_type,EMOTIONAL_EVENT,장기 기억 유형: EMOTIONAL_EVENT,memory.memory_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.memory_type,OTHER,장기 기억 유형: OTHER,memory.memory_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.lifecycle_status,ACTIVE,기억 수명: ACTIVE,memory.lifecycle_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.lifecycle_status,DISPUTED,기억 수명: DISPUTED,memory.lifecycle_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.lifecycle_status,SUPERSEDED,기억 수명: SUPERSEDED,memory.lifecycle_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.lifecycle_status,EXPIRED,기억 수명: EXPIRED,memory.lifecycle_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.lifecycle_status,DELETED,기억 수명: DELETED,memory.lifecycle_status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.visibility,PRIVATE,기억 공개 범위: PRIVATE,memory.visibility의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.visibility,SHARED_WITH_PRIMARY,기억 공개 범위: SHARED_WITH_PRIMARY,memory.visibility의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+memory.visibility,SHARED_WITH_GUARDIANS,기억 공개 범위: SHARED_WITH_GUARDIANS,memory.visibility의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.record_type,HEALTH_CONDITION,돌봄 기록 유형: HEALTH_CONDITION,care_record.record_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.record_type,ALLERGY,돌봄 기록 유형: ALLERGY,care_record.record_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.record_type,PHYSICAL_LIMITATION,돌봄 기록 유형: PHYSICAL_LIMITATION,care_record.record_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.record_type,MEDICATION,돌봄 기록 유형: MEDICATION,care_record.record_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.record_type,MEDICATION_SCHEDULE,돌봄 기록 유형: MEDICATION_SCHEDULE,care_record.record_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.record_type,MEDICATION_REMINDER,돌봄 기록 유형: MEDICATION_REMINDER,care_record.record_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.record_type,MEDICATION_TAKEN,돌봄 기록 유형: MEDICATION_TAKEN,care_record.record_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.record_type,APPOINTMENT,돌봄 기록 유형: APPOINTMENT,care_record.record_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.record_type,PERSONAL_SCHEDULE,돌봄 기록 유형: PERSONAL_SCHEDULE,care_record.record_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.record_type,HEALTH_OBSERVATION,돌봄 기록 유형: HEALTH_OBSERVATION,care_record.record_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.record_type,REST_OBSERVATION,돌봄 기록 유형: REST_OBSERVATION,care_record.record_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.record_type,ENVIRONMENT_OBSERVATION,돌봄 기록 유형: ENVIRONMENT_OBSERVATION,care_record.record_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.record_type,COGNITIVE_ASSESSMENT,돌봄 기록 유형: COGNITIVE_ASSESSMENT,care_record.record_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.record_type,GUARDIAN_NOTIFICATION,돌봄 기록 유형: GUARDIAN_NOTIFICATION,care_record.record_type의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.status,ACTIVE,돌봄 기록 상태: ACTIVE,care_record.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.status,COMPLETED,돌봄 기록 상태: COMPLETED,care_record.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.status,CANCELLED,돌봄 기록 상태: CANCELLED,care_record.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.status,SUPERSEDED,돌봄 기록 상태: SUPERSEDED,care_record.status의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.recurrence.frequency,DAILY,반복 주기: DAILY,care_record.recurrence.frequency의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+care_record.recurrence.frequency,WEEKLY,반복 주기: WEEKLY,care_record.recurrence.frequency의 상태·분기 판단,정의되지 않은 값을 성공으로 처리하지 않음
+scenario.scenario_type,WALK,시나리오 유형: 산책,scenario.scenario_type의 상태·분기 판단,FOLLOW 제어만 관리하고 tracking은 Robot 책임
+scenario.final_status,STARTING_FOLLOW,FOLLOW_START 결과 대기,WALK 시작 명령 발행 뒤 사용,늦은 STARTED가 STOPPING을 되돌리지 않음
+scenario.final_status,FOLLOWING,Robot 추종 진행 중,유효한 STARTED·UNCHANGED 뒤 사용,공용 20분 watchdog에서 제외
+scenario.final_status,STOPPING_FOLLOW,FOLLOW_STOP 결과 대기,명시적 STOP 또는 안전 종료 시 사용,같은 STOP 요청은 새 command를 만들지 않음
+walk_request_receipt.ingress,MQTT,Voice/AI MQTT 유입,request_id 멱등 범위를 정함,payload source와 구분
+walk_request_receipt.ingress,GUARDIAN_REST,Guardian REST 유입,App requestId 멱등 범위를 정함,MQTT의 같은 문자열 ID와 충돌하지 않음
+walk_request_receipt.action,START,산책 시작 요청,새 WALK 입장 정책 실행,활성 시나리오를 선점하지 않음
+walk_request_receipt.action,STOP,산책 종료 요청,같은 Robot의 활성 WALK를 잠금 조회,새 Scenario를 만들지 않음
+walk_request_receipt.source,VOICE,음성 의도 판정 출처,MQTT 요청 문맥 비교,Backend가 대화 intent를 새로 만들지 않음
+walk_request_receipt.source,APP,Guardian App 출처,REST adapter가 서버에서 고정,클라이언트가 다른 값으로 지정할 수 없음
+walk_request_receipt.disposition,RECEIVED,처리 중 임시 결정,영수증 생성 직후 사용,최종 응답으로 해석하지 않음
+walk_request_receipt.disposition,ACCEPTED,새 FOLLOW 명령 수락,START 또는 STOP 명령 발행 결정,scenario_id·scenario_status 필수
+walk_request_receipt.disposition,NO_OP_ALREADY_STOPPING,이미 종료 명령 대기 중,STOPPING 중 다른 STOP을 결정적으로 수락,기존 commandId를 다시 만들지 않음
+walk_request_receipt.disposition,REJECTED_NO_ACTIVE_WALK,종료할 활성 산책 없음,STOP without active 응답,나중에 생긴 산책을 같은 ID로 멈추지 않음
+walk_request_receipt.disposition,REJECTED_UNKNOWN_ROBOT,미등록 Robot,deviceId 권위 조회 실패,명령 미발행
+walk_request_receipt.disposition,REJECTED_INACTIVE_ROBOT,비활성 Robot,START 입장 정책,STOP 안전 시도에는 적용하지 않음
+walk_request_receipt.disposition,REJECTED_UNASSIGNED_ROBOT,시니어 미배정 Robot,START 대상 검증,어르신 잠금 없이 시작하지 않음
+walk_request_receipt.disposition,REJECTED_SAFE_STOP,SAFE_STOP Robot,START 안전 정책,안전 정지 상태에서 추종을 시작하지 않음
+walk_request_receipt.disposition,REJECTED_REST_GUARD,REST_GUARD Robot,START 휴식 보호 정책,휴식 상태를 산책이 선점하지 않음
+walk_request_receipt.disposition,REJECTED_ACTIVE_SCENARIO,다른 활성 시나리오 존재,시니어 단위 시작 직렬화,기존 흐름을 취소하지 않음
+walk_request_receipt.disposition,REJECTED_BUSY_MODE,지원하지 않는 활성 Robot mode,START mode 검사,IDLE에서만 산책 시작
+walk_request_receipt.disposition,REJECTED_REQUEST_ID_REUSED,요청 ID 문맥 불일치,같은 키의 robot/action/source 비교,기존 결정을 덮어쓰지 않음
+walk_request_receipt.disposition,REJECTED_MQTT_UNAVAILABLE,명령 gateway 비활성,REST 문서 profile·운영 장애 응답,영수증을 확정하지 않아 재시도 가능
+scenario.last_follow_result_code,STARTED,추종 시작 확인,FOLLOW_START 성공 결과,START commandId와 함께 검증
+scenario.last_follow_result_code,STOPPED,추종 종료 확인,명시적 STOP 또는 Robot 자체 종료,어느 commandId인지 함께 보존
+scenario.last_follow_result_code,UNCHANGED,이미 원하는 추종 상태 또는 Backend synthetic timeout 기록 코드,Robot 멱등 성공 결과 또는 timeout- eventId의 Backend 안전 종료,synthetic timeout은 Robot 성공 증거가 아니며 eventId·reasonCode와 함께 판별
+scenario.last_follow_reason_code,PERSON_LOST,추종 대상 놓침,실패 FOLLOW_RESULT,고빈도 tracking 정보는 저장하지 않음
+scenario.last_follow_reason_code,COMMAND_EXPIRED,명령 만료,실패·시간초과 결과,expiresAt과 구분해 코드만 저장
+scenario.last_follow_reason_code,EXECUTION_TIMEOUT,실행 시간초과,Robot 또는 Backend timeout,늦은 STOPPED가 원인을 덮어쓰지 않음
+scenario.last_follow_reason_code,SAFETY_STOP,Robot 안전 정지,취소·실패 결과,terminal Robot mode는 SAFE_STOP
+scenario.last_follow_reason_code,INTERNAL_ERROR,Robot 내부 오류,실패 FOLLOW_RESULT,상세 예외 전문은 로그 경계에 둠
+robot.occupancy_status / occupancy_event.resulting_occupancy,HOME,재실 확인,현관 IN 또는 발화 증거 적용 뒤 사용,현재 스냅샷과 이벤트 결과를 같은 코드로 유지
+robot.occupancy_status / occupancy_event.resulting_occupancy,AWAY,외출 확인,현관 OUT 증거 적용 뒤 사용,침묵을 이상으로 오판하지 않게 함
+robot.occupancy_status / occupancy_event.resulting_occupancy,UNKNOWN,재실 불명,관측 전 또는 현관 하트비트 timeout 뒤 사용,HOME으로 낙관하지 않음
+occupancy_event.direction,IN,현관 안쪽 통과,귀가 이벤트에 사용,방향 없는 재실 변화는 null
+occupancy_event.direction,OUT,현관 바깥쪽 통과,외출 이벤트에 사용,방향 없는 재실 변화는 null
+occupancy_event.source,DOOR_SENSOR,현관 센서 확정,문 통과 재실 변화에 사용,센서 reportedAt은 참고 시각
+occupancy_event.source,SPEECH,발화로 HOME 확정,어르신 발화 감지 시 사용,발화는 집 안 존재의 강한 증거
+occupancy_event.source,HEARTBEAT_TIMEOUT,현관 노드 통신 만료,재실을 UNKNOWN으로 강등할 때 사용,문 통과 사건이 아님
+care_record.notification_tier,T1,즉시 보호자 알림,응급·즉시 공유 사건,T4는 이 컬럼에 저장하지 않음
+care_record.notification_tier,T2,일간 요약,추세·비응급 관찰 집계,중복 발송은 summary_sent_at으로 방지
+care_record.notification_tier,T3,시니어 동의 필요,민감 사실 공유 전 동의 흐름,권한·동의를 우회하지 않음

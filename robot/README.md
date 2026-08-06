@@ -3,8 +3,8 @@
 Ubuntu 22.04, ROS 2 Humble, Python 3.10을 기준으로 하는 로봇 워크스페이스입니다.
 
 `core`의 `pico_driver`가 Pico H와 실제로 시리얼 통신하는 드라이버입니다.
-실기로 전진·후진·좌우회전·제자리회전까지 확인했습니다. 그 외 이동 관련
-기능은 아직 Mock 단계입니다.
+실기로 전진·후진·좌우회전·제자리회전까지 확인했습니다. MQTT 통신 테스트는
+유효한 NAVIGATE를 2초 저속 전진으로 바꾸며, 실제 Nav2 목적지 주행과 분리됩니다.
 
 ## 패키지
 
@@ -35,6 +35,7 @@ Git으로 추적하지 않습니다. 준비 방법은
 | `ros2 run core vision_udp_bridge` | AI 비전의 UDP 추적 결과를 `/vision/follow_result`로 발행 |
 | `ros2 run core person_follower` | 추적 결과와 `/scan_real`로 `/cmd_vel` 생성, 근접 시 정지 |
 | `ros2 run core scan_sanitizer` | 각도 범위가 360°가 아닌 LaserScan을 버리고 나머지를 다시 발행 |
+| `ros2 launch bridge backend_drive_test.launch.py` | 유효한 MQTT NAVIGATE마다 저속으로 2초 전진하는 통신 테스트 |
 
 ## 하드웨어
 
