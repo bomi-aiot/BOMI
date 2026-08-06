@@ -33,6 +33,12 @@ pico_driver:
     # 어긋난다. 그 오차는 회전 중 /scan과 odom TF가 어긋나는 만큼 지도에
     # 그대로 남는다.
     control_hz: 50.0
+
+    # V 명령 전송 주기. 읽기 주기(control_hz)와 분리한다.
+    # 펌웨어는 메인 루프 한 바퀴에 문자 하나만 읽으므로 전송이 잦으면
+    # USB 버퍼에 명령이 쌓여 조작 지연이 계속 누적된다. 워치독 300ms에
+    # 대해 20Hz면 6배 여유다.
+    command_hz: 20.0
     cmd_vel_timeout_sec: 0.5
     telemetry_timeout_sec: 1.0
 

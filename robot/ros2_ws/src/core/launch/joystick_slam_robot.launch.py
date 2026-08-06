@@ -4,7 +4,11 @@ from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    GroupAction,
+    IncludeLaunchDescription,
+)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, NotSubstitution
@@ -100,20 +104,28 @@ def generate_launch_description() -> LaunchDescription:
     # 넘긴다. 모터가 돌면 드라이버가 한 바퀴 경계를 놓쳐 각도 범위가 402°인
     # 스캔을 섞어 보내므로 그대로 SLAM에 주면 회전마다 지도가 어긋난다.
     # 근거와 실측값은 core/core/scan_sanitizer.py에 적혀 있다.
-    lidar = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(str(lidar_launch)),
-        launch_arguments={
-            "port": lidar_port,
-            "scan_topic": raw_scan_topic,
-            "base_frame": base_frame,
-            "laser_frame": laser_frame,
-            "laser_x": laser_x,
-            "laser_y": laser_y,
-            "laser_z": laser_z,
-            "laser_roll": laser_roll,
-            "laser_pitch": laser_pitch,
-            "laser_yaw": laser_yaw,
-        }.items(),
+    # GroupAction으로 감싸 launch 인자가 부모 스코프로 새지 않게 한다.
+    # 감싸지 않으면 여기 넘긴 scan_topic(=/scan_raw)이 부모의
+    # scan_topic까지 덮어써서, 위생 노드의 출력과 slam_toolbox의 입력이
+    # 모두 원시 토픽을 가리킨다.
+    lidar = GroupAction(
+        [
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(str(lidar_launch)),
+                launch_arguments={
+                    "port": lidar_port,
+                    "scan_topic": raw_scan_topic,
+                    "base_frame": base_frame,
+                    "laser_frame": laser_frame,
+                    "laser_x": laser_x,
+                    "laser_y": laser_y,
+                    "laser_z": laser_z,
+                    "laser_roll": laser_roll,
+                    "laser_pitch": laser_pitch,
+                    "laser_yaw": laser_yaw,
+                }.items(),
+            )
+        ]
     )
 
     scan_sanitizer = Node(

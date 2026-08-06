@@ -6,6 +6,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    GroupAction,
     IncludeLaunchDescription,
     TimerAction,
 )
@@ -118,13 +119,21 @@ def generate_launch_description() -> LaunchDescription:
     # 돌면 드라이버가 한 바퀴 경계를 놓쳐 각도 범위가 402°인 스캔을 섞어
     # 보내는데, 그대로 두면 AMCL과 코스트맵에 유령 장애물이 박힌다.
     # 근거와 실측값은 core/core/scan_sanitizer.py에 적혀 있다.
-    lidar = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(str(lidar_launch)),
-        launch_arguments={
-            "port": lidar_port,
-            "scan_topic": raw_scan_topic,
-            "base_frame": base_frame,
-        }.items(),
+    # GroupAction으로 감싸 launch 인자가 부모 스코프로 새지 않게 한다.
+    # 감싸지 않으면 여기 넘긴 scan_topic(=/scan_raw)이 부모의
+    # scan_topic까지 덮어써서, 위생 노드의 출력과 slam_toolbox의 입력이
+    # 모두 원시 토픽을 가리킨다.
+    lidar = GroupAction(
+        [
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(str(lidar_launch)),
+                launch_arguments={
+                    "port": lidar_port,
+                    "scan_topic": raw_scan_topic,
+                    "base_frame": base_frame,
+                }.items(),
+            )
+        ]
     )
 
     scan_sanitizer = Node(
