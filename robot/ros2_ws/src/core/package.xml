@@ -31,6 +31,7 @@
 
   <!-- 로봇 수동 조작에 필요한 실행 의존성 -->
   <exec_depend>twist_mux</exec_depend>
+  <exec_depend>robot_localization</exec_depend>
   <exec_depend>joy_linux</exec_depend>
   <exec_depend>teleop_twist_joy</exec_depend>
 

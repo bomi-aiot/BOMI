@@ -57,6 +57,9 @@ class PicoDriver(Node):
         self._last_cmd_vel = Twist()
         self._last_cmd_vel_time: Time | None = None
         self._cmd_vel_timeout_logged = False
+        self._last_command_time: Time | None = None
+        self._clamped_count = 0
+        self._last_clamp_log_time: Time | None = None
 
         self._read_buffer = ""
         self._violation_count = 0
@@ -99,11 +102,13 @@ class PicoDriver(Node):
 
         self._serial.timeout = 0
 
+        # 깊이 1이면 큐에 밀린 옛 명령을 처리하지 않고 항상 최신 명령만
+        # 남는다. 조작 입력은 최신값만 의미가 있다.
         self._cmd_vel_subscription = self.create_subscription(
             Twist,
             self._cmd_vel_topic,
             self._handle_cmd_vel,
-            10,
+            1,
         )
 
         self._control_timer = self.create_timer(
@@ -143,8 +148,18 @@ class PicoDriver(Node):
         self.declare_parameter("left_front_cpr", 979)
         self.declare_parameter("right_front_cpr", 979)
 
-        # 노드의 V 전송 주기. 펌웨어 CONTROL_MS(20ms)와 같다.
+        # 텔레메트리를 읽어 발행하는 주기. 펌웨어 CONTROL_MS(20ms)와 같게
+        # 두어야 한 주기에 여러 줄이 몰리지 않고 stamp가 표본 시각에 맞는다.
         self.declare_parameter("control_hz", 50.0)
+
+        # V 명령 전송 주기. 읽기 주기와 분리한다.
+        #
+        # 펌웨어는 메인 루프 한 바퀴에 문자 하나만 읽는다
+        # (closed_loop_speed.py의 `sys.stdin.read(1)`). V 한 줄이 18자쯤이라
+        # 전송 주기를 올리면 펌웨어가 배출하는 속도를 넘어서고, 그때부터
+        # USB 버퍼에 명령이 쌓여 조작 지연이 계속 누적된다.
+        # 워치독이 300ms이므로 20Hz면 6배 여유가 있다.
+        self.declare_parameter("command_hz", 20.0)
 
         # ROS 레벨 명령 타임아웃. Pico 자체 워치독(300ms)과는 별개로,
         # /cmd_vel이 끊기면 여기서 먼저 정지 명령으로 바꾼다.
@@ -222,6 +237,9 @@ class PicoDriver(Node):
         self._control_hz = float(
             self.get_parameter("control_hz").value
         )
+        self._command_hz = float(
+            self.get_parameter("command_hz").value
+        )
         self._cmd_vel_timeout_sec = float(
             self.get_parameter("cmd_vel_timeout_sec").value
         )
@@ -282,6 +300,16 @@ class PicoDriver(Node):
 
         if not self._is_positive_finite(self._control_hz):
             raise ValueError("control_hz는 유한한 양수여야 합니다.")
+
+        if not self._is_positive_finite(self._command_hz):
+            raise ValueError("command_hz는 유한한 양수여야 합니다.")
+
+        if self._command_hz > self._control_hz:
+            raise ValueError(
+                "command_hz는 control_hz보다 클 수 없습니다 "
+                f"(command_hz={self._command_hz}, "
+                f"control_hz={self._control_hz})."
+            )
 
         if not self._is_positive_finite(self._cmd_vel_timeout_sec):
             raise ValueError(
@@ -625,10 +653,36 @@ class PicoDriver(Node):
         self._last_cmd_vel_time = self.get_clock().now()
 
     def _on_control_tick(self) -> None:
-        """수신 처리, 타임아웃 확인, V 명령 전송을 한 주기에 묶는다."""
+        """
+        수신 처리와 타임아웃 확인을 매 주기 하고, 전송은 따로 제한한다.
+
+        읽기는 텔레메트리 주기(50Hz)에 맞춰야 stamp가 정확하지만, 전송은
+        펌웨어가 문자를 배출하는 속도를 넘으면 지연이 누적된다.
+        """
         self._drain_serial()
         self._check_telemetry_timeout()
-        self._send_velocity_command()
+
+        if self._is_command_due():
+            self._send_velocity_command()
+
+    def _is_command_due(self) -> bool:
+        """V 명령을 보낼 차례인지 확인하고, 보낼 때 시각을 기록한다."""
+        now = self.get_clock().now()
+
+        if self._last_command_time is not None:
+            elapsed_sec = (
+                now - self._last_command_time
+            ).nanoseconds / 1_000_000_000
+
+            # 제어 주기의 절반을 여유로 둔다. 이게 없으면 전송 주기가
+            # 항상 한 주기씩 밀려 목표보다 느려진다.
+            due_sec = 1.0 / self._command_hz - 0.5 / self._control_hz
+
+            if elapsed_sec < due_sec:
+                return False
+
+        self._last_command_time = now
+        return True
 
     def _check_telemetry_timeout(self) -> None:
         """텔레메트리가 오래 끊기면 경고한다 (한 번만)."""
@@ -680,13 +734,35 @@ class PicoDriver(Node):
         )
 
         if targets.clamped:
-            self.get_logger().warning(
-                "목표 속도가 최대치를 넘어 잘렸습니다: "
-                f"left={targets.left_rev_s:.3f} "
-                f"right={targets.right_rev_s:.3f}"
-            )
+            self._log_clamped(targets)
 
         self._write_line(format_velocity_command(targets))
+
+    def _log_clamped(self, targets) -> None:
+        """
+        잘린 명령을 1초에 한 번만 묶어서 경고한다.
+
+        조이스틱을 대각선으로 밀면 매 주기 잘리는데, 그때마다 화면에
+        찍으면 콘솔 출력이 노드 주기를 잡아먹어 조작이 밀린다.
+        """
+        self._clamped_count += 1
+        now = self.get_clock().now()
+
+        if self._last_clamp_log_time is not None:
+            elapsed_sec = (
+                now - self._last_clamp_log_time
+            ).nanoseconds / 1_000_000_000
+
+            if elapsed_sec < 1.0:
+                return
+
+        self._last_clamp_log_time = now
+        self.get_logger().warning(
+            "목표 속도가 최대치를 넘어 잘렸습니다 "
+            f"(누적 {self._clamped_count}회): "
+            f"left={targets.left_rev_s:.3f} "
+            f"right={targets.right_rev_s:.3f}"
+        )
 
     def shutdown(self) -> None:
         """정지 명령을 최선을 다해 보내고 포트를 닫는다."""

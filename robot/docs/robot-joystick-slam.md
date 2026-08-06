@@ -155,10 +155,34 @@ RViz Fixed Frame을 `map`으로 두고 LaserScan과 Map을 함께 표시한다.
 | 증상 | 먼저 확인할 항목 |
 | --- | --- |
 | 회전할수록 벽이 부채꼴·이중으로 보임 | 유효 트레드, 추가 회전, `laser_yaw` |
+| 공간 전체가 여러 장으로 돌아가 겹치고 지도 크기가 실제보다 커짐 | `/scan_raw`의 스캔당 점 개수와 각도 범위, `scan_sanitizer` 폐기 개수 |
 | 직선 벽이 평행한 두 줄로 누적됨 | 바퀴 미끄러짐, odometry 거리, TF 시간 끊김 |
 | 로봇을 돌리면 스캔이 벽에서 벗어남 | LiDAR x/y/yaw와 장착 강성 |
 | 지도가 순간 이동하거나 찢어짐 | `/scan`·`/odom` 주기, TF 누락, USB 통신 |
 | 특정 재질만 비거나 번짐 | 유리·거울·검은 물체와 LiDAR 반사 특성 |
+
+LiDAR 드라이버는 `/scan_raw`로 내고 `scan_sanitizer`가 성한 스캔만 `/scan`으로
+넘긴다. 모터가 돌면 드라이버가 한 바퀴의 경계를 놓쳐 각도 범위가 360°를 넘는
+스캔을 섞어 보내고, 그 겹친 각도만큼 벽이 엉뚱한 방향에 그려진다. 위생 노드는
+버린 개수를 주기적으로 로그에 남기므로, 지도가 나빠지면 그 숫자를 먼저 본다.
+
+원시 스캔이 실제로 흐트러지는지는 점 개수로 확인한다. 정지 중과 주행 중을 각각
+본다. 주행 중에만 점 개수가 여러 값으로 갈라지면 이 현상이다.
+
+```bash
+ros2 topic echo /scan_raw --field ranges --once | head -1
+ros2 topic hz /scan_raw
+ros2 topic hz /scan
+```
+
+스캔 매칭과 루프 클로저는 launch 인자로 끄고 켤 수 있다. 좁은 공간에서 지도가
+돌아가 겹칠 때 원인을 나누는 데 쓴다. 값의 뜻과 기본값 근거는
+`mapping/config/slam_toolbox_real.yaml`에 있다.
+
+```bash
+ros2 launch core joystick_slam_robot.launch.py \
+  use_scan_matching:=false do_loop_closing:=false
+```
 
 ## 7. 저장과 결과 보존
 
