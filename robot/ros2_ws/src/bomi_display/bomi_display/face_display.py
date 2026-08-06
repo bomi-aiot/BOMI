@@ -1,6 +1,7 @@
 """PySide6 이벤트 루프와 ROS 2 구독을 함께 실행하는 LCD 진입점."""
 
 import argparse
+import signal
 import sys
 
 from PySide6.QtCore import QTimer
@@ -24,6 +25,7 @@ def main(args=None) -> None:
     raw_args = list(sys.argv[1:] if args is None else args)
     app_args, ros_args = _parse_app_args(raw_args)
     app = QApplication([sys.argv[0]])
+    signal.signal(signal.SIGINT, lambda _signal, _frame: app.quit())
     widget = FaceWidget()
     if app_args.windowed:
         widget.resize(800, 480)
