@@ -675,6 +675,10 @@ def main() -> int:
                 "WAKE_TIME", "SLEEP_TIME", "CHRONIC_PAIN_AREA",
                 "PREFERRED_HOSPITAL", "FAVORITE_FOOD", "FAVORITE_SONG",
                 "FORMER_OCCUPATION", "HOMETOWN",
+                # S15P11E102-353: 최초 입력 필수 데이터의 남은 구멍 세 개 —
+                # 자택 주소(날씨 기본 지역), 조용한 시간(게이트·사다리),
+                # 가까운 가족(회피 명부 known_person).
+                "HOME_ADDRESS", "QUIET_HOURS", "CLOSE_FAMILY",
             }
             if set(question_codes) != required_codes:
                 fail(errors, f"질문 코드 목록이 다릅니다: {sorted(question_codes)}")

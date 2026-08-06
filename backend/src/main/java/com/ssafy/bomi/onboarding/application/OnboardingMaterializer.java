@@ -2,6 +2,8 @@ package com.ssafy.bomi.onboarding.application;
 
 import com.ssafy.bomi.fact.application.FactMaterializer;
 import com.ssafy.bomi.fact.domain.FactCandidate;
+import com.ssafy.bomi.person.domain.KnownPerson;
+import com.ssafy.bomi.person.repository.KnownPersonRepository;
 import com.ssafy.bomi.user.domain.AppUser;
 import com.ssafy.bomi.user.domain.ConsentStatus;
 import java.time.LocalDate;
@@ -44,9 +46,12 @@ public class OnboardingMaterializer {
     private static final Logger log = LoggerFactory.getLogger(OnboardingMaterializer.class);
 
     private final FactMaterializer factMaterializer;
+    private final KnownPersonRepository knownPersonRepository;
 
-    public OnboardingMaterializer(FactMaterializer factMaterializer) {
+    public OnboardingMaterializer(FactMaterializer factMaterializer,
+        KnownPersonRepository knownPersonRepository) {
         this.factMaterializer = factMaterializer;
+        this.knownPersonRepository = knownPersonRepository;
     }
 
     /**
@@ -81,6 +86,22 @@ public class OnboardingMaterializer {
             return factMaterializer.materialize(candidate, confirmedValue, recordType).isPresent();
         }
 
+        if ("known_person".equals(table)) {
+            // 회피 명부 한 명 (S15P11E102-353, CLOSE_FAMILY). 엔티티 주석대로 이 표는
+            // 보호자 앱 외에 온보딩 경로로도 채워질 수 있다 — guardianUserId 는 없으므로
+            // null. 고인 여부(isDeceased)는 어르신이 밝힌 경우에만 값이 있고, 없으면
+            // null("모름")로 남는다 — 모름은 생존 확인과 같지 않고, 회피 판정은
+            // KnownPerson.isAvoidTarget 이 보수적으로 처리한다.
+            KnownPerson person = knownPersonRepository.save(KnownPerson.register(
+                senior.getId(), null,
+                text(confirmedValue, "displayName"),
+                text(confirmedValue, "relationship"),
+                optionalBoolean(confirmedValue, "isDeceased"), null,
+                optionalBoolean(confirmedValue, "livesWith"), null));
+            candidate.materialize(person.getId());
+            return true;
+        }
+
         log.info("onboarding answer {} confirmed but not materialized: target {} has no write "
                 + "path yet; the candidate stays CONFIRMED",
             question.code(),
@@ -109,6 +130,13 @@ public class OnboardingMaterializer {
             case "sleep_time" -> senior.changeSleepTime(localTimeOf(confirmedValue, "sleepTime"));
             case "chronic_pain_area" -> senior.changeChronicPainArea(text(confirmedValue, "chronicPainArea"));
             case "preferred_hospital" -> senior.changePreferredHospital(text(confirmedValue, "preferredHospital"));
+            // 자택 주소 (S15P11E102-353). 로봇의 날씨 기본 지역 폴백이 읽는 값이다(347).
+            case "home_address" -> senior.changeHomeAddress(text(confirmedValue, "homeAddress"));
+            // 조용한 시간 (S15P11E102-353). 두 시각을 한 질문으로 받는다 —
+            // changeQuietHours 가 쌍을 강제하므로 반쪽 값이 저장될 수 없다.
+            case "quiet_hours" -> senior.changeQuietHours(
+                localTimeOf(confirmedValue, "quietHoursStart"),
+                localTimeOf(confirmedValue, "quietHoursEnd"));
             // 계약에 app_user 필드가 추가됐는데 여기 분기를 안 만든 경우다. 조용히 넘어가면
             // "동의했는데 반영이 안 되는" 상태가 되므로 요란하게 실패한다.
             default -> throw new IllegalStateException(
@@ -174,5 +202,23 @@ public class OnboardingMaterializer {
             throw new IllegalArgumentException("confirmed value is missing " + field);
         }
         return raw.toString();
+    }
+
+    /**
+     * 선택 boolean 필드. 없으면 null("모름")로 남긴다 — false 로 채우면 안 된다.
+     *
+     * <p>known_person 의 isDeceased 가 대표적이다: "모름"(null)은 회피 대상으로
+     * 취급되지만 "생존 확인"(false)은 아니다. 값이 없다고 false 를 넣으면 확인한 적
+     * 없는 생존을 우리가 지어내는 셈이 된다 (KnownPerson.isAvoidTarget 참고).</p>
+     */
+    private Boolean optionalBoolean(Map<String, Object> value, String field) {
+        Object raw = Optional.ofNullable(value).map(v -> v.get(field)).orElse(null);
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof Boolean bool) {
+            return bool;
+        }
+        return Boolean.parseBoolean(raw.toString());
     }
 }
