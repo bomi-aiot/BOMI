@@ -34,6 +34,7 @@ Git으로 추적하지 않습니다. 준비 방법은
 | `ros2 run core nav2_waypoint_patrol` | YAML 순찰 지점을 Nav2 목표로 순서대로 전송 |
 | `ros2 run core vision_udp_bridge` | AI 비전의 UDP 추적 결과를 `/vision/follow_result`로 발행 |
 | `ros2 run core person_follower` | 추적 결과와 `/scan_real`로 `/cmd_vel` 생성, 근접 시 정지 |
+| `ros2 run core scan_sanitizer` | 각도 범위가 360°가 아닌 LaserScan을 버리고 나머지를 다시 발행 |
 
 ## 하드웨어
 

@@ -54,6 +54,13 @@ def generate_launch_description() -> LaunchDescription:
     pico_port = LaunchConfiguration("pico_port")
     lidar_port = LaunchConfiguration("lidar_port")
     scan_topic = LaunchConfiguration("scan_topic")
+    raw_scan_topic = LaunchConfiguration("raw_scan_topic")
+    scan_span_tolerance_deg = LaunchConfiguration(
+        "scan_span_tolerance_deg"
+    )
+    scan_minimum_interval_sec = LaunchConfiguration(
+        "scan_minimum_interval_sec"
+    )
     base_frame = LaunchConfiguration("base_frame")
     odom_frame = LaunchConfiguration("odom_frame")
     robot_radius = LaunchConfiguration("robot_radius")
@@ -107,13 +114,42 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
+    # LiDAR는 원시 토픽으로 내고 위생 노드가 성한 스캔만 넘긴다. 모터가
+    # 돌면 드라이버가 한 바퀴 경계를 놓쳐 각도 범위가 402°인 스캔을 섞어
+    # 보내는데, 그대로 두면 AMCL과 코스트맵에 유령 장애물이 박힌다.
+    # 근거와 실측값은 core/core/scan_sanitizer.py에 적혀 있다.
     lidar = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(lidar_launch)),
         launch_arguments={
             "port": lidar_port,
-            "scan_topic": scan_topic,
+            "scan_topic": raw_scan_topic,
             "base_frame": base_frame,
         }.items(),
+    )
+
+    scan_sanitizer = Node(
+        package="core",
+        executable="scan_sanitizer",
+        name="scan_sanitizer",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": ParameterValue(
+                    use_sim_time,
+                    value_type=bool,
+                ),
+                "input_topic": raw_scan_topic,
+                "output_topic": scan_topic,
+                "span_tolerance_deg": ParameterValue(
+                    scan_span_tolerance_deg,
+                    value_type=float,
+                ),
+                "minimum_interval_sec": ParameterValue(
+                    scan_minimum_interval_sec,
+                    value_type=float,
+                ),
+            }
+        ],
     )
 
     localization = IncludeLaunchDescription(
@@ -195,6 +231,30 @@ def generate_launch_description() -> LaunchDescription:
                 ),
             ),
             DeclareLaunchArgument(
+                "raw_scan_topic",
+                default_value="/scan_raw",
+                description=(
+                    "LiDAR 드라이버가 내는 원시 LaserScan 토픽. "
+                    "위생 노드가 이걸 받아 scan_topic으로 다시 낸다."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "scan_span_tolerance_deg",
+                default_value="5.0",
+                description=(
+                    "스캔의 각도 범위가 360°에서 이만큼 벗어나면 버린다. "
+                    "360으로 주면 모두 통과시켜 위생 노드를 끈다."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "scan_minimum_interval_sec",
+                default_value="0.07",
+                description=(
+                    "직전 통과 스캔과 이 간격보다 붙어 오면 버린다. "
+                    "0으로 주면 간격 기준을 끈다."
+                ),
+            ),
+            DeclareLaunchArgument(
                 "use_joystick",
                 default_value="false",
                 description=(
@@ -255,6 +315,7 @@ def generate_launch_description() -> LaunchDescription:
             pico_driver,
             ekf,
             lidar,
+            scan_sanitizer,
             start_navigation,
         ]
     )

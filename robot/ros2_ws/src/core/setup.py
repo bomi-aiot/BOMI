@@ -58,6 +58,7 @@ setup(
             'person_follower = core.person_follower:main',
             'vision_udp_bridge = core.vision_udp_bridge:main',
             'pico_driver = core.pico_driver:main',
+            'scan_sanitizer = core.scan_sanitizer:main',
         ],
     },
 )

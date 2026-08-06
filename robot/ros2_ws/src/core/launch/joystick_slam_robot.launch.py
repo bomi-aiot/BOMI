@@ -35,12 +35,19 @@ def generate_launch_description() -> LaunchDescription:
     use_sim_time = LaunchConfiguration("use_sim_time")
     use_rviz = LaunchConfiguration("use_rviz")
     use_ekf = LaunchConfiguration("use_ekf")
+    use_scan_matching = LaunchConfiguration("use_scan_matching")
+    do_loop_closing = LaunchConfiguration("do_loop_closing")
 
     cmd_vel_topic = LaunchConfiguration("cmd_vel_topic")
     pico_port = LaunchConfiguration("pico_port")
     lidar_port = LaunchConfiguration("lidar_port")
 
     scan_topic = LaunchConfiguration("scan_topic")
+    raw_scan_topic = LaunchConfiguration("raw_scan_topic")
+    scan_span_tolerance_deg = LaunchConfiguration("scan_span_tolerance_deg")
+    scan_minimum_interval_sec = LaunchConfiguration(
+        "scan_minimum_interval_sec"
+    )
     base_frame = LaunchConfiguration("base_frame")
     odom_frame = LaunchConfiguration("odom_frame")
     laser_frame = LaunchConfiguration("laser_frame")
@@ -89,11 +96,15 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
+    # LiDAR는 원시 토픽으로 내고, 위생 노드가 성한 스캔만 scan_topic으로
+    # 넘긴다. 모터가 돌면 드라이버가 한 바퀴 경계를 놓쳐 각도 범위가 402°인
+    # 스캔을 섞어 보내므로 그대로 SLAM에 주면 회전마다 지도가 어긋난다.
+    # 근거와 실측값은 core/core/scan_sanitizer.py에 적혀 있다.
     lidar = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(str(lidar_launch)),
         launch_arguments={
             "port": lidar_port,
-            "scan_topic": scan_topic,
+            "scan_topic": raw_scan_topic,
             "base_frame": base_frame,
             "laser_frame": laser_frame,
             "laser_x": laser_x,
@@ -103,6 +114,31 @@ def generate_launch_description() -> LaunchDescription:
             "laser_pitch": laser_pitch,
             "laser_yaw": laser_yaw,
         }.items(),
+    )
+
+    scan_sanitizer = Node(
+        package="core",
+        executable="scan_sanitizer",
+        name="scan_sanitizer",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": ParameterValue(
+                    use_sim_time,
+                    value_type=bool,
+                ),
+                "input_topic": raw_scan_topic,
+                "output_topic": scan_topic,
+                "span_tolerance_deg": ParameterValue(
+                    scan_span_tolerance_deg,
+                    value_type=float,
+                ),
+                "minimum_interval_sec": ParameterValue(
+                    scan_minimum_interval_sec,
+                    value_type=float,
+                ),
+            }
+        ],
     )
 
     slam_toolbox = Node(
@@ -120,6 +156,16 @@ def generate_launch_description() -> LaunchDescription:
                 "scan_topic": scan_topic,
                 "base_frame": base_frame,
                 "odom_frame": odom_frame,
+                # 지도가 90°씩 돌아가 겹칠 때 원인을 나누기 위해 launch에서
+                # 켜고 끈다. 값의 뜻과 기본값 근거는 설정 파일에 적혀 있다.
+                "use_scan_matching": ParameterValue(
+                    use_scan_matching,
+                    value_type=bool,
+                ),
+                "do_loop_closing": ParameterValue(
+                    do_loop_closing,
+                    value_type=bool,
+                ),
             },
         ],
     )
@@ -162,6 +208,22 @@ def generate_launch_description() -> LaunchDescription:
                 ),
             ),
             DeclareLaunchArgument(
+                "use_scan_matching",
+                default_value="true",
+                description=(
+                    "SLAM이 스캔 매칭으로 odometry를 보정할지 여부. "
+                    "false면 지도는 odometry만 따라간다."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "do_loop_closing",
+                default_value="false",
+                description=(
+                    "루프 클로저 사용 여부. 정사각형 공간에서는 90° 돌아간 "
+                    "후보가 잘못 채택되므로 기본값은 끔이다."
+                ),
+            ),
+            DeclareLaunchArgument(
                 "cmd_vel_topic",
                 default_value="/cmd_vel",
                 description="조이스틱 명령과 Pico가 공유할 속도 토픽",
@@ -180,6 +242,30 @@ def generate_launch_description() -> LaunchDescription:
                 "scan_topic",
                 default_value="/scan",
                 description="YDLIDAR와 SLAM이 공유할 LaserScan 토픽",
+            ),
+            DeclareLaunchArgument(
+                "raw_scan_topic",
+                default_value="/scan_raw",
+                description=(
+                    "LiDAR 드라이버가 내는 원시 LaserScan 토픽. "
+                    "위생 노드가 이걸 받아 scan_topic으로 다시 낸다."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "scan_span_tolerance_deg",
+                default_value="5.0",
+                description=(
+                    "스캔의 각도 범위가 360°에서 이만큼 벗어나면 버린다. "
+                    "360으로 주면 모두 통과시켜 위생 노드를 사실상 끈다."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "scan_minimum_interval_sec",
+                default_value="0.07",
+                description=(
+                    "직전 통과 스캔과 이 간격보다 붙어 오면 버린다. "
+                    "0으로 주면 간격 기준을 끈다."
+                ),
             ),
             DeclareLaunchArgument(
                 "base_frame",
@@ -223,6 +309,7 @@ def generate_launch_description() -> LaunchDescription:
             joystick,
             pico_driver,
             lidar,
+            scan_sanitizer,
             ekf,
             slam_toolbox,
             rviz,
