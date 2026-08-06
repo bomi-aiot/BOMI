@@ -47,7 +47,7 @@ const SOURCE_LABELS: Record<ConversationPreference['source'], string> = {
   GUARDIAN: '보호자 입력',
   ROBOT: '로봇 대화',
   AI: 'AI 제안',
-  SYSTEM: '시스템',
+  SYSTEM: '출처 확인 중',
 }
 
 const VERIFICATION_LABELS: Record<MemoryVerificationStatus, string> = {
@@ -64,18 +64,31 @@ const VISIBILITY_LABELS: Record<MemoryVisibility, string> = {
   SHARED_WITH_GUARDIANS: '등록 보호자와 공유',
 }
 
-// 읽기 전용 화면: 기억(memory)은 로봇/AI 대화에서 만들어지고 보호자는 "AI 확인 요청"에서
-// 승인한다. 여기서는 로봇이 학습한 내용을 조회만 한다(생성·수정·삭제는 설계상 제공 안 함).
+// 읽기 전용 화면: 보호자 공유 범위와 활성 상태가 확인된 memory만 조회한다.
 export function ConversationPreferencesPage() {
-  const { conversationPreferences, isLoading, error, refresh } = useBomi()
+  const { conversationPreferences, isLoading, error, dataErrors, refresh } = useBomi()
+  const pageError = dataErrors.conversationPreferences ?? error
 
   const [query, setQuery] = useState('')
   const [typeFilter, setTypeFilter] = useState<PreferenceTypeFilter>('ALL')
 
+  const guardianVisiblePreferences = useMemo(
+    () =>
+      conversationPreferences.filter(
+        (preference) =>
+          preference.lifecycleStatus === 'ACTIVE' &&
+          preference.memoryType !== 'CONVERSATION_SUMMARY' &&
+          preference.memoryType !== 'EMOTIONAL_EVENT' &&
+          (preference.visibility === 'SHARED_WITH_PRIMARY' ||
+            preference.visibility === 'SHARED_WITH_GUARDIANS'),
+      ),
+    [conversationPreferences],
+  )
+
   const filteredPreferences = useMemo(() => {
     const normalizedQuery = query.trim().toLocaleLowerCase('ko-KR')
 
-    return conversationPreferences.filter((preference) => {
+    return guardianVisiblePreferences.filter((preference) => {
       const matchesQuery =
         normalizedQuery.length === 0 ||
         [preference.title, preference.content, ...preference.keywords].some(
@@ -87,7 +100,7 @@ export function ConversationPreferencesPage() {
 
       return matchesQuery && matchesType
     })
-  }, [conversationPreferences, query, typeFilter])
+  }, [guardianVisiblePreferences, query, typeFilter])
 
   if (isLoading && conversationPreferences.length === 0) {
     return (
@@ -95,11 +108,11 @@ export function ConversationPreferencesPage() {
     )
   }
 
-  if (error && conversationPreferences.length === 0) {
+  if (pageError && conversationPreferences.length === 0) {
     return (
       <ErrorState
         title="대화 정보를 불러오지 못했습니다"
-        description={error}
+        description={pageError}
         onRetry={() => void refresh()}
       />
     )
@@ -110,13 +123,13 @@ export function ConversationPreferencesPage() {
       <PageHeader
         eyebrow="개인화 기억"
         title="대화 정보"
-        description="로봇이 어르신과의 대화에서 학습한 관심사·습관·선호입니다. 새로운 정보는 대화를 통해 파악되어 'AI 확인 요청'에서 승인됩니다."
-        metadata={<span>전체 {conversationPreferences.length}건</span>}
+        description="보호자 공유가 허용된 관심사·습관·선호만 보여드려요. 비공개 대화와 대화 원문은 표시하지 않아요."
+        metadata={<span>공유된 정보 {guardianVisiblePreferences.length}건</span>}
       />
 
-      {error ? (
+      {pageError ? (
         <div className="page-inline-alert" role="alert">
-          <span>{error}</span>
+          <span>{pageError}</span>
           <Button variant="quiet" size="small" onClick={() => void refresh()}>
             다시 불러오기
           </Button>
@@ -158,17 +171,17 @@ export function ConversationPreferencesPage() {
       {filteredPreferences.length === 0 ? (
         <EmptyState
           title={
-            conversationPreferences.length === 0
-              ? '아직 로봇이 학습한 대화 정보가 없습니다'
+            guardianVisiblePreferences.length === 0
+              ? '아직 보호자에게 공유된 대화 정보가 없습니다'
               : '조건에 맞는 정보가 없습니다'
           }
           description={
-            conversationPreferences.length === 0
-              ? '어르신과 대화가 쌓이면 여기에 표시됩니다.'
+            guardianVisiblePreferences.length === 0
+              ? '공유 범위가 확인된 정보가 생기면 여기에 표시됩니다.'
               : '검색어 또는 필터를 바꾸어 확인해 주세요.'
           }
           action={
-            conversationPreferences.length === 0 ? undefined : (
+            guardianVisiblePreferences.length === 0 ? undefined : (
               <Button
                 variant="secondary"
                 onClick={() => {
