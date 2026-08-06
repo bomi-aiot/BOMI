@@ -18,78 +18,80 @@ export interface NavigationGroup {
 
 export const NAVIGATION_GROUPS = [
   {
-    label: '돌봄 관리',
+    label: '돌봄 보기',
     items: [
       {
-        label: '대시보드',
-        shortLabel: '홈',
-        marker: '홈',
+        label: '오늘',
+        shortLabel: '오늘',
+        marker: '오늘',
         path: '/dashboard',
       },
       {
-        label: '어르신 프로필',
-        shortLabel: '어르신',
-        marker: '어',
-        path: '/elder/profile',
+        label: '생활 기록',
+        shortLabel: '기록',
+        marker: '기록',
+        path: '/records',
       },
       {
-        label: '대화 정보',
-        shortLabel: '대화',
-        marker: '대',
-        path: '/conversation-preferences',
+        label: '돌봄 계획',
+        shortLabel: '계획',
+        marker: '계획',
+        path: '/care-plan',
       },
       {
-        label: 'AI 확인 요청',
+        label: '확인할 일',
         shortLabel: '확인',
         marker: '확',
         path: '/confirmation-requests',
       },
       {
-        label: '복약 관리',
-        shortLabel: '복약',
-        marker: '약',
-        path: '/medications',
+        label: '보미와 집',
+        shortLabel: '보미',
+        marker: '보미',
+        path: '/bomi-home',
       },
       {
-        label: '일정 관리',
-        shortLabel: '일정',
-        marker: '일',
-        path: '/schedules',
+        label: '어르신 설정',
+        shortLabel: '설정',
+        marker: '설정',
+        path: '/elder/profile',
       },
+    ],
+  },
+  {
+    label: '세부 관리',
+    items: [
+      { label: '복약 관리', shortLabel: '복약', marker: '약', path: '/medications' },
+      { label: '일정 관리', shortLabel: '일정', marker: '일', path: '/schedules' },
+      { label: '공유된 생활 정보', shortLabel: '정보', marker: '공유', path: '/conversation-preferences' },
     ],
   },
 ] as const satisfies readonly NavigationGroup[];
 
 const MOBILE_NAV_ITEMS: readonly NavigationItem[] = [
   {
-    label: '대시보드',
-    shortLabel: '홈',
-    marker: '홈',
+    label: '오늘',
+    shortLabel: '오늘',
+    marker: '오늘',
     path: '/dashboard',
   },
   {
-    label: '어르신 프로필',
-    shortLabel: '어르신',
-    marker: '어',
-    path: '/elder/profile',
+    label: '생활 기록',
+    shortLabel: '기록',
+    marker: '기록',
+    path: '/records',
   },
   {
-    label: 'AI 확인 요청',
+    label: '확인할 일',
     shortLabel: '확인',
     marker: '확',
     path: '/confirmation-requests',
   },
   {
-    label: '복약 관리',
-    shortLabel: '복약',
-    marker: '약',
-    path: '/medications',
-  },
-  {
-    label: '일정 관리',
-    shortLabel: '일정',
-    marker: '일',
-    path: '/schedules',
+    label: '보미와 집',
+    shortLabel: '보미',
+    marker: '보미',
+    path: '/bomi-home',
   },
 ];
 
@@ -98,13 +100,12 @@ export interface AppLayoutProps {
   pathname: string;
   onNavigate: (path: string) => void;
   selectedElderName?: string;
-  lastUpdatedLabel?: string;
-  systemStatus?: StatusLevel;
-  systemStatusLabel?: string;
+  lastObservationLabel?: string;
+  alertStatus?: StatusLevel;
+  alertStatusLabel?: string;
   notificationCount?: number;
   guardianName?: string;
   guardianRole?: string;
-  onElderSelect?: () => void;
   onRefresh?: () => void;
   onNotificationsOpen?: () => void;
   mockNotice?: ReactNode;
@@ -114,6 +115,7 @@ interface NavigationProps {
   pathname: string;
   onNavigate: (path: string) => void;
   onItemSelected?: () => void;
+  notificationCount?: number;
 }
 
 function Brand() {
@@ -134,6 +136,7 @@ function Navigation({
   pathname,
   onNavigate,
   onItemSelected,
+  notificationCount = 0,
 }: NavigationProps) {
   const handleNavigate = (path: AppRoutePath): void => {
     onNavigate(path);
@@ -188,12 +191,20 @@ function Navigation({
                         {item.marker}
                       </span>
                       <span className="sidebar-nav__label">{item.label}</span>
-                      {item.notificationCount ? (
+                      {(item.path === '/confirmation-requests'
+                        ? notificationCount
+                        : item.notificationCount) ? (
                         <span
                           className="sidebar-nav__count"
-                          aria-label={`${item.notificationCount}건`}
+                          aria-label={`${
+                            item.path === '/confirmation-requests'
+                              ? notificationCount
+                              : item.notificationCount
+                          }건`}
                         >
-                          {item.notificationCount}
+                          {item.path === '/confirmation-requests'
+                            ? notificationCount
+                            : item.notificationCount}
                         </span>
                       ) : null}
                     </button>
@@ -213,13 +224,12 @@ interface AppHeaderProps
   extends Pick<
     AppLayoutProps,
     | 'selectedElderName'
-    | 'lastUpdatedLabel'
-    | 'systemStatus'
-    | 'systemStatusLabel'
+    | 'lastObservationLabel'
+    | 'alertStatus'
+    | 'alertStatusLabel'
     | 'notificationCount'
     | 'guardianName'
     | 'guardianRole'
-    | 'onElderSelect'
     | 'onRefresh'
     | 'onNotificationsOpen'
   > {
@@ -229,13 +239,12 @@ interface AppHeaderProps
 
 export function AppHeader({
   selectedElderName = '봄순 어르신',
-  lastUpdatedLabel = '방금 전',
-  systemStatus = 'normal',
-  systemStatusLabel,
+  lastObservationLabel = '관찰 시각 없음',
+  alertStatus = 'pending',
+  alertStatusLabel,
   notificationCount = 0,
-  guardianName = '김보호',
-  guardianRole = '주 보호자',
-  onElderSelect,
+  guardianName = '보호자',
+  guardianRole = '보호자 화면',
   onRefresh,
   onNotificationsOpen,
   drawerOpen,
@@ -256,27 +265,16 @@ export function AppHeader({
         >
           <span aria-hidden="true">{drawerOpen ? '×' : '☰'}</span>
         </button>
-        <button
-          className="elder-selector"
-          type="button"
-          onClick={onElderSelect}
-          disabled={!onElderSelect}
-          aria-label={`돌봄 대상: ${selectedElderName}`}
-        >
+        <div className="elder-selector" aria-label={`돌봄 대상: ${selectedElderName}`}>
           <span className="elder-selector__label">돌봄 대상</span>
           <strong className="elder-selector__name">{selectedElderName}</strong>
-          {onElderSelect ? (
-            <span className="elder-selector__chevron" aria-hidden="true">
-              ▾
-            </span>
-          ) : null}
-        </button>
+        </div>
       </div>
 
       <div className="app-header__status">
         <div className="refresh-status">
-          <span className="refresh-status__label">최근 갱신</span>
-          <span className="refresh-status__time">{lastUpdatedLabel}</span>
+          <span className="refresh-status__label">마지막 관찰</span>
+          <span className="refresh-status__time">{lastObservationLabel}</span>
           {onRefresh ? (
             <button
               className="refresh-status__button"
@@ -289,8 +287,8 @@ export function AppHeader({
           ) : null}
         </div>
         <StatusBadge
-          status={systemStatus}
-          label={systemStatusLabel ?? '시스템 정상'}
+          status={alertStatus}
+          label={alertStatusLabel ?? '알림 확인 중'}
         />
       </div>
 
@@ -300,9 +298,9 @@ export function AppHeader({
           type="button"
           onClick={onNotificationsOpen}
           disabled={!onNotificationsOpen}
-          aria-label={`알림 ${notificationCount}건`}
+          aria-label={`확인할 일 ${notificationCount}건`}
         >
-          <span aria-hidden="true">알림</span>
+          <span aria-hidden="true">확인</span>
           {notificationCount > 0 ? (
             <span className="notification-button__count">
               {notificationCount > 99 ? '99+' : notificationCount}
@@ -328,13 +326,12 @@ export function AppLayout({
   pathname,
   onNavigate,
   selectedElderName,
-  lastUpdatedLabel,
-  systemStatus,
-  systemStatusLabel,
-  notificationCount,
+  lastObservationLabel,
+  alertStatus,
+  alertStatusLabel,
+  notificationCount = 0,
   guardianName,
   guardianRole,
-  onElderSelect,
   onRefresh,
   onNotificationsOpen,
   mockNotice,
@@ -432,7 +429,7 @@ export function AppLayout({
 
       <aside className="app-sidebar">
         <Brand />
-        <Navigation pathname={pathname} onNavigate={handleNavigate} />
+        <Navigation pathname={pathname} onNavigate={handleNavigate} notificationCount={notificationCount} />
         <div className="app-sidebar__support">
           <p>도움이 필요하신가요?</p>
           <span>돌봄 서비스 문의는 운영팀에 알려주세요.</span>
@@ -442,13 +439,12 @@ export function AppLayout({
       <div className="app-shell__body">
         <AppHeader
           selectedElderName={selectedElderName}
-          lastUpdatedLabel={lastUpdatedLabel}
-          systemStatus={systemStatus}
-          systemStatusLabel={systemStatusLabel}
+          lastObservationLabel={lastObservationLabel}
+          alertStatus={alertStatus}
+          alertStatusLabel={alertStatusLabel}
           notificationCount={notificationCount}
           guardianName={guardianName}
           guardianRole={guardianRole}
-          onElderSelect={onElderSelect}
           onRefresh={onRefresh}
           onNotificationsOpen={onNotificationsOpen}
           drawerOpen={drawerOpen}
@@ -498,6 +494,7 @@ export function AppLayout({
               pathname={pathname}
               onNavigate={handleNavigate}
               onItemSelected={() => setDrawerOpen(false)}
+              notificationCount={notificationCount}
             />
           </aside>
         </div>
@@ -519,10 +516,20 @@ export function AppLayout({
               key={item.path}
               onClick={() => handleNavigate(item.path as AppRoutePath)}
               aria-current={isActive ? 'page' : undefined}
+              aria-label={
+                item.path === '/confirmation-requests'
+                  ? `확인할 일 ${notificationCount}건`
+                  : item.label
+              }
             >
               <span className="mobile-bottom-nav__marker" aria-hidden="true">
                 {item.marker}
               </span>
+              {item.path === '/confirmation-requests' && notificationCount > 0 ? (
+                <span className="mobile-bottom-nav__count" aria-hidden="true">
+                  {notificationCount > 99 ? '99+' : notificationCount}
+                </span>
+              ) : null}
               <span>{item.shortLabel}</span>
             </button>
           );

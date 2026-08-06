@@ -30,16 +30,23 @@ const undef = <T>(v: T | null | undefined): T | undefined =>
 function mapScheduleStatus(status: string): ScheduleStatus {
   if (status === 'COMPLETED') return 'COMPLETED'
   if (status === 'CANCELLED') return 'CANCELLED'
-  return 'UPCOMING'
+  if (status === 'UPCOMING' || status === 'ACTIVE') return 'UPCOMING'
+  return 'UNKNOWN'
 }
 
 export function mapSchedule(dto: ScheduleDto): Schedule {
+  if (dto.recordType !== 'APPOINTMENT' && dto.recordType !== 'PERSONAL_SCHEDULE') {
+    throw new Error('지원하지 않는 일정 유형입니다.')
+  }
   const startsAt = dto.startsAt ?? ''
+  if (Number.isNaN(new Date(startsAt).getTime())) {
+    throw new Error('일정 시각을 확인할 수 없습니다.')
+  }
   return {
     id: dto.id,
     elderId: '',
     recordType: dto.recordType as ScheduleType,
-    title: dto.title ?? '',
+    title: dto.title?.trim() || '제목이 확인되지 않은 일정',
     description: undef(dto.description),
     startsAt,
     endsAt: undef(dto.endsAt),
@@ -50,9 +57,9 @@ export function mapSchedule(dto: ScheduleDto): Schedule {
     reminderLeadMinutes: dto.reminderLeadMinutes ?? 0,
     followUpEnabled: dto.followUpEnabled ?? false,
     followUpQuestion: undef(dto.followUpQuestion),
-    sourceType: 'GUARDIAN',
-    verificationStatus: 'GUARDIAN_CONFIRMED',
-    createdAt: startsAt,
-    updatedAt: startsAt,
+    sourceType: 'SYSTEM',
+    verificationStatus: 'UNVERIFIED',
+    createdAt: '',
+    updatedAt: '',
   }
 }
