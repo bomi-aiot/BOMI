@@ -17,6 +17,7 @@ MQTT 브릿지나 백엔드 계약과는 무관하다. 실물에서 좌표 자�
 """
 
 from pathlib import Path
+import sys
 
 from action_msgs.msg import GoalStatus
 from ament_index_python.packages import get_package_share_directory
@@ -79,6 +80,10 @@ class GotoWaypoint(Node):
         )
         self.declare_parameter("wait_timeout_sec", 30.0)
 
+        # 상태 조회 하나가 이 시간 안에 안 오면 유실로 보고 다시 건다.
+        # wait_timeout_sec 보다 충분히 짧아야 재시도할 여유가 생긴다.
+        self.declare_parameter("state_request_timeout_sec", 5.0)
+
         waypoint_file = self._get_waypoint_file()
         self.frame_id = self.get_parameter("frame_id").value
         waypoint_name = str(self.get_parameter("waypoint_name").value)
@@ -88,6 +93,9 @@ class GotoWaypoint(Node):
         ).value
         self.wait_timeout_sec = float(
             self.get_parameter("wait_timeout_sec").value
+        )
+        self.state_request_timeout_sec = float(
+            self.get_parameter("state_request_timeout_sec").value
         )
 
         route = load_patrol_route(waypoint_file)
@@ -104,6 +112,7 @@ class GotoWaypoint(Node):
         )
         self.active_goal_handle = None
         self.nav2_state_request_pending = False
+        self.state_request_pending_sec = 0.0
         self.last_nav2_state_id = None
         self.finished = False
         self.arrived = False
@@ -121,10 +130,14 @@ class GotoWaypoint(Node):
 
     def wait_for_nav2(self) -> None:
         """Nav2 활성 상태를 비동기로 조회하고 대기 시간을 제한한다."""
-        if self.nav2_state_request_pending:
-            return
-
+        # 대기 시간은 조회가 밀려 있든 말든 먼저 센다. 예전에는 pending
+        # 검사를 먼저 해서, 응답이 한 번 유실되면 플래그가 영원히 True로
+        # 남고 이 카운터가 아예 안 올라갔다. 그러면 타임아웃 에러조차 못
+        # 찍고 바깥의 timeout 명령에 잘릴 때까지 조용히 매달린다.
+        # 2026-08-07 실기에서 실제로 그랬다 — bt_navigator 는 active 인데
+        # "활성화 대기 중"만 찍고 200초를 버린 뒤 주행 실패로 끝났다.
         self.waited_sec += 1.0
+
         if self.waited_sec > self.wait_timeout_sec:
             self.start_timer.cancel()
             self.get_logger().error(
@@ -134,10 +147,28 @@ class GotoWaypoint(Node):
             self.finished = True
             return
 
+        if self.nav2_state_request_pending:
+            # 응답이 오지 않는 요청에 계속 매달리지 않는다. 몇 초 안에
+            # 안 오면 유실로 보고 다시 건다.
+            self.state_request_pending_sec += 1.0
+
+            if (
+                self.state_request_pending_sec
+                < self.state_request_timeout_sec
+            ):
+                return
+
+            self.get_logger().warning(
+                "Nav2 상태 조회에 응답이 없어 다시 건다 "
+                f"({self.state_request_pending_sec:g}초 대기)"
+            )
+            self.nav2_state_request_pending = False
+
         if not self.navigator_state_client.service_is_ready():
             return
 
         self.nav2_state_request_pending = True
+        self.state_request_pending_sec = 0.0
         state_future = self.navigator_state_client.call_async(
             GetState.Request()
         )
@@ -252,8 +283,14 @@ class GotoWaypoint(Node):
         return share_dir / "config" / "room_waypoints.yaml"
 
 
-def main(args=None) -> None:
-    """지정한 웨이포인트로 한 번 주행하는 노드를 실행한다."""
+def main(args=None) -> int:
+    """지정한 웨이포인트로 한 번 주행하는 노드를 실행한다.
+
+    도착했으면 0, 아니면 1을 돌려준다. 이 값이 그대로 프로세스 종료 코드가
+    되므로 부르는 쪽 스크립트가 성패를 판단할 수 있다. 예전에는 항상 None을
+    돌려줘 종료 코드가 늘 0이었고, Nav2가 목표를 중단(status=6)했는데도
+    bomi_goto.sh 가 "2단계 완료"를 찍었다. 2026-08-07 실기에서 실제로 그랬다.
+    """
     rclpy.init(args=args)
 
     try:
@@ -263,7 +300,7 @@ def main(args=None) -> None:
         temp_node.get_logger().error(f"웨이포인트 설정 오류: {error}")
         temp_node.destroy_node()
         rclpy.shutdown()
-        return
+        return 1
 
     # rclpy.spin_once 를 쓰면 호출마다 노드를 executor에 넣었다 빼기
     # 때문에, 액션 클라이언트가 서버를 찾는 중에 그래프 탐색이 계속
@@ -278,12 +315,15 @@ def main(args=None) -> None:
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
+        arrived = node.arrived
         executor.remove_node(node)
         node.destroy_node()
 
         if rclpy.ok():
             rclpy.shutdown()
 
+    return 0 if arrived else 1
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

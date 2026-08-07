@@ -6,12 +6,13 @@
 import json
 import socket
 
+import pytest
+
 from bomi_ai_chat.search_signal import (
     SearchSignalSender,
     build_search_signal_sender,
     normalize_relative_deg,
 )
-import pytest
 
 
 @pytest.fixture()

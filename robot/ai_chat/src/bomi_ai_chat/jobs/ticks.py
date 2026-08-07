@@ -1130,10 +1130,27 @@ def extraction_flush(
     resolved_llm = llm if llm is not None else _default_extraction_llm()
     resolved_fact_client = fact_client if fact_client is not None else _default_fact_client()
 
+    # 어르신별 시간대를 flush 당 한 번만 읽는다 (G4).
+    #
+    # 왜 senior_id 별 dict 인가
+    #   extraction.pending(limit) 은 senior 로 필터하지 않는다. 지금은 1인 기기라
+    #   실질적으로 값이 하나뿐이지만, 이 인자(senior_id)의 시간대를 모든 행에
+    #   적용해버리면 다른 어르신의 행이 섞이는 순간 남의 시간대로 약속이 계산된다.
+    #   행마다 캐시를 다시 읽지 않으면서도 그 사고를 막는 최소 구조다.
+    #
+    # 시간대만 캐시하고 '시각'은 행마다 따로 계산한다 — 기준점은 발화가 말해진
+    # 시각(created_at)이지 이 틱이 도는 시각이 아니다(_utterance_local_time 참고).
+    zone_by_senior: dict[str, object] = {}
+
     result = {"processed": 0, "submitted": 0, "failed": 0}
     for row in rows:
+        row_senior = row["senior_id"]
+        if row_senior not in zone_by_senior:
+            zone_by_senior[row_senior] = _extraction_zone(row_senior)
+        spoken_at = _utterance_local_time(zone_by_senior[row_senior], row)
+
         try:
-            facts = _extract_facts(resolved_llm, row)
+            facts = _extract_facts(resolved_llm, row, now_local=spoken_at)
         except Exception:  # noqa: BLE001 - 한 행의 LLM 실패가 틱 전체를 죽이면 안 된다
             logger.warning(
                 "extraction failed for job %s; will retry next flush",
@@ -1149,6 +1166,10 @@ def extraction_flush(
                     conversation_id=row["conversation_id"],
                     source_message_id=row["source_message_id"],
                     facts=facts,
+                    # 프롬프트에 실은 것과 **같은** 기준 시각을 검증에도 쓴다. 둘이
+                    # 갈리면 "모델은 발화 시각 기준으로 계산했는데 검증은 지금 기준으로
+                    # 과거라고 판정"하는 모순이 생긴다.
+                    now_local=spoken_at,
                 )
             except Exception:  # noqa: BLE001 - fact_client 는 FactSubmissionError 를
                 # 올리지만, 예상 못 한 예외까지도 이 행을 조용히 잃는 방향(잘못
@@ -1233,12 +1254,94 @@ def _flush_cancel_requests(senior_id: str, fact_client=None) -> int:
     return sent
 
 
-def _extract_facts(llm, row: dict) -> list[dict]:
+def _extraction_zone(senior_id: str):
+    """어르신의 시간대. 모르면 None (G4).
+
+    왜 필요한가
+        "다음 주 화요일 세 시에 병원 가"를 절대 시각으로 옮기려면 모델이 기준점을
+        알아야 한다. 기준점 없이 상대 날짜를 계산하라고 하면 모델은 아무 날짜나
+        만들어 낸다.
+
+    ★ 왜 _local_now_from 을 재사용하지 않는가
+        그쪽은 시간대를 모르면 조용히 UTC 로 떨어진다. 야간 외출 판정에서는 그것이
+        "덜 정확한 판정"으로 끝나지만, 여기서는 어르신이 말한 "다음 주 화요일 오후
+        두 시"가 아홉 시간 어긋난 절대 시각으로 보호자 화면의 일정에 그대로 박힌다.
+        모르는 것을 0(UTC)으로 채우는 전형이다.
+
+        그래서 모르면 날짜를 아예 주지 않는다. 프롬프트의 '오늘' 블록이 그 사실을
+        말하고("오늘이 며칠인지 알 수 없습니다"), 약속을 뽑지 말라고 지시한다.
+        기능이 무음이 되는 대신 틀린 일정이 생기지 않는다.
+
+    젯슨에서 주의할 것
+        tzdata 가 없으면 ZoneInfo("Asia/Seoul") 자체가 실패한다. 그 경우도 None 으로
+        떨어지므로 약속 등록만 통째로 조용해진다 — 아래 warning 로그가 실기에서
+        이 기능이 살아 있는지 확인하는 유일한 단서다.
+    """
+    ctx = context_cache.load(senior_id)
+    zone_name = ((ctx or {}).get("profile") or {}).get("timeZone")
+    if not zone_name:
+        logger.warning(
+            "senior %s has no profile.timeZone; extraction prompts will carry no date "
+            "and appointments will not be extracted", senior_id,
+        )
+        return None
+    try:
+        zone = ZoneInfo(zone_name)
+    except Exception:  # noqa: BLE001 - 알 수 없는 시간대가 틱을 죽이면 안 된다
+        logger.warning(
+            "unknown time zone %r for senior %s; extraction prompts will carry no date",
+            zone_name, senior_id,
+        )
+        return None
+    return zone
+
+
+def _utterance_local_time(zone, row: dict) -> datetime | None:
+    """이 발화가 **말해진** 시각을 어르신의 로컬 시각으로 (G4).
+
+    ★ 왜 clock.now() 가 아닌가 (리뷰 지적)
+        원래 이 값은 "틱이 도는 지금"이었다. 그런데 extraction_job 은 **밀린다** —
+        네트워크가 끊기면 _extract_facts 가 실패하고 그 행은 pending 으로 남아
+        다음 flush 로 넘어간다. 배치 크기도 작아서 백로그는 천천히 빠진다.
+
+        그 상태에서 기준점을 '지금'으로 잡으면 이렇게 된다. 월요일 저녁에 어르신이
+        "내일 세 시에 병원 가"라고 말한다 → 큐잉 → 밤새 단절 → 화요일 아침 flush.
+        프롬프트에 "지금은 화요일"이 실리고, 모델은 지시대로 '내일'을 수요일로
+        계산한다. APPOINTMENT 는 자동 반영이라 아무도 안 보고, 하루 밀린 일정이
+        그대로 박힌다. **어르신은 화요일 진료를 놓친다.**
+
+        "내일"의 기준은 말한 날이지 처리한 날이 아니다. created_at 은 enqueue 가
+        이미 적어 두었고 pending() 의 SELECT * 로 행에 들어 있다 — 쓰지 않고 있었을 뿐이다.
+
+    반환값
+        tz-aware datetime. 시간대를 모르거나 created_at 을 읽을 수 없으면 None —
+        그 경우 프롬프트의 '오늘' 블록이 "알 수 없다"고 말하고 약속을 뽑지 않는다.
+    """
+    if zone is None:
+        return None
+    raw = row.get("created_at")
+    try:
+        # enqueue 가 clock.now()(POSIX 초, float)를 넣는다.
+        return datetime.fromtimestamp(float(raw), tz=zone)
+    except (TypeError, ValueError):
+        # 큐 행이 오래돼 형식이 다르거나 비어 있는 경우. 지어내지 않는다.
+        logger.warning(
+            "extraction job %s has an unreadable created_at; its prompt will carry no date",
+            row.get("id"),
+        )
+        return None
+
+
+def _extract_facts(llm, row: dict, *, now_local: datetime | None = None) -> list[dict]:
     """대기 행 하나에서 사실을 뽑는다. 못 뽑았거나 없으면 빈 리스트.
 
     무엇을 호출하는가
         prompts.build_memory_extraction_prompt 로 프롬프트를 조립하고, 이 턴의
         유일한 생성 호출을 한다(row 하나당 최대 1회).
+
+    인자
+        now_local: 어르신 시간대로 본 '지금'. 상대 날짜를 절대 시각으로 옮기는
+            기준점이며, 모르면 None 이다(_extraction_now_local 참고).
 
     반환값
         [{"factType": ..., "content": ...}, ...]. 최대
@@ -1249,6 +1352,7 @@ def _extract_facts(llm, row: dict) -> list[dict]:
 
     prompt = build_memory_extraction_prompt(
         row.get("preceding_robot_utterance") or "", row["content"],
+        now_local=now_local,
     )
     raw = llm.generate(prompt)
     facts = _parse_json_fact_array(raw)
@@ -1276,11 +1380,26 @@ def _parse_json_fact_array(raw: str | None) -> list[dict]:
         return []
     # factType 과 content 가 둘 다 있는, 비어 있지 않은 항목만 남긴다. 모델이
     # 형태를 어겨도(예: 문자열만 나열) 백엔드로 그대로 새어나가지 않게 한다.
-    return [
-        {"factType": str(item["factType"]), "content": str(item["content"])}
-        for item in parsed
-        if isinstance(item, dict) and item.get("factType") and item.get("content")
-    ]
+    facts = []
+    for item in parsed:
+        if not isinstance(item, dict) or not item.get("factType") or not item.get("content"):
+            continue
+        kept = {"factType": str(item["factType"]), "content": str(item["content"])}
+        # 약속(APPOINTMENT)이 쓰는 선택 키 (G4).
+        #
+        # ★ 왜 전부 통과시키지 않고 화이트리스트인가
+        #   여기서 살아남은 키는 fact_contract 를 지나 서버 proposedValue 로 가고,
+        #   서버는 그 dict 를 통째로 care_record.details 에 넣는다(임의 키를 받는다).
+        #   즉 모델이 지어 붙인 아무 키나 보호자 화면까지 그대로 샌다. 반대로 이
+        #   목록을 넓히지 '않으면' 지금처럼 startsAt 이 여기서 조용히 버려져,
+        #   약속이 언제나 시각 없는 상태로 강등된다 — 양쪽 다 조용한 실패라서
+        #   이 화이트리스트가 그 경계다.
+        for optional in ("title", "startsAt"):
+            value = item.get(optional)
+            if isinstance(value, str) and value.strip():
+                kept[optional] = value.strip()
+        facts.append(kept)
+    return facts
 
 
 def daily_summary_job(senior_id: str) -> None:

@@ -89,4 +89,16 @@ public interface CareRecordRepository extends JpaRepository<CareRecord, UUID> {
         @Param("recordTypes") Collection<String> recordTypes,
         @Param("from") OffsetDateTime from,
         @Param("to") OffsetDateTime to);
+
+    /**
+     * 주어진 발화들을 근거로 쓰는 기록들 (ERD §4, 검증 시나리오 31).
+     *
+     * <p>{@code ConversationRawPurgeService} 가 발화를 지우기 <b>직전에</b> 부른다.
+     * 삭제 후에는 어느 기록의 근거를 비워야 했는지 알 방법이 영원히 없다 — 물리 FK 도
+     * {@code ON DELETE SET NULL} 도 없다(V1 주석).</p>
+     *
+     * <p>상태로 거르지 않는다. {@code SUPERSEDED} 된 기록도 존재하지 않는 발화를
+     * 가리키면 안 되고, 여기서 거르면 그 행만 끊어진 참조를 들고 남는다.</p>
+     */
+    List<CareRecord> findBySourceMessageIdIn(Collection<UUID> sourceMessageIds);
 }

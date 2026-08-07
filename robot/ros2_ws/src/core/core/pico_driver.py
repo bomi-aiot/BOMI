@@ -36,6 +36,13 @@ from core.pico_protocol import (
 )
 
 
+# 빈 줄을 보낸 뒤 Pico가 그걸 소화하고 응답을 낼 때까지 주는 시간.
+# 펌웨어는 메인 루프 한 바퀴(20 ms)에 문자 하나만 읽으므로, 앞에 남은
+# 명령 조각까지 밀어내려면 몇 글자분의 여유가 필요하다. 넉넉히 잡아도
+# 시작할 때 한 번뿐이라 손해가 없다.
+INPUT_FLUSH_SETTLE_SEC = 0.3
+
+
 class PicoDriver(Node):
     """Pico H와 시리얼로 통신하며 /cmd_vel을 주행 명령으로 바꾸는 노드."""
 
@@ -66,6 +73,7 @@ class PicoDriver(Node):
         self._last_telemetry_time: Time | None = None
         self._telemetry_timeout_logged = False
         self._previous_flags = 0
+        self._first_flag_report = True
 
         self._previous_left_front_count: int | None = None
         self._previous_right_front_count: int | None = None
@@ -94,8 +102,11 @@ class PicoDriver(Node):
         # 그 잔여분을 비우지 않으면 핸드셰이크 응답이 밀린 줄 뒤에 묻힌다.
         self._serial.reset_input_buffer()
 
+        self._gyro_bias_dps = 0.0
+
         try:
-            self._run_startup_sequence()
+            self._run_startup_sequence_with_retry()
+            self._measure_gyro_bias()
         except Exception:
             self._serial.close()
             raise
@@ -132,6 +143,34 @@ class PicoDriver(Node):
         # 응답 하나를 받기까지 밀린 줄을 한참 읽어야 할 수 있다. 개별
         # 읽기 시간(handshake_timeout_sec)과 달리 이건 전체 대기 예산이다.
         self.declare_parameter("startup_response_timeout_sec", 5.0)
+
+        # 핸드셰이크를 몇 번까지 다시 시도할지. 부팅 직후에는 Pico가 USB
+        # 열거를 막 끝낸 참이라 첫 'S'를 받지 못하고 흘리는 일이 있다.
+        # 2026-08-07 리허설에서 젯슨 부팅 1분 뒤 실행한 스택이 정확히 그
+        # 이유로 이 노드만 죽었고, 나머지 노드는 멀쩡해서 조이스틱이
+        # 안 듣는 원인을 찾는 데 오래 걸렸다. 한 번의 실패로 노드를 죽이면
+        # 스택 전체가 모터 없이 뜬다.
+        self.declare_parameter("startup_attempts", 5)
+        self.declare_parameter("startup_retry_delay_sec", 1.0)
+
+        # 자이로가 보고하는 회전량에 곱하는 보정 계수.
+        #
+        # 2026-08-07 실기: 제자리 한 바퀴(360°)를 돌렸는데 EKF가 411°로
+        # 셌다. 90° 돌 때마다 지도는 103° 돌았다고 믿으므로, 회전할 때마다
+        # 방이 10~20°씩 어긋난 채 겹쳐 쌓인다. 부호는 정상이고 배율만 크다.
+        #
+        # 이 오차는 공간이 특징적일 때는 스캔 매칭이 가려준다. 특징 없는
+        # 빈 직사각형 방에서는 매칭이 잡아줄 근거가 없어 그대로 드러난다.
+        # 그래서 "예전엔 됐는데"가 성립하며, 설정을 되돌려도 낫지 않는다.
+        #
+        # 실측으로 정한다: scripts/lib/calibrate_gyro.py 참고.
+        # 1.0은 보정하지 않는다는 뜻이다.
+        self.declare_parameter("gyro_scale", 1.0)
+
+        # 기동 시 정지 상태에서 자이로 영점을 재서 뺀다. 0이면 재지 않는다.
+        # 이 치우침은 재부팅·온도마다 달라지므로 상수로 적어두면 안 된다.
+        self.declare_parameter("gyro_bias_samples", 100)
+        self.declare_parameter("gyro_bias_max_spread_dps", 1.0)
 
         self.declare_parameter("cmd_vel_topic", "/cmd_vel")
         self.declare_parameter("odom_topic", "/odom")
@@ -194,6 +233,19 @@ class PicoDriver(Node):
         )
         self._startup_response_timeout_sec = float(
             self.get_parameter("startup_response_timeout_sec").value
+        )
+        self._startup_attempts = int(
+            self.get_parameter("startup_attempts").value
+        )
+        self._startup_retry_delay_sec = float(
+            self.get_parameter("startup_retry_delay_sec").value
+        )
+        self._gyro_scale = float(self.get_parameter("gyro_scale").value)
+        self._gyro_bias_samples = int(
+            self.get_parameter("gyro_bias_samples").value
+        )
+        self._gyro_bias_max_spread_dps = float(
+            self.get_parameter("gyro_bias_max_spread_dps").value
         )
 
         self._cmd_vel_topic = str(
@@ -280,6 +332,20 @@ class PicoDriver(Node):
                 "startup_response_timeout_sec는 유한한 양수여야 합니다."
             )
 
+        if self._startup_attempts < 1:
+            raise ValueError("startup_attempts는 1 이상이어야 합니다.")
+
+        if not self._is_positive_finite(self._gyro_scale):
+            raise ValueError("gyro_scale은 유한한 양수여야 합니다.")
+
+        if (
+            not math.isfinite(self._startup_retry_delay_sec)
+            or self._startup_retry_delay_sec < 0.0
+        ):
+            raise ValueError(
+                "startup_retry_delay_sec는 유한한 0 이상이어야 합니다."
+            )
+
         if not self._is_positive_finite(self._track_width_m):
             raise ValueError("track_width_m은 유한한 양수여야 합니다.")
 
@@ -353,9 +419,56 @@ class PicoDriver(Node):
     # 시작 절차 (robot/docs/pico-serial-protocol.md `## 6`)
     # -----------------------------------------------------------
 
+    def _run_startup_sequence_with_retry(self) -> None:
+        """핸드셰이크가 실패하면 잠시 쉬었다가 다시 시도한다.
+
+        젯슨 부팅 직후에는 /dev/ttyACM0이 생긴 직후라도 Pico가 아직
+        명령을 받을 준비가 안 돼 첫 'S'를 흘려버린다. 이건 몇 초 뒤면
+        저절로 낫는 상태이므로, 한 번 실패했다고 노드를 죽이면 안 된다.
+        노드가 죽으면 나머지 스택은 정상으로 보이는 채 /cmd_vel 구독자만
+        사라져서, 조이스틱도 Nav2도 조용히 아무 일도 하지 않는다.
+
+        프로토콜 버전 불일치(RuntimeError)는 기다린다고 낫지 않으므로
+        다시 시도하지 않고 그대로 올린다.
+        """
+        last_error: Exception | None = None
+
+        for attempt in range(1, self._startup_attempts + 1):
+            try:
+                self._run_startup_sequence()
+            except (TimeoutError, ValueError) as error:
+                last_error = error
+                self.get_logger().warn(
+                    f"Pico 핸드셰이크 실패 "
+                    f"({attempt}/{self._startup_attempts}): {error}"
+                )
+
+                if attempt < self._startup_attempts:
+                    # 실패한 시도가 남긴 응답 조각을 비우고 다시 건다.
+                    # 남겨두면 다음 시도가 옛 줄을 읽느라 예산을 쓴다.
+                    self._serial.reset_input_buffer()
+                    self._serial.reset_output_buffer()
+                    time.sleep(self._startup_retry_delay_sec)
+
+                continue
+
+            if attempt > 1:
+                self.get_logger().info(
+                    f"Pico 핸드셰이크가 {attempt}번째 시도에서 성공했습니다."
+                )
+
+            return
+
+        raise TimeoutError(
+            f"Pico 핸드셰이크가 {self._startup_attempts}번 모두 "
+            f"실패했습니다: {last_error}"
+        )
+
     def _run_startup_sequence(self) -> None:
         """S -> P(버전 확인) -> Z -> T 1 순서로 Pico를 초기화한다."""
         timeout = self._startup_response_timeout_sec
+
+        self._flush_partial_command()
 
         self._write_line("S")
         self._expect_line_prefix("ACK", "S", timeout)
@@ -375,6 +488,91 @@ class PicoDriver(Node):
 
         self._write_line("T 1")
         self._expect_line_prefix("ACK T", "T 1", timeout)
+
+    def _measure_gyro_bias(self) -> None:
+        """정지 상태에서 자이로 영점을 재서 이후 각속도에서 뺀다.
+
+        왜 필요한가: 2026-08-07 실기에서 로봇이 완전히 멈춰 있는데도
+        자이로가 초당 1.5555°(=93°/분)를 보고했다. EKF는 yaw를 이 자이로
+        하나로만 만들므로(config/ekf.yaml), 40초짜리 제자리 회전이면 그것만
+        으로 62°가 쌓여 회전할 때마다 지도가 어긋난 채 겹쳤다.
+
+        왜 파라미터 상수가 아니라 매번 재는가: 같은 로봇에서도 재부팅과
+        온도에 따라 값이 달라진다. 실제로 배율 오차로 오인해 상수를 넣었다가
+        같은 측정을 두 번 했을 때 6% 어긋나는 것을 보고서야 원인을 알았다.
+
+        로봇이 움직이는 중이면 잘못된 영점을 박아 넣게 되므로, 표본이
+        흔들리면 보정을 포기한다. 안 하는 편이 틀리게 하는 것보다 낫다.
+        """
+        if self._gyro_bias_samples <= 0:
+            return
+
+        deadline = time.monotonic() + 10.0
+        rates: list[float] = []
+
+        while len(rates) < self._gyro_bias_samples:
+            if time.monotonic() > deadline:
+                self.get_logger().warning(
+                    "자이로 영점 표본을 다 모으지 못했습니다 "
+                    f"({len(rates)}/{self._gyro_bias_samples}). 보정 없이 갑니다."
+                )
+                return
+
+            raw = self._serial.readline()
+            line = self._decode_line(raw) if raw else None
+
+            if line is None or classify_line(line) is not LineKind.TELEMETRY:
+                continue
+
+            try:
+                frame = parse_telemetry_line(line)
+            except ValueError:
+                continue
+
+            if not frame.is_imu_ok:
+                self.get_logger().warning(
+                    "IMU가 비정상이라 자이로 영점을 재지 않습니다."
+                )
+                return
+
+            rates.append(frame.gyro_rate_dps)
+
+        spread = max(rates) - min(rates)
+
+        if spread > self._gyro_bias_max_spread_dps:
+            self.get_logger().warning(
+                f"자이로 영점 측정 중 각속도가 {spread:.2f}°/초 흔들렸습니다. "
+                "로봇이 움직이는 것으로 보고 보정을 건너뜁니다. "
+                "로봇을 완전히 세운 채 다시 실행하세요."
+            )
+            return
+
+        self._gyro_bias_dps = sum(rates) / len(rates)
+
+        self.get_logger().info(
+            f"자이로 영점 {self._gyro_bias_dps:+.4f}°/초 "
+            f"({self._gyro_bias_dps * 60.0:+.1f}°/분)를 재서 뺍니다. "
+            f"표본 {len(rates)}개, 흔들림 {spread:.3f}°/초."
+        )
+
+    def _flush_partial_command(self) -> None:
+        """Pico 입력 버퍼에 남은 명령 조각을 빈 줄로 끊는다.
+
+        앞선 세션이 명령을 쓰다가 강제 종료되면 Pico 버퍼에 완성되지 않은
+        줄이 남는다. 그 상태에서 'S'를 보내면 조각 뒤에 이어붙어 하나의
+        잘못된 명령이 되고, Pico는 'ERR usage: ...'로 답한다. 우리가 기다리는
+        'ACK'는 영영 오지 않는다. 2026-08-07 리허설의 실제 실패가 이것이다
+        (S 대기 중 'ERR usage: T <0|1>' 수신).
+
+        빈 줄은 규약상 무시되므로(robot/docs/pico-serial-protocol.md `## 1`)
+        버퍼가 이미 깨끗해도 부작용이 없다.
+        """
+        self._write_line("")
+        time.sleep(INPUT_FLUSH_SETTLE_SEC)
+
+        # 끊긴 조각에 대한 ERR과 밀린 텔레메트리를 버린다. 남겨두면
+        # 다음 응답을 기다리는 예산을 옛 줄 읽는 데 쓴다.
+        self._serial.reset_input_buffer()
 
     def _expect_line_prefix(
         self,
@@ -510,6 +708,27 @@ class PicoDriver(Node):
         )
         was_imu_ok = bool(self._previous_flags & FLAG_IMU_OK)
 
+        # 첫 프레임에는 비교할 이전 상태가 없다. 전환만 보면 "처음부터
+        # 비정상"인 경우를 통째로 놓친다 — 2026-08-07 실기에서 재부팅 뒤
+        # IMU가 죽은 채로 떴는데 아무 로그도 남지 않아, 지도가 회전마다
+        # 겹치는 원인을 찾는 데 오래 걸렸다. EKF는 yaw를 이 자이로 하나로만
+        # 만들므로(core/config/ekf.yaml), IMU가 죽으면 yaw가 아예 갱신되지
+        # 않고 지도는 회전에서만 무너진다. 그래서 첫 프레임 상태를 반드시
+        # 남긴다.
+        if self._first_flag_report:
+            self._first_flag_report = False
+
+            if frame.is_imu_ok:
+                self.get_logger().info("Pico IMU 정상 — yaw를 자이로로 만든다.")
+            else:
+                self.get_logger().error(
+                    "Pico IMU가 비정상 상태로 시작했습니다. "
+                    "yaw가 갱신되지 않아 회전하면 지도와 위치가 무너집니다. "
+                    "Pico USB를 다시 꽂아 펌웨어를 재기동하세요."
+                )
+
+            was_imu_ok = frame.is_imu_ok
+
         if frame.is_watchdog_stopped and not was_watchdog_stopped:
             self.get_logger().error("Pico가 워치독으로 정지했습니다.")
 
@@ -517,6 +736,9 @@ class PicoDriver(Node):
             self.get_logger().error(
                 "Pico IMU가 비정상입니다. yaw/rate를 더 이상 믿지 않습니다."
             )
+
+        if frame.is_imu_ok and not was_imu_ok:
+            self.get_logger().info("Pico IMU가 정상으로 돌아왔습니다.")
 
         if frame.is_fifo_overflowed:
             self.get_logger().warning("Pico PIO FIFO가 넘쳤습니다.")
@@ -536,8 +758,11 @@ class PicoDriver(Node):
         message.linear_acceleration_covariance[0] = -1.0
 
         if frame.is_imu_ok:
+            # 영점을 뺀 뒤 부호를 뒤집는다. 순서가 중요하다 — 영점은 Pico
+            # 부호계에서 잰 값이므로 뒤집기 전에 빼야 한다.
+            corrected_dps = frame.gyro_rate_dps - self._gyro_bias_dps
             rate_rad_s = math.radians(
-                flip_yaw_sign(frame.gyro_rate_dps)
+                flip_yaw_sign(corrected_dps) * self._gyro_scale
             )
             message.angular_velocity.z = rate_rad_s
 
@@ -592,8 +817,10 @@ class PicoDriver(Node):
                 left_distance_m + right_distance_m
             ) / 2.0
 
+            # 각속도와 같은 계수로 보정한다. 한쪽만 보정하면 /imu 로 만든
+            # TF 와 /odom 의 x·y 적분이 서로 다른 회전을 믿게 된다.
             self._yaw_rad = math.radians(
-                flip_yaw_sign(frame.yaw_deg)
+                flip_yaw_sign(frame.yaw_deg) * self._gyro_scale
             )
             self._x_m += travel_delta_m * math.cos(self._yaw_rad)
             self._y_m += travel_delta_m * math.sin(self._yaw_rad)
