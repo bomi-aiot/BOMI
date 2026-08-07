@@ -107,6 +107,31 @@ def next_state(current: SessionState, event: str) -> SessionState:
     return _TRANSITIONS[key]
 
 
+def is_search_stop_request(text: str) -> bool:
+    """사용자 발화가 '움직이지 말고 기다려'라는 뜻인지 부분일치로 판단한다.
+
+    무엇을 하는가
+        발화에서 공백을 없앤 뒤, policy.SEARCH_STOP_CUES 의 큐가 하나라도 들어
+        있으면 True. "보미야 잠깐만" -> "잠깐만" 포함 -> True.
+
+    어디에 쓰는가
+        bootstrap 의 대화 루프가 이 값이 참이면 회전 탐색에 정지 신호를 보낸다
+        (search_signal.SearchSignalSender.send_stop). 대화 자체는 계속된다 —
+        "기다려"는 대화를 끝내자는 말이 아니라 움직이지 말라는 말이다.
+
+    왜 is_farewell 과 따로 두는가
+        두 판정의 결과가 다르다. 마무리 문구는 대화를 닫고, 정지 요청은 로봇의
+        몸만 멈춘다. 한 함수로 합치면 "기다려" 한마디에 대화까지 끊긴다.
+
+    왜 LLM 을 안 쓰나
+        is_farewell 과 같은 이유다 — 턴마다 왕복이 늘면 2초 예산이 무너진다
+        (CLAUDE.md §16). 값싼 키워드 매칭으로 시작하고, 실제 녹취를 보고
+        policy 의 큐 목록을 늘린다.
+    """
+    normalized = text.replace(" ", "")
+    return any(cue in normalized for cue in policy.SEARCH_STOP_CUES)
+
+
 def is_farewell(text: str) -> bool:
     """사용자 발화가 '대화를 그만하겠다'는 뜻인지 부분일치로 판단한다.
 

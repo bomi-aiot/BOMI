@@ -59,6 +59,9 @@ setup(
             'vision_udp_bridge = core.vision_udp_bridge:main',
             'pico_driver = core.pico_driver:main',
             'scan_sanitizer = core.scan_sanitizer:main',
+            # 보미야 호출 회전 탐색. 등록하지 않으면 ros2 run / launch 가
+            # "executable not found" 로 실패한다.
+            'wake_search = core.wake_search:main',
         ],
     },
 )

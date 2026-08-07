@@ -100,6 +100,16 @@ class MqttBridgeNode(Node):
         self.declare_parameter(
             "approach_enable_topic", "/person_following/enable")
 
+        # 보미야 호출 회전 탐색 (구현계획 §0). 백엔드가 FOLLOW_START 를 보내면
+        # 이 노드가 search_start_topic 에 True 를 발행하고, core 의 wake_search
+        # 노드가 제자리 회전 탐색을 시작한다.
+        #
+        # search_enabled 가 킬 스위치인 이유: 탐색은 로봇이 스스로 도는 동작이라
+        # 다른 실기 검증(주행·매핑) 중에 켜져 있으면 위험하다. 기본값은 꺼짐이고,
+        # 시나리오 launch 가 명시적으로 켠다.
+        self.declare_parameter("search_enabled", False)
+        self.declare_parameter("search_start_topic", "/wake_search/start")
+
         robot_id = str(self.get_parameter("robot_id").value)
         host = str(self.get_parameter("broker_host").value)
         port = int(self.get_parameter("broker_port").value)
@@ -140,6 +150,10 @@ class MqttBridgeNode(Node):
             self.get_parameter("approach_duration_seconds").value)
         approach_enable_topic = str(
             self.get_parameter("approach_enable_topic").value)
+
+        search_enabled = bool(self.get_parameter("search_enabled").value)
+        search_start_topic = str(
+            self.get_parameter("search_start_topic").value)
 
         # timed 를 고른 경우에만 속도 발행자를 만든다. 다른 드라이버에서
         # /cmd_vel 발행자가 떠 있으면 혼동을 부른다.
@@ -185,6 +199,12 @@ class MqttBridgeNode(Node):
             enabled=approach_enabled,
         )
 
+        # 회전 탐색 시작/정지 스위치. 발행은 bridge 워커 스레드에서 불리는데,
+        # rclpy 발행은 스레드 안전하다(approach.py 의 "스레드 모델" 참고).
+        self._search_enabled = search_enabled
+        self._search_publisher = self.create_publisher(
+            Bool, search_start_topic, 10)
+
         self._runner = MqttBridgeRunner(
             robot_id,
             host,
@@ -196,16 +216,31 @@ class MqttBridgeNode(Node):
             ca_certs=ca_certs,
             tls_insecure=tls_insecure,
             on_arrival=self._approach.on_arrival,
+            on_follow_start=(
+                self._start_search if search_enabled else None),
+            on_follow_stop=(
+                self._stop_search if search_enabled else None),
         )
         self._runner.connect_and_loop_start()
         self.get_logger().info(
             f"MQTT bridge node started: robot_id={robot_id}, "
             f"broker={host}:{port}, driver_type={driver_type}, "
-            f"approach_enabled={approach_enabled}"
+            f"approach_enabled={approach_enabled}, "
+            f"search_enabled={search_enabled}"
         )
 
     def _publish_approach_enable(self, enable: bool) -> None:
         self._approach_enable_publisher.publish(Bool(data=enable))
+
+    def _start_search(self) -> None:
+        """FOLLOW_START 훅 — 회전 탐색을 시작한다."""
+        self.get_logger().info("FOLLOW_START: 회전 탐색을 시작합니다.")
+        self._search_publisher.publish(Bool(data=True))
+
+    def _stop_search(self) -> None:
+        """FOLLOW_STOP 훅 — 회전 탐색을 멈춘다. 몇 번 불려도 안전하다."""
+        self.get_logger().info("FOLLOW_STOP: 회전 탐색을 멈춥니다.")
+        self._search_publisher.publish(Bool(data=False))
 
     def _publish_linear_velocity(self, linear_x: float) -> None:
         """timed 드라이버가 부르는 속도 발행. 전진/정지만 쓴다."""
@@ -219,6 +254,12 @@ class MqttBridgeNode(Node):
         """종료 시 MQTT 러너 루프를 멈추고 드라이버 자원을 정리한다."""
         # 접근 중에 종료되면 추종을 켠 채로 죽는다 — 먼저 끈다.
         self._approach.stop()
+        # 탐색 중에 종료되면 로봇이 도는 채로 남는다 — 정지 신호를 먼저 낸다.
+        if self._search_enabled:
+            try:
+                self._stop_search()
+            except Exception:  # noqa: BLE001 - 종료 정리 실패는 무시한다
+                self.get_logger().warning("탐색 정지 발행에 실패했습니다.")
         self._runner.stop()
         return super().destroy_node()
 

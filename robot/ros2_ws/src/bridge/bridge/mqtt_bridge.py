@@ -116,6 +116,8 @@ class MqttBridge:
         async_execution: bool = False,
         now: Callable[[], datetime] | None = None,
         on_arrival: Callable[[str], None] | None = None,
+        on_follow_start: Callable[[], None] | None = None,
+        on_follow_stop: Callable[[], None] | None = None,
     ) -> None:
         self._robot_id = robot_id
         self._driver = driver
@@ -127,6 +129,12 @@ class MqttBridge:
         # 행동이므로 결과 발행 '뒤'에 부른다: 훅이 아무리 오래 걸리거나 죽어도
         # 백엔드가 보는 시나리오는 이미 정상 종결돼 있다.
         self._on_arrival = on_arrival
+        # FOLLOW_START / FOLLOW_STOP 훅(선택). 보미야 호출 회전 탐색을 켜고 끈다
+        # (core 의 wake_search 노드). 훅이 없으면 이 로봇은 탐색을 실행할 수
+        # 없다는 뜻이므로 FOLLOW 명령에 FAILED 를 회신한다 — 순수 paho 경로
+        # (mqtt_client.main)처럼 ROS 2 발행자를 만들 수 없는 실행 경로가 그렇다.
+        self._on_follow_start = on_follow_start
+        self._on_follow_stop = on_follow_stop
 
         # 최근에 본 commandId. OrderedDict 를 LRU 처럼 쓴다(값은 무의미).
         self._seen: OrderedDict[str, None] = OrderedDict()
@@ -266,7 +274,7 @@ class MqttBridge:
         elif command.type == contract.CMD_SPEAK:
             self._handle_speak(command)
         elif command.type in (contract.CMD_FOLLOW_START, contract.CMD_FOLLOW_STOP):
-            self._handle_follow_stub(command)
+            self._handle_follow(command)
         else:  # parse_command 가 이미 걸러내지만 방어적으로 둔다
             logger.warning("처리할 수 없는 명령 타입입니다: %s", command.type)
 
@@ -344,26 +352,62 @@ class MqttBridge:
             self._reason_for(outcome),
         )
 
-    def _handle_follow_stub(self, command: contract.RobotCommand) -> None:
-        """산책(FOLLOW) 은 시연 범위 밖 — 즉시 실패를 회신하는 스텁이다.
+    def _handle_follow(self, command: contract.RobotCommand) -> None:
+        """FOLLOW_START / FOLLOW_STOP 을 회전 탐색 노드에 연결한다.
 
-        무응답이 아니라 실패 회신인 이유: 백엔드의 FOLLOW ACK 타임아웃은
-        10초다. 조용히 버리면 10초 뒤 시나리오가 TIMED_OUT 으로 죽고 로봇이
-        SAFE_STOP 에 잠긴다. 즉시 FAILED 를 돌려주면 시나리오는 FAILED 로
-        깔끔하게 닫힌다(어느 쪽이든 SAFE_STOP 이지만, 원인이 로그에 남고
-        10초를 기다리지 않는다). 산책을 구현하는 날 이 스텁을 지운다.
+        왜 즉시 회신인가 (이 함수에서 가장 중요한 규칙)
+            FOLLOW_RESULT 의 resultCode 는 STARTED/STOPPED/UNCHANGED 다 —
+            "끝났다"가 아니라 "시작했다"는 접수 확인(ACK)이다. 그리고 백엔드의
+            FOLLOW ACK 타임아웃은 10초인데, 회전 탐색은 최악 20초를 넘길 수
+            있다(한 바퀴 + 복귀). 탐색이 끝나기를 기다렸다 회신하면 시나리오가
+            TIMED_OUT 으로 죽고 로봇이 SAFE_STOP 에 잠긴다. 그래서 명령을 받은
+            즉시 회신하고, 탐색은 그 뒤에 진행한다.
+
+        탐색 실패를 백엔드에 알리지 않는 이유
+            구현계획 결정 A. 사람을 못 찾으면 로봇이 시작 방향으로 되돌아가
+            조용히 멈춘다. 접수 확인 뒤에는 상관관계를 가진 commandId 가 더
+            없으므로, 알리려면 계약에 새 채널을 추가해야 한다. 시연 범위
+            밖이라 로그로만 남긴다.
+
+        훅이 없으면 FAILED
+            ROS 2 발행자를 만들 수 없는 실행 경로(순수 paho)에서는 탐색을
+            시작할 방법이 없다. 조용히 성공을 흉내 내면 백엔드는 로봇이
+            움직이는 줄 알고 대화를 이어간다 — 그게 더 나쁘다.
         """
-        logger.warning(
-            "FOLLOW 명령(%s)은 아직 미구현이라 FAILED 스텁으로 회신합니다",
-            command.type,
-        )
+        starting = command.type == contract.CMD_FOLLOW_START
+        hook = self._on_follow_start if starting else self._on_follow_stop
+        result_code = (
+            contract.CODE_STARTED if starting else contract.CODE_STOPPED)
+
+        if hook is None:
+            logger.warning(
+                "FOLLOW 명령(%s)을 실행할 수 없습니다 — 회전 탐색 훅이 "
+                "연결되지 않았습니다(ROS 2 노드 경로가 아닙니다)",
+                command.type,
+            )
+            self._publish_result(
+                contract.RESULT_FOLLOW,
+                command,
+                contract.OUTCOME_FAILED,
+                contract.CODE_UNCHANGED,
+                contract.REASON_INTERNAL_ERROR,
+            )
+            return
+
+        # 먼저 회신한다. 훅이 아무리 오래 걸리거나 죽어도 백엔드가 보는
+        # 시나리오는 이미 정상 접수돼 있다(on_arrival 과 같은 순서 규칙).
         self._publish_result(
             contract.RESULT_FOLLOW,
             command,
-            contract.OUTCOME_FAILED,
-            contract.CODE_UNCHANGED,
-            contract.REASON_INTERNAL_ERROR,
+            contract.OUTCOME_SUCCEEDED,
+            result_code,
+            None,
         )
+        try:
+            hook()
+        except Exception:  # noqa: BLE001 - 훅 실패가 브릿지를 죽이면 안 된다
+            logger.exception(
+                "회전 탐색 훅 실행에 실패했습니다: %s", command.type)
 
     # ── 발행 보조 ───────────────────────────────────────────────────────────
 

@@ -42,6 +42,8 @@ class MqttBridgeRunner:
         ca_certs: str | None = None,
         tls_insecure: bool = False,
         on_arrival: Callable[[str], None] | None = None,
+        on_follow_start: Callable[[], None] | None = None,
+        on_follow_stop: Callable[[], None] | None = None,
     ) -> None:
         self._robot_id = robot_id
         self._host = host
@@ -80,6 +82,11 @@ class MqttBridgeRunner:
             # 이면(순수 paho 경로, ApproachController 를 만들 rclpy 노드가
             # 없다) 조용히 비활성 — mqtt_bridge_node.py 만 이 값을 채운다.
             on_arrival=on_arrival,
+            # 보미야 호출 회전 탐색(core 의 wake_search 노드)을 켜고 끄는 훅.
+            # None 이면(순수 paho 경로) FOLLOW 명령은 FAILED 로 회신된다 —
+            # ROS 2 발행자가 없어 탐색을 시작할 방법이 없기 때문이다.
+            on_follow_start=on_follow_start,
+            on_follow_stop=on_follow_stop,
         )
         self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message

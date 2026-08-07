@@ -16,3 +16,9 @@
 
 # 저장소 안에서 그대로 실행되는 리눅스 대상 파일들
 .claude/hooks/*   text eol=lf
+
+# Gradle 래퍼 스크립트. 확장자가 없어서 위의 *.sh 규칙에 걸리지 않는다.
+#   CRLF 가 붙으면 리눅스(WSL·젯슨·CI)에서 셔뱅이 "#!/bin/sh\r" 로 읽혀
+#   "bad interpreter: No such file or directory" 로 실행 자체가 실패한다.
+#   증상이 "파일이 없다"로 나오는데 파일은 멀쩡히 있어서 원인을 찾기 어렵다.
+gradlew text eol=lf

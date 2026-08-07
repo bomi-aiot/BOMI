@@ -1,0 +1,36 @@
+# BOMI 로봇 USB 장치 이름 고정 (udev)
+#
+# 왜 필요한가
+#   /dev/ttyUSB0 과 /dev/ttyACM0 은 "먼저 꽂힌 순서"로 붙는 이름이다. 재부팅
+#   하거나 케이블을 다시 꽂으면 LiDAR 와 Pico 가 자리를 바꾼다. 그러면 launch
+#   가 LiDAR 포트로 Pico 에게 말을 걸어 "왜 안 움직이지"가 된다. 시연 당일
+#   시간을 가장 많이 잡아먹는 사고다.
+#
+#   여기서 고정 이름을 만들어 두면 순서가 어떻든 항상 같은 경로를 쓴다:
+#       /dev/bomi-pico    Pico H (바퀴 제어)
+#       /dev/bomi-lidar   YDLIDAR X4-PRO
+#
+# ★ 아래 idVendor / idProduct 는 예시다. 반드시 실제 값으로 바꿔야 한다.
+#
+# 실제 값 확인 방법 (장치를 하나씩만 꽂고 실행)
+#   udevadm info -a -n /dev/ttyACM0 | grep -m2 -E 'idVendor|idProduct'
+#   udevadm info -a -n /dev/ttyUSB0 | grep -m2 -E 'idVendor|idProduct'
+#
+#   같은 칩(예: CP210x)을 두 장치가 함께 쓰면 idVendor/idProduct 가 같다.
+#   그때는 serial 로 구분한다:
+#   udevadm info -a -n /dev/ttyUSB0 | grep -m1 'ATTRS{serial}'
+#   → 아래 규칙에 ATTRS{serial}=="<값>" 을 한 줄 더 넣는다.
+#
+# 설치
+#   sudo cp robot/scripts/99-bomi-devices.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#   ls -l /dev/bomi-*        # 심볼릭 링크가 보이면 성공
+#
+# 시리얼 포트 접근 권한이 없다면 (Permission denied):
+#   sudo usermod -aG dialout $USER     # 로그아웃 후 다시 로그인해야 적용된다
+
+# Pico H — Raspberry Pi RP2040 CDC (예시 값)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2e8a", ATTRS{idProduct}=="000a", SYMLINK+="bomi-pico", MODE="0666", GROUP="dialout"
+
+# YDLIDAR X4-PRO — Silicon Labs CP210x (예시 값)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="bomi-lidar", MODE="0666", GROUP="dialout"
