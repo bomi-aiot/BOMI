@@ -330,12 +330,32 @@ def proactive_gate(state: ConvState) -> dict:
     주의사항
         - 이긴 제안의 intent 를 반환한다. 그래서 능동 턴에서는 classify_intent 가
           아무 일도 하지 않는다. 제안한 쪽이 이미 어떤 종류의 발화인지 알고 있다.
-        - 진 생존자들은 여기서 버려진다. 원래는 재큐해야 한다(아래 TODO). 없으면
-          복약 알림에 밀린 수분 권유가 영구히 사라진다.
+        - 진 생존자들은 폐기되지 않는다 — _requeue_losers 참고. 저장소에 남아
+          다음 틱에 다시 평가되고, 게이트 1 이 TTL·완료 여부를 그때 다시 본다.
         - 이 함수에 우선순위 예외를 추가하지 않는다. policy.py 의 표를 고친다.
           로직과 정책이 섞이는 순간 아무도 동작을 예측할 수 없게 된다.
     """
     survivors: list[SpeechProposal] = []
+
+    # barge-in 으로 잘린 발화의 나머지를 제안 목록에 합류시킨다.
+    #
+    # ★ 이게 없으면 잘린 나머지는 영원히 다시 말해지지 않는다
+    #   note_interaction 이 진짜 끼어들기에서 _yield_playback 으로 나머지를
+    #   interrupted_remainder 에 실어 두지만, 그동안 이 필드를 읽는 코드가 없었다
+    #   (docs/natural-conversation/current-state-audit.md B2). "복약 두 알, 그리고
+    #   인슐린은—" 이 잘리면 인슐린 이야기가 조용히 사라지는 구조였다 (§13.3).
+    #   여기서 합류하면 나머지도 다른 제안과 같은 네 게이트·우선순위 경쟁을 거친다 —
+    #   원래 우선순위를 유지한 채로. critical(생존 프로브)은 _yield_playback 이
+    #   애초에 나머지를 만들지 않으므로 여기 올 수 없다.
+    #
+    #   소진 규칙: 이 제안은 저장소가 아니라 checkpoint 에만 있으므로(_row_id 없음),
+    #   이번 턴에 '이겼거나' 게이트 1 에서 '만료 폐기'됐을 때만 state 에서 지운다.
+    #   경쟁에서 밀리거나 연기됐으면 남겨서 다음 능동 턴에 다시 평가한다.
+    remainder = state.get("interrupted_remainder")
+    remainder_consumed = False
+    proposals: list[SpeechProposal] = list(state.get("proposals") or [])
+    if remainder:
+        proposals.append(remainder)
 
     # terse 는 개별 제안의 속성이 아니라 '출력'의 속성이다. 밤에 우리가 말하는
     # 유일한 이유가 인사라면, 발화 전체가 짧아야 한다. 그래서 제안별로 저장하지 않고
@@ -346,7 +366,7 @@ def proactive_gate(state: ConvState) -> dict:
     busy = is_busy(state)
     cooling = is_in_cooldown(state)
 
-    for proposal in state.get("proposals", []):
+    for proposal in proposals:
         bypass = policy.PRIORITY_POLICY[proposal["priority"]]
 
         # ── 게이트 1: 유효성 ─────────────────────────────────────────────────
@@ -354,6 +374,10 @@ def proactive_gate(state: ConvState) -> dict:
             # 폐기 — 재시도하지 않는다. 저장소에서도 실제로 지운다.
             # 안 지우면 만료된 인사가 매 틱마다 다시 평가되고 큐가 무한히 자란다.
             _discard(proposal)
+            if proposal is remainder:
+                # 만료된 나머지는 state 에서도 지운다. 남기면 매 능동 턴마다
+                # 다시 평가되고 영원히 사라지지 않는다.
+                remainder_consumed = True
             continue
 
         # ── 게이트 1.2: 성능 저하로 잡담이 꺼져 있는가 ───────────────────────
@@ -390,7 +414,10 @@ def proactive_gate(state: ConvState) -> dict:
 
     # 침묵. 정상적이고 건강한 결과다. 모듈 docstring 참고.
     if not survivors:
-        return {"gate_decision": "silent"}
+        out: dict = {"gate_decision": "silent"}
+        if remainder_consumed:
+            out["interrupted_remainder"] = None
+        return out
 
     # 한 턴에 정확히 하나의 발화. response_shaper 가 문장 수에 적용하는 것과 같은
     # 규칙이다(CLAUDE.md §14). 음성은 훑어 읽을 수 없으므로, 두 가지를 한 번에 말하면
@@ -410,8 +437,11 @@ def proactive_gate(state: ConvState) -> dict:
 
     # 이긴 제안은 큐에서 지운다. 안 지우면 다음 틱에 같은 말을 또 한다.
     _discard(winner)
+    if winner is remainder:
+        # 이겼으니 소비됐다. state 에서 지워야 다음 턴에 같은 나머지를 또 안 말한다.
+        remainder_consumed = True
 
-    return {
+    result: dict = {
         "gate_decision": "speak",
         "terse": terse,
         "intent": winner["intent"],
@@ -424,6 +454,9 @@ def proactive_gate(state: ConvState) -> dict:
         # 근거이기도 하다 (CLAUDE.md §13).
         "speech_priority": winner["priority"],
     }
+    if remainder_consumed:
+        result["interrupted_remainder"] = None
+    return result
 
 
 def _requeue_losers(

@@ -1,0 +1,39 @@
+[Unit]
+Description=Bomi Robot Software (ROS2 nodes + AI vision + AI chat) - auto start on Jetson boot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ssafy
+WorkingDirectory=/home/ssafy/S15P11E102/robot/ros2_ws
+
+# 보미야 호출 → 회전 탐색 → 사람 추종 시나리오 전체를 띄운다.
+# 이 launch 하나가 LiDAR, Pico 드라이버, 비전 UDP 브릿지, person_follower,
+# twist_mux, wake_search 와 ai_vision / ai_chat 프로세스까지 함께 실행한다.
+#
+# 왜 bash -lc 인가
+#   ROS 2 환경(setup.bash)을 source 해야 ros2 명령을 쓸 수 있는데, systemd 는
+#   셸을 거치지 않고 실행하므로 여기서 명시적으로 셸을 띄운다.
+#
+# 실행 전 확인
+#   scripts/preflight.sh 가 전부 통과해야 한다. 특히 .env, 가상환경, udev 규칙.
+#
+# 장치 경로
+#   udev 규칙(scripts/99-bomi-devices.rules)을 등록했다면 /dev/bomi-pico 와
+#   /dev/bomi-lidar 를 쓴다. 등록 전이면 pico_port/lidar_port 인자를 실제
+#   경로(/dev/ttyACM0 등)로 바꾼다.
+#
+# 백엔드 MQTT 를 함께 쓰려면 use_mqtt_bridge:=true 와 broker_* 인자를 추가한다.
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source /home/ssafy/S15P11E102/robot/ros2_ws/install/setup.bash && export BOMI_ROOT=/home/ssafy/S15P11E102 && exec ros2 launch core bomi_wake_search.launch.py pico_port:=/dev/bomi-pico lidar_port:=/dev/bomi-lidar'
+
+# 정지 신호를 받으면 launch 가 자식 프로세스를 정리할 시간을 준다. 바로 KILL
+# 하면 바퀴가 도는 채로 남을 수 있다.
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

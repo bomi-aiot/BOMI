@@ -62,7 +62,7 @@ cd backend && ./gradlew test
 
 | 결과 | 판정 |
 |---|---|
-| 로봇 `633 passed` + `All checks passed` | ✅ |
+| 로봇 `655 passed` + `All checks passed` (2026-08-06 실측, 341 반영) | ✅ |
 | **[be-develop]** 백엔드 `BUILD SUCCESSFUL` | ✅ |
 | 하나라도 실패 | ❌ — 아래에서 어느 영역인지 좁힌다 |
 
@@ -76,7 +76,7 @@ cd backend && ./gradlew test
 cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py tests/test_t3_consent.py -q
 ```
 
-`19 passed` (`test_emotional_handler.py`) 여야 합니다. 특히 다음이 이 티켓의 핵심입니다.
+`23 passed` (`test_emotional_handler.py`, 2026-08-06 실측) 여야 합니다. 특히 다음이 이 티켓의 핵심입니다.
 
 | 테스트 | 무엇이 깨지면 잡히는가 |
 |---|---|
@@ -95,13 +95,31 @@ cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py tests/test_
 확인됩니다. **상위 동의(`guardian_sharing_consent_status`)가 없는 어르신에게는
 아무리 말해도 질문이 안 나가야 정상입니다** — 이걸 결함으로 오해하지 마십시오.
 
+### 자연스러운 대화 — 세션·문맥·기억 프라이버시 (WIP 자연대화, 2026-08-06)
+
+```bash
+cd robot/ai_chat && python -m pytest tests/test_conversation_session.py tests/test_context_slots.py tests/test_memory_privacy.py -q
+```
+
+`43 passed` 여야 합니다 (18+16+9, 2026-08-06 실측). 파일별로 이것이 깨지면:
+
+| 파일 | 무엇이 깨진 것인가 |
+|---|---|
+| `test_conversation_session.py` | 웨이크워드 게이트(시나리오 A), 세션 중 웨이크워드 생략(B), "이제 됐어" 종료 후 재대기(L), 무응답 종료, **정상 종료된 재생을 끼어들기로 오분류하는 결함(B1)의 재발**, 잘린 발화 나머지의 재경쟁(B2) |
+| `test_context_slots.py` | "제주도 가"→"날씨 어때?" 지역 이어짐(D), "그런데" 화제 전환의 문맥 해제(E), "대전 말고 대구" 정정(H), 만료·감쇠 수명 규칙 (CLAUDE.md §30) |
+| `test_memory_privacy.py` | 잡담 중 "우리끼리" 봉인, "기억하지 마"의 대기 행 삭제(K), 프로필 성향·만성 부위 프롬프트 반영, 주소 폴백(C 준비) |
+
+**실기에서 확인할 것:** "보미야" 한 번으로 여러 질문이 이어지는지, "이제 됐어" 후
+일반 발화에 무반응인지, "제주도 가" 다음 "날씨 어때?"가 제주 날씨인지. 전부
+**실기 미실시** 상태입니다.
+
 ### 자연스러움 10개 항목 (212)
 
 ```bash
 cd robot/ai_chat && python -m pytest tests/test_naturalness_replay.py tests/test_degradation.py -q
 ```
 
-`45 passed` 여야 합니다.
+`54 passed` 여야 합니다 (2026-08-06 실측 — 341 이 자연스러움 회귀에 케이스를 추가했습니다).
 
 시나리오는 [`tests/scenarios/naturalness_v1.json`](../../robot/ai_chat/tests/scenarios/naturalness_v1.json) 에 있습니다. **파이썬을 몰라도 케이스를 추가할 수 있습니다** — `turns` 에 어르신 발화를 넣고 `expect` 에 확인할 것을 적으면 됩니다. 파일 안에 쓸 수 있는 키 목록이 있습니다.
 
@@ -269,14 +287,27 @@ curl -X POST http://localhost:8080/api/v1/seniors/{어르신UUID}/conversation-c
   "relevantSummaries": [ ... ],
   "memories": [ { "content": "...", "score": 0.42 } ],
   "careRecords": [ ... ],
-  "availability": { "semanticSearch": false, "documentCorpus": false, "notes": [...] }
+  "availability": { "semanticSearch": false, "documentCorpus": false, "notes": [...] },
+  "retrieval": {
+    "semanticRequested": true,
+    "semanticUsed": false,
+    "fallbackReason": "embedding_disabled",
+    "hitCount": 0,
+    "latencyMs": 7
+  }
 }
 ```
+
+`retrieval`은 BE 계약 확장 전까지 없을 수 있습니다. 그때 로봇은 값을 `false`로
+지어내지 않고 "모름"으로 둡니다. BE 확장 뒤에는 `availability`가 기능 가용성,
+`retrieval`이 이번 요청의 실제 실행 결과인지 반드시 따로 확인합니다.
 
 | 확인 항목 | 성공 | 실패 |
 |---|---|---|
 | `memories` 개수 | 요청한 `memoryTopK` 이하 | 20개씩 오면 과적재 방지가 깨진 것 |
 | `availability.semanticSearch` | 지금은 `false` **가 정상** (218 은 이미 완료됐지만 임베딩 과금 때문에 `EMBEDDING_ENABLED` 기본값이 off) | `true` 인데 명시적으로 켠 적이 없으면 거짓 보고 |
+| `retrieval.semanticRequested/semanticUsed` | 요청·실행 여부가 실제 폴백과 일치 | 임베딩 실패인데 `semanticUsed=true`, 또는 필드 없이 성공으로 간주 |
+| `retrieval.fallbackReason` | `semanticUsed=false`이면 운영자가 이해할 수 있는 사유 | 빈 값이라 폴백 원인을 추적할 수 없음 |
 | `profile.avoidTopics` | 회피 주제가 실려 온다 | 비어 있으면 프롬프트가 금지문을 못 만든다 |
 | **`memories` 에 `visibility=PRIVATE` 인 기억** | 로봇 호출(guardian 미지정)에서는 **와야 정상** | 보호자 지정 호출에서 오면 🔴 **프라이버시 사고** |
 
@@ -295,8 +326,13 @@ FROM memory WHERE senior_id = '...';
 ### 2.5 반응형 1왕복 — 한 턴이 끝까지 도는가 (204)
 
 ```bash
-cd robot/ai_chat && python -m pytest tests/test_turn_end_to_end.py tests/test_prompt_builder.py -v
+cd robot/ai_chat && python -m pytest tests/test_graph_build.py tests/test_turn_end_to_end.py tests/test_prompt_builder.py -v
 ```
+
+`test_information_turn_requests_documents_and_preserves_retrieval_evidence`가 다음을 한 번에
+검증합니다: `classify_intent → includeDocuments=true → 문서 출처·버전·청크·인용 →
+retrieval_status → 최종 프롬프트`. 실제 Spring Boot·Qdrant까지 포함하는 검증은 BE
+브랜치의 교차 모듈 E2E가 생기기 전까지 `UNVERIFIED`입니다.
 
 **프롬프트를 눈으로 보고 싶다면** (LLM 호출 없이, 순수 함수라 가능):
 

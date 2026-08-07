@@ -1,0 +1,35 @@
+{
+  "corpusVersion": "2026-08-06",
+  "chunks": [
+    {
+      "chunkId": "bokjiro-membership-overview-2026",
+      "title": "복지멤버십(맞춤형급여안내)",
+      "content": "연령, 가구 구성, 경제 상황 등 공적 자료를 바탕으로 받을 가능성이 있는 복지서비스를 찾아 안내하는 제도입니다. 복지로 또는 행정복지센터에서 가입 방법을 확인할 수 있습니다. 안내는 실제 수급 결정을 뜻하지 않으므로 자격과 신청 가능 여부는 담당 기관에서 다시 확인해야 합니다.",
+      "source": "복지로",
+      "version": "2026-08-06 스냅샷",
+      "citation": "복지로 > 맞춤형급여안내(복지멤버십) > 제도 안내",
+      "url": "https://www.bokjiro.go.kr/ssis-tbu/twatza/wmAplyMng/selectWmGdnc.do",
+      "keywords": ["복지", "복지제도", "복지서비스", "맞춤형급여안내", "복지멤버십", "노인 복지"]
+    },
+    {
+      "chunkId": "bokjiro-senior-care-overview-2026",
+      "title": "노인맞춤돌봄서비스",
+      "content": "일상생활이 어려운 취약 어르신에게 안전 확인, 사회 참여, 생활 교육, 일상생활 지원 같은 맞춤형 돌봄을 제공하는 제도입니다. 2026년 기준 안내는 65세 이상이면서 기초생활수급자, 차상위계층 또는 기초연금수급자 중 돌봄이 필요한 사람 등을 대상으로 하며 유사·중복사업 여부를 함께 확인합니다. 주민센터 또는 보건복지상담센터 129에서 최신 자격과 신청 절차를 확인해야 합니다.",
+      "source": "복지로",
+      "version": "2026년 기준, 2026-06-05 반영",
+      "citation": "복지로 복지서비스 상세 > 노인맞춤돌봄서비스",
+      "url": "https://www.bokjiro.go.kr/ssis-tbu/twataa/wlfareInfo/moveTWAT52011M.do?wlfareInfoId=WLF00003191&wlfareInfoReldBztpCd=01",
+      "keywords": ["복지", "복지제도", "노인 복지", "노인맞춤돌봄", "돌봄서비스", "안전 확인", "생활 지원"]
+    },
+    {
+      "chunkId": "bokjiro-emergency-safety-overview-2026",
+      "title": "독거노인·장애인 응급안전안심서비스",
+      "content": "안전 사각지대의 노인·장애인 가구에 응급호출기와 감지 장비 등을 설치해 화재나 응급상황에 신속히 대응하도록 돕는 예방적 돌봄 제도입니다. 2026년 안내는 상시 보호가 필요한 독거노인, 노인 2인 가구, 조손가구, 장애인 가구 등을 대상으로 하며 세부 선정 기준이 있습니다. 주민센터 또는 보건복지상담센터 129에서 거주지별 지원 가능 여부를 확인해야 합니다.",
+      "source": "복지로",
+      "version": "2026년 기준, 2026-08-06 스냅샷",
+      "citation": "복지로 복지서비스 상세 > 독거노인·장애인 응급안전안심서비스",
+      "url": "https://www.bokjiro.go.kr/ssis-tbu/twataa/wlfareInfo/moveTWAT52011M.do?wlfareInfoId=WLF00001093",
+      "keywords": ["복지", "복지제도", "노인 복지", "응급안전안심서비스", "독거노인", "응급호출기", "화재 감지"]
+    }
+  ]
+}

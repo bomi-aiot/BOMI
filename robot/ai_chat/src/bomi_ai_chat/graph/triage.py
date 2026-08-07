@@ -266,14 +266,44 @@ def safety_triage(state: ConvState) -> dict:
             "pending_safety_check": None,
         }
 
-    # 확인 질문을 던져둔 상태라면, 이 발화가 그 답이다.
-    if state.get("pending_safety_check"):
-        return _resolve_pending_check(state, text, senior_id)
+    # 확인 질문을 던져둔 상태라면, 이 발화가 그 답이다 — 단, 시효 안일 때만.
+    pending = state.get("pending_safety_check")
+    if pending:
+        if not _pending_check_is_stale(pending):
+            return _resolve_pending_check(state, text, senior_id)
+        # 마감(SAFETY_CONFIRMATION_TIMEOUT_SEC)이 한참 지난 확인 질문이다.
+        #
+        # ★ 왜 답으로 취급하지 않는가 — 233 실기에서 실제로 터진 구멍
+        #   pending 은 checkpoint 에 남아 재시작과 몇 시간의 공백을 넘어 살아남는다.
+        #   그런데 _resolve_pending_check 는 "명확한 부정 외에는 전부 T1" 이라서,
+        #   26분 전(혹은 어제) 던진 질문의 답으로 아침 첫 인사를 판정하면
+        #   "밥 먹자"가 보호자 호출이 된다. 답이 오지 않은 확인의 에스컬레이션은
+        #   jobs/ticks._escalate_unanswered_safety_check 가 마감 시점에 이미
+        #   처리했으므로, 여기서는 이번 발화를 평범한 새 턴으로 다시 판정한다.
+        logger.info("safety confirmation expired unanswered; treating this "
+                    "utterance as a fresh turn, not a reply")
+        _clear_pending_check(senior_id)
+        if _is_emergency(text):
+            # None 을 '먼저' 두고 펼친다 — 새 판정이 확인 질문을 다시 열면
+            # (_open_or_escalate 가 pending 을 새로 세팅하면) 그쪽이 이겨야 한다.
+            return {"pending_safety_check": None,
+                    **_open_or_escalate(state, text, senior_id)}
+        return {"safety_level": "none", "pending_safety_check": None}
 
     if _is_emergency(text):
         return _open_or_escalate(state, text, senior_id)
 
     return {"safety_level": "none"}
+
+
+def _pending_check_is_stale(pending: dict) -> bool:
+    """확인 질문의 시효가 지났는가.
+
+    expires_at 이 없으면(과거 빌드가 남긴 checkpoint) 지난 것으로 본다 —
+    언제 물었는지 모르는 질문의 답으로 지금 발화를 판정하는 쪽이 더 위험하다.
+    """
+    expires_at = float(pending.get("expires_at") or 0.0)
+    return expires_at <= 0.0 or clock.now() > expires_at
 
 
 def _open_or_escalate(state: ConvState, text: str, senior_id: str) -> dict:
@@ -361,7 +391,12 @@ def _clear_pending_check(senior_id: str) -> None:
 
 
 # 확인 질문. 진단하지 않고, 티어를 말하지 않고, 겁을 주지 않는다.
-_CONFIRM_QUESTION = "많이 불편하세요? 아드님께 연락드릴까요?"
+#
+# ★ "아드님" 이라고 말하지 않는다 (233 실기 후속)
+#   보호자는 딸일 수도, 형제일 수도, 돌봄 담당자일 수도 있다. 실제 관계를 로봇이
+#   모르는 채로 "아드님"을 단정하면, 아들이 없는 어르신에게는 그 한마디가 로봇이
+#   자기를 모른다는 증거가 된다. 관계를 아는 척하지 않는 "가족분"으로 부른다.
+_CONFIRM_QUESTION = "많이 불편하세요? 가족분께 연락드릴까요?"
 
 
 def safety_confirm(state: ConvState) -> dict:
@@ -457,17 +492,67 @@ def escalation(state: ConvState) -> dict:
     #
     # 실제 전송은 jobs.ticks.outbox_flush 가 한다. 여기서 직접 보내지 않는 이유는
     # 전송 지연이 어르신에게 돌아갈 응답을 붙잡아서는 안 되기 때문이다.
-    try:
-        outbox.enqueue("T1", payload)
-    except Exception:  # noqa: BLE001 - 큐 쓰기 실패가 응답까지 막으면 안 된다
-        # 여기까지 오면 로컬 저장소가 망가진 것이다. 어르신에게는 여전히 대답하되,
-        # 이 실패는 조용히 지나가서는 안 된다.
-        logger.exception("FAILED to queue a T1 guardian alert (reason=%s); "
-                         "the guardian may never be notified", reason)
+    # 같은 사유의 알림이 방금 나갔으면 큐에 넣지 않는다.
+    #
+    # ★ 억제되는 것은 '보호자 알림'뿐이고, 아래의 어르신 응답은 그대로 나간다.
+    #   두 번째로 "가슴이 아파"라고 하신 분에게 로봇이 침묵하면 그건 다른 종류의
+    #   실패다. 보호자는 이미 알고 있고, 어르신은 여전히 대답을 기다린다.
+    #
+    #   사유가 다르면 억제하지 않는다 — emergency 뒤의 self_harm_override 는
+    #   중복이 아니라 악화다 (policy.T1_DUPLICATE_SUPPRESSION_SEC 의 주석 참고).
+    senior_id = state.get("senior_id")
+    suppressed = False
+    if senior_id:
+        try:
+            stored = runtime_store.load(senior_id)
+            elapsed = clock.now() - (stored.get("last_escalation_at") or 0.0)
+            same_reason = stored.get("last_escalation_reason") == reason
+            suppressed = (
+                same_reason and elapsed < policy.T1_DUPLICATE_SUPPRESSION_SEC
+            )
+        except Exception:  # noqa: BLE001 - 억제 판정 실패가 알림을 막으면 안 된다
+            # 읽지 못했으면 '중복이 아니다'로 본다. 안전 기기에서 모르는 쪽의
+            # 기본값은 '보낸다'여야 한다.
+            logger.exception("could not read the last escalation; sending anyway")
+            suppressed = False
 
-    logger.warning("T1 escalation queued: reason=%s occupancy=%s",
-                   reason, state.get("occupancy"))
+    if suppressed:
+        # 조용히 버리지 않는다. 억제도 하나의 판단이므로 근거가 로그에 남아야
+        # 사후에 "왜 알림이 한 번만 갔나"를 답할 수 있다 (CLAUDE.md §26).
+        logger.warning(
+            "T1 alert suppressed as a duplicate: reason=%s within %.0fs; "
+            "the senior still gets a response",
+            reason, policy.T1_DUPLICATE_SUPPRESSION_SEC,
+        )
+    else:
+        try:
+            outbox.enqueue("T1", payload)
+        except Exception:  # noqa: BLE001 - 큐 쓰기 실패가 응답까지 막으면 안 된다
+            # 여기까지 오면 로컬 저장소가 망가진 것이다. 어르신에게는 여전히
+            # 대답하되, 이 실패는 조용히 지나가서는 안 된다.
+            logger.exception("FAILED to queue a T1 guardian alert (reason=%s); "
+                             "the guardian may never be notified", reason)
 
+        logger.warning("T1 escalation queued: reason=%s occupancy=%s",
+                       reason, state.get("occupancy"))
+
+        # 큐에 넣은 뒤에 기록한다. 넣지 못했는데 '보냈다'고 적으면 다음 진짜
+        # 알림까지 억제된다 — 억제 로직이 알림을 삼키는 최악의 형태다.
+        if senior_id:
+            try:
+                runtime_store.save(
+                    senior_id,
+                    last_escalation_at=clock.now(),
+                    last_escalation_reason=reason,
+                )
+            except Exception:  # noqa: BLE001 - 기록 실패가 응답을 막으면 안 된다
+                logger.exception("could not record the escalation timestamp; "
+                                 "duplicates may not be suppressed")
+
+    if suppressed:
+        # 알림은 이미 나갔다. 새로 약속하는 대신 그 사실을 말한다(위 상수의 주석 참고).
+        return {"response": _RESPONSES_ALREADY_SENT.get(
+            reason, _RESPONSES_ALREADY_SENT["emergency"])}
     return {"response": _RESPONSES.get(reason, _RESPONSES["emergency"])}
 
 
@@ -480,10 +565,25 @@ def escalation(state: ConvState) -> dict:
 #
 # 자해는 문구가 다르다. 상담을 시도하지 않고, 혼자가 아니라는 말만 하고 넘긴다.
 # 챗봇이 자살 대화를 붙잡고 있는 것은 도움을 부르는 것보다 나쁜 결과다 (CLAUDE.md §9).
+# 호칭은 전부 "가족분"이다 — _CONFIRM_QUESTION 의 주석 참고. 관계를 아는 척하지 않는다.
 _RESPONSES = {
-    "emergency": "제가 아드님께 연락드릴게요. 잠깐만 이대로 계세요.",
+    "emergency": "제가 가족분께 연락드릴게요. 잠깐만 이대로 계세요.",
     "explicit_request": "네, 지금 바로 연락드릴게요.",
     "self_harm_override": "그런 마음이 드셨군요. 혼자 두고 싶지 않아요. "
                           "제가 지금 가족분께 연락드릴게요.",
-    "no_response": "한참 대답이 없으셔서 걱정됐어요. 아드님께 연락드릴게요.",
+    "no_response": "한참 대답이 없으셔서 걱정됐어요. 가족분께 연락드릴게요.",
+}
+
+# 같은 사유의 알림이 '방금' 나가서 억제됐을 때의 응답.
+#
+# 왜 따로 두는가  ★ 233 실기에서 같은 문장이 6분간 14번 반복됐다
+#   억제되는 것은 보호자 알림뿐이고 어르신에게는 응답이 나가는데, 그 응답이
+#   매번 "제가 가족분께 연락드릴게요"면 로봇은 연락을 계속 '새로' 약속하는
+#   셈이다. 이미 연락한 상태라면 사실대로 — 연락은 됐고, 기다리는 중이고,
+#   곁에 있다 — 를 말하는 것이 정직하고 덜 무섭다.
+_RESPONSES_ALREADY_SENT = {
+    "emergency": "조금 전에 가족분께 연락드렸어요. 곧 연락이 올 테니 제가 옆에 있을게요.",
+    "explicit_request": "네, 조금 전에 연락드렸어요. 곧 연락이 올 거예요.",
+    "self_harm_override": "혼자 두지 않을게요. 가족분께는 이미 연락드렸어요.",
+    "no_response": "조금 전에 가족분께 연락드렸어요. 곧 연락이 올 거예요.",
 }

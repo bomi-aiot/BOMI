@@ -4,6 +4,7 @@ import pytest
 
 from bomi_ai_chat.http import ExternalServiceError, InvalidResponseError
 from bomi_ai_chat.llm.client import LLMClient
+from bomi_ai_chat.turn_timer import TurnTimer
 from tests.http_fakes import StubResponse, StubSession
 
 
@@ -73,3 +74,16 @@ def test_gemini_invalid_json_is_normalized(settings_factory):
 
     with pytest.raises(InvalidResponseError):
         client.generate("안녕")
+
+
+def test_gemini_call_is_recorded_in_the_active_turn(settings_factory):
+    client = LLMClient(
+        llm_settings(settings_factory),
+        session=StubSession(gemini_response()),
+    )
+    timer = TurnTimer()
+
+    with timer.activate():
+        client.generate("안녕")
+
+    assert timer.stages["llm"] >= 0

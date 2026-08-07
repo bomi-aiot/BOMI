@@ -1,0 +1,108 @@
+# 실제 LiDAR와 엔코더·자이로 오도메트리를 사용하는 온라인 2D 지도 생성 설정.
+# 시뮬레이션 설정과 분리하며, 실측 전 임의 튜닝값을 추가하지 않는다.
+#
+# 여기 적힌 값의 근거는 두 가지뿐이다.
+#   1. 공간 크기: 약 3 m x 3 m, 거의 정사각형
+#   2. 로봇 성능(robot/docs/hardware-control.md `## 7`):
+#      최대 0.154 m/s, 약 1.20 rad/s
+#
+# 정사각형 공간은 90° 돌려도 스캔이 거의 같아 보인다. 그래서 스캔 매칭만으로는
+# "제자리"와 "90° 돌아간 자리"를 구별할 수 없고, 구별할 수 있는 유일한 근거는
+# odometry의 yaw다. 아래 값은 전부 "매칭이 odometry를 크게 벗어나지 못하게
+# 묶는다"는 한 방향을 향한다. slam_toolbox 기본값은 반대로 넓은 공간에서
+# odometry를 크게 고쳐주도록 잡혀 있어, 이 공간에서는 지도가 90°씩 돌아간
+# 여러 장으로 겹쳐 쌓인다.
+slam_toolbox:
+  ros__parameters:
+    use_sim_time: false
+    mode: mapping
+    map_frame: map
+    odom_frame: odom
+    base_frame: base_link
+    scan_topic: /scan
+
+    # Nav2 코스트맵(core/config/nav2_safe_params_real.yaml)과 같은 해상도다.
+    resolution: 0.05
+
+    # X4-PRO의 측정 가능 범위에 맞춘다. 기본값(0.0~20.0 m)은 센서 사양을
+    # 벗어나 slam_toolbox가 실행 시 경고를 남기고, 하한이 0이면 로봇 몸체와
+    # 배선에 반사된 근거리 노이즈가 장애물로 기록된다.
+    # 상한은 bomi_lidar/config/x4_pro.yaml의 range_max와 같은 값이다.
+    # 하한은 range_min(0.12 m)에 여유를 둔 값이며, LiDAR 주변이 트여 있음을
+    # 확인하면 0.12까지 내릴 수 있다.
+    #
+    # 3 m x 3 m 공간에서 상한 10 m는 그냥 상한일 뿐이다(대각선이 4.3 m).
+    # 지도가 겹쳐 그려지는 원인은 이 상한이 아니라 아래 정합 파라미터다.
+    min_laser_range: 0.15
+    max_laser_range: 10.0
+
+    # LiDAR가 10 Hz이므로 0.2 s는 스캔 두 장 간격이다. 기본값 0.5 s는
+    # 이 공간에서 너무 드물다.
+    minimum_time_interval: 0.2
+    transform_publish_period: 0.02
+    map_update_interval: 1.0
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    throttle_scans: 1
+    stack_size_to_use: 40000000
+
+    # 스캔 매칭을 쓰되, 아래 탐색 범위로 odometry 근처만 보게 제한한다.
+    # 매칭을 완전히 끄면(use_scan_matching:=false) 지도는 odometry만
+    # 따라가므로 90° 오정합은 사라지지만 yaw 오차가 그대로 지도에 남는다.
+    # 두 방식은 joystick_slam_robot.launch.py의 launch 인자로 바꿔가며
+    # 같은 경로로 비교한다.
+    use_scan_matching: true
+    use_scan_barycenter: true
+
+    # 지도에 스캔을 추가하는 간격. 기본값(0.5 m, 0.5 rad = 28.6°)은
+    # 3 m 방에서 한 벽을 지나며 6장, 제자리 360° 회전에 12장뿐이다.
+    # 그 간격이면 매칭이 이전 스캔과 겹치는 부분을 잃고 90° 쪽으로 튄다.
+    # 0.1 m / 0.1 rad(5.7°)면 최고 속도에서도 0.65 s, 0.08 s마다 한 장이다.
+    minimum_travel_distance: 0.1
+    minimum_travel_heading: 0.1
+
+    # 최근 스캔 20장 = 이동 2 m 분량. 3 m 방의 벽 하나를 덮는다.
+    scan_buffer_size: 20
+    scan_buffer_maximum_scan_distance: 10.0
+    link_match_minimum_response_fine: 0.15
+    link_scan_maximum_distance: 1.0
+
+    # 루프 클로저는 이 공간에서 지도를 90° 돌려버리는 주된 경로다.
+    # 기본 탐색 격자가 8 m x 8 m여서 3 m 방에서는 모든 과거 위치가
+    # 후보가 되고, 회전 대칭인 방이라 90° 돌아간 후보도 높은 점수를 받는다.
+    # 한 바퀴 도는 동안의 그래프 누적 오차가 벽 두께보다 작을 만큼 공간이
+    # 작으므로 우선 끈다. odometry yaw를 실측으로 검증한 뒤, 아래 값을
+    # 그대로 두고 do_loop_closing만 켜서 한 항목씩 비교한다.
+    do_loop_closing: false
+    loop_search_maximum_distance: 1.5
+    loop_search_space_dimension: 3.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+    loop_match_minimum_chain_size: 15
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.5
+    loop_match_minimum_response_fine: 0.6
+
+    # 스캔 한 장을 맞출 때 탐색하는 위치 범위. 0.3 m는 스캔 간격(0.1 m)의
+    # 3배이므로 정상 주행에서 필요한 만큼은 되고, 방 반대편으로 옮겨가지는
+    # 못한다.
+    correlation_search_space_dimension: 0.3
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.03
+
+    # 각도 탐색 범위가 90° 오정합을 막는 핵심이다. 기본값 0.349 rad(20°)를
+    # 0.0873 rad(5°)로 줄여, 매칭이 odometry yaw에서 5° 이상 벗어난 답을
+    # 아예 고를 수 없게 한다. 스캔 간격이 5.7°이므로 정상 회전은 이 범위
+    # 안에서 처리된다. 여기서 계속 실패하면 파라미터가 아니라 odometry yaw
+    # 자체가 틀린 것이므로 그쪽을 먼저 고친다.
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.0873
+    coarse_angle_resolution: 0.0175
+
+    angle_variance_penalty: 1.0
+    distance_variance_penalty: 0.5
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true
+    min_pass_through: 2
+    occupancy_threshold: 0.1

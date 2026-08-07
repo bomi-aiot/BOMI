@@ -55,7 +55,7 @@ from langgraph.graph import END
 from bomi_ai_chat import policy
 from bomi_ai_chat.clock import clock
 from bomi_ai_chat.door import occupancy as occupancy_rules
-from bomi_ai_chat.graph import output
+from bomi_ai_chat.graph import context_slots, output
 from bomi_ai_chat.localstore import runtime as runtime_store
 from bomi_ai_chat.state import ConvState, SpeechProposal
 
@@ -177,6 +177,26 @@ def note_interaction(state: ConvState) -> dict:
         #   능동 턴(스케줄러/현관/backend_command)은 영향 없다 — 그쪽은 자기 노드가
         #   이번 턴에 intent 를 새로 채워 넣는다(ingress.py 의 다른 진입점들 참고).
         "intent": None,
+        # classify_intent 가 context_read 보다 먼저 도는 현재 그래프에서 의료
+        # 판정도 매 반응형 턴 새로 계산해야 한다. 지우지 않으면 지난 턴의 병원
+        # 질문 결과가 이번 잡담의 조회 여부까지 결정한다.
+        "is_medical_query": None,
+        # 안전 판정도 이번 턴에 새로 하게 한다.
+        #
+        # ★ 이게 없으면 T1 한 번이 영원히 이어진다 — 233 실기 폭주의 남은 반쪽
+        #   safety_level 과 escalation 도 reducer 가 없는 채널이라(state.py) 지난
+        #   턴의 값이 checkpoint 로 그대로 넘어온다. safety_triage 의 첫 분기는
+        #   "T1 + escalation 이 미리 세팅돼 있으면 분류 없이 통과"인데, 여기서
+        #   지우지 않으면 그 분기가 '지난 턴의 결과'를 '이번 턴의 사전 세팅'으로
+        #   오인한다. 그 뒤로는 무슨 말을 해도 — "괜찮아요"조차 — 분류 없이 T1 로
+        #   직행하고, 재시작해도 checkpoint 가 남아 그대로다. 233 실기에서 6분간
+        #   14연속 T1 이 나가고, 재시작 직후 첫 발화까지 즉시 T1 이 된 원인이다.
+        #   침묵 사다리의 T1 은 그래프를 거치지 않고 outbox 에 직접 쓰므로
+        #   (jobs/ticks._escalate_no_response) 여기서 지워도 잃는 경로가 없다.
+        #   pending_safety_check(확인 질문 대기)는 지우지 않는다 — 그건 다음 턴의
+        #   발화가 답이 되어야 하는, 살아 있어야 할 상태다.
+        "safety_level": "none",
+        "escalation": None,
     }
 
     # 대화 경계 판정 — 이어 붙일지, 새로 열지 (S15P11E102-306).
@@ -184,10 +204,34 @@ def note_interaction(state: ConvState) -> dict:
     # 반드시 last_user_interaction_at 을 위에서 '덮어쓰기 전'의 값(= state 에 남아
     # 있던 지난 상호작용 시각)으로 판정해야 한다. out 은 아직 state 에 합쳐지지
     # 않았으므로 여기서 state.get(...) 을 읽는 것이 정확하다.
-    out.update(_conversation_boundary(state, now))
+    boundary = _conversation_boundary(state, now)
+    out.update(boundary)
+
+    # 현재 대화 문맥(지역 등)을 이번 발화로 갱신한다 (자연스러운 대화 Phase 2).
+    #
+    # 대화 경계를 넘었으면 SESSION 범위 문맥부터 비운다 — 30분 넘게 자리를 비웠다
+    # 돌아온 사람의 "날씨 어때?"를 아침의 제주 이야기로 해석하면 안 된다. 경계
+    # 판정과 같은 신호를 쓰는 이유: '문맥의 수명'과 '최근 대화의 수명'이 다르면
+    # 프롬프트의 최근 대화에는 없는 지역으로 조회하는 어긋남이 생긴다.
+    crossed_boundary = "conversation_id" in boundary and boundary["conversation_id"] is None
+    previous_candidates = [] if crossed_boundary else (
+        state.get("context_candidates") or [])
+    out["context_candidates"] = context_slots.update(
+        previous_candidates, state.get("user_input") or "", now)
 
     # 맞장구로 끝나는 턴에서도 먼저 저장한다. "응" 한마디도 생존 증거다.
     _persist_interaction(state, now)
+
+    # 프라이버시 요청("우리끼리 얘기", "기억하지 마")을 모든 반응형 턴에서 듣는다.
+    #
+    # ★ 예전에는 T4 봉인 표지를 정서 턴(handle_emotional)에서만 검사했다
+    #   어르신이 잡담(companion) 중에 "우리끼리 얘긴데"라고 하면 봉인되지 않고
+    #   그 발화가 추출 큐로 들어갔다 (current-state-audit.md §3 — T4 봉인의
+    #   인텐트 한정). 비밀 요청이 인텐트 분류 결과에 따라 지켜지거나 안 지켜지는
+    #   것은 §9 의 "T4 는 진짜여야 한다"를 깨는 일이라, 인텐트 분류 '전'인
+    #   여기서 듣는다. LLM 은 이 결정에 관여하지 않는다.
+    _honor_privacy_requests(state, effective_conversation_id=(
+        None if crossed_boundary else state.get("conversation_id")))
 
     if not state.get("speaking"):
         return out
@@ -197,14 +241,85 @@ def note_interaction(state: ConvState) -> dict:
 
     if _is_backchannel(text, duration):
         # 계속 말한다. 여기서 턴이 끝나므로 재생에는 손대지 않는다.
+        # 재생이 사실은 이미 끝났더라도 맞장구는 응답이 필요 없는 턴이므로
+        # 여기서 끝내는 것이 여전히 옳다.
         out["is_backchannel"] = True
         return out
 
-    # 양보 우선(yield-first): 어르신의 발화가 우리 발화보다 가치 있다 (CLAUDE.md §13).
+    # state 가 '말하는 중'이라고 해도 재생 스레드에게 확인한다.
+    #
+    # ★ 이게 없으면 두 번째 턴부터 모든 발화가 '끼어들기'로 처리된다
+    #   emit 은 재생을 시작하며 speaking=True 를 쓰지만, 재생이 '정상 종료'될 때
+    #   False 로 되돌리는 노드가 없다 — 재생 스레드는 checkpoint 를 쓸 수 없고,
+    #   다음 그래프 실행은 재생이 언제 끝났는지 모른다. 그래서 반이중 대기로 재생을
+    #   다 듣고 말한 다음 발화조차 state 상으로는 '로봇이 말하는 중의 끼어들기'가
+    #   된다. 실피해는 취소할 것이 없어 작지만, 로그와 의도가 왜곡되고 barge-in
+    #   통계를 믿을 수 없게 된다 (docs/natural-conversation/current-state-audit.md B1).
+    #   진행 상황의 권위는 재생 핸들이므로(§13), 핸들이 없거나 이미 끝났으면 여기서
+    #   상태를 바로잡고 '끼어들기가 아니라' 평범한 턴으로 진행한다.
+    senior_id = state.get("senior_id") or ""
+    handle = output.TTS_HANDLES.get(senior_id)
+    if handle is None or handle.is_done:
+        output.clear_speech_state(senior_id)
+        out["speaking"] = False
+        out["spoken_prefix"] = ""
+        return out
+
     # 양보 우선(yield-first): 어르신의 발화가 우리 발화보다 가치 있다 (CLAUDE.md §13).
     out["speaking"] = False
     out["interrupted_remainder"] = _yield_playback(state)
     return out
+
+
+def _honor_privacy_requests(
+    state: ConvState, *, effective_conversation_id: str | None
+) -> None:
+    """"우리끼리 얘기" / "기억하지 마"를 결정론으로 지킨다. (시나리오 K, §9 T4)
+
+    무엇을 하는가
+        두 가지 표지를 본다.
+          1. T4 봉인(policy.T4_SEAL_MARKERS): 이 대화를 봉인한다 → 앞으로 이
+             대화의 발화는 추출 큐에 들어가지 않고(T4), T3 동의 질문의 재료도
+             되지 않는다.
+          2. 삭제 요청(policy.MEMORY_FORGET_MARKERS): 봉인에 더해, 이 대화에서
+             '이미' 큐에 쌓인 추출 대기 행을 지운다.
+
+    왜 note_interaction 에서 하는가
+        인텐트 분류보다 먼저여야 한다. 비밀 요청이 emotional 로 분류될 때만
+        지켜진다면 T4 는 확률적 약속이 되고, 어르신은 그것을 믿을 수 없다
+        (§9 — "T4 must be real"). 여기는 모든 반응형 턴이 지나는 첫 노드다.
+
+    무엇을 못 하는가 (정직하게)
+        이미 서버로 제출된 fact_candidate 는 취소하지 못한다 — 백엔드에 취소
+        엔드포인트가 없다(BE 티켓 대기). 그때까지 이 함수가 지키는 것은
+        "로봇이 아직 보내지 않은 것은 절대 보내지 않는다"까지다.
+    """
+    senior_id = state.get("senior_id") or ""
+    text = state.get("user_input") or ""
+    if not senior_id or not text:
+        return
+    normalized = text.replace(" ", "")
+
+    wants_forget = any(m in normalized for m in policy.MEMORY_FORGET_MARKERS)
+    wants_seal = wants_forget or any(m in text for m in policy.T4_SEAL_MARKERS)
+    if not wants_seal:
+        return
+
+    from bomi_ai_chat.localstore import cancellations, emotion, extraction
+
+    conversation_id = effective_conversation_id or ""
+    if conversation_id:
+        emotion.mark_sealed(senior_id, conversation_id)
+        logger.info("T4_SEALED conversation=%s", conversation_id)
+    if wants_forget and conversation_id:
+        dropped = extraction.forget_conversation(senior_id, conversation_id)
+        # 서버 절반도 요청한다 (S15P11E102-348). 여기서 직접 HTTP 를 부르면 턴
+        # 지연 예산(§16)을 깨고 네트워크 단절 시 요청을 잃으므로, 로컬 큐에 적고
+        # 배경 틱(extraction_flush)이 백엔드 취소 엔드포인트로 보낸다.
+        cancellations.enqueue(senior_id, conversation_id)
+        # 발화 원문은 로그에 싣지 않는다 — 지우라는 요청을 로그로 남기는 모순.
+        logger.info("MEMORY_FORGOTTEN conversation=%s pending_dropped=%d "
+                    "server_cancel=queued", conversation_id, dropped)
 
 
 def _persist_interaction(state: ConvState, now: float) -> None:
@@ -491,6 +606,19 @@ def backend_command(state: ConvState) -> dict:
 
     if not text:
         logger.warning("backend command has no text; nothing to say")
+        # ★ 체크포인트 오염 방어 (2026-08 랭그래프 분석에서 발견).
+        #
+        #   여기서 아무 키도 안 돌려주면 끝이 아니다. checkpointer 는 thread_id
+        #   (=어르신 id)별로 이전 턴의 state 전체를 이번 턴에도 그대로 물려주므로,
+        #   intent/user_input 을 안 지우면 "지난번에 backend_command 가 남긴 값"이
+        #   그대로 남아 있다. classify_intent 의 "if state.get('intent'): return
+        #   {'is_medical_query': None}" 가드가 그 지난 값을 "이번 턴에 이미 분류
+        #   됐다"로 착각해 재분류를 건너뛰고, handle_greeting 은 그 지난 user_input
+        #   을 다시 말해 버린다 — 빈 명령 하나가 지난 문구를 재생하는 셈이다.
+        #   note_interaction 이 반응형 턴 시작마다 intent 를 지우는 것과 같은
+        #   이유로, backend_command 도 자기 진입마다 명시적으로 비워야 한다.
+        out["intent"] = None
+        out["user_input"] = None
         return out
 
     out.update({

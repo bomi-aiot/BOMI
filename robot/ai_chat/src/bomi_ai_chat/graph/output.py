@@ -35,6 +35,7 @@ import re
 
 from bomi_ai_chat import policy
 from bomi_ai_chat.state import ConvState
+from bomi_ai_chat.turn_timer import current_stage
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,68 @@ def split_sentences(text: str) -> list[str]:
     ]
 
 
+# 프롬프트가 모델에게 건네는 '뼈대' 표시들.
+#
+# 이것들은 모델이 읽으라고 넣은 것이지 말하라고 넣은 것이 아니다. 그런데 입력이
+# 어수선하면 모델이 그대로 베껴 출력한다 — 233 실기 점검에서 로봇이
+# "[현재 정보] 오늘은 2026년 08월 05일 수요일... 어르신: 밖에 니가 오나 바로."
+# 를 소리 내어 말했다. 대괄호와 내부 라벨을 읽는 로봇은 말벗이 아니라 서식이다
+# (CLAUDE.md §17.9 "기계를 설명하지 않는다").
+_SCAFFOLD_LABEL = re.compile(r"\[[^\]\n]{1,20}\]\s*")
+
+# 화자 표시. 모델이 어르신의 말을 그대로 되읽는 형태다. 라벨만 떼면 어르신의 말이
+# 로봇의 말로 둔갑하므로, 이 표시가 붙은 문장은 통째로 버린다.
+_ECHOED_SPEAKER = re.compile(r"^(어르신|사용자)\s*[:：]")
+
+# 모델이 자기 답변에 붙이는 접두사. 이건 내용이 뒤에 있으므로 접두사만 뗀다.
+_ANSWER_PREFIX = re.compile(r"^(답변|응답)\s*[:：]\s*")
+
+
+def strip_prompt_scaffolding(text: str) -> str:
+    """프롬프트 뼈대가 음성으로 새어 나가는 것을 결정적으로 막는다.
+
+    무엇을 하는가
+        세 가지를 순서대로 처리한다.
+          1. `[현재 정보]` 같은 대괄호 라벨은 '떼기만' 한다. 그 뒤 문장은 대개
+             진짜 내용이라("오늘은 ... 수요일입니다") 통째로 버리면 답을 잃는다.
+          2. `어르신:` / `사용자:` 로 시작하는 문장은 '버린다'. 어르신의 말을
+             되읽은 것이므로 라벨만 떼면 그 말이 로봇의 말이 된다.
+          3. `답변:` 접두사는 뗀다. 뒤에 진짜 답이 있다.
+
+    왜 프롬프트가 아니라 여기서도 막는가
+        프롬프트는 확률적이다. 같은 지시를 넣어도 입력이 어수선하면 다시 샌다.
+        §17.9 는 취향이 아니라 검증 대상 항목이므로, 확률에 맡기지 않고 결정적인
+        보증을 하나 둔다. 프롬프트 쪽 금지 문구도 함께 넣었다(llm/client.py) —
+        이 함수는 그것이 실패했을 때의 안전망이다.
+
+    누가 호출하는가
+        response_shaper. 모든 출력 경로가 그곳을 지나므로 여기 한 곳이면 된다.
+
+    인자
+        text: 핸들러가 만든 응답 원문.
+
+    반환값
+        말해도 되는 텍스트. 전부 버려졌으면 빈 문자열.
+
+    주의사항
+        - 라벨 폭을 20자로 제한한다. 어르신이 실제로 대괄호를 쓸 일은 없지만,
+          제한이 없으면 긴 문장을 통째로 삼킬 수 있다.
+        - 이 함수가 무언가를 지웠다면 프롬프트가 제 일을 못 한 것이다.
+          호출부가 그 사실을 로그로 남긴다.
+    """
+    kept: list[str] = []
+    for sentence in split_sentences(text):
+        cleaned = _SCAFFOLD_LABEL.sub("", sentence).strip()
+        if not cleaned:
+            continue
+        if _ECHOED_SPEAKER.match(cleaned):
+            continue
+        cleaned = _ANSWER_PREFIX.sub("", cleaned).strip()
+        if cleaned:
+            kept.append(cleaned)
+    return " ".join(kept)
+
+
 def response_shaper(state: ConvState) -> dict:
     """발화 규칙을 강제하고 재생용 문장을 준비한다.
 
@@ -127,6 +190,19 @@ def response_shaper(state: ConvState) -> dict:
     """
     text = state.get("response", "")
     limit = policy.MAX_SENTENCES_TERSE if state.get("terse") else policy.MAX_SENTENCES
+
+    # 프롬프트 뼈대를 먼저 걷어낸다. 절단보다 앞에 두는 이유는, 라벨이 한 문장을
+    # 통째로 차지하면 그것이 MAX_SENTENCES 자리를 잡아먹어 진짜 할 말이 잘리기
+    # 때문이다.
+    stripped = strip_prompt_scaffolding(text)
+    if stripped != text.strip():
+        # 절단 경고와 같은 이유로 조용히 넘기지 않는다. 이 로그가 쌓이면 고칠 곳은
+        # 이 함수가 아니라 프롬프트다 (llm/client.py 의 SYSTEM_PROMPT).
+        logger.warning(
+            "prompt scaffolding leaked into the response and was stripped "
+            "(intent=%s). fix the prompt, not the shaper",
+            state.get("intent"))
+    text = stripped
 
     all_sentences = split_sentences(text)
     sentences = all_sentences[:limit]
@@ -167,9 +243,13 @@ def emit(state: ConvState) -> dict:
         {"speaking": True, "spoken_prefix": ""}
 
     주의사항
-        - 문장을 '하나씩' 투입하고 완료될 때마다 spoken_prefix 를 갱신한다. 전체
-          텍스트를 한 덩어리로 TTS 에 넘기면 barge-in 이 어디서 끊었는지 알 수 없고,
-          나머지를 정확히 재큐할 수 없다.
+        - 문장을 '하나씩' 투입한다. 전체 텍스트를 한 덩어리로 TTS 에 넘기면 barge-in
+          이 어디서 끊었는지 알 수 없고, 나머지를 정확히 재큐할 수 없다.
+        - state 의 spoken_prefix 는 여기서 "" 로 초기화만 한다. 진행 상황(몇 문장까지
+          말했나)의 권위는 재생 핸들(SpeechPlayback.spoken_prefix)이다 — 재생 스레드는
+          checkpoint 를 쓸 수 없으므로 state 쪽 값을 문장마다 갱신하는 것은 애초에
+          불가능하고, 재큐가 필요할 때는 ingress._yield_playback 이 핸들에게 직접
+          묻는다 (CLAUDE.md §13).
         - 재생 시작 후 policy.ECHO_GUARD_SEC 동안 VAD 를 무시한다. 그러지 않으면 로봇이
           자기 목소리를 듣고 문장 중간에 멈춘다. 능동 발화를 테스트하기 '전에' 이걸
           해결해야 한다. 안 그러면 모든 게이트 버그 리포트가 실제로는 echo 다
@@ -211,7 +291,8 @@ def emit(state: ConvState) -> dict:
     # 핸들을 여기 보관하는 것이 barge-in 복구의 전제다. note_interaction 이
     # 이 핸들에게 "어디까지 말했나"를 묻는다 — state 가 아니라. state 는 그래프
     # 실행 시점의 스냅샷이라 재생이 진행된 만큼 이미 낡아 있다.
-    TTS_HANDLES[senior_id] = player.speak_async(sentences)
+    with current_stage("tts_dispatch"):
+        TTS_HANDLES[senior_id] = player.speak_async(sentences)
 
     # 이번 발화가 무엇이었는지 남긴다. 잘렸을 때 나머지를 원래 우선순위로 되돌리려면
     # 우선순위와 origin 을 알아야 하는데, 재생 핸들은 그것을 모른다.

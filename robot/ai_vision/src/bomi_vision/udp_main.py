@@ -8,7 +8,7 @@ from bomi_vision.adapters.tracking import UltralyticsByteTracker
 from bomi_vision.adapters.udp import UdpFollowView
 from bomi_vision.application import run_person_tracking
 from bomi_vision.follow import FollowCommandGenerator
-from bomi_vision.main import build_parser
+from bomi_vision.main import build_parser, build_primary_person_selector
 from bomi_vision.tracking import UserTrackingService
 
 DEFAULT_UDP_PORT = 5005
@@ -94,7 +94,9 @@ def main() -> int:
 
         print(
             "BOMI UDP tracking sender started: "
-            f"destination={args.host}:{args.port}"
+            f"destination={args.host}:{args.port}, "
+            f"primary_person_selection="
+            f"{'on' if args.select_primary_person else 'off'}"
         )
 
         run_person_tracking(
@@ -103,6 +105,7 @@ def main() -> int:
             follow_command_generator,
             camera,
             output,
+            build_primary_person_selector(args),
         )
     except (OSError, RuntimeError, ValueError) as error:
         print(f"Error: {error}")

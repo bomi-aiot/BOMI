@@ -18,6 +18,7 @@
 | 3 | `.../graph/build.py` | 노드 배선. 로직 없음. 그림(§6)과 대조하며 읽는다 |
 | 4 | `.../policy.py` | 로봇의 '성격'. 숫자만 읽어도 행동을 예측할 수 있다 |
 | 5 | `docs/carebot/PROGRESS.md` | 지금 무엇이 되고 무엇이 안 되는지 |
+| 6 | `docs/natural-conversation/current-state-audit.md` | **2026-08 이후 작업의 출발점.** 무엇이 이미 있고(세션·게이트) 무엇이 없는지(문맥 슬롯·참조 해소·기억 삭제), 파일:라인 근거로. 이어서 같은 폴더의 implementation-plan(Phase 1~7)과 target-architecture |
 
 **2번이 핵심입니다.** 노드들은 서로를 import 하지 않고 오직 `ConvState` 의 키 이름에만 합의합니다. 그래서 이 파일을 읽으면 노드 간 계약을 전부 본 셈이 됩니다.
 
@@ -32,8 +33,8 @@
 | 1 | `graph/turn.py` | STT 텍스트를 받아 그래프를 호출. 지연 측정 시작 |
 | 2 | `graph/ingress.py` `note_interaction` | 사다리 리셋, occupancy=HOME, **barge-in 판단** |
 | 3 | `graph/triage.py` `safety_triage` | 안전 분류. T1 이면 여기서 파이프라인을 벗어난다 |
-| 4 | `graph/context.py` `context_read` | 백엔드에서 문맥 조회, 실패 시 캐시 |
-| 5 | `graph/context.py` `classify_intent` | 로컬 규칙으로 인텐트 결정 (LLM 안 씀) |
+| 4 | `graph/context.py` `classify_intent` | 로컬 규칙으로 인텐트 결정. 정보 턴의 문서 요청 여부를 문맥 조회 전에 확정 (LLM 안 씀) |
+| 5 | `graph/context.py` `context_read` | 백엔드에서 문맥 조회, 실패 시 캐시. `availability`와 요청별 `retrieval`을 정규화 |
 | 6 | `graph/handlers.py` `_generate` | **이 턴의 유일한 LLM 호출** |
 | 7 | `prompts/builder.py` `build_prompt` | 프롬프트 조립 (순수 함수) |
 | 8 | `graph/output.py` `response_shaper` | 문장 분할, 개수 제한 |
@@ -135,7 +136,7 @@
 | 파일 | 역할 |
 |---|---|
 | `llm/client.py` | Gemini 호출 |
-| `llm/router.py` | 의료 질의 판정 (**로컬** 임베딩) |
+| `llm/router.py` | 의료·날씨 질의 판정 — **키워드 결정 규칙**. 임베딩 라우터는 실측(기동 6.28s·약 732MB) 후 제거됨(d7ce99a); 비교 평가용으로만 `evals/`에 남음 |
 | `stt/`, `tts/` | 외부 API 클라이언트 |
 | `weather/`, `db/` | 날씨, 의료 참조 조회 |
 | `audio_io/` | 장치 입출력. `audio/`(판단)와 다르다 |

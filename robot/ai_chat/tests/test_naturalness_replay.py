@@ -415,3 +415,64 @@ def test_every_tuning_dial_has_a_reader(dial):
     assert readers, (
         f"policy.{dial} 을 읽는 코드가 없다. 이 값을 바꿔도 아무 일도 일어나지 않는다. "
         f"쓰이지 않는 다이얼이면 policy.py 에서 지우고, 쓰려던 것이면 배선한다")
+
+
+# ── §17.9 기계를 설명하지 않는다 — 프롬프트 뼈대 누출  (233 실기 점검) ────────
+
+
+@pytest.mark.parametrize(
+    "leaked, must_not_contain",
+    [
+        # 실기에서 실제로 스피커로 나간 문장들이다.
+        ("[현재 정보] 오늘은 2026년 08월 05일 수요일입니다.", "["),
+        ("[날씨 정보] 기온: 25도, 하늘상태: 구름 많음", "["),
+        ("[의료 조회 결과] 근처 병원은 세 곳입니다.", "["),
+        ("어르신: 밖에 니가 오나 바로.", "어르신:"),
+        ("사용자: 오늘 뭐 먹지", "사용자:"),
+        ("답변: 오늘은 수요일이에요.", "답변:"),
+    ],
+)
+def test_the_robot_never_speaks_the_prompt_scaffolding(leaked, must_not_contain):
+    """★ 대괄호 라벨과 화자 표시는 절대 음성으로 나가지 않는다.
+
+    왜 프롬프트만으로 두지 않는가
+        233 실기 점검에서 로봇이 "[현재 정보] 오늘은 ... 어르신: 밖에 니가 오나
+        바로."를 소리 내어 말했다. 프롬프트에 금지를 넣어도 입력이 어수선하면 다시
+        샌다. §17.9 는 검증 대상 항목이므로 결정적인 보증이 하나 필요하다.
+    """
+    spoken = output.strip_prompt_scaffolding(leaked)
+
+    assert must_not_contain not in spoken
+
+
+def test_stripping_the_label_keeps_the_answer():
+    """★ 라벨만 떼고 내용은 지킨다.
+
+    "[현재 정보] 오늘은 ... 수요일입니다"에서 문장을 통째로 버리면 어르신이 물은
+    날짜를 잃는다. 지남력 질문은 가장 흔한 질문 유형이다 (CLAUDE.md §8).
+    """
+    spoken = output.strip_prompt_scaffolding(
+        "[현재 정보] 오늘은 2026년 08월 05일 수요일입니다."
+    )
+
+    assert "수요일" in spoken
+
+
+def test_the_echoed_question_is_dropped_whole():
+    """★ 어르신의 말을 되읽은 문장은 라벨만 떼면 안 되고 통째로 버려야 한다.
+
+    라벨만 떼면 "밖에 니가 오나 바로." 가 로봇이 한 말로 둔갑한다.
+    """
+    spoken = output.strip_prompt_scaffolding(
+        "어르신: 밖에 니가 오나 바로. 오늘은 수요일이에요."
+    )
+
+    assert "밖에 니가 오나" not in spoken
+    assert "수요일" in spoken
+
+
+def test_a_clean_answer_is_left_alone():
+    """뼈대가 없으면 아무것도 건드리지 않는다."""
+    clean = "오늘은 수요일이에요. 저녁 드셨어요?"
+
+    assert output.strip_prompt_scaffolding(clean) == clean

@@ -1,0 +1,196 @@
+openapi: 3.0.3
+info:
+  title: "[AI-Vision] 인식 요청 API (계약·미구현)"
+  version: 1.0.0
+  description: |
+    ⚠️ **아직 구현체가 없는 계약입니다.** 이 문서는 합의된 계약이며 호출할 수 있는
+    API가 아닙니다. `robot/ai_vision`은 현재 HTTP 서버가 아니라 빈 패키지 상태이고,
+    아래 서버 주소는 구현 시점의 예시입니다. 지금 호출하면 연결되지 않습니다.
+
+    Spring Boot가 AI Vision 서버에 귀가 환영 시나리오의 사람 인식을 요청하는 내부 API 계약입니다.
+
+    요청이 수락되면 AI Vision은 비동기로 처리하고, 결과는 Spring Boot의
+    `POST /api/v1/integrations/vision/results` Callback API로 전달합니다.
+servers:
+  - url: http://localhost:8001
+    description: 로컬 AI Vision 개발 서버 예시
+tags:
+  - name: Vision Recognition
+    description: 시나리오에 연결된 사람 인식 작업
+paths:
+  /api/v1/recognitions:
+    post:
+      tags:
+        - Vision Recognition
+      summary: 사람 인식 작업 시작
+      description: |
+        Robot이 목적지에 도착한 뒤 Spring Boot가 호출합니다.
+        `requestId`는 멱등 키이며 같은 `requestId`의 재요청은 새 작업을 만들지 않고 기존 접수 결과를 반환해야 합니다.
+        AI Vision은 요청을 접수한 뒤 Callback을 시작할 수 있으며, HTTP `202` 응답과 Callback 도착 순서는 보장하지 않습니다.
+        Spring Boot는 이 API 호출 전에 `requestId`와 `RECOGNIZING` 상태를 저장해야 합니다.
+      operationId: startVisionRecognition
+      security:
+        - ServiceBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecognitionRequest'
+            examples:
+              homecoming:
+                summary: 현관 사람 인식 요청
+                value:
+                  requestId: 01K0M50M89A3C7D2F5G8H1J4NP
+                  scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
+                  robotId: robot-01
+                  scenarioType: HOMECOMING_WELCOME
+                  requestedAt: '2026-07-21T10:30:16+09:00'
+                  expiresAt: '2026-07-21T10:30:31+09:00'
+      responses:
+        '202':
+          description: 인식 작업 접수 또는 동일 요청의 기존 접수 결과 반환
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecognitionAcceptedResponse'
+              examples:
+                accepted:
+                  value:
+                    requestId: 01K0M50M89A3C7D2F5G8H1J4NP
+                    scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
+                    acceptedAt: '2026-07-21T10:30:16.120+09:00'
+                    duplicate: false
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: 해당 Robot에서 충돌하는 인식 작업이 이미 실행 중임
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: VISION_RECOGNITION_CONFLICT
+                message: 해당 Robot에서 다른 인식 작업이 실행 중입니다.
+                traceId: 4f0f84dbd8204ed8
+                occurredAt: '2026-07-21T10:30:16.100+09:00'
+        '422':
+          description: 만료됐거나 현재 처리할 수 없는 인식 요청
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+components:
+  securitySchemes:
+    ServiceBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: service-token
+      description: 환경변수 또는 비밀 저장소로 주입하는 내부 서비스 토큰
+  schemas:
+    RecognitionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - requestId
+        - scenarioId
+        - robotId
+        - scenarioType
+        - requestedAt
+        - expiresAt
+      properties:
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Backend가 생성하는 인식 요청 멱등 키
+          example: 01K0M50M89A3C7D2F5G8H1J4NP
+        scenarioId:
+          type: string
+          format: uuid
+          minLength: 1
+          maxLength: 64
+          description: 귀가 환영 시나리오 식별자
+          example: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
+        robotId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: 카메라 스트림을 제공하는 Robot 식별자
+          example: robot-01
+        scenarioType:
+          type: string
+          enum:
+            - HOMECOMING_WELCOME
+        requestedAt:
+          type: string
+          format: date-time
+          description: Backend가 요청을 생성한 시각
+        expiresAt:
+          type: string
+          format: date-time
+          description: AI Vision이 작업을 시작할 수 있는 마지막 시각
+    RecognitionAcceptedResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - requestId
+        - scenarioId
+        - acceptedAt
+        - duplicate
+      properties:
+        requestId:
+          type: string
+        scenarioId:
+          type: string
+          format: uuid
+        acceptedAt:
+          type: string
+          format: date-time
+        duplicate:
+          type: boolean
+          description: 같은 `requestId`로 이미 접수된 작업인지 여부
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - occurredAt
+      properties:
+        code:
+          type: string
+          example: INVALID_REQUEST
+        message:
+          type: string
+          example: 요청 필드가 올바르지 않습니다.
+        traceId:
+          type: string
+          description: 분산 로그 상관관계 식별자
+          example: 4f0f84dbd8204ed8
+        occurredAt:
+          type: string
+          format: date-time
+  responses:
+    BadRequest:
+      description: JSON 형식 또는 필수 필드 오류
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: 내부 서비스 인증 실패
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalServerError:
+      description: AI Vision 내부 오류
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

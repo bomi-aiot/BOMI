@@ -1094,6 +1094,13 @@ def extraction_flush(
         - 예외를 밖으로 던지지 않는다. 이 틱이 죽으면 큐가 영원히 쌓이기만
           하고, 그 사실을 아무도 모르게 된다(다른 틱들과 같은 원칙).
     """
+    # "기억하지 마"의 서버 취소부터 보낸다 (S15P11E102-348).
+    #
+    # ★ 추출 킬스위치보다 먼저다 — 추출이 꺼져 있어도 "지웠어요" 약속은 지켜져야
+    #   하고, 순서상으로도 취소를 먼저 처리해야 같은 flush 안에서 새로 제출되는
+    #   사실이 지워진 대화의 것과 섞이지 않는다.
+    _flush_cancel_requests(senior_id, fact_client)
+
     if not policy.EXTRACTION_ENABLED:
         return {"processed": 0, "submitted": 0, "failed": 0}
 
@@ -1184,6 +1191,46 @@ def _default_fact_client():
     from bomi_ai_chat.backend_client.fact_client import BackendFactClient
 
     return BackendFactClient()
+
+
+def _flush_cancel_requests(senior_id: str, fact_client=None) -> int:
+    """"기억하지 마"의 서버 취소 큐를 비운다 (S15P11E102-348). 성공 건수를 돌려준다.
+
+    무엇을 하는가
+        localstore.cancellations 의 대기 행을 오래된 순으로 읽어, 행마다 백엔드의
+        POST /api/v1/robot/fact-candidates/cancel 을 부른다. 성공했을 때만
+        mark_done — 실패한 행은 그대로 남아 다음 flush 가 재시도한다(서버 쪽이
+        멱등이라 중복 전송은 안전하다).
+
+    왜 예외를 밖으로 던지지 않는가
+        extraction_flush 의 첫 단계로 돈다. 여기서 죽으면 추출까지 함께 멈추고,
+        그 사실을 아무도 모르게 된다 — 다른 틱들과 같은 원칙이다.
+    """
+    from bomi_ai_chat.localstore import cancellations
+
+    try:
+        rows = cancellations.pending(senior_id)
+    except Exception:  # noqa: BLE001 - 큐 조회 실패가 틱을 죽이면 안 된다
+        logger.warning("could not read the fact-cancel queue", exc_info=True)
+        return 0
+    if not rows:
+        return 0
+
+    client = fact_client if fact_client is not None else _default_fact_client()
+    sent = 0
+    for row in rows:
+        try:
+            client.cancel_conversation(row["senior_id"], row["conversation_id"])
+        except Exception:  # noqa: BLE001 - 실패한 행은 남겨서 재시도한다
+            logger.warning(
+                "fact-cancel request could not reach the backend; keeping it queued "
+                "(conversation=%s)", row["conversation_id"], exc_info=True)
+            continue
+        cancellations.mark_done(row["id"])
+        sent += 1
+        logger.info("MEMORY_FORGOTTEN server half delivered (conversation=%s)",
+                    row["conversation_id"])
+    return sent
 
 
 def _extract_facts(llm, row: dict) -> list[dict]:
