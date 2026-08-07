@@ -2,7 +2,7 @@
 //
 // 계약: 서버는 fact_candidate 원본 enum/필드를 그대로 내려주고, FE가 이 모듈에서
 // 화면 표시값(status)·분류(kind)로 변환한다. (P0 필드매핑 문서 A-3 / A-4)
-// USE_MOCK_API=false 로 실제 API를 붙일 때 HttpBomiService 가 이 함수를 사용한다.
+// HttpBomiService 가 GET /v1/confirmation-requests 응답을 도메인 타입으로 바꿀 때 사용한다.
 
 import type {
   ConfirmationKind,

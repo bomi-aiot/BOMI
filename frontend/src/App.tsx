@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { MockDataNotice, Toast } from './components'
+import { Toast } from './components'
 import { useRoute } from './hooks'
 import { AppLayout } from './layouts'
 import {
@@ -49,8 +49,6 @@ function GuardianExperience({ pathname, navigate }: GuardianExperienceProps) {
     elderProfile,
     confirmationRequests,
     toast,
-    isMockMode,
-    apiBaseUrl,
     refresh,
     undoConfirmationRequest,
     clearToast,
@@ -115,14 +113,6 @@ function GuardianExperience({ pathname, navigate }: GuardianExperienceProps) {
       notificationCount={pendingConfirmationCount}
       onRefresh={() => void refresh()}
       onNotificationsOpen={() => navigate('/confirmation-requests')}
-      mockNotice={
-        isMockMode ? (
-          <MockDataNotice
-            message="예시 데이터입니다. 실제 관찰·알림으로 해석하지 마세요. 저장·수정은 이 브라우저 세션에서만 유지됩니다."
-            apiBaseUrl={apiBaseUrl}
-          />
-        ) : undefined
-      }
     >
       {renderPage()}
       {toast && !LOCAL_TOAST_ROUTES.has(pathname) ? (
