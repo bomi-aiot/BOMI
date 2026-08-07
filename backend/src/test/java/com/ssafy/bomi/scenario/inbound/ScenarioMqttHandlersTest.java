@@ -1,9 +1,14 @@
 package com.ssafy.bomi.scenario.inbound;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,10 +17,15 @@ import com.ssafy.bomi.conversation.domain.ConversationIntent;
 import com.ssafy.bomi.conversation.domain.ConversationOutcome;
 import com.ssafy.bomi.mqtt.inbound.MqttInboundMessage;
 import com.ssafy.bomi.mqtt.topic.MqttInboundCategory;
+import com.ssafy.bomi.occupancy.application.DoorEventService;
+import com.ssafy.bomi.occupancy.application.EntranceDirectionResolver.Signal;
+import com.ssafy.bomi.occupancy.config.EntranceProperties;
 import com.ssafy.bomi.scenario.application.HomecomingOrchestrator;
 import com.ssafy.bomi.scenario.application.NavigationResultRouter;
 import com.ssafy.bomi.scenario.application.WakeWordCallOrchestrator;
+import com.ssafy.bomi.scenario.config.HomecomingProperties;
 import java.time.OffsetDateTime;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
@@ -29,19 +39,73 @@ class ScenarioMqttHandlersTest {
         mock(NavigationResultRouter.class);
     private final WakeWordCallOrchestrator wakeWordCallOrchestrator =
         mock(WakeWordCallOrchestrator.class);
+    private final DoorEventService doorEventService = mock(DoorEventService.class);
+    private final HomecomingProperties homecomingProperties = mock(HomecomingProperties.class);
+    private final EntranceProperties entranceProperties = new EntranceProperties();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    private DoorOpenedHandler doorOpenedHandler() {
+        return new DoorOpenedHandler(
+            orchestrator, doorEventService, homecomingProperties, entranceProperties);
+    }
+
+    /**
+     * 기본 경로. 방향을 묻지 않고 문이 열렸다는 사실만으로 귀가를 시작한다 —
+     * PIR 배치가 검증되기 전까지의 동작이며, 시연 대본이 의존하는 동작이다.
+     */
     @Test
-    void doorOpenedHandlerStartsHomecomingWithSensorId() {
-        DoorOpenedHandler handler = new DoorOpenedHandler(orchestrator);
+    void doorOpenedHandlerStartsHomecomingWithSensorIdWhenResolutionIsOff() {
         MqttInboundMessage doorOpened = message(
             MqttInboundCategory.IOT_EVENT, "DOOR_OPENED", "door-sensor-01",
             null, null, null, false, null);
 
-        assertThat(handler.supports(doorOpened)).isTrue();
-        handler.handle(doorOpened);
+        assertThat(entranceProperties.isDirectionResolutionEnabled()).isFalse();
+        assertThat(doorOpenedHandler().supports(doorOpened)).isTrue();
+        doorOpenedHandler().handle(doorOpened);
 
         verify(orchestrator).startHomecoming("door-sensor-01");
+        verifyNoInteractions(doorEventService);
+    }
+
+    /**
+     * 스위치를 켜면 문 신호가 PIR 과 같은 버퍼로 들어간다.
+     *
+     * <p>여기서 오케스트레이터를 직접 부르지 <b>않는</b> 것이 핵심이다. 짝이 맞아
+     * 방향이 확정될 때 {@code DoorEventService} 가 인사와 함께 부른다 — 문만 열리고
+     * 아무도 지나가지 않았다면 로봇은 움직이지 않아야 한다.</p>
+     */
+    @Test
+    void doorOpenedHandlerFeedsDirectionResolutionWhenEnabled() {
+        entranceProperties.setDirectionResolutionEnabled(true);
+        UUID seniorId = UUID.randomUUID();
+        when(homecomingProperties.findSenior("door-sensor-01")).thenReturn(Optional.of(seniorId));
+
+        doorOpenedHandler().handle(message(
+            MqttInboundCategory.IOT_EVENT, "DOOR_OPENED", "door-sensor-01",
+            null, null, null, false, null));
+
+        verify(doorEventService).accept(
+            eq(seniorId), eq(Signal.DOOR_OPENED), any(OffsetDateTime.class), isNull());
+        verifyNoInteractions(orchestrator);
+    }
+
+    /**
+     * 미등록 센서는 경고 후 폐기한다.
+     *
+     * <p>예외를 던지면 ack 가 생략되어 브로커가 QoS 1 로 무한 재전송하고, 센서 id
+     * 오타 하나가 수신 파이프라인 전체를 막는다.</p>
+     */
+    @Test
+    void doorOpenedHandlerDropsUnmappedSensorWhenResolutionEnabled() {
+        entranceProperties.setDirectionResolutionEnabled(true);
+        when(homecomingProperties.findSenior("unknown-door")).thenReturn(Optional.empty());
+
+        doorOpenedHandler().handle(message(
+            MqttInboundCategory.IOT_EVENT, "DOOR_OPENED", "unknown-door",
+            null, null, null, false, null));
+
+        verifyNoInteractions(doorEventService);
+        verifyNoInteractions(orchestrator);
     }
 
     @Test
