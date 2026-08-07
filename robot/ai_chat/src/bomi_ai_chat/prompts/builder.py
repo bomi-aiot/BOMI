@@ -31,6 +31,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -460,12 +461,63 @@ def build_extraction_prompt(fields: list[str], utterance: str) -> str:
 # (policy.EXTRACTION_MAX_FACTS_PER_UTTERANCE) — 상한 자체는 프롬프트 문구에
 # 있고, jobs/ticks.extraction_flush 가 다시 한 번 파이썬으로 자른다(모델이
 # 상한을 어겨도 조용히 넘어가지 않는다).
+#
+# 약속(APPOINTMENT)도 같은 두 겹 구조다 (G4). 프롬프트는 "날짜와 시각을 둘 다
+# 확정하지 못하면 APPOINTMENT 로 뽑지 말라"고 권고할 뿐이고, 하중을 받는 층은
+# backend_client/fact_contract._appointment_starts_at 이다. 여기서 지시만 하고
+# 파이썬 검증을 빼면, 오프셋 없는 시각 하나가 보호자 화면의 일정으로 그대로 샌다.
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+# 요일 이름. llm/client.py 에 같은 목록(WEEKDAYS)이 있지만 거기서 가져오지 않는다.
+# 그쪽은 Gemini 클라이언트 모듈이라, import 하는 순간 이 순수 프롬프트 모듈이 네트워크
+# 클라이언트를 끌어온다 — API 키가 없는 환경에서 프롬프트 한 줄을 확인하려다 import 가
+# 실패하는 것이 이 모듈이 피하려는 바로 그 상황이다. 일곱 단어 복제가 그 결합보다 싸다.
+_WEEKDAYS = ("월", "화", "수", "목", "금", "토", "일")
+
+
+def _format_extraction_today(now_local: datetime | None) -> str:
+    """추출 프롬프트의 '오늘' 블록. 시각을 모르면 모른다고 말한다.
+
+    왜 '모름'일 때도 블록을 지우지 않는가
+        _section 의 관례("빈 것은 만들지 않는다")를 여기서는 일부러 따르지 않는다.
+        날짜 블록이 통째로 사라지면 모델은 그 침묵을 "알아서 하라"로 읽고 '다음 주
+        화요일'을 제 마음대로 계산해 채운다. 없다는 사실 자체가 지시여야 한다.
+
+    왜 오프셋(+09:00)까지 실어야 하는가
+        모델이 startsAt 에 시간대 표기를 붙일 근거가 프롬프트 어디에도 없으면
+        "2026-08-11T14:00" 처럼 오프셋 없는 값을 뱉는다. 그 값은 서버의
+        OffsetDateTime.parse 에서만 죽고, CareRecordTime 은 경고 한 줄만 남긴 채
+        occurred_at 을 '지금'으로 채운다 — 사람 눈에는 멀쩡해 보이는데 보호자
+        화면에는 엉뚱한 시각이 뜬다. isoformat() 이 tz-aware 값의 오프셋을 그대로
+        문자열에 담으므로, 모델이 베낄 견본이 프롬프트 안에 생긴다.
+
+    ★ 이 블록이 템플릿의 '유일한' 날짜 견본인 것도 의도다
+        memory_extract.md 의 출력 예시에 `2026-08-11T15:00:00+09:00` 같은 진짜
+        날짜를 박아 두면, 모델은 날짜를 모르는 턴에도 그 값을 그대로 베낀다.
+        llm/client.py 에서 이미 밟은 사고다 — 예시에 넣어 둔 날씨 수치를 모델이
+        날씨 정보가 없는 턴에 지어내 말했다. 그래서 템플릿에는 고정 날짜를 두지
+        않고, 형식 견본을 이 함수가 매번 새로 만든다. 날짜를 모르면 견본도 함께
+        사라진다 — 베낄 것이 없어야 지어내지 않는다.
+    """
+    if now_local is None:
+        return (
+            "오늘이 며칠인지 알 수 없습니다. 그래서 이번에는 앞으로의 "
+            "약속(APPOINTMENT)을 뽑지 않습니다. 날짜를 짐작해서 채우지 않습니다."
+        )
+    return (
+        f"지금은 {now_local.isoformat(timespec='seconds')} "
+        f"({_WEEKDAYS[now_local.weekday()]}요일)입니다.\n"
+        '"다음 주 화요일" 같은 말은 이 값을 기준으로 계산합니다. '
+        "startsAt 의 시간대 표기(+09:00 등)도 이 값의 것을 그대로 씁니다."
+    )
 
 
 def build_memory_extraction_prompt(
     preceding_robot_utterance: str,
     utterance: str,
+    *,
+    now_local: datetime | None = None,
 ) -> str:
     """어르신의 발화에서 기억할 만한 사실을 뽑는 프롬프트.
 
@@ -480,11 +532,22 @@ def build_memory_extraction_prompt(
             없음"을 모델에게 정직하게 알리는 값이라 굳이 숨기지 않는다.
         utterance: 어르신이 실제로 한 말. localstore.extraction 에 큐잉될 때
             이미 6자 이상으로 걸러졌다(policy.EXTRACTION_MIN_UTTERANCE_LENGTH).
+        now_local: 어르신의 시간대로 본 '지금'(tz-aware). 상대 날짜("다음 주
+            화요일")를 절대 시각으로 옮기려면 모델이 기준점을 알아야 한다.
+            모르면 None 을 준다 — 그러면 프롬프트가 약속을 뽑지 말라고 말한다.
+
+    ★ 왜 인자로 받는가 (시스템 지시에 기대면 안 되는 이유)
+        llm/client.py 는 매 호출에 "[현재 정보] 오늘은 ...입니다"를 붙인다. 그
+        값에 기대고 싶어지지만 세 가지가 틀린다. (1) tzinfo 가 없는 OS 로컬
+        시각이라 어르신의 timeZone 이 아니고, (2) UTC 오프셋이 문자열에 없어
+        모델이 +09:00 을 붙일 근거가 없으며, (3) 테스트의 가짜 LLM 에는 시스템
+        지시 자체가 존재하지 않아 날짜 주입이 테스트로 잠기지 않는다.
 
     반환값
-        LLM 에 그대로 넘길 문자열. 순수 함수다.
+        LLM 에 그대로 넘길 문자열. 순수 함수다 — 시계는 호출부가 읽고 값만 넘긴다.
     """
     return load_template("memory_extract.md").format(
         preceding_robot_utterance=preceding_robot_utterance or "(없음)",
         utterance=utterance,
+        today=_format_extraction_today(now_local),
     )

@@ -62,7 +62,13 @@ public class CareRecord {
     @Column(name = "source_conversation_id")
     private UUID sourceConversationId;
 
-    /** Logical reference to {@code conversation_message}; deletion is handled by policy. */
+    /**
+     * Logical reference to {@code conversation_message}; deletion is handled by policy.
+     *
+     * <p>그 "policy" 는 {@code ConversationRawPurgeService} 다 — 물리 FK 도
+     * {@code ON DELETE SET NULL} 도 없으므로(V1 주석) 발화가 지워질 때 이 값을 비우는
+     * 것은 오로지 그 배치의 책임이다.</p>
+     */
     @Column(name = "source_message_id")
     private UUID sourceMessageId;
 
@@ -158,6 +164,24 @@ public class CareRecord {
         this.sourceMessageId = sourceMessageId;
         this.sourceCandidateId = sourceCandidateId;
         this.createdByUserId = createdByUserId;
+    }
+
+    /**
+     * 보존기간이 지난 근거 발화의 링크를 끊는다 (ERD §4, 검증 시나리오 31).
+     *
+     * <p><b>유일한 호출자는 {@code ConversationRawPurgeService} 다.</b> care_record 는
+     * 최종 조회원(§1)이라 이 행 자체는 절대 지우지 않는다 — 지우는 것은 "어느 발화에서
+     * 나왔나"라는 끈 하나뿐이고, 확정된 내용({@link #details})은 그대로 남는다.</p>
+     *
+     * <p>{@link #attachSources} 로 대신할 수 없어서 따로 만든다: 그 메서드는 5개 필드를
+     * 한꺼번에 덮어써서 발화 하나만 비우려면 {@code scenarioId}·
+     * {@code sourceConversationId}·{@code sourceCandidateId}·{@code createdByUserId}
+     * 를 전부 되먹여야 한다. 그중 {@code sourceCandidateId} 는 유니크 제약
+     * ({@code uq_care_record_source_candidate})이 걸린 중복 실체화 방지 장치라, 한 번만
+     * 빠뜨리면 같은 후보가 두 번 반영될 수 있는 상태로 되돌아간다.</p>
+     */
+    public void clearSourceMessage() {
+        this.sourceMessageId = null;
     }
 
     public void assignRecipientGuardian(UUID recipientGuardianId) {

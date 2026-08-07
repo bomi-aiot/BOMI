@@ -24,6 +24,7 @@ import com.ssafy.bomi.memory.repository.MemoryRepository;
 import com.ssafy.bomi.robot.domain.Robot;
 import com.ssafy.bomi.robot.repository.RobotRepository;
 import com.ssafy.bomi.user.domain.AppUser;
+import com.ssafy.bomi.user.domain.ConsentStatus;
 import com.ssafy.bomi.user.repository.AppUserRepository;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -300,10 +301,36 @@ public class DashboardService {
         //
         // 구분은 statusLevel 로 한다. T1 은 지금 조치가 필요한 것이고, T2 는 추세다.
         // 둘을 같은 무게로 보여주면 매일 오는 요약이 응급을 가린다 (CLAUDE.md §9).
+        // 공유 동의가 없으면 T2 는 화면에도 올리지 않는다.
+        //
+        // ★ 왜 이 필터가 지금 생겼나 (S15P11E102-362 리뷰 지적)
+        //   GuardianAlertService.accept 는 동의가 없을 때 알림을 '보류'한다 — 행은 남기고
+        //   delivered=false 만 돌려준다("관찰을 잃지 않되 공유하지 않는다"). 그런데 이
+        //   조회는 recipient_guardian_id 도 동의도 보지 않아서, 보류된 행이 그대로 활동
+        //   피드에 실렸다. 지금까지 무해했던 이유는 단 하나 — T2 를 만드는 호출자가
+        //   0건이라 그런 행이 존재한 적이 없어서다. 일일 요약 발송 스케줄러가 그 전제를
+        //   깬다: 동의하지 않은 어르신에게도 매일 한 행씩 쌓인다.
+        //
+        //   지표 값 자체는 고정 문구에 가려 안 나가지만, "요약이 만들어졌다"는 사실과
+        //   그 시각이 매일 보호자에게 전달된다. 동의하지 않은 것을 공유하지 않겠다는
+        //   약속은 그 정도로도 깨진다.
+        //
+        //   recipient_guardian_id 로 거르지 않는 이유: NO_GUARDIAN 경로도 그 값이 null 인데,
+        //   그쪽은 "보호자가 연결되는 순간 보이게 하려고" 일부러 남긴 것이다. 그 의도를
+        //   죽이지 않으려면 거를 축은 수신자가 아니라 동의여야 한다.
+        //
+        //   T1 은 동의 면제다(NotificationTier 자바독) — 응급은 동의를 기다리지 않는다.
+        boolean sharingGranted = appUserRepository.findById(seniorId)
+                .map(user -> user.getGuardianSharingConsentStatus() == ConsentStatus.GRANTED)
+                .orElse(false);
+
         for (CareRecord alert : careRecordRepository.findBySeniorIdAndRecordTypeAndStatus(
                 seniorId, GUARDIAN_ALERT_TYPE, CareRecordStatus.ACTIVE)) {
             NotificationTier tier = alert.getNotificationTier();
             if (tier == null) {
+                continue;
+            }
+            if (tier != NotificationTier.T1 && !sharingGranted) {
                 continue;
             }
             OffsetDateTime at = alertTime(alert);
