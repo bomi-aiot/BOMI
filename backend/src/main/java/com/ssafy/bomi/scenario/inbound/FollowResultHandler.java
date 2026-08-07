@@ -4,19 +4,26 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.ssafy.bomi.mqtt.inbound.MqttInboundMessage;
 import com.ssafy.bomi.mqtt.inbound.MqttMessageHandler;
 import com.ssafy.bomi.mqtt.topic.MqttInboundCategory;
-import com.ssafy.bomi.scenario.application.WalkOrchestrator;
+import com.ssafy.bomi.scenario.application.FollowResultRouter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-/** The one inbound adapter for WALK FOLLOW_RESULT messages. */
+/**
+ * The one inbound adapter for FOLLOW_RESULT messages.
+ *
+ * <p>Two scenarios now issue FOLLOW_START — the walk and the wake-word call —
+ * so this adapter no longer knows the owner. It parses the envelope and hands
+ * the result to {@link FollowResultRouter}, the same shape
+ * {@code NavigationResultHandler} already uses for NAVIGATION_RESULT.</p>
+ */
 @Component
 @ConditionalOnProperty(prefix = "bomi.mqtt", name = "enabled", havingValue = "true")
 public class FollowResultHandler implements MqttMessageHandler {
 
-    private final WalkOrchestrator orchestrator;
+    private final FollowResultRouter router;
 
-    public FollowResultHandler(WalkOrchestrator orchestrator) {
-        this.orchestrator = orchestrator;
+    public FollowResultHandler(FollowResultRouter router) {
+        this.router = router;
     }
 
     @Override
@@ -29,7 +36,7 @@ public class FollowResultHandler implements MqttMessageHandler {
     public void handle(MqttInboundMessage message) {
         JsonNode payload = message.payload();
         JsonNode reason = payload.get("reasonCode");
-        orchestrator.onFollowResult(
+        router.route(
             message.eventId(),
             message.requireScenarioId(),
             message.sourceId(),
