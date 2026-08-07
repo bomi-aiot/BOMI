@@ -104,6 +104,26 @@ class RobotCommandTest {
         }
     }
 
+    @Test
+    void cancelRequiresTargetCommandAndReasonCode() {
+        RobotCommand command = command(RobotCommandType.CANCEL, Map.of(
+            "targetCommandId", "navigate-01",
+            "reasonCode", "OPERATOR_CANCELLED"));
+
+        assertThat(command.payload()).containsExactlyInAnyOrderEntriesOf(Map.of(
+            "targetCommandId", "navigate-01",
+            "reasonCode", "OPERATOR_CANCELLED"));
+
+        assertThatThrownBy(() -> command(RobotCommandType.CANCEL, Map.of()))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("CANCEL");
+        assertThatThrownBy(() -> command(RobotCommandType.CANCEL, Map.of(
+            "targetCommandId", "navigate-01", "reasonCode", "OPERATOR_CANCELLED",
+            "extra", true)))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("CANCEL");
+    }
+
     private static RobotCommand command(
         RobotCommandType type,
         Map<String, Object> payload
