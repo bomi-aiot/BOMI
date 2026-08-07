@@ -35,6 +35,7 @@ conversation_client 와 무엇이 다른가  ★ 먼저 읽을 것
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any
 
 import requests
@@ -83,6 +84,7 @@ class BackendFactClient:
         conversation_id: str | None,
         source_message_id: str | None,
         facts: list[dict[str, Any]],
+        now_local: datetime | None = None,
     ) -> None:
         """추출된 사실을 백엔드에 올린다. 실패하면 FactSubmissionError 를 올린다.
 
@@ -113,6 +115,7 @@ class BackendFactClient:
                 senior_id=senior_id,
                 conversation_id=conversation_id,
                 source_message_id=source_message_id,
+                now_local=now_local,
             )
             try:
                 request_with_retry(
