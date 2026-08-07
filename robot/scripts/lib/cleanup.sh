@@ -11,7 +11,8 @@ LAUNCH_PATTERN="joystick_slam_robot|bomi_navigation_real|mapping_real"
 NODE_PATTERN="slam_toolbox|ydlidar_ros2_driver_node|pico_driver|joy_linux\
 |ekf_node|rviz2|teleop_node|scan_sanitizer|amcl|controller_server\
 |planner_server|bt_navigator|map_server|behavior_server|velocity_smoother\
-|lifecycle_manager|waypoint_follower|smoother_server"
+|lifecycle_manager|waypoint_follower|smoother_server|mqtt_bridge\
+|nav2_robot_driver|nav2_waypoint_patrol"
 
 bomi_cleanup() {
     pkill -INT -f "$LAUNCH_PATTERN" 2>/dev/null
