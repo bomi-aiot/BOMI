@@ -150,7 +150,7 @@ def test_command_expired_false_before_deadline():
 
 
 def test_command_expired_accepts_backend_utc_z_timestamp():
-    """Jetson Python 3.10에서도 백엔드의 RFC 3339 `Z` 시각을 파싱한다."""
+    """Python 3.10에서도 백엔드의 나노초 RFC 3339 `Z` 시각을 파싱한다."""
     command = contract.parse_start_conversation(
         start_conversation_json(
             occurredAt="2026-08-07T19:31:14.100115958Z",
@@ -160,6 +160,13 @@ def test_command_expired_accepts_backend_utc_z_timestamp():
     before_deadline = 1_786_131_074.0  # 2026-08-07T19:31:14Z
 
     assert contract.command_expired(command, now=before_deadline) is False
+
+
+def test_parse_backend_timestamp_truncates_nanoseconds_to_microseconds():
+    parsed = contract._parse_iso_datetime("2026-08-07T19:31:24.100115958Z")
+
+    assert parsed is not None
+    assert parsed.isoformat() == "2026-08-07T19:31:24.100115+00:00"
 
 
 # ── contracts/ai_commands.py: 응답 봉투 ──────────────────────────────────────

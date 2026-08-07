@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -299,6 +300,12 @@ def _parse_iso_datetime(value: str) -> datetime | None:
     # fromisoformat이 Z를 받지만 Jetson의 Python 3.10은 받지 않아 None으로
     # 떨어졌고, 유효한 START_CONVERSATION을 전부 만료로 오판했다.
     normalized = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
+    # Java Instant는 나노초 9자리를 출력할 수 있지만 Python 3.10 datetime은
+    # 마이크로초 6자리까지만 안전하게 받는다. 정밀도 차이는 TTL 판정에 의미가
+    # 없으므로 뒤 3자리를 버린다.
+    normalized = re.sub(
+        r"(\.\d{6})\d+(?=[+-]\d{2}:\d{2}$)", r"\1", normalized
+    )
     try:
         parsed = datetime.fromisoformat(normalized)
     except (TypeError, ValueError):
