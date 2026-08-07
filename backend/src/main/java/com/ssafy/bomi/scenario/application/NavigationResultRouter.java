@@ -45,6 +45,11 @@ public class NavigationResultRouter {
                 scenarioId);
             return;
         }
+        if (scenario.isTerminated()) {
+            log.info("Late navigation result for terminal scenario ignored: scenarioId={}, status={}",
+                scenarioId, scenario.getFinalStatus());
+            return;
+        }
         if (scenario.getScenarioType() == ScenarioType.WAKE_WORD_CALL) {
             wakeWordCallOrchestrator.onNavigationResult(
                 scenarioId, sourceRobotId, commandId, legacyContract,
