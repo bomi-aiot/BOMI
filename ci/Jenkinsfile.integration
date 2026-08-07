@@ -1,0 +1,99 @@
+// BOMI 시연 통합 배포 파이프라인 (hotfix/scenario-integration 전용)
+//
+// 왜 이 파일이 따로 있는가
+//   시연 막바지에는 브랜치 전략을 접고 모든 도메인을 hotfix/scenario-integration 하나로
+//   모은다. 그런데 Jenkins 의 Job 트리거는 "브랜치" 단위지 "경로" 단위가 아니다. 기존
+//   backend Job 과 frontend Job 을 둘 다 이 브랜치에 걸면 push 한 번에 두 Job 이 동시에
+//   뜬다. 두 Job 은 같은 /home/ubuntu/bomi/secrets/production.env 를 읽고-고쳐-덮어쓰기
+//   때문에(deploy-common.sh 의 set_env_value) 서로의 이미지 태그를 유실시킬 수 있다 —
+//   배포는 성공으로 끝나는데 실제로는 이전 이미지가 뜨는, 에러 없는 실패다.
+//
+//   Job 을 하나로 합치면 disableConcurrentBuilds() 하나로 backend·frontend 가 전부
+//   직렬화되므로 이 레이스가 구조적으로 사라진다. 락 플러그인도 추가 설정도 필요 없다.
+//
+// 무엇을 배포하고 무엇을 배포하지 않는가
+//   배포 대상은 EC2 의 backend·frontend 뿐이다. 젯슨(robot/ai_chat·bridge·ros2_ws)과
+//   파이(iot)는 수동 배포이며 이 파이프라인의 관심사가 아니다 — 해당 기계들은 이 브랜치를
+//   직접 checkout 해서 실행한다. (CLAUDE.md "배포와 CI/CD" 절)
+//
+// 전제 조건 (안 맞으면 Deploy 스테이지에서 죽는다)
+//   deploy-common.sh 의 verify_release_commit 가 HEAD 와 origin/$BOMI_RELEASE_BRANCH 의
+//   커밋이 같은지 강제한다. 따라서 Job 의 SCM Branch Specifier 와 아래 BOMI_RELEASE_BRANCH
+//   가 반드시 같아야 하고, refspec 이 특정 브랜치로 좁혀져 있으면
+//   refs/remotes/origin/hotfix/scenario-integration 자체가 안 만들어져서 실패한다.
+//   Job 설정에서 refspec 은 기본값(+refs/heads/*:refs/remotes/origin/*)을 유지할 것.
+//
+// 시연 후
+//   이 파일은 폐기하고 ci/Jenkinsfile.backend · ci/Jenkinsfile.frontend 와
+//   be-main/fe-main 브랜치 전략으로 복귀한다. 그 두 파일은 이번에 건드리지 않았다.
+
+pipeline {
+    agent {
+        node {
+            label 'built-in'
+            customWorkspace '/home/ubuntu/bomi/data/jenkins/workspace/bomi-integration-production'
+        }
+    }
+
+    options {
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    environment {
+        BOMI_RELEASE_BRANCH = 'hotfix/scenario-integration'
+    }
+
+    stages {
+        stage('Checkout hotfix/scenario-integration') {
+            steps {
+                script {
+                    def scmVars = checkout scm
+                    env.GIT_COMMIT = scmVars.GIT_COMMIT
+                        ?: sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                    echo "SCM checkout: branch=${env.BOMI_RELEASE_BRANCH}, commit=${env.GIT_COMMIT}"
+                }
+            }
+        }
+
+        stage('Validate') {
+            steps {
+                sh '''bash -n \
+                    scripts/deploy/deploy-common.sh \
+                    scripts/deploy/deploy-backend.sh \
+                    scripts/deploy/deploy-frontend.sh'''
+            }
+        }
+
+        // Backend 를 먼저 올린다. Frontend 가 먼저 뜨면 아직 옛 API 를 보는 창이 생긴다.
+        stage('Deploy Backend') {
+            steps {
+                sh '''BOMI_SOURCE_DIR="$WORKSPACE" \
+                    BOMI_RELEASE_BRANCH="$BOMI_RELEASE_BRANCH" \
+                    scripts/deploy/deploy-backend.sh'''
+            }
+        }
+
+        stage('Deploy Frontend') {
+            steps {
+                sh '''BOMI_SOURCE_DIR="$WORKSPACE" \
+                    BOMI_RELEASE_BRANCH="$BOMI_RELEASE_BRANCH" \
+                    scripts/deploy/deploy-frontend.sh'''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Integration deployment succeeded: commit=${env.GIT_COMMIT}"
+        }
+        failure {
+            // Backend 가 끝난 뒤 Frontend 에서 죽으면 두 이미지 버전이 어긋난 채 남는다.
+            // 어느 스테이지에서 멈췄는지 반드시 확인하고, 필요하면 재실행할 것.
+            echo "Integration deployment FAILED: ${env.BUILD_URL}"
+            echo 'Backend/Frontend 중 어디까지 반영됐는지 스테이지 로그를 확인하십시오.'
+        }
+    }
+}
