@@ -74,9 +74,11 @@ cd backend
 
 Windows에서는 `gradlew.bat bootRun`을 사용합니다. 상태 확인은 `GET http://localhost:8080/api/health`입니다.
 
+팀 공용 REST 계약은 [배포 Swagger UI](https://i15e102.p.ssafy.io/swagger-ui.html)에서 확인합니다. 상단 선택 메뉴에서 AI Vision 요청, Vision 결과 Callback, 대화·음성 AI 명세를 전환할 수 있습니다.
+
 ### 5. Robot / IoT
 
-Robot은 Ubuntu 22.04 및 ROS 2 Humble 환경에서 `robot/README.md`를 따릅니다. IoT Python 의존성은 대상 장치에서 `pip install -r iot/requirements.txt`로 설치합니다.
+Robot은 Ubuntu 22.04 및 ROS 2 Humble 환경에서 `robot/README.md`를 따릅니다. IoT 번역기는 대상 장치에서 `pip install -r iot/raspberry-pi/translator/requirements.txt`로 의존성을 설치합니다.
 
 ## 디렉터리 책임
 

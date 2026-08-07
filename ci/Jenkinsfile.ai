@@ -6,8 +6,8 @@ pipeline {
         stage('Verify AI') {
             steps {
                 script {
-                    if (!fileExists('ai')) {
-                        unstable('ai/ is not available yet; AI verification is pending')
+                    if (!fileExists('robot/ai_chat')) {
+                        error('robot/ai_chat is not available yet; AI verification cannot run')
                     } else {
                         sh 'BOMI_SOURCE_DIR="$WORKSPACE" scripts/ci/verify-ai.sh'
                     }

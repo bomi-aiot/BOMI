@@ -1,0 +1,133 @@
+// BOMI 시연 통합 배포 파이프라인 (hotfix/scenario-integration 전용)
+//
+// 왜 이 파일이 따로 있는가
+//   시연 막바지에는 브랜치 전략을 접고 모든 도메인을 hotfix/scenario-integration 하나로
+//   모은다. 그런데 Jenkins 의 Job 트리거는 "브랜치" 단위지 "경로" 단위가 아니다. 기존
+//   backend Job 과 frontend Job 을 둘 다 이 브랜치에 걸면 push 한 번에 두 Job 이 동시에
+//   뜬다. 두 Job 은 같은 /home/ubuntu/bomi/secrets/production.env 를 읽고-고쳐-덮어쓰기
+//   때문에(deploy-common.sh 의 set_env_value) 서로의 이미지 태그를 유실시킬 수 있다.
+//   Job 을 하나로 합치면 disableConcurrentBuilds() 하나로 전부 직렬화된다.
+//
+// 왜 Frontend 를 배포하지 않는가 (2026-08-07 결정)
+//   hotfix 의 frontend 는 fe-main 과 랜딩 페이지 구현이 갈라져 있고(LandingPage.tsx/css
+//   vs styles.css), 이 브랜치의 frontend/Dockerfile 은 tsconfig.json 과 vite.config.ts 를
+//   COPY 하지 않아서 `tsc --noEmit && vite build` 가 성립하지 않는다(vite.config.ts 가
+//   @vitejs/plugin-react 를 등록하므로 JSX 변환이 죽는다).
+//   시연 화면은 이미 fe-main 이미지로 떠 있고 시연까지 프론트 변경 계획이 없으므로,
+//   이 파이프라인은 Backend 만 배포한다. 프론트를 다시 배포해야 하면 그때
+//   ci/Jenkinsfile.frontend 와 fe-main Job 을 쓴다.
+//
+//   젯슨(robot/ai_chat·bridge·ros2_ws)과 파이(iot)는 수동 배포이며 이 파이프라인의
+//   관심사가 아니다 — 해당 기계들은 이 브랜치를 직접 checkout 해서 실행한다.
+//
+// 왜 Build 가 Deploy 와 분리되어 있는가 (2026-08-07 사고 기록)
+//   scripts/deploy/deploy-backend.sh 는 이 순서로 돈다:
+//       set_env_value BACKEND_IMAGE_TAG   →  compose up -d postgres  →  compose build
+//   즉 이미지 빌드가 마지막이다. 컴파일이 깨지면 이미 production.env 가 존재하지 않는
+//   태그로 덮여 있고 운영 postgres 는 재기동된 뒤다. 실제로 이 순서 때문에 hotfix 의
+//   backend/build.gradle 이 구버전이던 것을 배포 시도로 처음 발견했고, 그 과정에서
+//   운영 DB 커넥션이 끊겨 백엔드가 PSQLException 을 뱉었다.
+//
+//   그래서 배포 스크립트를 건드리지 않고(그건 be 라인 자산이다) 파이프라인에서
+//   선행 게이트를 세운다. 아래 'Build Backend' 는 이미지를 새 태그로 빌드만 하고
+//   production.env·실행 중인 컨테이너를 일절 건드리지 않는다. 여기서 깨지면 운영은
+//   손상되지 않은 채 빌드만 실패한다. 통과하면 Deploy 단계의 compose build 는
+//   캐시 적중이라 사실상 즉시 끝난다.
+//
+// 전제 조건
+//   deploy-common.sh 의 verify_release_commit 가 HEAD 와 origin/$BOMI_RELEASE_BRANCH 의
+//   커밋이 같은지 강제한다. Job 의 SCM Branch Specifier 와 아래 BOMI_RELEASE_BRANCH 가
+//   반드시 같아야 하고, refspec 은 기본값(+refs/heads/*:refs/remotes/origin/*)을 쓴다.
+//
+// 시연 후
+//   이 파일과 해당 Job 을 제거하고 ci/Jenkinsfile.backend · ci/Jenkinsfile.frontend 와
+//   be-main/fe-main 브랜치 전략으로 복귀한다. 그 두 파일은 건드리지 않았다.
+
+pipeline {
+    agent {
+        node {
+            label 'built-in'
+            customWorkspace '/home/ubuntu/bomi/data/jenkins/workspace/bomi-integration-production'
+        }
+    }
+
+    options {
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+        timestamps()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    environment {
+        BOMI_RELEASE_BRANCH = 'hotfix/scenario-integration'
+        BOMI_ENV_FILE = '/home/ubuntu/bomi/secrets/production.env'
+        BOMI_COMPOSE_FILE = 'infra/compose.prod.yml'
+    }
+
+    stages {
+        stage('Checkout hotfix/scenario-integration') {
+            steps {
+                script {
+                    def scmVars = checkout scm
+                    env.GIT_COMMIT = scmVars.GIT_COMMIT
+                        ?: sh(returnStdout: true, script: 'git rev-parse HEAD').trim()
+                    env.BOMI_GIT_SHA = sh(
+                        returnStdout: true,
+                        script: 'git rev-parse --short=12 HEAD'
+                    ).trim()
+                    echo "checkout: branch=${env.BOMI_RELEASE_BRANCH}, sha=${env.BOMI_GIT_SHA}"
+                }
+            }
+        }
+
+        // 읽기 전용 검증. 셸 문법과 compose 스키마·필수 환경변수만 본다.
+        stage('Validate') {
+            steps {
+                sh '''set -eu
+                    bash -n \
+                      scripts/deploy/deploy-common.sh \
+                      scripts/deploy/deploy-backend.sh
+                    docker compose \
+                      --env-file "$BOMI_ENV_FILE" \
+                      -f "$BOMI_COMPOSE_FILE" \
+                      config --quiet'''
+            }
+        }
+
+        // 선행 게이트. 여기서 실패하면 운영은 아무것도 바뀌지 않는다.
+        //
+        // BACKEND_IMAGE_TAG 를 셸 환경으로 넘겨 새 SHA 태그로만 빌드한다. Compose 의
+        // 변수 우선순위는 셸 환경 > --env-file 이므로 production.env 는 읽기만 하고
+        // 쓰지 않으며, 지금 돌고 있는 이미지의 태그도 덮어쓰지 않는다.
+        stage('Build Backend') {
+            steps {
+                sh '''set -eu
+                    BACKEND_IMAGE_TAG="$BOMI_GIT_SHA" docker compose \
+                      --env-file "$BOMI_ENV_FILE" \
+                      -f "$BOMI_COMPOSE_FILE" \
+                      build backend
+                    docker image inspect "bomi-backend:$BOMI_GIT_SHA" >/dev/null'''
+            }
+        }
+
+        stage('Deploy Backend') {
+            steps {
+                sh '''BOMI_SOURCE_DIR="$WORKSPACE" \
+                    BOMI_RELEASE_BRANCH="$BOMI_RELEASE_BRANCH" \
+                    scripts/deploy/deploy-backend.sh'''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Backend deployment succeeded: sha=${env.BOMI_GIT_SHA}"
+        }
+        failure {
+            echo "Pipeline FAILED: ${env.BUILD_URL}"
+            echo 'Build Backend 에서 멈췄다면 운영은 무손상이다 — 코드만 고쳐 다시 돌린다.'
+            echo 'Deploy Backend 에서 멈췄다면 production.env 의 BACKEND_IMAGE_TAG 와'
+            echo '실행 중 컨테이너 이미지를 대조할 것: docker ps --filter name=bomi'
+        }
+    }
+}

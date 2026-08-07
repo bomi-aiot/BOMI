@@ -108,7 +108,6 @@ export interface AppLayoutProps {
   guardianRole?: string;
   onRefresh?: () => void;
   onNotificationsOpen?: () => void;
-  mockNotice?: ReactNode;
 }
 
 interface NavigationProps {
@@ -334,7 +333,6 @@ export function AppLayout({
   guardianRole,
   onRefresh,
   onNotificationsOpen,
-  mockNotice,
 }: AppLayoutProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -450,10 +448,6 @@ export function AppLayout({
           drawerOpen={drawerOpen}
           onDrawerToggle={() => setDrawerOpen((current) => !current)}
         />
-
-        {mockNotice ? (
-          <div className="app-shell__notice">{mockNotice}</div>
-        ) : null}
 
         <main className="app-main" id="main-content" tabIndex={-1}>
           {children}

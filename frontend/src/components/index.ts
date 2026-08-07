@@ -3,7 +3,6 @@ export * from './Button';
 export * from './Card';
 export * from './ErrorBoundary';
 export * from './FeedbackStates';
-export * from './MockDataNotice';
 export * from './Modal';
 export * from './PageHeader';
 export * from './Toast';

@@ -1,0 +1,48 @@
+pico_driver:
+  ros__parameters:
+    serial_port: /dev/ttyACM0
+    handshake_timeout_sec: 1.0
+    startup_response_timeout_sec: 5.0
+
+    cmd_vel_topic: /cmd_vel
+    odom_topic: /odom
+    imu_topic: /imu
+    odom_frame_id: odom
+    base_frame_id: base_link
+    imu_frame_id: base_link
+    publish_tf: true
+
+    # 회전에 쓰는 유효 트레드. 기하학적 좌우 바퀴 간 거리는 0.257 m지만
+    # 스키드 스티어는 회전에서 바퀴가 옆으로 긁혀 실제로는 더 크다.
+    # 2026-08-06 자이로 실측: 좌우 ±0.352 rev/s(양쪽 대칭 확인, 엔코더
+    # lf/lr/rf/rr 모두 정상 계수)로 제자리 회전할 때 각속도가 28.0°/s였다.
+    # 기하값 0.257이면 30.3°/s가 나와야 하므로 유효 트레드는
+    # 2 x 0.352 x 0.1929 / 0.489 rad/s = 0.278 m다.
+    # 이 값은 /cmd_vel의 angular.z를 바퀴 속도로 바꿀 때만 쓴다.
+    # odometry의 yaw는 자이로에서 오므로 영향받지 않는다.
+    track_width_m: 0.278
+    distance_per_rev_m: 0.1929
+    max_target_rev_s: 0.8
+    left_front_cpr: 979
+    right_front_cpr: 979
+
+    # 펌웨어 제어 주기와 텔레메트리 주기(20 ms, 50 Hz)에 맞춘다.
+    # robot/docs/pico-serial-protocol.md `## 4`, `## 10` 참고.
+    # 이보다 낮으면 한 주기에 텔레메트리 여러 줄이 몰려 들어오고, 노드는
+    # 수신 시각으로 stamp를 찍으므로 실제 표본 시각과 최대 한 주기만큼
+    # 어긋난다. 그 오차는 회전 중 /scan과 odom TF가 어긋나는 만큼 지도에
+    # 그대로 남는다.
+    control_hz: 50.0
+
+    # V 명령 전송 주기. 읽기 주기(control_hz)와 분리한다.
+    # 펌웨어는 메인 루프 한 바퀴에 문자 하나만 읽으므로 전송이 잦으면
+    # USB 버퍼에 명령이 쌓여 조작 지연이 계속 누적된다. 워치독 300ms에
+    # 대해 20Hz면 6배 여유다.
+    command_hz: 20.0
+    cmd_vel_timeout_sec: 0.5
+    telemetry_timeout_sec: 1.0
+
+    # 실측 보정 전 잠정값. robot/docs/pico-serial-protocol.md `## 9` 참고.
+    angular_velocity_variance: 0.05
+    pose_covariance_diagonal: [0.05, 0.05, 1000000.0, 1000000.0, 1000000.0, 0.2]
+    twist_covariance_diagonal: [0.05, 1000000.0, 1000000.0, 1000000.0, 1000000.0, 0.2]

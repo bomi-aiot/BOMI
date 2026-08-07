@@ -1,0 +1,172 @@
+# 코드 읽는 순서
+
+> **이 문서의 목적**: 어디부터 읽을지, 각 파일에서 **무엇을 봐야 하는지** 알려준다.
+> 전부 읽을 필요는 없다. 목적별 경로를 §5 에 두었다.
+
+읽기 전에 [CONCEPTS.md](CONCEPTS.md) 의 §1(용어)만 훑으면 훨씬 수월합니다.
+
+---
+
+## 1. 30분 코스 — 전체 구조를 잡는다
+
+이 순서로 읽으면 "무엇이 어디에 있는지"가 잡힙니다.
+
+| 순서 | 파일 | 여기서 볼 것 |
+|---|---|---|
+| 1 | `CLAUDE.md` §1, §5, §6 | 무엇을 만드는지, 누가 무엇을 소유하는지, 노드 그림 |
+| 2 | `robot/ai_chat/src/bomi_ai_chat/state.py` | **한 턴에 흐르는 값 전부.** 이 파일이 곧 목차다 |
+| 3 | `.../graph/build.py` | 노드 배선. 로직 없음. 그림(§6)과 대조하며 읽는다 |
+| 4 | `.../policy.py` | 로봇의 '성격'. 숫자만 읽어도 행동을 예측할 수 있다 |
+| 5 | `docs/carebot/PROGRESS.md` | 지금 무엇이 되고 무엇이 안 되는지 |
+| 6 | `docs/natural-conversation/current-state-audit.md` | **2026-08 이후 작업의 출발점.** 무엇이 이미 있고(세션·게이트) 무엇이 없는지(문맥 슬롯·참조 해소·기억 삭제), 파일:라인 근거로. 이어서 같은 폴더의 implementation-plan(Phase 1~7)과 target-architecture |
+
+**2번이 핵심입니다.** 노드들은 서로를 import 하지 않고 오직 `ConvState` 의 키 이름에만 합의합니다. 그래서 이 파일을 읽으면 노드 간 계약을 전부 본 셈이 됩니다.
+
+---
+
+## 2. 대화 한 턴을 따라가기
+
+어르신이 "무릎이 아파" 라고 말했을 때 무슨 일이 일어나는지, 실행 순서대로:
+
+| 순서 | 파일 | 하는 일 |
+|---|---|---|
+| 1 | `graph/turn.py` | STT 텍스트를 받아 그래프를 호출. 지연 측정 시작 |
+| 2 | `graph/ingress.py` `note_interaction` | 사다리 리셋, occupancy=HOME, **barge-in 판단** |
+| 3 | `graph/triage.py` `safety_triage` | 안전 분류. T1 이면 여기서 파이프라인을 벗어난다 |
+| 4 | `graph/context.py` `classify_intent` | 로컬 규칙으로 인텐트 결정. 정보 턴의 문서 요청 여부를 문맥 조회 전에 확정 (LLM 안 씀) |
+| 5 | `graph/context.py` `context_read` | 백엔드에서 문맥 조회, 실패 시 캐시. `availability`와 요청별 `retrieval`을 정규화 |
+| 6 | `graph/handlers.py` `_generate` | **이 턴의 유일한 LLM 호출** |
+| 7 | `prompts/builder.py` `build_prompt` | 프롬프트 조립 (순수 함수) |
+| 8 | `graph/output.py` `response_shaper` | 문장 분할, 개수 제한 |
+| 9 | `graph/output.py` `emit` | 재생 시작 (**블로킹하지 않음**) |
+| 10 | `audio/playback.py` | 문장을 하나씩 합성·재생 |
+
+각 파일의 모듈 docstring 첫 문단이 "이 파일이 어디에 위치하는가"를 설명합니다.
+
+### 2.1 문이 열렸을 때 (208)
+
+대화 턴과 **완전히 다른 경로**입니다. 어디서 끝나는지를 보십시오.
+
+| 순서 | 파일 | 하는 일 |
+|---|---|---|
+| 1 | `door/mqtt.py` `handle_payload` | 브로커에서 bytes 하나를 받는다 |
+| 2 | `contracts/door.py` `parse_door_event` | 봉투 검증, **시각을 도착 시각으로 정규화** |
+| 3 | `door/intake.py` `ingest` | 하트비트, 문 개폐, 보수적 재실, 백엔드 전달 |
+| 4 | `door/occupancy.py` `set_occupancy` | **낡은 관측을 버린다.** `away_since` 유지 |
+| 5 | `graph/ingress.py` `door_event` | checkpoint 에도 반영하고 **END** |
+
+**5번에서 끝납니다.** 인사 제안이 없습니다 — 판정은 백엔드(226)이고, 그 결과는 `backend_command` 로 다시 들어옵니다.
+
+주기 감시는 별도입니다: `jobs/ticks.py` `door_watch_tick` — 하트비트, 문 방치, 미귀가, 야간 배회.
+
+---
+
+## 3. 서버 쪽 (백엔드)
+
+⚠️ **이 절 전체가 `be-develop` 전용입니다.** `ai-develop`(이 문서가 있는 라인)의 `backend/`
+는 `HealthController` 하나만 있는 껍데기이고, 아래 경로는 전부 `com.ssafy.bomi` 패키지
+기준 상대 경로입니다(`backend/src/main/java/com/ssafy/bomi/` 를 앞에 붙이십시오). `be-develop`
+워크트리에서 여십시오.
+
+| 순서 | 파일 | 여기서 볼 것 |
+|---|---|---|
+| 1 | `docs/database/mvp-erd.md` §9 | 문맥 조립 레시피. **이것이 계약이다.** `ai-develop` 의 `docs/database/` 에는 `README.md` 만 있습니다 |
+| 2 | `context/api/ConversationContextResponse.java` | 로봇이 받는 것 전부. 응답 모양이 곧 명세 |
+| 3 | `context/application/ConversationContextService.java` | 조립 로직. **§5 선필터가 핵심** |
+| 4 | `memory/repository/MemoryRepository.java` | `findRetrievable` — 프라이버시 통제가 이 쿼리다 |
+| 5 | `backend/src/main/resources/db/migration/` | 로봇 런타임이 쓰는 컬럼들. V1 부터 최신 V파일까지 — 정확한 기대 목록은 `FlywayMigrationValidationTest.migrationsApplyToEmptyDatabaseAndEntitiesValidate()` 가 갖고 있으니 숫자를 여기 다시 박지 않습니다 |
+
+**4번을 반드시 보십시오.** 이 쿼리 하나가 "누가 어떤 기억을 볼 수 있는가"를 결정합니다. 여기가 틀리면 보호자에게 어르신의 속마음이 새어 나갑니다.
+
+---
+
+## 4. 파일별 한 줄 안내
+
+### 로봇 (`robot/ai_chat/src/bomi_ai_chat/`)
+
+| 파일 | 한 줄 |
+|---|---|
+| `clock.py` | 시간을 읽는 **유일한** 곳. 압축 시계로 하루를 10초에 |
+| `policy.py` | 제품 판단 상수. `config.py`(환경변수)와 성격이 다르다 |
+| `config.py` | 환경변수. 배포마다 바뀌는 값 |
+| `state.py` | 한 턴의 상태 스키마 + `SpeechProposal` |
+| `bootstrap.py` | **런타임 배선 (232).** 200~211 에서 만든 그래프·게이트·사다리·현관·트리아지·온보딩·보호자 알림이 실행 경로에 실제로 연결되는 곳. `build_runtime()` 하나가 컴파일된 그래프에 재생기·백엔드 클라이언트를 꽂고 스케줄러와 현관 구독을 띄운다 |
+| `turn_timer.py` | 턴 지연 실측. `clock` 이 아니라 `monotonic` 을 쓰는 이유가 적혀 있다 |
+| `conversation_control.py` | 대화 시작·응답·종료 판단. 레거시 파이프라인과 그래프 런타임이 함께 쓴다 |
+| `graph/build.py` | 배선만 |
+| `graph/ingress.py` | 진입 **4경로** + barge-in. `door_event` 가 왜 END 로 끝나는지 여기 |
+| `graph/gate.py` | 능동 발화 게이트 (**206**). `not_before` 연기 확인은 263 — 지연이 필요한 제안(T3 동의)을 위한 것이고, 폐기가 아니라 연기다 |
+| `graph/triage.py` | 안전 분류. **부정을 먼저, 통증은 부위로, 애매하면 부른다** |
+| `graph/context.py` | 문맥 조회 + 인텐트 분류 |
+| `graph/handlers.py` | 7개 핸들러 (**전부 구현됨**. `handle_emotional` 은 263) |
+| `graph/output.py` | 정제 + 재생 시작 |
+| `graph/turn.py` | 반응형 한 턴 실행. `turn_timer` 로 단계별 지연을 잰다 |
+| `prompts/builder.py` | 프롬프트 조립 (순수 함수) |
+| `degradation.py` | 압박이 올 때 무엇을 먼저 버리는가 (**212**). 안전 경로는 여기서 아예 쳐다보지 않는다 |
+| `prompts/templates/*.md` | 실제 프롬프트 문구. **여기를 고치면 로봇 말투가 바뀐다** |
+| `graph/contract_dialogue.py` | **무엇을 LLM 에게 맡기지 않는가.** 확인 판정의 규칙 |
+| `backend_client/contract_client.py` | 온보딩·재질의 API. **실패하면 예외** (문맥 조회와 반대) |
+| `contracts/door.py` | 기기 경계를 넘는 메시지 형태. **여기를 고치는 것은 호환성 결정** |
+| `door/occupancy.py` | 재실 규칙. **"발화가 센서를 이긴다"가 여기서 시각 비교로 표현된다** |
+| `door/intake.py` | 문 이벤트 하나의 처리. 저장소가 두 개인 이유가 여기 적혀 있다 |
+| `door/mqtt.py` | 브로커 구독. 판정 로직이 없어서 브로커 없이 테스트된다 |
+| `backend_client/` | 어르신의 사실·기억으로 가는 유일한 길 |
+| `backend_client/conversation_client.py` | 대화 이벤트 적재(`conversation_message`), 보호자 알림 수신 (211) |
+| `backend_client/door_client.py` | 현관 이벤트를 백엔드로 전달. 실패해도 로컬 안전 감시는 계속된다 (208) |
+| `localstore/db.py` | **DB 파일이 왜 두 개인지**가 여기 적혀 있다 |
+| `localstore/outbox.py` | 보호자 알림 큐. 전송보다 저장이 먼저 |
+| `localstore/runtime.py` | 재부팅을 넘는 운영 상태. **틱이 읽는 쪽** |
+| `localstore/schema.py` | 표 정의 + 뒤늦게 추가한 컬럼의 멱등 마이그레이션 |
+| `localstore/proposals.py` | 게이트가 심판할 대기 목록 |
+| `localstore/audio_cache.py` | critical 프로브용 캐시 오디오. 오프라인에서도 생존 확인 발화가 가능해야 한다 (§18) |
+| `localstore/context_cache.py` | 백엔드 문맥 조회 실패 시 읽는 로컬 캐시 (204) |
+| `localstore/dump.py` | 로컬 DB 를 USB/서버로 내보내는 일간 백업 (§18) |
+| `audio/echo_guard.py` | 자기 목소리를 걸러내는 판정 |
+| `audio/vad.py` | Voice Activity Detection — 지금 누가 말하는지 값싸게 판정 (205) |
+| `audio/playback.py` | **진행 상황의 권위.** 동기화 버그가 가장 나기 쉬운 곳 |
+| `audio_io/wakeword.py` | 웨이크워드 감지. 항상 스트리밍하지 않기 위한 로컬 트리거 |
+| `notify/base.py` | 보호자 채널 어댑터 인터페이스 |
+| `notify/logging_notifier.py` | 기본 채널. 실제 보호자 채널이 없을 때 로그로만 기록 |
+| `notify/backend_notifier.py` | **거절과 실패를 구분하는 곳.** 로봇은 푸시 서버를 모른다 |
+| `jobs/ticks.py` | 주기 작업. 일간 요약은 백엔드로 옮겼다(211) |
+| `jobs/scheduler.py` | `build_scheduler()` — APScheduler 배선. `bootstrap.py` 가 시작한다 (232) |
+
+### 이미 있던 것 (재구현하지 않음)
+
+| 파일 | 역할 |
+|---|---|
+| `llm/client.py` | Gemini 호출 |
+| `llm/router.py` | 의료·날씨 질의 판정 — **키워드 결정 규칙**. 임베딩 라우터는 실측(기동 6.28s·약 732MB) 후 제거됨(d7ce99a); 비교 평가용으로만 `evals/`에 남음 |
+| `stt/`, `tts/` | 외부 API 클라이언트 |
+| `weather/`, `db/` | 날씨, 의료 참조 조회 |
+| `audio_io/` | 장치 입출력. `audio/`(판단)와 다르다 |
+| `pipeline.py` | `--legacy` 전용 구경로. **그래프를 거치지 않는다** — 게이트도, 침묵 사다리도, 트리아지도, 현관도 없다. 실기에서 그래프 경로에 문제가 생겼을 때 코드 수정 없이 즉시 되돌리기 위해서만 남아 있다(232) |
+
+---
+
+## 5. 목적별 경로
+
+| 알고 싶은 것 | 읽을 것 |
+|---|---|
+| 로봇이 언제 말하는가 | `CLAUDE.md` §7 → `policy.py` 우선순위 표 → `graph/gate.py` |
+| 느려질 때 무엇을 버리는가 | `CLAUDE.md` §18 → `policy.DEGRADATION_ORDER` → `degradation.py` → `graph/context.py`·`graph/gate.py` |
+| 자연스러움을 어떻게 재는가 | `CLAUDE.md` §17 → `tests/scenarios/naturalness_v1.json` → `tests/test_naturalness_replay.py` |
+| 속마음을 언제 가족과 나누는가 | `CLAUDE.md` §9 → `policy.py` `T3_CONSENT_DELAY_SEC` → `graph/handlers.py` `_queue_t3_consent_question` → `graph/gate.py` `is_too_early` |
+| 로봇이 왜 이렇게 말하는가 | `prompts/templates/system.md` → `prompts/builder.py` |
+| 무엇을 기억하는가 | `CLAUDE.md` §8 → `MemoryRepository.findRetrievable` → `ConversationContextService` |
+| 언제 보호자를 부르는가 | `CLAUDE.md` §9 → `localstore/outbox.py` → `graph/triage.py` |
+| 어르신이 끼어들면 | `CLAUDE.md` §13 → `audio/playback.py` → `graph/ingress.py` |
+| 오프라인이면 | `backend_client/context_client.py` → `localstore/context_cache.py` |
+| 왜 이 숫자인가 | `policy.py` — 모든 상수에 "올리면/내리면"이 적혀 있다 |
+
+---
+
+## 6. 읽을 때 알아두면 좋은 것
+
+**주석이 코드보다 많은 파일이 있습니다.** 의도적입니다. CLAUDE.md §2 가 "팀 대부분이 LangChain·RAG 경험이 없다"고 전제하고, 주석을 산출물로 규정합니다. 특히 `왜 존재하는가` / `주의사항` 절이 설계 판단을 담고 있습니다.
+
+**"이게 없으면 무엇이 깨지는가"가 자주 적혀 있습니다.** 그 문장이 그 코드의 존재 이유입니다. 예:
+
+> 이 컬럼이 없으면 "아무도 움직이지 않았다"와 "라즈베리파이가 죽었다"를 구분할 수 없다.
+
+**한글 주석 / 영문 식별자**가 규칙입니다(§21). 백엔드 Java 는 영문 Javadoc 이 기존 관례라 그쪽을 따릅니다.
