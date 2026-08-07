@@ -42,6 +42,7 @@ import com.ssafy.bomi.scenario.application.ScenarioStartGuard;
 import com.ssafy.bomi.scenario.application.WakeWordCallOrchestrator;
 import com.ssafy.bomi.scenario.application.WalkOrchestrator;
 import com.ssafy.bomi.scenario.application.WellnessCheckOrchestrator;
+import com.ssafy.bomi.occupancy.config.EntranceProperties;
 import com.ssafy.bomi.scenario.config.AiConversationProperties;
 import com.ssafy.bomi.scenario.config.HomecomingProperties;
 import com.ssafy.bomi.scenario.config.MedicationReminderProperties;
@@ -168,7 +169,18 @@ class HomecomingE2eTest {
             clock);
 
         handlers = List.of(
-            new DoorOpenedHandler(orchestrator),
+            // S15P11E102-365(PIR 방향 판정)가 생성자를 넷으로 늘렸는데 이 E2E 만
+            // 갱신되지 않아 테스트 트리 전체가 컴파일되지 않았다.
+            //
+            // EntranceProperties 의 directionResolutionEnabled 기본값이 false 이고,
+            // 꺼져 있으면 handle() 이 orchestrator.startHomecoming 만 부르고 즉시
+            // 반환한다 — doorEventService 와 homecomingProperties 에는 닿지 않는다.
+            // 그래서 이 테스트가 검증하는 옛 경로(문 열림 하나로 귀가 시작)는 그대로다.
+            //
+            // ★ 이 테스트에서 방향 판정을 켜려면 doorEventService 를 진짜로 만들어야
+            //   한다. null 이 남아 있는 채로 켜면 NPE 로 죽는다.
+            new DoorOpenedHandler(orchestrator, null, new HomecomingProperties(),
+                new EntranceProperties()),
             new WakeWordDetectedHandler(wakeWordCallOrchestrator),
             new NavigationResultHandler(navigationResultRouter),
             new FollowResultHandler(followResultRouter),
