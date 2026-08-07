@@ -10,16 +10,18 @@ initialize_deploy
 verify_release_commit "$BOMI_RELEASE_BRANCH"
 deploy_log "Deploying Backend commit $GIT_SHA from $BOMI_RELEASE_BRANCH"
 set_env_value BACKEND_IMAGE_TAG "$GIT_SHA"
+set_env_value OPERATOR_CONSOLE_IMAGE_TAG "$GIT_SHA"
 compose config --quiet
 compose up -d --wait --wait-timeout 60 postgres
-compose build backend
-compose up -d --wait --wait-timeout 120 backend
+compose build backend operator-console
+compose up -d --wait --wait-timeout 120 backend operator-console
 verify_container_health bomi-postgres
 # Qdrant 는 backend 의 depends_on 으로 함께 뜬다(compose up 이 의존성을 시작한다).
 # 그래도 여기서 따로 확인한다 — 확인하지 않으면 Qdrant 가 불건강할 때 "backend 가
 # healthy 가 되지 않았다"로만 실패하고, 원인이 색인 서버라는 사실이 로그에 없다.
 verify_container_health bomi-qdrant
 verify_container_health bomi-backend
+verify_container_health bomi-operator-console
 # 공용 Nginx 가 마운트하는 conf.d 는 이 워크스페이스의 것이다(compose.prod.yml).
 # 방금 checkout 으로 파일이 바뀌었을 수 있으니 여기서 반영한다. Frontend 배포에는
 # 넣지 않는다 — nginx 는 fe 워크스페이스를 마운트하지 않으므로 리로드할 이유가 없다.
