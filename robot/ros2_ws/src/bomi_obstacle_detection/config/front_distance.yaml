@@ -1,0 +1,8 @@
+front_distance_node:
+  ros__parameters:
+    scan_topic: /scan
+    output_topic: /bomi/lidar/front_distance
+
+    # 로봇 정면을 기준으로 사용할 LiDAR 각도 범위이다.
+    front_angle_min_deg: -30.0
+    front_angle_max_deg: 30.0

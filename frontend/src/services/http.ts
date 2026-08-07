@@ -1,4 +1,4 @@
-// 실제 API 호출용 fetch 래퍼. USE_MOCK_API=false 일 때 HttpBomiService 가 사용한다.
+// 실제 API 호출용 fetch 래퍼. HttpBomiService 가 모든 요청에 사용한다.
 
 async function parseJson<T>(res: Response): Promise<T> {
   if (!res.ok) {
