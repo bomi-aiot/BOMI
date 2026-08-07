@@ -249,6 +249,9 @@ services:
       - no-new-privileges:true
     networks:
       - backend-net
+      # backend-net is internal-only. A non-internal network is also required for
+      # Docker to activate the loopback-only published port above.
+      - proxy-net
 
   frontend:
     build:
