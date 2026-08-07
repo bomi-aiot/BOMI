@@ -55,9 +55,11 @@ setup(
             'keyboard_teleop = core.keyboard_teleop:main',
             'joy_cmd_filter = core.joy_cmd_filter:main',
             'nav2_waypoint_patrol = core.nav2_waypoint_patrol:main',
+            'goto_waypoint = core.goto_waypoint:main',
             'person_follower = core.person_follower:main',
             'vision_udp_bridge = core.vision_udp_bridge:main',
             'pico_driver = core.pico_driver:main',
+            'scan_sanitizer = core.scan_sanitizer:main',
         ],
     },
 )

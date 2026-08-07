@@ -173,7 +173,7 @@ python3 -m bridge.mqtt_client
 채팅에 올리지 말고, 실행 명령에도 직접 입력하지 말고 필요할 때마다 각자
 터미널에서 입력하세요.
 
-## 3. 주행 드라이버 (Mock / Nav2)
+## 3. 주행 드라이버 (Mock / Nav2 / Timed / Forward-test)
 
 주행 실행 드라이버는 ROS 2 노드의 `driver_type` 파라미터로 고릅니다.
 
@@ -181,6 +181,13 @@ python3 -m bridge.mqtt_client
 | --- | --- |
 | `mock` (기본값) | 실제 주행 없이 즉시 `ARRIVED` 반환. 통신·상태 검증용 |
 | `nav2` | 목적지 이름을 좌표로 바꿔 Nav2 `NavigateToPose`로 실제 주행 |
+| `timed` | 지도 없이 `/cmd_vel`로 정해진 시간(기본 2초)만 직진. Nav2 병목 우회용 임시 수단 |
+| `forward_test` | 유효한 NAVIGATE마다 `/cmd_vel_backend_test`로 0.08 m/s를 2초간 발행한 뒤 정지 |
+
+- `timed`와 `forward_test`는 **목적지를 구분하지 않습니다.** 계약 왕복·대화·DB
+  종결 검증 전용이며, 주행 품질의 근거로 쓰면 안 됩니다. 둘의 차이는 출력
+  토픽입니다 — `timed`는 `/cmd_vel`로 곧장, `forward_test`는 전용 토픽으로 보내
+  `twist_mux` 우선순위 아래에 둡니다(조이스틱이 항상 이깁니다).
 
 - 기본값은 `mock`입니다. 잘못된 값이면 조용히 넘어가지 않고 노드 시작이 실패합니다.
 - `nav2`는 ROS 2 노드 실행 경로에서만 쓰이며, Nav2가 먼저 활성화돼 있어야 합니다.
@@ -249,8 +256,59 @@ mosquitto_pub -h localhost -t 'bomi/v1/robot/robot-01/commands' -m '{
   "payload":{"target":"ENTRANCE"}}'
 ```
 
-RViz에서 로봇이 `entrance`로 이동하고, `.../results`에 `status`가 `ARRIVED`(성공)
-또는 `FAILED`로 발행되면 정상입니다.
+RViz에서 로봇이 `entrance`로 이동하고, `.../results`에 `payload.outcome`이
+`SUCCEEDED`(성공, `resultCode: ARRIVED`) 또는 `FAILED`(`resultCode: NOT_ARRIVED`
++ `reasonCode`)로 발행되면 정상입니다.
+
+## 4. Raspberry Pi → Backend → Robot 통신 주행 테스트
+
+이 기능은 MQTT 명령 전달 경로와 실제 모터 연결만 확인하는 임시 테스트입니다.
+Nav2나 목적지 좌표는 사용하지 않습니다. `ENTRANCE`, `DEFAULT`, `LIVING_ROOM`을
+target으로 가진 NAVIGATE만 0.08 m/s로 2초간 전진하고 반드시 정지합니다.
+SPEAK, CANCEL, FOLLOW_START, FOLLOW_STOP은 새 전진을 시작하지 않습니다.
+
+테스트 launch는 MQTT 브릿지와 `twist_mux`를 실행하며, Pico 드라이버는 안전을
+위해 자동 실행하지 않습니다.
+
+```bash
+ros2 launch bridge backend_drive_test.launch.py \
+  robot_id:=robot-01 broker_host:=localhost broker_port:=1883
+```
+
+속도 명령을 먼저 확인합니다.
+
+```bash
+ros2 topic echo /cmd_vel_backend_test
+ros2 topic echo /cmd_vel
+```
+
+다른 터미널에서 로컬 MQTT 명령을 보냅니다.
+
+```bash
+mosquitto_pub -h localhost -t 'bomi/v1/robot/robot-01/commands' -q 1 -m '{
+  "commandId":"drive-test-1","scenarioId":"scenario-drive-test",
+  "robotId":"robot-01","type":"NAVIGATE",
+  "occurredAt":"2026-08-06T10:00:00+09:00",
+  "expiresAt":"2099-12-31T23:59:59+09:00",
+  "payload":{"target":"LIVING_ROOM"}}'
+```
+
+`linear.x=0.08`, `angular.z=0.0`이 약 10Hz로 2초간 보이고 마지막에 둘 다
+0인 메시지가 나와야 합니다. 결과 토픽에는 `NAVIGATION_RESULT`가 최상위
+`scenarioId`/`commandId` echo-back과 함께
+`payload: {"outcome":"SUCCEEDED","resultCode":"ARRIVED","reasonCode":null}`
+형태로 발행됩니다.
+
+실차에서는 로봇 바퀴를 바닥에서 띄우고 위 토픽을 먼저 확인한 뒤에만 다음
+드라이버를 별도 터미널에서 실행합니다.
+
+```bash
+ros2 launch core pico_driver.launch.py
+```
+
+조이스틱은 mux 우선순위가 더 높아 테스트 중에도 즉시 개입할 수 있습니다.
+실차 테스트 중에는 Nav2, 사람 추종, 키보드 주행 등 다른 명령원을 함께 실행하지
+않고 전방 공간과 물리적인 전원 차단 수단을 확보합니다.
 
 ## 범위
 

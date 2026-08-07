@@ -46,6 +46,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import re
 from typing import Any, Callable
 import uuid
 
@@ -329,12 +330,49 @@ def build_status_envelope(
     }
 
 
+#: 소수점 이하 초. 날짜부에도 오프셋에도 '.' 은 없으므로 이 패턴은 항상
+#: 초의 소수부만 잡는다.
+_FRACTIONAL_SECONDS = re.compile(r"\.(\d+)")
+
+
+def _normalize_fractional_seconds(value: str) -> str:
+    """소수점 이하 초를 정확히 6자리(마이크로초)로 맞춘다.
+
+    왜 필요한가 (2026-08-07 실기에서 처음 밟음)
+        백엔드는 Java ``Instant`` 를 쓰므로 나노초 9자리를 보낸다
+        (``2026-08-06T15:32:32.163415068Z``). 그런데 젯슨의 Python 3.10
+        ``fromisoformat`` 은 소수부가 3자리 또는 6자리일 때만 파싱한다 —
+        9자리는 ValueError 다. 그 결과 **백엔드가 보낸 모든 NAVIGATE 가
+        "expiresAt 형식 오류"로 거절**됐다. 자릿수를 맞춰 주는 이 한 단계가
+        없으면 실기에서 이동이 한 번도 시작되지 않는다.
+
+        (Python 3.11 부터는 임의 자릿수를 받지만, 젯슨은 22.04/3.10 이다.)
+    """
+    match = _FRACTIONAL_SECONDS.search(value)
+    if match is None:
+        return value
+    digits = match.group(1)
+    # 자르거나(9자리 → 6자리) 채워서(1~5자리 → 6자리) 항상 6자리로 만든다.
+    normalized = (digits + "000000")[:6]
+    return f"{value[: match.start()]}.{normalized}{value[match.end() :]}"
+
+
 def _parse_iso_datetime(value: str) -> datetime | None:
     """ISO-8601 문자열을 tz-aware datetime 으로 파싱한다. 실패 시 None.
 
     백엔드는 항상 오프셋(+09:00 등)을 붙여 보낸다. 오프셋이 없는 값은
     시계 비교가 무의미하므로 파싱 실패로 취급한다.
+
+    끝의 ``Z``(UTC)는 ``+00:00`` 으로 바꿔서 넘긴다 — 젯슨(Ubuntu 22.04)의
+    Python 3.10 ``fromisoformat`` 은 ``Z`` 를 못 읽어서, 이 변환이 없으면
+    UTC 표기로 온 명령이 전부 "형식 오류"로 거절된다. 나노초 자릿수도 같은
+    이유로 먼저 다듬는다(``_normalize_fractional_seconds``).
     """
+    if not isinstance(value, str):
+        return None
+    value = _normalize_fractional_seconds(value)
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
     try:
         parsed = datetime.fromisoformat(value)
     except (TypeError, ValueError):

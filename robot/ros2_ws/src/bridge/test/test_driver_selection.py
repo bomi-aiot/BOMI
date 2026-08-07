@@ -5,6 +5,7 @@ nav2를 골랐을 때만 호출되어야 한다(잘못된 값에서 Nav2 자원�
 """
 
 from bridge.robot_driver import (
+    DRIVER_TYPE_FORWARD_TEST,
     DRIVER_TYPE_MOCK,
     DRIVER_TYPE_NAV2,
     create_driver,
@@ -29,7 +30,10 @@ def test_mock_type_creates_mock_and_skips_nav2() -> None:
     create_nav2 = _Recorder("nav2-driver")
 
     result = create_driver(
-        DRIVER_TYPE_MOCK, create_mock=create_mock, create_nav2=create_nav2
+        DRIVER_TYPE_MOCK,
+        create_mock=create_mock,
+        create_nav2=create_nav2,
+        create_forward_test=_Recorder("forward-driver"),
     )
 
     assert result == "mock-driver"
@@ -42,7 +46,10 @@ def test_nav2_type_creates_nav2_and_skips_mock() -> None:
     create_nav2 = _Recorder("nav2-driver")
 
     result = create_driver(
-        DRIVER_TYPE_NAV2, create_mock=create_mock, create_nav2=create_nav2
+        DRIVER_TYPE_NAV2,
+        create_mock=create_mock,
+        create_nav2=create_nav2,
+        create_forward_test=_Recorder("forward-driver"),
     )
 
     assert result == "nav2-driver"
@@ -56,7 +63,10 @@ def test_default_behaviour_uses_mock() -> None:
     create_nav2 = _Recorder("nav2-driver")
 
     result = create_driver(
-        DRIVER_TYPE_MOCK, create_mock=create_mock, create_nav2=create_nav2
+        DRIVER_TYPE_MOCK,
+        create_mock=create_mock,
+        create_nav2=create_nav2,
+        create_forward_test=_Recorder("forward-driver"),
     )
 
     assert result == "mock-driver"
@@ -68,8 +78,29 @@ def test_unknown_type_raises_and_creates_nothing() -> None:
 
     with pytest.raises(ValueError):
         create_driver(
-            "bogus", create_mock=create_mock, create_nav2=create_nav2
+            "bogus",
+            create_mock=create_mock,
+            create_nav2=create_nav2,
+            create_forward_test=_Recorder("forward-driver"),
         )
 
+    assert create_mock.called is False
+    assert create_nav2.called is False
+
+
+def test_forward_test_type_creates_only_forward_driver() -> None:
+    create_mock = _Recorder("mock-driver")
+    create_nav2 = _Recorder("nav2-driver")
+    create_forward = _Recorder("forward-driver")
+
+    result = create_driver(
+        DRIVER_TYPE_FORWARD_TEST,
+        create_mock=create_mock,
+        create_nav2=create_nav2,
+        create_forward_test=create_forward,
+    )
+
+    assert result == "forward-driver"
+    assert create_forward.called is True
     assert create_mock.called is False
     assert create_nav2.called is False

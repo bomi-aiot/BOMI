@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Callable
 
 import paho.mqtt.client as mqtt
 
@@ -40,11 +41,16 @@ class MqttBridgeRunner:
         use_tls: bool = False,
         ca_certs: str | None = None,
         tls_insecure: bool = False,
-        on_arrival=None,
+        on_arrival: Callable[[str], None] | None = None,
     ) -> None:
         self._robot_id = robot_id
         self._host = host
         self._port = port
+        # 드라이버를 붙들어 두는 이유: stop() 에서 shutdown() 을 불러야 한다.
+        # 안 부르면 종료해도 ROS 2 타이머·액션 클라이언트가 남고, 전진 계열
+        # 드라이버는 마지막 정지(0) 발행을 못 해 바퀴가 도는 채로 남는다.
+        self._driver = driver or MockRobotDriver()
+        self._stopped = False
 
         self._client = mqtt.Client(
             client_id=client_id or f"bomi-robot-bridge-{robot_id}",
@@ -67,7 +73,7 @@ class MqttBridgeRunner:
         # keepalive(기본 60초) PINGREQ 가 끊기지 않는다.
         self._bridge = MqttBridge(
             robot_id,
-            driver or MockRobotDriver(),
+            self._driver,
             self._publish,
             async_execution=True,
             # "도착 후 사람 접근"(CLAUDE.md §3a) — LIVING_ROOM 도착 훅. None
@@ -100,9 +106,17 @@ class MqttBridgeRunner:
         self._client.loop_start()
 
     def stop(self) -> None:
-        """백그라운드 루프를 멈추고 브로커 연결을 종료한다."""
+        """명령 수신·워커를 멈추고 드라이버 정지 후 브로커 연결을 종료한다.
+
+        노드 종료와 KeyboardInterrupt 양쪽에서 불릴 수 있어 두 번 불려도
+        안전해야 한다(두 번째 호출은 아무 일도 하지 않는다).
+        """
+        if self._stopped:
+            return
+        self._stopped = True
         self._bridge.stop()
         self._client.loop_stop()
+        self._driver.shutdown()
         self._client.disconnect()
 
 
