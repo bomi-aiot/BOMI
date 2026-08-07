@@ -24,4 +24,10 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
 }
 
+// 소스 인코딩 고정. 지정하지 않으면 javac 가 플랫폼 기본 문자셋을 쓰는데,
+// 한국어 Windows + JDK 17 조합에서는 그 값이 MS949 다. 이 저장소는 주석이
+// 한국어라 그대로 두면 "unmappable character" / "illegal char for encoding"
+// 으로 컴파일이 깨진다. CI(리눅스)는 UTF-8 이라 로컬에서만 터져서 더 헷갈린다.
+tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }
+
 tasks.named('test') { useJUnitPlatform() }
