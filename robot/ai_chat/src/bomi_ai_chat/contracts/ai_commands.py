@@ -295,8 +295,12 @@ def _require_text(body: Mapping[str, Any], field_name: str) -> str:
 
 def _parse_iso_datetime(value: str) -> datetime | None:
     """ISO-8601 문자열을 tz-aware datetime 으로. 실패하면 None."""
+    # 백엔드는 UTC를 RFC 3339의 `Z` 접미사로 보낸다. Python 3.11에서는
+    # fromisoformat이 Z를 받지만 Jetson의 Python 3.10은 받지 않아 None으로
+    # 떨어졌고, 유효한 START_CONVERSATION을 전부 만료로 오판했다.
+    normalized = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
     try:
-        parsed = datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(normalized)
     except (TypeError, ValueError):
         return None
     if parsed.tzinfo is None:

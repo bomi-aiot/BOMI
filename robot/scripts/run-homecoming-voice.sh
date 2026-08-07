@@ -55,7 +55,7 @@ echo "[사전 검사] AI Chat 설정과 오디오 구성 확인"
 (
     cd "$AI_CHAT_DIR"
     "$AI_CHAT_PYTHON" -c \
-        'from bomi_ai_chat.config import get_settings; s=get_settings(); s.validate_conversation(); s.validate_mqtt(); print("AI Chat 설정 OK")'
+        'import paho.mqtt.client; from bomi_ai_chat.config import get_settings; s=get_settings(); s.validate_conversation(); s.validate_mqtt(); print("AI Chat 설정 및 MQTT 의존성 OK")'
 )
 
 bomi_navigation_start

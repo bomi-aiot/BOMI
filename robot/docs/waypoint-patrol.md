@@ -62,6 +62,13 @@ bash robot/scripts/run-entrance-mqtt.sh
 시험하려면 AI Chat의 `venv`와 `.env`를 준비한 뒤 통합 스크립트를 실행합니다.
 
 ```bash
+cd ~/bomi/robot/ai_chat
+source venv/bin/activate
+python -m pip install -e '.[mqtt]'
+deactivate
+```
+
+```bash
 cd ~/bomi
 export MQTT_PASSWORD='<bomi-jetson 비밀번호>'
 bash robot/scripts/run-homecoming-voice.sh
