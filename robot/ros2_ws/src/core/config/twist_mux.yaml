@@ -1,0 +1,18 @@
+# 키보드, 백엔드 통신 테스트와 조이스틱 속도 명령을 중재하는 설정
+twist_mux:
+  ros__parameters:
+    topics:
+      keyboard:
+        topic: /cmd_vel_keyboard
+        timeout: 0.5
+        priority: 50
+
+      backend_test:
+        topic: /cmd_vel_backend_test
+        timeout: 0.5
+        priority: 75
+
+      joystick:
+        topic: /cmd_vel_joy
+        timeout: 0.5
+        priority: 100

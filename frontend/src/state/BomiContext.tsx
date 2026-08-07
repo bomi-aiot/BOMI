@@ -7,17 +7,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import {
-  API_BASE_URL,
-  USE_MOCK_API,
-  bomiService,
-  type BomiDataKey,
-} from "../services/bomiService";
+import { bomiService, type BomiDataKey } from "../services/bomiService";
 import type {
   ConfirmationRequest,
   ConfirmationResolution,
   ConversationPreference,
-  CreateConversationPreferenceInput,
   CreateMedicationInput,
   CreateScheduleInput,
   ElderProfile,
@@ -26,7 +20,6 @@ import type {
   MedicationResponse,
   Schedule,
   StructuredValue,
-  UpdateConversationPreferenceInput,
   UpdateMedicationInput,
   UpdateScheduleInput,
 } from "../types/domain";
@@ -48,26 +41,11 @@ export interface BomiContextValue {
   medicationResponses: MedicationResponse[];
   schedules: Schedule[];
   isLoading: boolean;
-  isSaving: boolean;
   pendingActionId: string | null;
   error: string | null;
   dataErrors: Partial<Record<BomiDataKey, string>>;
   toast: BomiToast | null;
-  isMockMode: boolean;
-  apiBaseUrl: string;
   refresh: () => Promise<void>;
-  saveElderProfile: (profile: ElderProfile) => Promise<ElderProfile>;
-  addConversationPreference: (
-    input: CreateConversationPreferenceInput,
-  ) => Promise<ConversationPreference>;
-  updateConversationPreference: (
-    id: string,
-    input: UpdateConversationPreferenceInput,
-  ) => Promise<ConversationPreference>;
-  deleteConversationPreference: (id: string) => Promise<void>;
-  toggleConversationPreference: (
-    id: string,
-  ) => Promise<ConversationPreference>;
   resolveConfirmationRequest: (
     id: string,
     resolution: ConfirmationResolution,
@@ -90,7 +68,6 @@ export interface BomiContextValue {
     id: string,
     input: UpdateScheduleInput,
   ) => Promise<Schedule>;
-  resetDemoData: () => Promise<void>;
   clearError: () => void;
   clearToast: () => void;
 }
@@ -123,7 +100,6 @@ export function BomiProvider({ children }: BomiProviderProps) {
   >([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSaving, setIsSaving] = useState(false);
   const [pendingActionId, setPendingActionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dataErrors, setDataErrors] = useState<
@@ -154,19 +130,6 @@ export function BomiProvider({ children }: BomiProviderProps) {
       setDashboard(nextDashboard);
     } catch {
       // 주 변경은 이미 성공했으므로 파생 요약 갱신 실패를 액션 실패로 되돌리지 않는다.
-    }
-  }, []);
-
-  const refreshPersonalizationState = useCallback(async () => {
-    try {
-      const [nextProfile, nextPreferences] = await Promise.all([
-        bomiService.getElderProfile(),
-        bomiService.getConversationPreferences(),
-      ]);
-      setElderProfile(nextProfile);
-      setConversationPreferences(nextPreferences);
-    } catch {
-      // 다음 전체 새로고침에서 재동기화한다.
     }
   }, []);
 
@@ -241,108 +204,6 @@ export function BomiProvider({ children }: BomiProviderProps) {
       }
     },
     [showToast],
-  );
-
-  const saveElderProfile = useCallback(
-    async (profile: ElderProfile): Promise<ElderProfile> => {
-      setIsSaving(true);
-      try {
-        const saved = await runAction(
-          "elder-profile",
-          () => bomiService.saveElderProfile(profile),
-          "어르신 정보가 저장되었습니다.",
-        );
-        setElderProfile(saved);
-        void refreshPersonalizationState();
-        void refreshDashboard();
-        return saved;
-      } finally {
-        setIsSaving(false);
-      }
-    },
-    [refreshDashboard, refreshPersonalizationState, runAction],
-  );
-
-  const addConversationPreference = useCallback(
-    async (
-      input: CreateConversationPreferenceInput,
-    ): Promise<ConversationPreference> => {
-      const created = await runAction(
-        "preference-new",
-        () => bomiService.createConversationPreference(input),
-        "맞춤 대화 정보가 추가되었습니다.",
-      );
-      setConversationPreferences((current) => [created, ...current]);
-      void refreshPersonalizationState();
-      return created;
-    },
-    [refreshPersonalizationState, runAction],
-  );
-
-  const updateConversationPreference = useCallback(
-    async (
-      id: string,
-      input: UpdateConversationPreferenceInput,
-    ): Promise<ConversationPreference> => {
-      const updated = await runAction(
-        `preference-${id}`,
-        () => bomiService.updateConversationPreference(id, input),
-        "맞춤 대화 정보가 수정되었습니다.",
-      );
-      setConversationPreferences((current) =>
-        current.map((preference) =>
-          preference.id === id ? updated : preference,
-        ),
-      );
-      void refreshPersonalizationState();
-      return updated;
-    },
-    [refreshPersonalizationState, runAction],
-  );
-
-  const deleteConversationPreference = useCallback(
-    async (id: string): Promise<void> => {
-      await runAction(
-        `preference-${id}`,
-        () => bomiService.deleteConversationPreference(id),
-        "맞춤 대화 정보가 삭제되었습니다.",
-      );
-      setConversationPreferences((current) =>
-        current.filter((preference) => preference.id !== id),
-      );
-      setElderProfile((current) =>
-        current
-          ? {
-              ...current,
-              personalPreferences: current.personalPreferences.filter(
-                (preference) => preference.id !== id,
-              ),
-              importantPeople: current.importantPeople.filter(
-                (person) => person.id !== id,
-              ),
-            }
-          : current,
-      );
-      void refreshPersonalizationState();
-    },
-    [refreshPersonalizationState, runAction],
-  );
-
-  const toggleConversationPreference = useCallback(
-    async (id: string): Promise<ConversationPreference> => {
-      const updated = await runAction(
-        `preference-${id}`,
-        () => bomiService.toggleConversationPreference(id),
-        "대화 활용 상태가 변경되었습니다.",
-      );
-      setConversationPreferences((current) =>
-        current.map((preference) =>
-          preference.id === id ? updated : preference,
-        ),
-      );
-      return updated;
-    },
-    [runAction],
   );
 
   const resolveConfirmationRequest = useCallback(
@@ -515,28 +376,6 @@ export function BomiProvider({ children }: BomiProviderProps) {
     [refreshDashboard, runAction],
   );
 
-  const resetDemoData = useCallback(async (): Promise<void> => {
-    setIsLoading(true);
-    setError(null);
-    setDataErrors({});
-    try {
-      const data = await bomiService.resetMockData();
-      setDashboard(data.dashboard);
-      setElderProfile(data.elderProfile);
-      setConversationPreferences(data.conversationPreferences);
-      setConfirmationRequests(data.confirmationRequests);
-      setMedications(data.medications);
-      setMedicationResponses(data.medicationResponses);
-      setSchedules(data.schedules);
-      setDataErrors(data.errors ?? {});
-      showToast("데모 데이터를 초기 상태로 되돌렸습니다.", "INFO");
-    } catch (requestError: unknown) {
-      setError(messageFromError(requestError));
-    } finally {
-      setIsLoading(false);
-    }
-  }, [showToast]);
-
   const clearError = useCallback(() => setError(null), []);
   const clearToast = useCallback(() => setToast(null), []);
 
@@ -550,19 +389,11 @@ export function BomiProvider({ children }: BomiProviderProps) {
       medicationResponses,
       schedules,
       isLoading,
-      isSaving,
       pendingActionId,
       error,
       dataErrors,
       toast,
-      isMockMode: USE_MOCK_API,
-      apiBaseUrl: API_BASE_URL,
       refresh,
-      saveElderProfile,
-      addConversationPreference,
-      updateConversationPreference,
-      deleteConversationPreference,
-      toggleConversationPreference,
       resolveConfirmationRequest,
       undoConfirmationRequest,
       addMedication,
@@ -572,7 +403,6 @@ export function BomiProvider({ children }: BomiProviderProps) {
       toggleMedicationReminder,
       addSchedule,
       updateSchedule,
-      resetDemoData,
       clearError,
       clearToast,
     }),
@@ -585,17 +415,11 @@ export function BomiProvider({ children }: BomiProviderProps) {
       medicationResponses,
       schedules,
       isLoading,
-      isSaving,
       pendingActionId,
       error,
       dataErrors,
       toast,
       refresh,
-      saveElderProfile,
-      addConversationPreference,
-      updateConversationPreference,
-      deleteConversationPreference,
-      toggleConversationPreference,
       resolveConfirmationRequest,
       undoConfirmationRequest,
       addMedication,
@@ -605,7 +429,6 @@ export function BomiProvider({ children }: BomiProviderProps) {
       toggleMedicationReminder,
       addSchedule,
       updateSchedule,
-      resetDemoData,
       clearError,
       clearToast,
     ],

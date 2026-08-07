@@ -1,0 +1,48 @@
+# 엔코더 오도메트리와 IMU 자이로를 융합해 odom → base_link TF를 발행한다.
+#
+# 4바퀴 스키드 스티어는 제자리 회전에서 바퀴가 옆으로 미끄러지므로
+# 엔코더로 계산한 회전각을 믿을 수 없다. robot/docs/hardware-control.md
+# `## 8`의 예비 관측에서도 명령 종료 후 관성으로 약 38도 더 도는 여분이
+# 확인됐고, 유효 트레드는 아직 실측 전이다.
+#
+# 그래서 회전은 자이로만, 전진은 엔코더만 사용한다.
+# - /odom  : vx 만        (엔코더 직진 거리는 실효값으로 보정되어 신뢰 가능)
+# - /imu   : vyaw 만      (core/pico_driver.py가 angular_velocity.z만 채우고
+#                          자세와 선가속도는 covariance[0] = -1로 무효 표시한다)
+#
+# 이 노드를 켜는 launch는 pico_driver에 publish_tf:=false를 넘겨야 한다.
+# 두 노드가 함께 odom → base_link를 발행하면 TF가 충돌한다.
+ekf_filter_node:
+  ros__parameters:
+    frequency: 30.0
+    sensor_timeout: 0.2
+    two_d_mode: true
+    publish_tf: true
+    publish_acceleration: false
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom
+
+    # 순서: x y z / roll pitch yaw / vx vy vz / vroll vpitch vyaw / ax ay az
+    odom0: /odom
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  false, false,
+                   false, false, false,
+                   false, false, false]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+
+    imu0: /imu
+    imu0_config: [false, false, false,
+                  false, false, false,
+                  false, false, false,
+                  false, false, true,
+                  false, false, false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 10
+    imu0_remove_gravitational_acceleration: false

@@ -5,7 +5,18 @@
 application-local.yml
 application-secret.yml
 **/config/*.yaml
+!robot/ros2_ws/src/core/config/nav2_safe_params.yaml
+!robot/ros2_ws/src/core/config/nav2_safe_params_real.yaml
 !**/config/*.example.yaml
+!robot/ros2_ws/src/bomi_core/config/xbox360_sim.yaml
+!robot/ros2_ws/src/core/config/xbox360_sim.yaml
+!robot/ros2_ws/src/core/config/twist_mux.yaml
+!robot/ros2_ws/src/mapping/config/
+!robot/ros2_ws/src/mapping/config/slam_toolbox.yaml
+!robot/ros2_ws/src/core/config/person_following.yaml
+!robot/ros2_ws/src/core/config/pico_driver.yaml
+!**/bomi_lidar/config/x4_pro.yaml
+!**/bomi_obstacle_detection/config/front_distance.yaml
 *.pem
 *.key
 
@@ -19,10 +30,12 @@ dist/
 build/
 out/
 *.class
+backend/bin/
 
 # Python / ROS 2
 __pycache__/
 *.py[cod]
+/tmp/pdfdeps/
 robot/ros2_ws/build/
 robot/ros2_ws/install/
 robot/ros2_ws/log/
@@ -33,4 +46,12 @@ robot/ros2_ws/log/
 *.iml
 .DS_Store
 Thumbs.db
+
+# Claude Code
+#   .claude/ 전체를 무시하면 안 된다. skills/ 와 hooks/ 는 팀 공유 대상이고
+#   CLAUDE.md §25~§29 가 그것들을 표로 명시해 가리킨다.
+#   반면 settings.local.json 은 개인 권한 허용 목록이라 커밋 대상이 아니다.
+#   여기 적기 전까지는 개인 전역 ignore(~/.config/git/ignore)에만 의존하고 있었다.
+#   그 설정이 없는 팀원이 `git add .claude` 를 하면 남의 권한 목록이 조용히 커밋된다.
+.claude/settings.local.json
 
