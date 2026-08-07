@@ -61,6 +61,11 @@ class Runtime:
     # (navigation_watch.NavigationArrivalWatcher). None 이면 이 기능이
     # 꺼져 있다는 뜻 — 웨이크 흐름은 기존 WAKE_ACK_MESSAGE 로 그대로 동작한다.
     navigation_watcher: Any = None
+    # 보미야 호출 회전 탐색 신호 발신자(search_signal.SearchSignalSender).
+    # 웨이크워드 직후 소리 방향을, 대화 중 정지 요청과 대화 종료 시 정지를
+    # 로봇 내부(ROS 2 wake_search 노드)로 UDP 발신한다. None 이면 이 기능이
+    # 꺼져 있다는 뜻 — 대화는 그대로 동작하고 로봇만 돌지 않는다.
+    search_signal: Any = None
 
     def shutdown(self, *, wait_for_speech_sec: float = 0.0) -> None:
         """백그라운드 스레드를 정리한다. 실패해도 종료를 막지 않는다.
@@ -90,6 +95,7 @@ class Runtime:
             ("door subscriber", getattr(self.door_subscriber, "stop", None)),
             ("ai command subscriber", getattr(self.ai_command_subscriber, "stop", None)),
             ("navigation arrival watcher", getattr(self.navigation_watcher, "stop", None)),
+            ("search signal sender", getattr(self.search_signal, "close", None)),
             ("scheduler", getattr(self.scheduler, "shutdown", None)),
         ):
             if closer is None:
@@ -425,6 +431,14 @@ def run_conversation_loop(
         if event_publisher is not None:
             event_publisher.start()
 
+    # 회전 탐색 신호 발신자. 웨이크워드가 있을 때만 의미가 있다 — 부르지 않으면
+    # 탐색을 시작할 계기도 없다. 이미 만들어져 있으면(테스트 주입) 그대로 쓴다.
+    if runtime.search_signal is None and wake is not None:
+        from bomi_ai_chat.search_signal import build_search_signal_sender
+
+        runtime.search_signal = build_search_signal_sender(
+            getattr(runtime, "beam", None))
+
     # 호출 응답("저를 부르셨나요?") 재생용 TTS. 웨이크워드 + 출력이 있을 때만 만든다.
     tts = None
     if wake is not None and audio_out is not None:
@@ -476,6 +490,12 @@ def run_conversation_loop(
                 # 큐잉이라 블로킹하지 않고, 실패는 발행자가 삼킨다 — 여기서 한 번 더
                 # 감싸는 이유는 가짜 발행자(테스트)나 미래의 구현 변경이 던져도
                 # 대화 시작을 막지 않기 위해서다.
+                # 소리 방향을 먼저 로봇 내부로 보낸다(구현계획 §0). MQTT 는
+                # 백엔드를 한 번 돌아오므로 UDP 힌트가 먼저 도착한다 — 시작
+                # 신호가 왔을 때 wake_search 가 쓸 각도가 이미 있어야 한다.
+                if runtime.search_signal is not None:
+                    runtime.search_signal.send_wake()
+
                 if event_publisher is not None:
                     try:
                         event_publisher.publish_wake_word()
@@ -504,6 +524,12 @@ def run_conversation_loop(
 
                 turns, _end_reason = _run_graph_conversation(
                     runtime, audio_in, stt, turns, max_turns)
+                # 대화가 끝나면 로봇도 멈춘다(구현계획 결정 C). 시간 상한
+                # (wake_search 의 follow_timeout_sec)은 "대화가 끝나지 않을
+                # 때"의 최후 방어선이고, 정상 종료는 여기서 즉시 끈다.
+                if runtime.search_signal is not None:
+                    runtime.search_signal.send_stop(
+                        f"conversation_ended:{_end_reason}")
             else:
                 # 웨이크워드 없음(팀원 기본): 매 발화를 그냥 처리한다.
                 text, duration, _ = _listen(audio_in, stt)
@@ -658,6 +684,14 @@ def _run_graph_conversation(
             continue
 
         session = _advance(session, "speech_captured")
+
+        # "기다려", "잠깐만" 같은 발화는 대화를 끝내자는 말이 아니라 움직이지
+        # 말라는 말이다. 대화는 그대로 이어가고 로봇의 몸만 멈춘다.
+        if (runtime.search_signal is not None
+                and conversation_control.is_search_stop_request(text)):
+            runtime.search_signal.send_stop("user_requested_wait")
+            logger.info("search stop requested by the user utterance")
+
         run_user_turn(runtime.app, runtime.senior_id, text, duration_sec=duration)
         session = _advance(session, "turn_done")
         turns += 1
