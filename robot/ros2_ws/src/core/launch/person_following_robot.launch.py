@@ -24,6 +24,7 @@ def generate_launch_description() -> LaunchDescription:
     vision_topic = LaunchConfiguration("vision_topic")
 
     output_topic = LaunchConfiguration("output_topic")
+    start_enabled = LaunchConfiguration("start_enabled")
     pico_port = LaunchConfiguration("pico_port")
 
     lidar_port = LaunchConfiguration("lidar_port")
@@ -90,6 +91,7 @@ def generate_launch_description() -> LaunchDescription:
             "output_topic": output_topic,
             "scan_topic": scan_topic,
             "use_lidar": "true",
+            "start_enabled": start_enabled,
         }.items(),
     )
 
@@ -114,6 +116,15 @@ def generate_launch_description() -> LaunchDescription:
                 "output_topic",
                 default_value="/cmd_vel",
                 description="Pico에 전달할 속도 명령 토픽",
+            ),
+            # 보미야 회전 탐색(bomi_wake_search.launch.py)에서는 false 로 띄운다
+            # — 탐색 노드가 사람을 찾은 뒤에야 /person_following/enable 로 켠다.
+            # 기본값 true 는 이 launch 단독 사용의 기존 동작을 그대로 유지한다.
+            DeclareLaunchArgument(
+                "start_enabled",
+                default_value="true",
+                description="시작 시 추종 활성 여부. 회전 탐색 대본에서는 "
+                            "false — wake_search 가 켠다",
             ),
             DeclareLaunchArgument(
                 "pico_port",

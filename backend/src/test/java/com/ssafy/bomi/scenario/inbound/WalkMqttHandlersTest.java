@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.ssafy.bomi.mqtt.inbound.MqttInboundMessage;
 import com.ssafy.bomi.mqtt.topic.MqttInboundCategory;
+import com.ssafy.bomi.scenario.application.FollowResultRouter;
 import com.ssafy.bomi.scenario.application.WalkOrchestrator;
 import com.ssafy.bomi.scenario.application.WalkRequest;
 import com.ssafy.bomi.scenario.domain.WalkAction;
@@ -26,6 +27,7 @@ class WalkMqttHandlersTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final WalkOrchestrator orchestrator = mock(WalkOrchestrator.class);
+    private final FollowResultRouter followResultRouter = mock(FollowResultRouter.class);
 
     @Test
     void walkRequestedHandlerDelegatesTheCompleteTransportNeutralRequestOnce() {
@@ -69,7 +71,7 @@ class WalkMqttHandlersTest {
 
     @Test
     void followResultHandlerDelegatesEveryCorrelationAndResultFieldOnce() {
-        FollowResultHandler handler = new FollowResultHandler(orchestrator);
+        FollowResultHandler handler = new FollowResultHandler(followResultRouter);
         UUID scenarioId = UUID.randomUUID();
         ObjectNode body = objectMapper.createObjectNode();
         ObjectNode payload = body.putObject("payload");
@@ -96,7 +98,9 @@ class WalkMqttHandlersTest {
             body))).isFalse();
         handler.handle(result);
 
-        verify(orchestrator, times(1)).onFollowResult(
+        // 핸들러는 봉투를 풀어 라우터에 넘기기만 한다. 어느 시나리오가
+        // 주인인지는 FollowResultRouter 가 정한다(FollowResultRouterTest 참고).
+        verify(followResultRouter, times(1)).route(
             "evt-follow-result",
             scenarioId,
             "robot-01",

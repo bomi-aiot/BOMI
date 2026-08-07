@@ -1,6 +1,7 @@
 package com.ssafy.bomi.e2e;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,10 +35,12 @@ import com.ssafy.bomi.robot.repository.RobotRepository;
 import com.ssafy.bomi.scenario.application.HomecomingOrchestrator;
 import com.ssafy.bomi.scenario.application.MedicationReminderScheduler;
 import com.ssafy.bomi.scenario.application.MqttConversationGateway;
+import com.ssafy.bomi.scenario.application.FollowResultRouter;
 import com.ssafy.bomi.scenario.application.NavigationResultRouter;
 import com.ssafy.bomi.scenario.application.ScenarioRobotStartPolicy;
 import com.ssafy.bomi.scenario.application.ScenarioStartGuard;
 import com.ssafy.bomi.scenario.application.WakeWordCallOrchestrator;
+import com.ssafy.bomi.scenario.application.WalkOrchestrator;
 import com.ssafy.bomi.scenario.application.WellnessCheckOrchestrator;
 import com.ssafy.bomi.scenario.config.AiConversationProperties;
 import com.ssafy.bomi.scenario.config.HomecomingProperties;
@@ -47,6 +50,7 @@ import com.ssafy.bomi.scenario.domain.ScenarioStatus;
 import com.ssafy.bomi.scenario.inbound.ConversationEndedHandler;
 import com.ssafy.bomi.scenario.inbound.ConversationStartedHandler;
 import com.ssafy.bomi.scenario.inbound.DoorOpenedHandler;
+import com.ssafy.bomi.scenario.inbound.FollowResultHandler;
 import com.ssafy.bomi.scenario.inbound.NavigationResultHandler;
 import com.ssafy.bomi.scenario.inbound.WakeWordDetectedHandler;
 import com.ssafy.bomi.scenario.repository.ScenarioRepository;
@@ -143,6 +147,11 @@ class HomecomingE2eTest {
                 clock);
         NavigationResultRouter navigationResultRouter = new NavigationResultRouter(
             scenarioRepository, orchestrator, wakeWordCallOrchestrator);
+        // 보미야 호출은 이제 FOLLOW_START 로 로봇의 회전 탐색을 켠다. 산책은 이
+        // E2E 의 범위 밖이라 대역으로 둔다 — 여기 도착하는 결과는 전부
+        // WAKE_WORD_CALL 시나리오다.
+        FollowResultRouter followResultRouter = new FollowResultRouter(
+            scenarioRepository, wakeWordCallOrchestrator, mock(WalkOrchestrator.class));
 
         RobotObservationService observationService = new RobotObservationService(
             robotRepository, careRecordRepository, observationProperties);
@@ -162,6 +171,7 @@ class HomecomingE2eTest {
             new DoorOpenedHandler(orchestrator),
             new WakeWordDetectedHandler(wakeWordCallOrchestrator),
             new NavigationResultHandler(navigationResultRouter),
+            new FollowResultHandler(followResultRouter),
             new ConversationStartedHandler(orchestrator),
             new ConversationEndedHandler(orchestrator),
             new RestStateChangedHandler(observationService),
@@ -171,24 +181,25 @@ class HomecomingE2eTest {
     }
 
     @Test
-    void wakeWordCallNavigatesToLivingRoomAndCompletesWithoutConversationOrReturn() {
+    void wakeWordCallStartsTheSearchAndCompletesWithoutConversationOrReturn() {
         assertThat(mode()).isEqualTo(RobotMode.IDLE);
 
         dispatcher.dispatch(wakeWordDetected("wake-1"));
         sync();
 
         assertThat(robotPublisher.commands).hasSize(1);
-        RobotCommand navigate = robotPublisher.commands.get(0);
-        assertThat(navigate.type()).isEqualTo(RobotCommandType.NAVIGATE);
-        assertThat(navigate.payload()).containsEntry("target", "LIVING_ROOM");
-        UUID scenarioId = navigate.scenarioId();
+        RobotCommand followStart = robotPublisher.commands.get(0);
+        assertThat(followStart.type()).isEqualTo(RobotCommandType.FOLLOW_START);
+        assertThat(followStart.payload()).isEmpty();
+        UUID scenarioId = followStart.scenarioId();
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.NAVIGATING);
         assertThat(mode()).isEqualTo(RobotMode.SCENARIO_ACTIVE);
         assertThat(conversationRepository.findAll()).isEmpty();
         assertThat(aiPublisher.commands).isEmpty();
 
-        dispatcher.dispatch(navigationResult(
-            "wake-nav-1", scenarioId, navigate.commandId(), "SUCCEEDED"));
+        // STARTED 는 접수 확인이다. 탐색 결과는 로봇 안에서 끝나고 보고되지 않는다.
+        dispatcher.dispatch(followResult(
+            "wake-follow-1", scenarioId, followStart.commandId(), "SUCCEEDED"));
         sync();
 
         assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.COMPLETED);
@@ -212,8 +223,8 @@ class HomecomingE2eTest {
 
         assertThat(scenarioRepository.findAll()).hasSize(1);
         assertThat(robotPublisher.commands).hasSize(1);
-        assertThat(robotPublisher.commands.get(0).payload())
-            .containsEntry("target", "LIVING_ROOM");
+        assertThat(robotPublisher.commands.get(0).type())
+            .isEqualTo(RobotCommandType.FOLLOW_START);
     }
 
     @Test
@@ -231,7 +242,7 @@ class HomecomingE2eTest {
         assertThat(scenarioRepository.findAll()).hasSize(1);
         assertThat(robotPublisher.commands).hasSize(1);
         assertThat(robotPublisher.commands)
-            .noneMatch(command -> "LIVING_ROOM".equals(command.payload().get("target")));
+            .noneMatch(command -> command.type() == RobotCommandType.FOLLOW_START);
     }
 
     @Test
@@ -546,6 +557,27 @@ class HomecomingE2eTest {
             payload.put("reasonCode", "PATH_BLOCKED");
         }
         return message(MqttInboundCategory.ROBOT_RESULT, "NAVIGATION_RESULT", DEVICE_ID, eventId,
+            scenarioId, null, commandId, false, body);
+    }
+
+    private MqttInboundMessage followResult(
+        String eventId,
+        UUID scenarioId,
+        String commandId,
+        String outcome
+    ) {
+        ObjectNode body = objectMapper.createObjectNode();
+        ObjectNode payload = body.putObject("payload");
+        boolean success = "SUCCEEDED".equals(outcome);
+        payload.put("outcome", outcome);
+        // FOLLOW 어휘는 STARTED/UNCHANGED 다 — ARRIVED/NOT_ARRIVED 가 아니다.
+        payload.put("resultCode", success ? "STARTED" : "UNCHANGED");
+        if (success) {
+            payload.putNull("reasonCode");
+        } else {
+            payload.put("reasonCode", "INTERNAL_ERROR");
+        }
+        return message(MqttInboundCategory.ROBOT_RESULT, "FOLLOW_RESULT", DEVICE_ID, eventId,
             scenarioId, null, commandId, false, body);
     }
 

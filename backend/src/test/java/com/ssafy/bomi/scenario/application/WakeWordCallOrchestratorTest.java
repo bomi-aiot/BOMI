@@ -110,7 +110,7 @@ class WakeWordCallOrchestratorTest {
     }
 
     @Test
-    void acceptedWakeWordPersistsMinimalContextAndPublishesOneLivingRoomNavigation() {
+    void acceptedWakeWordPersistsMinimalContextAndPublishesOneFollowStart() {
         orchestrator.onWakeWordDetected(
             DEVICE_ID, EVENT_ID, OCCURRED_AT, KEYWORD, CONFIDENCE);
 
@@ -126,10 +126,12 @@ class WakeWordCallOrchestratorTest {
         assertThat(scenario.getConversationRequest()).isNull();
 
         RobotCommand command = publishedCommand();
-        assertThat(command.type()).isEqualTo(RobotCommandType.NAVIGATE);
+        // 로봇이 거실 좌표로 주행하지 않고 제자리에서 돌며 사람을 찾는다.
+        // 방향은 계약에 실을 수 없어(payload 화이트리스트) 로봇 내부 UDP 로 간다.
+        assertThat(command.type()).isEqualTo(RobotCommandType.FOLLOW_START);
         assertThat(command.scenarioId()).isEqualTo(scenarioId);
         assertThat(command.robotId()).isEqualTo(DEVICE_ID);
-        assertThat(command.payload()).hasSize(1).containsEntry("target", "LIVING_ROOM");
+        assertThat(command.payload()).isEmpty();
         assertThat(command.expiresAt()).isAfter(command.occurredAt());
         assertThat(scenario.getActiveNavigationCommandId()).isEqualTo(command.commandId());
         assertThat(scenario.getActiveNavigationTarget()).isEqualTo("LIVING_ROOM");
@@ -356,6 +358,65 @@ class WakeWordCallOrchestratorTest {
             DEVICE_ID, EVENT_ID, OCCURRED_AT.plusSeconds(1), KEYWORD, CONFIDENCE))
             .isInstanceOf(MqttContractViolationException.class);
         verify(commandPublisher, times(1)).publish(any());
+    }
+
+    @Test
+    void followStartedAcknowledgementCompletesTheScenarioImmediately() {
+        // STARTED 는 "탐색을 시작했다"는 접수 확인이다. 여기서 시나리오를 닫지
+        // 않으면 로봇이 탐색하는 동안 다음 "보미야"가 ACTIVE_SCENARIO_EXISTS 로
+        // 튕긴다.
+        orchestrator.onWakeWordDetected(
+            DEVICE_ID, EVENT_ID, OCCURRED_AT, KEYWORD, CONFIDENCE);
+        RobotCommand command = publishedCommand();
+
+        orchestrator.onFollowResult(
+            scenarioId, DEVICE_ID, command.commandId(), false,
+            "SUCCEEDED", "STARTED", null);
+
+        Scenario scenario = scenarioStore.get();
+        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.COMPLETED);
+        assertThat(scenario.getCompletionResultCode()).isEqualTo("STARTED");
+        assertThat(scenario.getCompletionReasonCode()).isNull();
+        assertThat(robot.getCurrentMode()).isEqualTo(RobotMode.IDLE);
+        verify(commandPublisher, times(1)).publish(any());
+    }
+
+    @Test
+    void followThatCouldNotStartFailsTheScenarioAndStopsTheRobot() {
+        orchestrator.onWakeWordDetected(
+            DEVICE_ID, EVENT_ID, OCCURRED_AT, KEYWORD, CONFIDENCE);
+        RobotCommand command = publishedCommand();
+
+        orchestrator.onFollowResult(
+            scenarioId, DEVICE_ID, command.commandId(), false,
+            "FAILED", "UNCHANGED", "INTERNAL_ERROR");
+
+        assertThat(scenarioStore.get().getFinalStatus()).isEqualTo(ScenarioStatus.FAILED);
+        assertThat(scenarioStore.get().getCompletionResultCode()).isEqualTo("UNCHANGED");
+        assertThat(robot.getCurrentMode()).isEqualTo(RobotMode.SAFE_STOP);
+    }
+
+    @Test
+    void followResultRejectsTheNavigationVocabulary() {
+        // 어휘가 섞이면 백엔드가 조용히 폐기하거나 엉뚱한 상태로 닫힌다.
+        orchestrator.onWakeWordDetected(
+            DEVICE_ID, EVENT_ID, OCCURRED_AT, KEYWORD, CONFIDENCE);
+        RobotCommand command = publishedCommand();
+
+        assertThatThrownBy(() -> orchestrator.onFollowResult(
+            scenarioId, DEVICE_ID, command.commandId(), false,
+            "SUCCEEDED", "ARRIVED", null))
+            .isInstanceOf(MqttContractViolationException.class);
+        assertThatThrownBy(() -> orchestrator.onFollowResult(
+            scenarioId, DEVICE_ID, command.commandId(), false,
+            "FAILED", "NOT_ARRIVED", "PATH_BLOCKED"))
+            .isInstanceOf(MqttContractViolationException.class);
+        assertThatThrownBy(() -> orchestrator.onFollowResult(
+            scenarioId, DEVICE_ID, command.commandId(), false,
+            "SUCCEEDED", "STARTED", "PERSON_LOST"))
+            .isInstanceOf(MqttContractViolationException.class);
+
+        assertThat(scenarioStore.get().getFinalStatus()).isEqualTo(ScenarioStatus.NAVIGATING);
     }
 
     private RobotCommand publishedCommand() {
