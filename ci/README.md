@@ -2,7 +2,7 @@
 
 | Pipeline | 대상 브랜치 | 동작 |
 | --- | --- | --- |
-| `Jenkinsfile.integration` | `hotfix/scenario-integration` | **시연 기간 한정.** MQTT Broker와 Backend를 배포 |
+| `Jenkinsfile.integration` | `hotfix/scenario-integration` | **시연 기간 한정.** MQTT Broker·Backend·Frontend를 배포 |
 | `Jenkinsfile.backend` | `be-main` | Backend만 EC2에 배포 |
 | `Jenkinsfile.mqtt` | `be-main` | MQTT 관련 경로가 바뀐 경우에만 Mosquitto 재배포 |
 | `Jenkinsfile.frontend` | `fe-main` | Frontend만 EC2에 배포 |
@@ -23,7 +23,7 @@ AI 프로젝트는 `robot/ai_chat/`에 있습니다. 디렉터리가 없을 때 
 
 시연 기간에는 브랜치 전략을 접고 모든 도메인을 `hotfix/scenario-integration` 하나로
 모읍니다. 이 기간의 EC2 배포는 `Jenkinsfile.integration` **하나만** 담당합니다.
-담당 범위는 MQTT Broker와 Backend입니다.
+담당 범위는 MQTT Broker, Backend, Frontend입니다.
 
 Job을 하나로 합친 이유는 Jenkins의 Job 트리거가 "브랜치" 단위지 "경로" 단위가 아니기
 때문입니다. `Jenkinsfile.backend`와 `Jenkinsfile.frontend`를 둘 다 같은 브랜치에 걸면
@@ -59,17 +59,36 @@ MQTT 전제조건은 `Validate`에서 끝까지 확인합니다. `Deploy MQTT`�
 `--profile tools` 스키마입니다. **`mqtt.env`는 `production.env`와 다른 파일입니다** —
 없으면 `scripts/deploy/MQTT_DEPLOYMENT.md` 2~3절을 먼저 수행합니다.
 
-### Frontend는 배포하지 않습니다 (2026-08-07 결정)
+### Frontend도 배포합니다 — 맨 뒤에 (2026-08-07 변경)
 
-이 브랜치의 `frontend`는 `fe-main`과 랜딩 페이지 구현이 갈라져 있고
-(`LandingPage.tsx`/`LandingPage.css` ↔ `styles.css`), `frontend/Dockerfile`이
-`tsconfig.json`과 `vite.config.ts`를 COPY하지 않아 `tsc --noEmit && vite build`가
-성립하지 않습니다. `vite.config.ts`가 `@vitejs/plugin-react`를 등록하므로 JSX 변환이
-죽습니다.
+그 전까지 통합 Pipeline은 Frontend를 배포하지 않았습니다. 막고 있던 이유 둘을 모두
+해소했습니다.
 
-시연 화면은 이미 `fe-main` 이미지로 떠 있고 시연까지 프론트 변경 계획이 없으므로,
-통합 Pipeline은 Backend만 배포합니다. 프론트를 다시 배포해야 하면 그때
-`Jenkinsfile.frontend`와 `fe-main` Job을 사용합니다.
+**(1) 빌드가 성립하지 않았습니다.** `frontend/Dockerfile`이 `tsconfig.json`과
+`vite.config.ts`를 COPY하지 않아, `npm run build`의 첫 단계인 `tsc --noEmit`이 도움말을
+출력하고 `exit 1`로 죽었습니다(`&&` 뒤의 `vite build`는 실행조차 되지 않습니다).
+`bomi-fe-production` #11이 이 이유로 실패했고, **`fe-main`도 같은 Dockerfile이라 그쪽
+배포 역시 깨져 있었습니다.** 두 줄을 되살렸습니다.
+
+**(2) 랜딩 페이지가 `fe-main`과 갈라져 있었습니다.** `fe-main`의 `LandingPage.tsx`,
+`LandingPage.css`, `BomiHeroScene.tsx`(three.js), `assets/landing/*.webp`를 이 브랜치로
+가져오고 `styles.css`를 `fe-main` 것으로 되돌렸습니다. 이 브랜치가 `styles.css`에
+접어넣었던 랜딩 427줄을 걷어내야 `LandingPage.css`와의 캐스케이드 충돌
+(`.landing-page`, `.landing-header`, `.landing-hero`, `.landing-hero__copy`,
+`.landing-brand`)이 사라집니다. 걷어낸 427줄의 클래스는 19개 전부 `.landing-*` 계열이라
+다른 페이지에 영향이 없습니다. hotfix의 `bomiService.ts` 실서버 연동과
+`MockDataNotice` 배선은 보존했습니다.
+
+접합부는 맞물립니다 — hotfix의 `App.tsx`는 랜딩 라우트에서
+`getElementById('landing-main')`으로 포커스를 옮기고, `fe-main`의 `LandingPage.tsx`가
+`<main id="landing-main" tabIndex={-1}>`을 렌더합니다.
+
+검증: `tsc --noEmit`(TypeScript 7.0.2, strict) 0 에러, `vite build` 성공(60 모듈,
+three.js는 `BomiHeroScene` 청크로 lazy 분리).
+
+**순서를 맨 뒤로 둡니다.** Frontend 게이트를 앞에 두면 프론트가 깨질 때 지금 정상
+동작하는 Backend·MQTT 배포까지 같이 막힙니다. 맨 뒤면 프론트가 깨져도 그 둘은 이미
+배포를 마친 뒤입니다.
 
 ### Build와 Deploy를 분리한 이유 (2026-08-07 사고 기록)
 
