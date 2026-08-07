@@ -65,6 +65,7 @@ readonly BOMI_DOMAIN="$(read_env_value BOMI_DOMAIN)"
 log "Starting deployment for Git commit $GIT_SHA"
 log 'Updating Backend and Frontend image tags'
 set_env_value BACKEND_IMAGE_TAG "$GIT_SHA"
+set_env_value OPERATOR_CONSOLE_IMAGE_TAG "$GIT_SHA"
 set_env_value FRONTEND_IMAGE_TAG "$GIT_SHA"
 
 log 'Validating Docker Compose configuration'
@@ -73,18 +74,18 @@ compose config --quiet
 log 'Ensuring PostgreSQL is healthy'
 compose up -d --wait --wait-timeout 60 postgres
 
-log 'Building Backend and Frontend images'
-compose build backend frontend
+log 'Building Backend, Operator Console and Frontend images'
+compose build backend operator-console frontend
 
 log 'Starting application containers'
-compose up -d --wait --wait-timeout 120 backend frontend
+compose up -d --wait --wait-timeout 120 backend operator-console frontend
 
 log 'Recreating public Nginx with the current configuration'
 compose up -d --force-recreate --wait --wait-timeout 60 nginx
 
 log 'Verifying container health'
-compose ps postgres backend frontend nginx
-for container in bomi-postgres bomi-backend bomi-frontend bomi-nginx; do
+compose ps postgres backend operator-console frontend nginx
+for container in bomi-postgres bomi-backend bomi-operator-console bomi-frontend bomi-nginx; do
   health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")"
   [[ "$health" == 'healthy' ]] || fail "$container is not healthy (state: $health)"
 done

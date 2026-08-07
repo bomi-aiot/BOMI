@@ -4,9 +4,34 @@
 이용해 Robot 상태를 확인하고, 멈춘 내비게이션 Scenario를 취소한 뒤 실제 정지를
 확인하여 Robot mode를 `IDLE`로 복구한다.
 
-## 실행
+## 운영 배포
 
-EC2에서 Backend 컨테이너의 운영 Secret을 현재 셸로 읽고 콘솔을 실행한다. Secret
+`operator-console`은 `infra/compose.prod.yml`에 포함되며
+`hotfix/scenario-integration` 배포 시 Backend와 함께 이미지가 빌드되고 재시작된다.
+EC2 재부팅 뒤에도 `restart: unless-stopped` 정책으로 자동 시작된다.
+
+최초 자동 배포 전에 기존에 터미널이나 tmux에서 수동 실행한 Streamlit을 종료한다.
+수동 프로세스가 `127.0.0.1:8501`을 계속 사용하면 컨테이너가 포트를 바인딩하지
+못해 배포가 실패한다.
+
+```bash
+docker ps --filter name=bomi-operator-console
+docker inspect bomi-operator-console \
+  --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}'
+```
+
+서비스는 EC2의 `127.0.0.1:8501`에만 공개된다. 운영자 PC에서 SSH 터널을 연다.
+
+```bash
+ssh -N -L 8501:127.0.0.1:8501 <EC2 SSH Host 별칭>
+```
+
+브라우저에서 `http://localhost:8501`을 연다. EC2 보안 그룹에 8501 포트를 공개하지
+않는다.
+
+## 로컬 수동 실행
+
+개발 중에는 Backend 컨테이너의 운영 Secret을 현재 셸로 읽고 콘솔을 실행한다. Secret
 값 자체를 화면이나 로그에 출력하지 않는다.
 
 ```bash
@@ -21,15 +46,6 @@ test -n "$OPERATOR_SHARED_SECRET"
 
 streamlit run app.py
 ```
-
-기본 설정은 `127.0.0.1:8501`에만 바인딩된다. 운영자 PC에서 SSH 터널을 연다.
-
-```bash
-ssh -L 8501:127.0.0.1:8501 ubuntu@i15e102.p.ssafy.io
-```
-
-브라우저에서 `http://localhost:8501`을 연다. EC2 보안 그룹에 8501 포트를 공개하지
-않는다.
 
 ## 안전 절차
 

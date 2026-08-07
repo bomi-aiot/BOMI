@@ -211,6 +211,45 @@ services:
       - proxy-net
       - bomi-mqtt-net
 
+  operator-console:
+    build:
+      context: ../backend/tools/operator_console
+      dockerfile: Dockerfile
+    image: bomi-operator-console:${OPERATOR_CONSOLE_IMAGE_TAG:-local}
+    container_name: bomi-operator-console
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      BOMI_BACKEND_URL: http://backend:8080
+      OPERATOR_SHARED_SECRET: ${OPERATOR_SHARED_SECRET:?OPERATOR_SHARED_SECRET is required}
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOME: /tmp
+    ports:
+      - "127.0.0.1:8501:8501"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=2).read()
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    mem_limit: 256m
+    cpus: 0.5
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend-net
+
   frontend:
     build:
       context: ../frontend
