@@ -63,13 +63,29 @@ setsid ros2 launch core bomi_navigation_real.launch.py \
     pico_port:=/dev/ttyACM0 lidar_port:=/dev/ttyUSB0 > "$LOG" 2>&1 &
 LAUNCH_PGID=$!
 
+# AMCL 이 active 가 될 때까지 기다린다. 아래 bt_navigator 확인과 같은 방식이다.
+#
+# `ros2 service list | grep /amcl/get_state` 는 두 가지 이유로 못 쓴다.
+# 첫째, ROS 데몬이 캐시한 그래프를 보므로 방금 뜬 노드를 한동안 못 본다.
+# 둘째, 찾은 뒤 판정을 위해 한 번 더 호출하면 그 호출이 일시적으로 실패할 때
+# 멀쩡한 스택을 실패로 처리한다. 2026-08-07 실기에서 실제로 그랬다 —
+# 로그에는 "Server amcl connected with bond / Managed nodes are active" 가
+# 남았는데 스크립트만 "AMCL 이 뜨지 않았습니다"로 멈췄다.
+#
+# `ros2 lifecycle get` 은 데몬 캐시가 아니라 서비스를 직접 부르고, 결과를
+# 플래그에 담아 두 번 묻지 않는다.
+AMCL_ACTIVE=no
 for _ in $(seq 1 40); do
-    ros2 service list 2>/dev/null | grep -q /amcl/get_state && break
+    case "$(timeout 8 ros2 lifecycle get /amcl 2>&1)" in
+        *"active "*) AMCL_ACTIVE=yes; break;;
+    esac
     sleep 3
 done
-if ! ros2 service list 2>/dev/null | grep -q /amcl/get_state; then
-    echo "❌ AMCL 이 뜨지 않았습니다. $LOG 를 확인하세요."; finish; exit 1
+if [ "$AMCL_ACTIVE" != yes ]; then
+    echo "❌ AMCL 이 active 가 되지 않았습니다. $LOG 를 확인하세요."
+    finish; exit 1
 fi
+echo "  amcl active"
 sleep 3
 
 # 모터 드라이버가 없으면 Nav2 는 경로까지 잘 뽑고 로봇만 제자리에 선다.
