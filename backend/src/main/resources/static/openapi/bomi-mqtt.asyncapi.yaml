@@ -496,7 +496,11 @@ components:
       summary: |
         AI가 "보미" 호출을 감지했을 때 발행합니다. 임시 구현은 STT 결과에
         "보미"가 포함되는지 확인합니다. AI는 호출 직후 자체적으로 대화를 시작하고,
-        Backend는 이 이벤트에 대해 NAVIGATE {target: LIVING_ROOM}만 발행합니다.
+        Backend는 이 이벤트에 대해 FOLLOW_START(payload 없음)만 발행합니다.
+        로봇은 좌표로 주행하지 않고 제자리에서 돌며 사람을 찾은 뒤 추종합니다.
+        소리 방향은 이 계약에 실을 수 없어(payload 화이트리스트: keyword/confidence)
+        로봇 내부 UDP 채널로 전달합니다. FOLLOW_RESULT 는 완료 보고가 아니라
+        접수 확인(STARTED)이며, 탐색 성패는 보고하지 않습니다.
         START_CONVERSATION은 발행하지 않으며, 아직 Backend 시나리오가 없으므로
         scenarioId 와 commandId 는 포함하지 않습니다. NAVIGATION_RESULT가 ARRIVED면
         Backend는 호출 시나리오를 완료하며 AI 대화 종료는 완료 조건이 아닙니다.
