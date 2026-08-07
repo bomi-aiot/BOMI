@@ -15,6 +15,8 @@ LOG=/tmp/bomi_goto.log
 
 # shellcheck source=lib/cleanup.sh
 source "$HERE/lib/cleanup.sh"
+# shellcheck source=lib/health.sh
+source "$HERE/lib/health.sh"
 source /opt/ros/humble/setup.bash
 source "$WS/install/setup.bash"
 cd "$WS" || exit 1
@@ -69,6 +71,10 @@ if ! ros2 service list 2>/dev/null | grep -q /amcl/get_state; then
     echo "❌ AMCL 이 뜨지 않았습니다. $LOG 를 확인하세요."; finish; exit 1
 fi
 sleep 3
+
+# 모터 드라이버가 없으면 Nav2 는 경로까지 잘 뽑고 로봇만 제자리에 선다.
+# 그 상태의 실패는 "주행 실패"로만 보여서 원인을 찾는 데 오래 걸린다.
+bomi_require_pico "$LOG" || { finish; exit 1; }
 
 echo "▶ 2/5 초기 위치 입력"
 timeout 40 python3 "$HERE/lib/set_initpose.py" "$SX" "$SY" "$SYAW" || {
