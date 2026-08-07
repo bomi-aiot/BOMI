@@ -91,11 +91,64 @@ class ComposeEnvironmentPassthroughTest {
         // 30분을 현장에서 조정할 수 있어야 하는 값이라 SCENARIO_ACTIVE_TIMEOUT 과
         // 같은 기준으로 뽑았다. 나머지는 재배포 없이 바꿀 운영상의 이유가 없다.
         Map.entry("CONVERSATION_RAW_RETENTION_DAYS",
-            "삭제 잡이 아직 없다(이 티켓 범위 밖). 삭제 잡이 생기면 그때 함께 노출한다"),
+            "보존기간을 줄이는 것은 '더 많이 지운다'는 뜻이라 되돌릴 수 없다. env 한 줄로 바꿀 값이 아니라 "
+                + "purge-enabled 와 함께 검토하는 배포 판단이다"),
         Map.entry("CONVERSATION_LIFECYCLE_SWEEP_ENABLED",
             "끄면 이 티켓이 고치는 문제(대화가 영원히 OPEN)로 되돌아간다. 끌 이유가 있다면 재배포로 다룰 사고 대응이다"),
         Map.entry("CONVERSATION_LIFECYCLE_SWEEP_INTERVAL_MILLIS",
-            "배치 간격이다. 유휴시간(30분) 대비 기본 1분이면 촘촘하다. 급하면 sweep-enabled 를 끄면 된다"));
+            "배치 간격이다. 유휴시간(30분) 대비 기본 1분이면 촘촘하다. 급하면 sweep-enabled 를 끄면 된다"),
+        // 보존기간 만료 Raw 삭제 (ERD §4). 위 "운영 중에 바꿀 일이 있는가" 기준이
+        // 여기서는 반대 방향으로 답이 나온다 — 되돌릴 수 없는 삭제를 env 한 줄로
+        // 켤 수 있게 두는 것이 더 위험하다. 켜려면 의도적인 배포여야 한다.
+        //
+        // ※ 대가: 켠 뒤에 급히 끄는 것도 재배포가 된다. infra/compose.prod.yml 은
+        //   backend 라인 밖 파일이라 여기서 고칠 수 없으므로, 인프라 담당이 compose 의
+        //   backend environment 를 손볼 때 이 4개(위 RETENTION 포함)를 함께 넣으면
+        //   그때부터 운영 중 kill switch 조작이 가능해진다.
+        Map.entry("CONVERSATION_RAW_PURGE_ENABLED",
+            "켜면 어르신의 발화가 영구 삭제된다(백업·소프트삭제·감사테이블 없음). 운영 중 즉흥 전환 대상이 "
+                + "아니라, 삭제 건수를 먼저 SELECT 로 확인하고 내리는 의도적인 배포 판단이다"),
+        Map.entry("CONVERSATION_RAW_PURGE_BATCH_SIZE",
+            "한 사고의 폭 상한이다. 급하면 늘릴 값이 아니라 오히려 purge-enabled 를 꺼야 하는 상황이므로 "
+                + "운영 다이얼로 노출하지 않는다"),
+        Map.entry("CONVERSATION_RAW_PURGE_INTERVAL_MILLIS",
+            "배치 간격이다. 보존기간 단위가 일(day)이라 조정할 이유가 없고, 급하면 purge-enabled 를 끄면 "
+                + "빈 자체가 사라진다"),
+
+        // ── 일간 요약 생성(361)과 보호자 발송(362) ──────────────────────────
+        //
+        // 이 여덟 개는 위 purge 세 개와 판단이 다르다. purge 는 "되돌릴 수 없으니
+        // env 로 켜지 못하게" 막은 것이고, 여기는 대부분 **바꿀 이유 자체가 없는**
+        // 값이다. 시각·창 크기는 어르신 현지 시각으로 해석되므로 시간대별로 이미
+        // 알아서 갈리고, 서버 전역에서 조정할 상황이 떠오르지 않는다.
+        //
+        // ※ 대가: 지금은 끄는 것도 재배포다. infra/compose.prod.yml 은 backend 라인
+        //   밖 파일이라 여기서 넣을 수 없다. 인프라 담당이 그 파일의 backend
+        //   environment 를 손볼 때 아래 두 ENABLED 스위치만이라도 함께 넣으면,
+        //   그때부터 운영 중 정지가 가능해진다. 나머지 여섯 개는 그때도 넣을 이유가 없다.
+        Map.entry("DAILY_SUMMARY_ENABLED",
+            "보호자 발송을 통째로 끄는 스위치다. 끄면 보호자가 어르신의 하루를 받지 못하는 상태로 "
+                + "돌아가므로(이 티켓이 고치는 문제 그 자체) 급히 켜고 끌 값이 아니다. 다만 알림 사고 시 "
+                + "즉시 멈출 수단이므로, compose 에 넣을 만한 후보 둘 중 하나다"),
+        Map.entry("DAILY_SUMMARY_SEND_AT_LOCAL",
+            "어르신 현지 아침 시각이다. 시간대별로 이미 각자 계산되므로 서버 전역에서 옮길 이유가 없고, "
+                + "옮긴다면 그것은 알림 정책 변경이라 재배포가 맞다"),
+        Map.entry("DAILY_SUMMARY_WINDOW_MINUTES",
+            "발송 창의 폭이다. 넓히면 지연 복구가 쉬워지고 좁히면 시각이 정확해지는 트레이드오프인데, "
+                + "운영 중에 저울질할 상황이 없다"),
+        Map.entry("DAILY_SUMMARY_TICK_INTERVAL_MILLIS",
+            "폴링 간격이다. 창(기본 30분)보다 촘촘하기만 하면 되고 그 조건은 기본값이 이미 만족한다"),
+        Map.entry("LLM_MAX_DAILY_SUMMARY_MESSAGES",
+            "요약 하나에 넣는 발화 수 상한 = 프롬프트 길이 상한이다. 과금과 직결되지만 "
+                + "LLM_MAX_CALLS_PER_RUN 이 이미 실행당 지출 상한을 쥐고 있어, 급할 때 만질 다이얼은 그쪽이다"),
+        Map.entry("LLM_DAILY_SUMMARY_HOUR",
+            "어르신 현지 새벽 몇 시에 전날을 요약할지다. 발송(아침)과 달리 사람이 보지 않는 시각이라 "
+                + "옮겨서 얻을 것이 없다"),
+        Map.entry("LLM_DAILY_SUMMARY_WINDOW_HOURS",
+            "새벽 창의 폭이다. 넓히면 프로세스가 잠깐 죽어도 그날 요약을 놓치지 않는다. 기본 4시간이 "
+                + "그 목적에 이미 넉넉하고, 좁히는 것은 오히려 손해라 노출할 이유가 없다"),
+        Map.entry("LLM_DAILY_SUMMARY_CRON",
+            "생성 틱의 cron 이다. 창 안에 몇 번 들어오기만 하면 되는 값이라 조정 여지가 사실상 없다"));
 
     @Test
     @DisplayName("★ application.yml 이 읽는 변수는 compose 가 넘기거나, 안 넘기는 이유가 있어야 한다")
