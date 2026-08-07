@@ -154,6 +154,55 @@ echo "▶ 3/4 출발 좌표 기록"
 START=$(timeout 40 python3 "$HERE/lib/read_pose.py") || {
     echo "❌ 좌표를 읽지 못했습니다"; exit 1; }
 echo "  출발: $START"
+read -r SX SY SYAW <<<"$START"
+
+# 출발 좌표를 sofa(=LIVING_ROOM)와 charging(=DEFAULT)에도 넣는다.
+#
+# 이 값들을 손으로 관리하면 재매핑 때 갱신을 잊는다 — 2026-08-07 에 실제로
+# 그래서 sofa 가 새 지도의 좌표계 밖(y 범위 -1.71~+0.64 인데 1.722)에 남았고,
+# LIVING_ROOM 을 쓰는 세 시나리오(보미야 호출·복약 알림·온습도 안부)가 모두
+# "지도 밖" 으로 실패할 상태였다. 현관 좌표와 같은 절차로 함께 갱신한다.
+#
+# 출발 지점을 쓰는 이유: 로봇이 실제로 서 있던 자리라 도달 가능성이 이미
+# 증명돼 있는 유일한 지점이다. 시연 대본에서도 어르신 옆 대기 자리이자
+# 대화가 끝난 뒤 돌아갈 자리라 셋의 의미가 같다.
+python3 - "$WAYPOINTS" "$SX" "$SY" "$SYAW" <<'PY' || exit 1
+import re
+import sys
+
+path, x, y, yaw = sys.argv[1:5]
+text = open(path, encoding="utf-8").read()
+
+# 이름 -> 그 웨이포인트가 무엇을 가리키는지 한 줄 설명.
+TARGETS = {
+    "sofa": "LIVING_ROOM(보미야 호출·복약·온습도)이 가리키는 지점",
+    "charging": "DEFAULT(대기 위치 복귀)가 가리키는 지점",
+}
+
+for name, purpose in TARGETS.items():
+    block = (
+        "  # 실측 좌표. bomi_map.sh 가 출발 좌표를 기록할 때 함께 갱신한다.\n"
+        f"  # {purpose}이며, 재매핑하면 무효가 된다.\n"
+        f"  - name: {name}\n    x: {x}\n    y: {y}\n    yaw: {yaw}\n"
+    )
+    # 앞에 붙은 주석 줄까지 함께 갈아끼운다. 남겨두면 옛 근거가 새 좌표
+    # 위에 붙어 다음 사람이 잘못된 설명을 읽는다.
+    updated = re.sub(
+        r"(?:  #[^\n]*\n)*  - name: " + name + r"\n(?:    \w+: [-0-9.]+\n)+",
+        block,
+        text,
+        count=1,
+    )
+
+    if updated == text:
+        print(f"  ❌ room_waypoints.yaml 의 {name} 항목을 찾지 못했습니다")
+        sys.exit(1)
+
+    text = updated
+
+open(path, "w", encoding="utf-8").write(text)
+print("  sofa(LIVING_ROOM)·charging(DEFAULT) 좌표도 출발 지점으로 갱신했습니다")
+PY
 timeout 150 ros2 run nav2_map_server map_saver_cli -f "src/mapping/maps/$MAP" \
     --ros-args -p save_map_timeout:=90.0 2>&1 | grep -E "successfully"
 
