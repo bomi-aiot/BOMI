@@ -15,13 +15,15 @@ NODE_PATTERN="slam_toolbox|ydlidar_ros2_driver_node|pico_driver|joy_linux\
 |nav2_robot_driver|nav2_waypoint_patrol"
 
 bomi_cleanup() {
-    pkill -INT -f "$LAUNCH_PATTERN" 2>/dev/null
+    # pkill은 일치하는 프로세스가 없으면 1을 반환한다. 이미 깨끗한 상태는
+    # 실패가 아니므로 set -e를 쓰는 호출 스크립트에서도 계속 진행시킨다.
+    pkill -INT -f "$LAUNCH_PATTERN" 2>/dev/null || true
     sleep 4
-    pkill -f "$NODE_PATTERN" 2>/dev/null
+    pkill -f "$NODE_PATTERN" 2>/dev/null || true
     sleep 2
     # launch 부모가 자식만 잃고 남는 경우가 있어 PID 로 확실히 끊는다.
-    for pid in $(pgrep -f "ros2 launch" 2>/dev/null); do
-        kill -9 "$pid" 2>/dev/null
+    for pid in $(pgrep -f "ros2 launch" 2>/dev/null || true); do
+        kill -9 "$pid" 2>/dev/null || true
     done
     sleep 1
 }

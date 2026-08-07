@@ -48,8 +48,12 @@ bomi_navigation_load_state() {
 }
 
 bomi_navigation_start() {
+    # ROS 2 Humble의 setup.bash는 일부 선택 환경변수를 값 없이 참조한다.
+    # 호출 스크립트의 nounset(-u)은 유지하되 setup 파일을 읽는 동안만 끈다.
+    set +u
     source /opt/ros/humble/setup.bash
     source "$BOMI_WS/install/setup.bash"
+    set -u
     cd "$BOMI_WS"
 
     bomi_navigation_load_state
