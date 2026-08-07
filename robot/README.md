@@ -32,6 +32,7 @@ Git으로 추적하지 않습니다. 준비 방법은
 | `ros2 run core mock_motor_driver` | `/cmd_vel`을 구독해 값을 로그로 출력 |
 | `ros2 run core joy_cmd_filter` | 조이스틱 입력을 `/cmd_vel` 명령으로 변환 |
 | `ros2 run core nav2_waypoint_patrol` | YAML 순찰 지점을 Nav2 목표로 순서대로 전송 |
+| `ros2 run core person_search_patrol` | 웨이포인트를 한 바퀴 돌며 사람을 찾고 Nav2 취소 후 추종 전환 |
 | `ros2 run core vision_udp_bridge` | AI 비전의 UDP 추적 결과를 `/vision/follow_result`로 발행 |
 | `ros2 run core person_follower` | 추적 결과와 `/scan_real`로 `/cmd_vel` 생성, 근접 시 정지 |
 | `ros2 run core scan_sanitizer` | 각도 범위가 360°가 아닌 LaserScan을 버리고 나머지를 다시 발행 |
@@ -161,6 +162,27 @@ ros2 launch core person_following.launch.py output_topic:=/cmd_vel
 
 카메라와 LiDAR 준비, 토픽 설정과 실행 순서는
 [`ros2_ws/src/core/README.md`](ros2_ws/src/core/README.md)에 있습니다.
+
+## 웨이포인트 사용자 탐색 MVP
+
+`person_search_patrol`은 저장된 웨이포인트를 한 바퀴만 순찰합니다. 비전 결과에서
+동일한 한 사람이 0.5초 동안 유지되면 현재 Nav2 목표를 취소하고, Nav2가 실제
+`CANCELED` 상태로 끝난 뒤 `/person_following/enable`을 켭니다. 모든 지점을
+확인해도 사람이 없으면 `/person_search/status`에 `not_found`를 발행합니다.
+
+Nav2와 카메라·LiDAR를 먼저 실행한 뒤 다음 launch를 사용합니다.
+
+```bash
+ros2 launch core person_search_patrol.launch.py \
+  waypoint_file:=$WS/src/core/config/room_waypoints.yaml \
+  scan_topic:=/scan_real
+```
+
+`start_automatically:=false`로 실행했다면 `/person_search/enable`의 Bool 값으로
+탐색을 시작하거나 취소할 수 있습니다. 이 launch는 추종 출력을 `/cmd_vel`에
+직접 연결하므로 `nav2_waypoint_patrol`, 키보드 주행 또는 다른 속도 명령원을
+동시에 실행하지 않습니다. 사람을 놓친 뒤 순찰 재개, 여러 바퀴 탐색과 MQTT 결과
+연결은 MVP 범위에 포함하지 않습니다.
 
 ## 지도 만들기
 
