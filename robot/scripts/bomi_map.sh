@@ -1,13 +1,34 @@
 #!/usr/bin/env bash
 # 시연 1단계 — 지도를 그리고 현관·출발 좌표를 기록한다. (로봇에서 실행)
 #
-#   bomi_map.sh [지도이름]        기본값 bomi_demo
+#   bomi_map.sh [지도이름] [launch 인자...]     기본값 bomi_demo
 #
 # 사람이 할 일은 조이스틱 운전과 Enter 두 번뿐이다. 정리·저장·좌표기록은
 # 전부 이 스크립트가 한다.
+#
+# 지도 이름 뒤의 인자는 ros2 launch 로 그대로 넘어간다. SLAM 설정을
+# 바꿔가며 비교할 때 파일을 고치고 colcon build 를 다시 하지 않아도 된다.
+#
+#   bomi_map.sh bomi_demo do_loop_closing:=false
+#   bomi_map.sh bomi_demo use_scan_matching:=false
+#   bomi_map.sh bomi_demo use_rviz:=false
 set -o pipefail
 
 MAP=${1:-bomi_demo}
+shift 2>/dev/null || true
+LAUNCH_EXTRA=("$@")
+
+# LiDAR의 base_link 기준 장착 위치(m). launch 기본값 0은 임시값이므로
+# 반드시 넘겨야 한다.
+#
+# 왜 중요한가: LiDAR가 회전 중심에서 앞으로 나와 있으면, 제자리 회전에서
+# 스캔 원점은 반지름 0.135 m의 원을 그린다. TF가 0이라고 하면 그 이동분이
+# 통째로 지도 오차가 되어, 회전할 때마다 방이 조금씩 돌아간 채 겹쳐 쌓인다.
+# 2026-08-07 오전 실기의 증상이 정확히 이것이었다. 같은 날 새벽에 깨끗한
+# 지도가 나온 실행은 이 값을 손으로 넘기고 있었다(bash history 1529행 등).
+LASER_X=${BOMI_LASER_X:-0.135}
+LASER_Y=${BOMI_LASER_Y:-0.0}
+LASER_Z=${BOMI_LASER_Z:-0.240}
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WS=$(cd "$HERE/../ros2_ws" && pwd)
 WAYPOINTS=$WS/src/core/config/room_waypoints.yaml
@@ -16,6 +37,8 @@ LOG=/tmp/bomi_map.log
 
 # shellcheck source=lib/cleanup.sh
 source "$HERE/lib/cleanup.sh"
+# shellcheck source=lib/health.sh
+source "$HERE/lib/health.sh"
 source /opt/ros/humble/setup.bash
 source "$WS/install/setup.bash"
 cd "$WS" || exit 1
@@ -51,8 +74,12 @@ if [ -z "$DISPLAY" ]; then
 fi
 
 echo "▶ 1/4 매핑 스택 실행 — 로그 $LOG"
+[ ${#LAUNCH_EXTRA[@]} -gt 0 ] && echo "  추가 launch 인자: ${LAUNCH_EXTRA[*]}"
+echo "  LiDAR 장착 위치 x=$LASER_X y=$LASER_Y z=$LASER_Z"
 setsid ros2 launch core joystick_slam_robot.launch.py \
-    pico_port:=/dev/ttyACM0 lidar_port:=/dev/ttyUSB0 > "$LOG" 2>&1 &
+    pico_port:=/dev/ttyACM0 lidar_port:=/dev/ttyUSB0 \
+    laser_x:="$LASER_X" laser_y:="$LASER_Y" laser_z:="$LASER_Z" \
+    ${LAUNCH_EXTRA[@]+"${LAUNCH_EXTRA[@]}"} > "$LOG" 2>&1 &
 LAUNCH_PGID=$!
 
 for _ in $(seq 1 40); do
@@ -64,6 +91,11 @@ if ! pgrep -f slam_toolbox >/dev/null; then
     exit 1
 fi
 sleep 6
+
+# slam_toolbox 만 보고 진행하면, 모터 드라이버가 죽어도 안내문이 그대로
+# 나가서 사람이 안 움직이는 조이스틱을 붙들게 된다. 운전을 시키기 전에
+# 확인한다.
+bomi_require_pico "$LOG" || exit 1
 
 SCAN=$(timeout 10 ros2 topic hz /scan 2>&1 | grep -m1 -o 'average rate: [0-9.]*')
 echo "  scan_sanitizer $(pgrep -f scan_sanitizer >/dev/null && echo OK || echo 없음) / ${SCAN:-스캔 없음}"
