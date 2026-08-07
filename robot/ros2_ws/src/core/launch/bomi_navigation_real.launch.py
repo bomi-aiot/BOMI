@@ -63,6 +63,9 @@ def generate_launch_description() -> LaunchDescription:
         "scan_minimum_interval_sec"
     )
     base_frame = LaunchConfiguration("base_frame")
+    laser_x = LaunchConfiguration("laser_x")
+    laser_y = LaunchConfiguration("laser_y")
+    laser_z = LaunchConfiguration("laser_z")
     odom_frame = LaunchConfiguration("odom_frame")
     robot_radius = LaunchConfiguration("robot_radius")
 
@@ -131,6 +134,9 @@ def generate_launch_description() -> LaunchDescription:
                     "port": lidar_port,
                     "scan_topic": raw_scan_topic,
                     "base_frame": base_frame,
+                    "laser_x": laser_x,
+                    "laser_y": laser_y,
+                    "laser_z": laser_z,
                 }.items(),
             )
         ]
@@ -312,6 +318,26 @@ def generate_launch_description() -> LaunchDescription:
                 "odom_frame",
                 default_value="odom",
                 description="odom 부모 프레임",
+            ),
+            # LiDAR가 회전 중심에서 벗어나 있으면, 제자리 회전에서 스캔
+            # 원점이 원을 그린다. 이 값을 0으로 두면 그 이동분이 통째로
+            # 오차가 되어 AMCL이 회전마다 위치를 놓친다. 매핑 쪽과 같은
+            # 실측값을 기본값으로 둔다(joystick_slam_robot.launch.py는
+            # 아직 0이 기본이므로 그쪽은 스크립트가 넘긴다).
+            DeclareLaunchArgument(
+                "laser_x",
+                default_value="0.135",
+                description="base_link 기준 LiDAR 전방 위치(m). 실측값",
+            ),
+            DeclareLaunchArgument(
+                "laser_y",
+                default_value="0.0",
+                description="base_link 기준 LiDAR 좌측 위치(m). 실측값",
+            ),
+            DeclareLaunchArgument(
+                "laser_z",
+                default_value="0.240",
+                description="base_link 기준 LiDAR 높이(m). 실측값",
             ),
             DeclareLaunchArgument(
                 "robot_radius",
