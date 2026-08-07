@@ -1,0 +1,33 @@
+waypoints:
+  - name: sofa
+    x: 0.178
+    y: 1.722
+    yaw: 0.0
+
+  # 2026-08-07 bomi_real_14 지도에서 실측(서랍을 넣고 재매핑한 지도).
+  # 로봇을 현관 앞에 세우고 slam_toolbox의 map->base_link TF를 읽었다.
+  # 좌표계는 bomi_real_14 기준이므로 재매핑하면 무효가 된다.
+  - name: entrance
+    x: 0.525
+    y: -0.038
+    yaw: 1.381
+
+  - name: window
+    x: -0.665
+    y: 0.012
+    yaw: 3.14
+
+  # 충전소 도킹 위치. 실측값이 아니라 지도 원점(0, 0, 0)으로 절차적으로
+  # 정의한다 — 재매핑할 때 로봇을 충전소에 도킹한 채로 SLAM을 시작하면
+  # 원점이 곧 충전소가 된다. bridge의 contract.TARGET_DEFAULT가 이 이름으로
+  # 매핑된다(robot/ros2_ws/src/bridge/bridge/waypoint_lookup.py).
+  - name: charging
+    x: 0.0
+    y: 0.0
+    yaw: 0.0
+
+loop: true
+waypoint_delay_sec: 5.0
+loop_delay_sec: 30.0
+max_goal_retries: 3
+goal_retry_delay_sec: 5.0

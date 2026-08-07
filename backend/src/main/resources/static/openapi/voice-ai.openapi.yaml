@@ -1,0 +1,337 @@
+openapi: 3.0.3
+info:
+  title: "[AI-Chat] 대화·음성 생성 API (계약·미구현)"
+  version: 1.0.0
+  description: |
+    ⚠️ **아직 구현체가 없는 계약입니다.** 이 문서는 합의된 계약이며 호출할 수 있는
+    API가 아닙니다. `robot/ai_chat`은 현재 HTTP 서버가 아니라 MQTT 소비자이자
+    Backend 호출자입니다. 아래 서버 주소는 구현 시점의 예시입니다.
+
+    ai_chat이 **호출하는** Backend API는 실제로 동작하며 Swagger의
+    `[BE-Robot] 로봇·AI 채널 API` 그룹에서 볼 수 있습니다. ai_chat이 구독하는
+    MQTT 계약은 `/asyncapi/`에 있습니다.
+
+    Spring Boot가 귀가 환영 문장과 TTS 음성을 생성하기 위해 호출하는 내부 API 계약입니다.
+
+    음성 바이너리는 JSON 또는 MQTT에 포함하지 않습니다. 생성 응답은 `audioId`와 `downloadPath`를 반환하고,
+    Robot은 Backend가 구성한 내부 `audioUri`로 음성을 내려받아 재생합니다.
+servers:
+  - url: http://localhost:8002
+    description: 로컬 대화·음성 AI 개발 서버 예시
+tags:
+  - name: Conversation
+    description: 상황 기반 문장 및 TTS 음성 생성
+  - name: Audio
+    description: 생성된 TTS 음성 다운로드
+paths:
+  /api/v1/conversations/generate:
+    post:
+      tags:
+        - Conversation
+      summary: 귀가 환영 문장과 음성 생성
+      description: |
+        `requestId`는 멱등 키입니다. Spring Boot가 네트워크 오류로 같은 `requestId`를 재요청하면
+        AI 서버는 새 음성을 중복 생성하지 않고 기존 결과를 반환해야 합니다.
+      operationId: generateHomecomingResponse
+      security:
+        - ServiceBearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GenerateConversationRequest'
+            examples:
+              homecoming:
+                summary: 사용자 귀가 환영 문장 생성
+                value:
+                  requestId: 01K0M517K2B6D9F4G8H1J3N5QR
+                  scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
+                  robotId: 7a4a4cf6-6c8e-4f69-b55b-2a9b94d86c40
+                  scenarioType: HOMECOMING_WELCOME
+                  locale: ko-KR
+                  requestedAt: '2026-07-21T10:30:19+09:00'
+                  context:
+                    userId: a2b64af3-5ee5-42ea-98c5-35ac9de10570
+                    displayName: 길동
+                    location: ENTRANCE
+      responses:
+        '200':
+          description: 문장과 TTS 음성 생성 완료 또는 기존 멱등 결과 반환
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerateConversationResponse'
+              examples:
+                generated:
+                  value:
+                    requestId: 01K0M517K2B6D9F4G8H1J3N5QR
+                    scenarioId: 6fd94c8c-3903-4a01-a82d-819e0c8edb12
+                    utteranceId: utt-01K0M519WQ
+                    text: 길동님, 어서 오세요.
+                    generatedAt: '2026-07-21T10:30:20+09:00'
+                    duplicate: false
+                    audio:
+                      audioId: audio-01K0M51A9P
+                      downloadPath: /api/v1/audio/audio-01K0M51A9P
+                      contentType: audio/wav
+                      durationMs: 1850
+                      expiresAt: '2026-07-21T10:35:20+09:00'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: 안전 정책 또는 입력 문맥 문제로 응답을 생성할 수 없음
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                code: RESPONSE_GENERATION_REJECTED
+                message: 제공된 문맥으로 응답을 생성할 수 없습니다.
+                traceId: b534dc065e4a475e
+                occurredAt: '2026-07-21T10:30:19.100+09:00'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          description: LLM 또는 TTS 의존 서비스를 일시적으로 사용할 수 없음
+          headers:
+            Retry-After:
+              description: 재시도까지 기다릴 초
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /api/v1/audio/{audioId}:
+    get:
+      tags:
+        - Audio
+      summary: 생성된 TTS 음성 다운로드
+      description: |
+        생성 응답의 `expiresAt` 이전에 내부 서비스 인증으로 호출합니다.
+        이 엔드포인트는 로컬 AI 서버 파일을 제공하며 장기 보관을 보장하지 않습니다.
+      operationId: downloadGeneratedAudio
+      security:
+        - ServiceBearerAuth: []
+      parameters:
+        - name: audioId
+          in: path
+          required: true
+          description: 생성 응답에 포함된 음성 식별자
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+          example: audio-01K0M51A9P
+      responses:
+        '200':
+          description: 생성된 음성 바이너리
+          headers:
+            Content-Length:
+              description: 음성 파일 크기(Byte)
+              schema:
+                type: integer
+                format: int64
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: 존재하지 않거나 삭제된 음성
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '410':
+          description: 보존 시간이 지나 만료된 음성
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+components:
+  securitySchemes:
+    ServiceBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: service-token
+      description: 환경변수 또는 비밀 저장소로 주입하는 내부 서비스 토큰
+  schemas:
+    GenerateConversationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - requestId
+        - scenarioId
+        - robotId
+        - scenarioType
+        - locale
+        - requestedAt
+        - context
+      properties:
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: Backend가 생성하는 대화·음성 HTTP 요청 멱등 키
+        scenarioId:
+          type: string
+          format: uuid
+          minLength: 1
+          maxLength: 64
+        robotId:
+          type: string
+          format: uuid
+          minLength: 1
+          maxLength: 64
+          description: 음성을 재생할 Robot 식별자
+        scenarioType:
+          type: string
+          enum:
+            - HOMECOMING_WELCOME
+        locale:
+          type: string
+          pattern: '^[a-z]{2}-[A-Z]{2}$'
+          example: ko-KR
+        requestedAt:
+          type: string
+          format: date-time
+          description: Backend가 생성 요청을 만든 시각
+        context:
+          $ref: '#/components/schemas/ConversationContext'
+    ConversationContext:
+      type: object
+      additionalProperties: false
+      required:
+        - location
+      properties:
+        userId:
+          type: string
+          format: uuid
+          nullable: true
+          description: 사용자를 식별한 경우의 내부 사용자 ID
+        displayName:
+          type: string
+          nullable: true
+          maxLength: 50
+          description: 환영 문장에 사용할 최소한의 표시 이름
+        location:
+          type: string
+          enum:
+            - ENTRANCE
+    GenerateConversationResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - requestId
+        - scenarioId
+        - utteranceId
+        - text
+        - generatedAt
+        - duplicate
+        - audio
+      properties:
+        requestId:
+          type: string
+          description: 요청의 `requestId`와 동일
+        scenarioId:
+          type: string
+          format: uuid
+        utteranceId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        text:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Robot 음성 재생의 Fallback과 기록에 사용할 문장
+        generatedAt:
+          type: string
+          format: date-time
+        duplicate:
+          type: boolean
+          description: 같은 `requestId`로 생성된 기존 결과인지 여부
+        audio:
+          $ref: '#/components/schemas/AudioReference'
+    AudioReference:
+      type: object
+      additionalProperties: false
+      required:
+        - audioId
+        - downloadPath
+        - contentType
+        - durationMs
+        - expiresAt
+      properties:
+        audioId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        downloadPath:
+          type: string
+          pattern: '^/api/v1/audio/[^/]+$'
+          description: AI 서버 기준 상대 경로. 토큰이나 비밀값을 포함하지 않음
+        contentType:
+          type: string
+          enum:
+            - audio/wav
+            - audio/mpeg
+        durationMs:
+          type: integer
+          minimum: 1
+        expiresAt:
+          type: string
+          format: date-time
+          description: AI 서버가 음성 조회를 보장하는 마지막 시각
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - message
+        - occurredAt
+      properties:
+        code:
+          type: string
+          example: VOICE_AI_UNAVAILABLE
+        message:
+          type: string
+          example: 음성 생성 서비스를 사용할 수 없습니다.
+        traceId:
+          type: string
+          example: b534dc065e4a475e
+        occurredAt:
+          type: string
+          format: date-time
+  responses:
+    BadRequest:
+      description: JSON 형식 또는 필수 필드 오류
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: 내부 서비스 인증 실패
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalServerError:
+      description: 대화·음성 AI 내부 오류
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

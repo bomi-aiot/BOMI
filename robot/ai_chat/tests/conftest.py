@@ -1,0 +1,210 @@
+"""외부 환경과 격리된 pytest 공통 fixture."""
+
+import re
+from collections.abc import Callable
+from functools import lru_cache
+from pathlib import Path
+
+import pytest
+import requests
+
+from bomi_ai_chat import config as config_module
+from bomi_ai_chat.clock import Clock, SimClock, install_clock
+from bomi_ai_chat.config import Settings, clear_settings_cache
+
+# Settings 가 읽는 변수 중 테스트 하네스가 '일부러' 세팅하는 것들.
+# settings_factory 가 이것들까지 지우면 테스트가 개발자의 실제 저장소·env 파일을
+# 건드리기 시작한다 (localstore fixture 의 주석 참고).
+_HARNESS_OWNED_ENV = frozenset({"LOCALSTORE_DIR", "AI_CHAT_ENV_FILE"})
+
+# config.py 소스에서 "..._env(\"NAME\"" 패턴을 찾는다. 여러 줄에 걸쳐 있어도
+# 잡도록 \s* 를 둔다.
+_ENV_NAME_PATTERN = re.compile(r'_env\(\s*"([A-Z][A-Z0-9_]*)"')
+
+
+@lru_cache(maxsize=1)
+def _settings_env_names() -> frozenset[str]:
+    """config.py 가 실제로 읽는 환경변수 이름을 소스에서 뽑는다.
+
+    왜 손으로 적어 두지 않는가
+        목록을 여기 박아 두면 config.py 에 변수가 추가될 때 조용히 뒤처진다.
+        그러면 이 파일은 '환경을 격리한다'고 주장하면서 새 변수만 셸에서 새어
+        들어오는, 가장 나쁜 형태가 된다. 소스에서 뽑으면 드리프트가 없다.
+    """
+    source = Path(config_module.__file__).read_text(encoding="utf-8")
+    return frozenset(_ENV_NAME_PATTERN.findall(source))
+
+SETTING_VARIABLES = (
+    "AI_CHAT_ENV_FILE",
+    "RTZR_CLIENT_ID",
+    "RTZR_CLIENT_SECRET",
+    "GEMINI_API_KEY",
+    "TYPECAST_API_KEY",
+    "TYPECAST_VOICE_ID",
+    "KMA_API_KEY",
+    "AUDIO_MODE",
+    "AUDIO_INPUT_DEVICE",
+    "AUDIO_OUTPUT_DEVICE",
+    "AUDIO_SAMPLE_RATE",
+    "AUDIO_CHANNELS",
+    "AUDIO_CHUNK_SECONDS",
+    "AUDIO_SILENCE_THRESHOLD",
+    "AUDIO_SILENCE_LIMIT_SECONDS",
+    "AUDIO_MAX_SECONDS",
+    "HTTP_TIMEOUT_SECONDS",
+    "HTTP_MAX_ATTEMPTS",
+    "HTTP_BACKOFF_SECONDS",
+    "HTTP_MAX_BACKOFF_SECONDS",
+    "STT_POLL_INTERVAL_SECONDS",
+    "STT_POLL_TIMEOUT_SECONDS",
+    "STT_TOKEN_TTL_SECONDS",
+    "DB_CONNECTION_MODE",
+    "DATABASE_URL",
+    "DB_HOST",
+    "DB_PORT",
+    "DB_NAME",
+    "DB_USER",
+    "DB_PASSWORD",
+    "EC2_HOST",
+    "EC2_SSH_USER",
+    "SSH_KEY_PATH",
+    "REMOTE_DB_HOST",
+    "REMOTE_DB_PORT",
+    "LOCALSTORE_DIR",
+    "BACKEND_BASE_URL",
+    "BACKEND_TIMEOUT_SECONDS",
+    "BACKEND_SHARED_SECRET",
+    "ROBOT_ID",
+    "T3_CONSENT_ENABLED",
+    "EXTRACTION_ENABLED",
+    # 개발자 .env 의 MQTT 설정이 테스트로 새면, 브로커에 실제로 붙으려 하거나
+    # 비활성 기본값을 검증하는 테스트가 머신마다 다른 결과를 낸다.
+    "MQTT_ENABLED",
+    "MQTT_BROKER_URL",
+    "MQTT_DOOR_TOPIC",
+    "MQTT_CLIENT_ID",
+    "MQTT_USERNAME",
+    "MQTT_PASSWORD",
+)
+
+
+@pytest.fixture(autouse=True)
+def isolated_environment(monkeypatch, tmp_path):
+    """로컬 .env와 프로세스 설정 캐시가 테스트에 스며들지 않게 한다."""
+
+    for variable in SETTING_VARIABLES:
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv("AI_CHAT_ENV_FILE", str(tmp_path / "missing.env"))
+
+    # ★ LOCALSTORE_DIR 은 '지우는' 것으로 부족하다 (S15P11E102-233).
+    #
+    #   지우면 config 의 기본값인 var/localstore 로 떨어진다 — **개발자의 실제
+    #   저장소다.** 그래서 자기 fixture 에서 LOCALSTORE_DIR 을 다시 세우지 않은
+    #   테스트는 조용히 실제 runtime.sqlite 에 쓴다.
+    #
+    #   실기 점검 중에 실제로 발견했다. runtime_state 에 senior-1 행이 있었고
+    #   last_user_interaction_at 이 5000.0(SimClock 값)이었다. 테스트가 남긴 것이다.
+    #   그 상태로 침묵 사다리를 관찰하면 관찰 대상이 오염돼 있다.
+    #
+    #   여기서 tmp_path 로 '세워' 두면 개별 테스트가 잊어도 실제 저장소에 닿지 않는다.
+    monkeypatch.setenv("LOCALSTORE_DIR", str(tmp_path / "localstore"))
+    clear_settings_cache()
+    yield
+    clear_settings_cache()
+
+
+@pytest.fixture(autouse=True)
+def reset_degradation():
+    """저하 단계는 모듈 전역이다. 테스트 사이에 새면 원인을 찾기 어렵다.
+
+    새면 어떻게 보이는가
+        느린 턴을 만든 테스트 뒤에 도는 테스트가 갑자기 top_k 가 작고 잡담이 막힌
+        상태로 시작한다. 그 테스트는 자기가 무엇을 잘못했는지 알 수 없고, 실패는
+        테스트 실행 순서에 따라 나타나거나 사라진다 (S15P11E102-212).
+    """
+    from bomi_ai_chat import degradation
+
+    degradation.reset()
+    yield
+    degradation.reset()
+
+
+@pytest.fixture(autouse=True)
+def block_external_http(monkeypatch, request):
+    """기본 테스트에서 실수로 실제 HTTP 요청을 보내면 즉시 실패시킨다."""
+
+    if request.node.get_closest_marker("integration") or request.node.get_closest_marker(
+        "manual"
+    ):
+        return
+
+    def fail_request(*args, **kwargs):
+        raise AssertionError(
+            "기본 테스트에서는 외부 HTTP 요청을 사용할 수 없습니다. "
+            "응답을 mock하거나 integration/manual 테스트로 분리하세요."
+        )
+
+    monkeypatch.setattr(requests.sessions.Session, "request", fail_request)
+
+
+@pytest.fixture
+def frozen_clock():
+    """스스로 흐르지 않는 시계를 설치하고, 테스트가 끝나면 되돌린다.
+
+    왜 speed=0.0 인가
+        SimClock 의 기본값 speed=1.0 은 시작점부터 '실제 시간과 함께' 흐른다.
+        그래서 now() 가 정확히 start 값이 아니고, 시각을 직접 비교하는 단위 테스트가
+        머신 부하에 따라 흔들린다. speed=0.0 은 시간을 멈춰서 advance() 로만
+        움직이게 하므로, "3시간 뒤"를 결정적으로 재현할 수 있다.
+
+    사용 예
+        def test_something(frozen_clock):
+            sim = frozen_clock(start=1_000.0)
+            ...
+            sim.advance(3 * 3600)
+    """
+
+    installed: list[Clock] = []
+
+    def install(start: float = 1_700_000_000.0) -> SimClock:
+        sim = SimClock(start=start, speed=0.0)
+        installed.append(install_clock(sim))
+        return sim
+
+    yield install
+
+    # 설치한 역순으로 되돌린다. 전역 상태이므로 복원을 빼먹으면 이후 테스트가
+    # 가짜 시계를 물려받는다.
+    for previous in reversed(installed):
+        install_clock(previous)
+
+
+@pytest.fixture
+def settings_factory(monkeypatch) -> Callable[..., Settings]:
+    """필요한 환경변수만 주입한 Settings를 만드는 공통 factory.
+
+    ★ 왜 주입하지 않은 변수를 먼저 지우는가  (233 실기 점검에서 드러났다)
+        Settings 의 모든 읽기는 config._optional_env -> os.getenv 한 곳을 지난다.
+        그래서 셸에 값이 export 되어 있으면, 이 factory 가 주입하지 않은 것까지
+        Settings 가 주워 읽는다.
+
+        실제 사고: `set -a; . .env; set +a` 로 .env 를 셸에 올린 터미널에서 pytest 를
+        돌리자 test_it_refuses_to_start_without_a_senior_id 가 실패했다.
+        "SENIOR_ID 가 없을 때 기동을 거부하는가"를 확인하려는 테스트인데, 셸에 그
+        값이 있어서 '없는 상황'을 아예 재현하지 못한 것이다.
+
+        테스트 결과가 그것을 돌리는 사람의 셸 상태에 좌우되면 게이트로 쓸 수 없다
+        (CLAUDE.md §26).
+    """
+
+    def build(**values: str) -> Settings:
+        # 주입하지 않은 것은 지운다. 단, 하네스가 일부러 세팅한 것은 남긴다 —
+        # LOCALSTORE_DIR 을 지우면 테스트가 개발자의 실제 var/localstore 에
+        # 쓰기 시작한다(위 localstore fixture 의 주석 참고).
+        for name in _settings_env_names() - _HARNESS_OWNED_ENV - set(values):
+            monkeypatch.delenv(name, raising=False)
+        for name, value in values.items():
+            monkeypatch.setenv(name, value)
+        return Settings.from_env(load_env_file=False)
+
+    return build
