@@ -167,6 +167,7 @@ class OpenApiDocumentationTest {
             .andReturn().getResponse().getContentAsString();
         assertThat(operator)
             .contains("/api/v1/operator/robots/{deviceId}/mode-recoveries")
+            .contains("/api/v1/operator/robots/{deviceId}/active-scenario-cancellations")
             .doesNotContain("/api/v1/robot/")
             .doesNotContain("/api/v1/guardian/");
     }
