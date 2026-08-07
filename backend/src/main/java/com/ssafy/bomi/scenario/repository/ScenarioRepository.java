@@ -43,6 +43,10 @@ public interface ScenarioRepository extends JpaRepository<Scenario, UUID> {
         @Param("robotId") UUID robotId,
         @Param("statuses") Collection<ScenarioStatus> statuses);
 
+    /** Read-only operator view of active scenarios for one Robot. */
+    List<Scenario> findByRobotIdAndFinalStatusInOrderByUpdatedAtDesc(
+        UUID robotId, Collection<ScenarioStatus> statuses);
+
     /**
      * 이 어르신에게 같은 타입의 시나리오가 주어진 상태로 {@code after} 이후에
      * 갱신된 적이 있는가.
