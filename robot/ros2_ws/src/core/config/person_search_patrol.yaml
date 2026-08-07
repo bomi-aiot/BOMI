@@ -1,0 +1,13 @@
+person_search_patrol:
+  ros__parameters:
+    waypoint_file: ""
+    frame_id: map
+    action_name: navigate_to_pose
+    navigator_state_service: /bt_navigator/get_state
+    vision_topic: /vision/follow_result
+    follow_enable_topic: /person_following/enable
+    enable_topic: /person_search/enable
+    status_topic: /person_search/status
+    target_confirm_sec: 0.5
+    start_automatically: true
+
