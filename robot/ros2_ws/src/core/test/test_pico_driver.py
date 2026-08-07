@@ -61,8 +61,42 @@ class FakeSerial:
         """대기 중이던 잔여 바이트를 비운다."""
         self._extra_buffer = b""
 
+    def reset_output_buffer(self) -> None:
+        """보내다 만 바이트를 비운다. 재시도 사이에 불린다."""
+
     def close(self) -> None:
         self.closed = True
+
+
+class SilentThenReadySerial(FakeSerial):
+    """처음 몇 번은 아무 응답도 하지 않다가 그 뒤에 정상 응답하는 포트.
+
+    젯슨 부팅 직후 Pico가 아직 명령을 받지 못하는 상태를 흉내 낸다.
+    """
+
+    def __init__(self, port: str, timeout: float = 0, silent: int = 1) -> None:
+        super().__init__(port, timeout)
+        self._silent_attempts_left = silent
+        self._ready_lines = deque(self._pending_lines)
+        self._pending_lines = deque()
+
+    def write(self, data: bytes) -> None:
+        super().write(data)
+
+        # 'S'는 매 시도의 첫 명령이다. 조용할 횟수를 다 쓰면 그때부터
+        # 정상 응답을 내놓는다.
+        if data == b"S\n":
+            if self._silent_attempts_left > 0:
+                self._silent_attempts_left -= 1
+            else:
+                self._pending_lines = deque(self._ready_lines)
+
+
+NO_RETRY_DELAY_OVERRIDE = rclpy.parameter.Parameter(
+    "startup_retry_delay_sec",
+    rclpy.parameter.Parameter.Type.DOUBLE,
+    0.0,
+)
 
 
 FAST_STARTUP_OVERRIDE = rclpy.parameter.Parameter(
@@ -103,13 +137,27 @@ def pico_driver_node(monkeypatch):
 
 
 def test_pico_driver_runs_startup_sequence(pico_driver_node) -> None:
-    """생성 시 S, P, Z, T 1 순서로 명령을 보낸다."""
+    """생성 시 빈 줄로 버퍼를 끊고 S, P, Z, T 1 순서로 명령을 보낸다."""
     _node, fake_serial = pico_driver_node
 
-    assert fake_serial.written[0] == b"S\n"
-    assert fake_serial.written[1] == b"P\n"
-    assert fake_serial.written[2] == b"Z\n"
-    assert fake_serial.written[3] == b"T 1\n"
+    assert fake_serial.written[0] == b"\n"
+    assert fake_serial.written[1] == b"S\n"
+    assert fake_serial.written[2] == b"P\n"
+    assert fake_serial.written[3] == b"Z\n"
+    assert fake_serial.written[4] == b"T 1\n"
+
+
+def test_pico_driver_clears_partial_command_before_handshake(
+    pico_driver_node,
+) -> None:
+    """'S' 앞에 빈 줄이 나가야 앞 세션이 남긴 명령 조각이 끊긴다.
+
+    2026-08-07 리허설 회귀: 조각에 'S'가 이어붙어 Pico가
+    'ERR usage: T <0|1>'로 답하고 ACK를 주지 않았다.
+    """
+    _node, fake_serial = pico_driver_node
+
+    assert fake_serial.written.index(b"\n") < fake_serial.written.index(b"S\n")
 
 
 def test_pico_driver_integrates_odometry_from_telemetry(
@@ -223,6 +271,111 @@ def test_pico_driver_rejects_wrong_protocol_version(monkeypatch) -> None:
             )
 
         assert fake_serial.closed is True
+    finally:
+        rclpy.shutdown(context=context)
+
+
+def test_pico_driver_retries_handshake_until_pico_answers(monkeypatch) -> None:
+    """첫 시도에 Pico가 조용해도 다시 걸어 노드를 살려낸다.
+
+    2026-08-07 리허설 회귀: 부팅 직후 첫 'S'가 흘려져 이 노드만 죽었고,
+    나머지 스택은 정상으로 보이는 채 /cmd_vel 구독자만 사라졌다.
+    """
+    fake_serial = SilentThenReadySerial("/dev/ttyACM0", silent=2)
+
+    monkeypatch.setattr(
+        pico_driver_module.serial,
+        "Serial",
+        lambda port, timeout: fake_serial,
+    )
+
+    context = rclpy.Context()
+    rclpy.init(context=context)
+    node = None
+
+    try:
+        node = PicoDriver(
+            context=context,
+            parameter_overrides=[
+                FAST_STARTUP_OVERRIDE,
+                NO_RETRY_DELAY_OVERRIDE,
+            ],
+        )
+
+        # 조용한 2번 + 성공한 1번 = 'S' 세 번.
+        assert fake_serial.written.count(b"S\n") == 3
+        assert fake_serial.closed is False
+        assert fake_serial.written[-4:] == [b"S\n", b"P\n", b"Z\n", b"T 1\n"]
+    finally:
+        if node is not None:
+            node.destroy_node()
+        rclpy.shutdown(context=context)
+
+
+def test_pico_driver_gives_up_after_configured_attempts(monkeypatch) -> None:
+    """끝내 응답이 없으면 시도 횟수를 다 쓰고 포트를 닫으며 실패한다."""
+    fake_serial = SilentThenReadySerial("/dev/ttyACM0", silent=99)
+
+    monkeypatch.setattr(
+        pico_driver_module.serial,
+        "Serial",
+        lambda port, timeout: fake_serial,
+    )
+
+    context = rclpy.Context()
+    rclpy.init(context=context)
+
+    try:
+        with pytest.raises(TimeoutError):
+            PicoDriver(
+                context=context,
+                parameter_overrides=[
+                    FAST_STARTUP_OVERRIDE,
+                    NO_RETRY_DELAY_OVERRIDE,
+                    rclpy.parameter.Parameter(
+                        "startup_attempts",
+                        rclpy.parameter.Parameter.Type.INTEGER,
+                        3,
+                    ),
+                ],
+            )
+
+        assert fake_serial.written.count(b"S\n") == 3
+        assert fake_serial.closed is True
+    finally:
+        rclpy.shutdown(context=context)
+
+
+def test_pico_driver_does_not_retry_protocol_mismatch(monkeypatch) -> None:
+    """버전 불일치는 기다려도 낫지 않으므로 다시 시도하지 않는다."""
+    fake_serial = FakeSerial("/dev/ttyACM0")
+    fake_serial._pending_lines = deque(
+        [
+            b"ACK STOP command\n",
+            b"ACK P proto=2 fw=closed_loop_speed\n",
+        ]
+    )
+
+    monkeypatch.setattr(
+        pico_driver_module.serial,
+        "Serial",
+        lambda port, timeout: fake_serial,
+    )
+
+    context = rclpy.Context()
+    rclpy.init(context=context)
+
+    try:
+        with pytest.raises(RuntimeError):
+            PicoDriver(
+                context=context,
+                parameter_overrides=[
+                    FAST_STARTUP_OVERRIDE,
+                    NO_RETRY_DELAY_OVERRIDE,
+                ],
+            )
+
+        assert fake_serial.written.count(b"S\n") == 1
     finally:
         rclpy.shutdown(context=context)
 

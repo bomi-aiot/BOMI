@@ -4,13 +4,17 @@ waypoints:
     y: 1.722
     yaw: 0.0
 
-  # 2026-08-07 bomi_real_14 지도에서 실측(서랍을 넣고 재매핑한 지도).
+  # 2026-08-07 bomi_real_15 지도에서 실측(강의장, 실측 2.73 m x 2.21 m).
   # 로봇을 현관 앞에 세우고 slam_toolbox의 map->base_link TF를 읽었다.
-  # 좌표계는 bomi_real_14 기준이므로 재매핑하면 무효가 된다.
+  # 좌표계는 bomi_real_15 기준이므로 재매핑하면 무효가 된다.
+  #
+  # 이 지도는 자이로 영점 보정(config/pico_driver.yaml의 gyro_bias_samples)을
+  # 넣은 뒤 처음으로 회전 겹침 없이 그려진 지도다. 그 전 지도들은 정지
+  # 상태에서도 자이로가 초당 1.56° 흘러 회전마다 방이 겹쳐 쌓였다.
   - name: entrance
-    x: 0.525
-    y: -0.038
-    yaw: 1.381
+    x: 0.412
+    y: 0.128
+    yaw: -0.208
 
   - name: window
     x: -0.665
