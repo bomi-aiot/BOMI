@@ -65,7 +65,14 @@ public class OnboardingAnswer {
     @Column(name = "source_conversation_id")
     private UUID sourceConversationId;
 
-    /** Logical reference to {@code conversation_message}; deletion is handled by policy. */
+    /**
+     * Logical reference to {@code conversation_message}; deletion is handled by policy.
+     *
+     * <p>그 "policy" 는 {@code ConversationRawPurgeService} 다 — 물리 FK 도
+     * {@code ON DELETE SET NULL} 도 없으므로(V1 주석) 발화가 지워질 때 이 값을 비우는
+     * 것은 오로지 그 배치의 책임이다. 비우지 않으면 존재하지 않는 행을 가리키는 UUID 가
+     * 조용히 남는다.</p>
+     */
     @Column(name = "source_message_id")
     private UUID sourceMessageId;
 
@@ -105,6 +112,29 @@ public class OnboardingAnswer {
     public void linkEvidence(UUID sourceConversationId, UUID sourceMessageId) {
         this.sourceConversationId = sourceConversationId;
         this.sourceMessageId = sourceMessageId;
+        this.updatedAt = OffsetDateTime.now();
+    }
+
+    /**
+     * 보존기간이 지난 근거 발화의 링크를 끊는다 (ERD §4, 검증 시나리오 31).
+     *
+     * <p><b>유일한 호출자는 {@code ConversationRawPurgeService} 다.</b> 다른 곳에서
+     * 부르면 근거를 되짚을 수단이 사라지므로 리뷰에서 막는다.</p>
+     *
+     * <p>{@code source_conversation_id} 는 <b>남긴다</b> — 지워지는 것은 발화지 대화
+     * 행이 아니고, "어느 대화에서 나온 답인가"는 요약으로 되짚을 수 있는 정보다. 대화
+     * id 까지 함께 비우면 남은 요약과 이 답을 이어 줄 끈이 없어진다.</p>
+     *
+     * <p>{@link #linkEvidence} 로 대신할 수 없어서 따로 만든다: 그 메서드는 두 값을
+     * 함께 덮어써서 호출부가 {@code sourceConversationId} 를 되먹여야 하고, 한 번만
+     * 빠뜨리면 발화만이 아니라 대화 근거까지 조용히 사라진다. 되돌릴 수 없는 잡에
+     * 그런 호출 규약을 남겨 두지 않는다.</p>
+     *
+     * <p>이 클래스는 {@code @UpdateTimestamp} 를 쓰지 않고 {@code updatedAt} 을 손으로
+     * 관리하므로 여기서도 직접 찍는다 — 빠뜨리면 "언제 근거가 비워졌나"가 남지 않는다.</p>
+     */
+    public void clearSourceMessage() {
+        this.sourceMessageId = null;
         this.updatedAt = OffsetDateTime.now();
     }
 
