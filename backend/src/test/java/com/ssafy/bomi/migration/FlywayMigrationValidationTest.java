@@ -110,7 +110,21 @@ class FlywayMigrationValidationTest {
         assertThat(applied).containsExactly(
             "1", "2", "3", "4", "5", "6",
             "7", "8", "9", "10", "11", "12",
-            "13", "14", "15", "16", "17", "18");
+            "13", "14", "15", "16", "17", "18", "19");
+    }
+
+    @Test
+    void operatorScenarioCancellationMigrationAddsAuditShape() throws Exception {
+        String table = "operator_scenario_cancellation_audit";
+        assertThat(columnExists(table, "robot_id")).isTrue();
+        assertThat(columnExists(table, "scenario_id")).isTrue();
+        assertThat(columnExists(table, "operator_id")).isTrue();
+        assertThat(columnExists(table, "target_navigation_command_id")).isTrue();
+        assertThat(columnExists(table, "cancel_command_id")).isTrue();
+        assertThat(columnExists(table, "physical_safety_confirmed")).isTrue();
+        assertThat(constraintExists(table, "ck_operator_scenario_cancel_confirmation")).isTrue();
+        assertThat(constraintExists(table, "uq_operator_scenario_cancel_scenario")).isTrue();
+        assertThat(indexExists("ix_operator_scenario_cancel_robot_time")).isTrue();
     }
 
     @Test
