@@ -121,6 +121,14 @@ services:
       WELLNESS_TEMP_THRESHOLD: ${WELLNESS_TEMP_THRESHOLD:-30.0}
       WELLNESS_HUMIDITY_THRESHOLD: ${WELLNESS_HUMIDITY_THRESHOLD:-80.0}
       WELLNESS_COOLDOWN_MINUTES: ${WELLNESS_COOLDOWN_MINUTES:-30}
+      # 현관 방향 판정(문↔PIR 순서로 IN/OUT 결정)과 그 상관 윈도우 (S15P11E102-365).
+      # PIR 을 어디에 다느냐에 따라 귀가가 외출로 뒤집힐 수 있고, 그것은 리허설에서만
+      # 드러난다. 재배포 없이 켜고 끄고 창을 조정할 수 있어야 한다 — 컨테이너 재시작만
+      # 으로 반영된다.
+      ENTRANCE_DIRECTION_RESOLUTION_ENABLED: ${ENTRANCE_DIRECTION_RESOLUTION_ENABLED:-false}
+      ENTRANCE_CORRELATION_WINDOW: ${ENTRANCE_CORRELATION_WINDOW:-15s}
+      ENTRANCE_GREETING_TTL: ${ENTRANCE_GREETING_TTL:-45s}
+      ENTRANCE_REVERSAL_WINDOW: ${ENTRANCE_REVERSAL_WINDOW:-30s}
       # 복약 알림 유예(분). 시연 리허설에서 재배포 없이 조정 가능해야 한다.
       MEDICATION_GRACE_MINUTES: ${MEDICATION_GRACE_MINUTES:-15}
       # 활성 시나리오 강제 타임아웃(ScenarioTimeoutWatchdog). 대화 핸드오프가 로깅
