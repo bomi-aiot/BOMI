@@ -21,12 +21,30 @@ source /opt/ros/humble/setup.bash
 source "$WS/install/setup.bash"
 cd "$WS" || exit 1
 
-if [ ! -f "$STATE" ]; then
-    echo "❌ $STATE 가 없습니다. bomi_map.sh 를 먼저 실행하세요."
-    exit 1
+# 상태 파일은 1단계가 2단계에게 남기는 쪽지다(쓸 지도 이름과 출발 좌표).
+# 젯슨 홈에만 있는 런타임 산출물이라 재부팅·브랜치 전환·홈 초기화로 사라지고,
+# 사라지면 2단계가 여기서 멈춘다. 2026-08-07 에 실제로 그래서 손으로 복원했다.
+#
+# 같은 출발 좌표가 이미 저장소에 있다 — charging(=DEFAULT, 대기 위치)을
+# bomi_map.sh 가 출발 지점으로 갱신하기 때문이다. 그래서 쪽지가 없으면
+# 저장소에서 읽어 진행한다. 좌표를 두 곳에 적어 동기화하는 대신 저장소를
+# 단일 출처로 두고, 상태 파일은 캐시로만 쓴다.
+if [ -f "$STATE" ]; then
+    # shellcheck source=/dev/null
+    source "$STATE"
+else
+    echo "⚠ $STATE 가 없습니다 — 저장소 기본값으로 진행합니다."
+    # shellcheck source=demo_defaults.sh
+    source "$HERE/demo_defaults.sh"
+    START=$(python3 "$HERE/lib/read_waypoint.py" "$WAYPOINTS" "$FALLBACK_START_WAYPOINT") || {
+        echo "❌ 저장소에서도 출발 좌표를 읽지 못했습니다."
+        echo "   bomi_map.sh 를 먼저 실행하세요."
+        exit 1
+    }
+    echo "  지도=$MAP 출발=$START (웨이포인트 '$FALLBACK_START_WAYPOINT')"
+    echo "  ⚠ 로봇이 실제로 그 자리에 있어야 합니다 — 아니면 AMCL 이 어긋난 채 출발합니다."
 fi
-# shellcheck source=/dev/null
-source "$STATE"
+
 MAP=${1:-$MAP}
 read -r SX SY SYAW <<<"$START"
 if [ -z "$SYAW" ]; then

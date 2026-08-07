@@ -341,10 +341,12 @@ def generate_launch_description() -> LaunchDescription:
             ),
             DeclareLaunchArgument(
                 "robot_radius",
-                default_value="0.30",
+                default_value="0.20",
                 description=(
-                    "costmap이 쓰는 로봇 반경(m). 모델 외접 반경 0.276m에 "
-                    "여유를 둔 값. RewrittenYaml이 params 파일 값을 이 인자로 "
+                    "costmap이 쓰는 로봇 반경(m). 2026-08-07 줄자 실측 "
+                    "28.5 x 15.5cm 의 외접 반경 16.2cm 에 여유를 둔 값. "
+                    "이전 0.30 은 실물이 아니라 시뮬 모델(0.45 x 0.32)에서 "
+                    "나온 값이었다. RewrittenYaml이 params 파일 값을 이 인자로 "
                     "덮어쓰므로, YAML만 고치면 반영되지 않는다."
                 ),
             ),
