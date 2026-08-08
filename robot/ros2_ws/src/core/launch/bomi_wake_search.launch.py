@@ -87,6 +87,10 @@ def generate_launch_description() -> LaunchDescription:
     ai_chat_python = LaunchConfiguration("ai_chat_python")
     ai_chat_dir = LaunchConfiguration("ai_chat_dir")
     robot_udp_host = LaunchConfiguration("robot_udp_host")
+    vision_confidence = LaunchConfiguration("vision_confidence")
+    primary_min_confidence = LaunchConfiguration("primary_min_confidence")
+    primary_min_height_ratio = LaunchConfiguration(
+        "primary_min_height_ratio")
 
     robot_id = LaunchConfiguration("robot_id")
     broker_host = LaunchConfiguration("broker_host")
@@ -148,18 +152,46 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     # ── 4) AI 비전 (별도 가상환경) ──────────────────────────────────────────
+    # --select-primary-person: 이 launch 는 "웨이크워드 방향으로 돈 뒤 화면
+    # 중앙 사람을 따라간다"는 시나리오 전용이라 항상 켠다(기본값이 꺼져 있는
+    # 건 ai_vision 단독 실행 시 다중 인물 상황에서 안전하게 멈추기 위해서다).
+    # 2026-08-08 실기: 이걸 안 켠 채로는 부르지 않은 사람이 잠깐 화각에
+    # 들어와도 그 사람을 그대로 추종 대상으로 확정해 버렸다.
+    # --no-window: 이 launch 는 SSH 로 접속한 젯슨에서 헤드리스로 뜬다.
+    # udp_main 기본값(show_window=True)은 DISPLAY 가 없으면 OpenCV 의 Qt
+    # 플러그인 로딩에서 그대로 죽는다(2026-08-08 실기, ai_vision 즉시 종료로
+    # 전체 launch 가 함께 내려감) — 물리 디스플레이가 붙은 디버그 세션에서만
+    # 수동으로 udp_main 을 따로 띄워 확인한다.
+    # --confidence: main.py 의 기본값(0.8)은 노트북 웹캠 MVP 확인용으로 잡은
+    # 값이라 실기(젯슨 카메라·조명·CPU 폴백 추론)에서는 지나치게 보수적이다
+    # (2026-08-08 실기, 카메라가 사람을 비춰도 한 번도 탐지되지 않았다 — YOLO
+    # 자체가 0.8 미만 박스를 이미 버려서, 그 뒤의 primary_min_confidence(0.5)
+    # 필터는 애초에 발동할 기회가 없었다). 이 launch 는 웹캠 데모가 아니라
+    # 실기 시나리오라 primary_min_confidence 와 맞춰 0.5 로 낮춘다.
     ai_vision_process = ExecuteProcess(
         condition=IfCondition(use_ai_vision),
         cmd=[
             ai_vision_python, "-m", "bomi_vision.udp_main",
             "--host", robot_udp_host,
             "--port", vision_udp_port,
+            "--no-window",
+            "--confidence", vision_confidence,
+            "--select-primary-person",
+            "--primary-min-confidence", primary_min_confidence,
+            "--primary-min-height-ratio", primary_min_height_ratio,
         ],
         cwd=ai_vision_dir,
         name="ai_vision",
         output="screen",
-        # PYTHONPATH 가 ROS 2 것으로 오염되면 가상환경 패키지가 가려진다.
-        additional_env={"PYTHONPATH": ""},
+        additional_env={
+            # PYTHONPATH 가 ROS 2 것으로 오염되면 가상환경 패키지가 가려진다.
+            "PYTHONPATH": "",
+            # 파이프로 나가는 stdout 은 기본이 블록 버퍼링이라, ros2 launch
+            # 화면에 실시간이 아니라 프로세스가 죽거나 버퍼가 찰 때 몰아서
+            # 찍힌다(2026-08-08 실기, 시작 로그가 크래시 트레이스백 '뒤'에
+            # 찍혀 시간순 디버깅이 불가능했다).
+            "PYTHONUNBUFFERED": "1",
+        },
         on_exit=Shutdown(),
     )
 
@@ -175,6 +207,7 @@ def generate_launch_description() -> LaunchDescription:
         additional_env={
             "PYTHONPATH": "",
             "AI_CHAT_ENV_FILE": PathJoinSubstitution([ai_chat_dir, ".env"]),
+            "PYTHONUNBUFFERED": "1",
         },
         on_exit=Shutdown(),
     )
@@ -216,6 +249,16 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             "vision_udp_port", default_value="5005",
             description="ai_vision → vision_udp_bridge 수신 포트"),
+        DeclareLaunchArgument(
+            "vision_confidence", default_value="0.5",
+            description="YOLO 검출 자체의 최소 신뢰도(main.py 기본 0.8은 "
+                        "웹캠 MVP 용 — 실기 카메라·조명에는 너무 높다)"),
+        DeclareLaunchArgument(
+            "primary_min_confidence", default_value="0.5",
+            description="화면 중앙 사람 선택 후보의 최소 검출 신뢰도"),
+        DeclareLaunchArgument(
+            "primary_min_height_ratio", default_value="0.0",
+            description="화면 중앙 사람 선택 후보의 최소 박스 높이 비율"),
 
         # ── 구성 요소 켜고 끄기 ─────────────────────────────────────────────
         DeclareLaunchArgument(

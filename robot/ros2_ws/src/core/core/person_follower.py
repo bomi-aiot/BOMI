@@ -55,6 +55,9 @@ class PersonFollower(Node):
         enable_topic = str(
             self.get_parameter("enable_topic").value
         )
+        status_topic = str(
+            self.get_parameter("status_topic").value
+        )
 
         # 추종 스위치. False 인 동안은 _publish_velocity 가 아무것도 발행하지
         # 않는다(끄는 순간의 정지 1회는 스위치를 내리기 '전'에 내보낸다 —
@@ -159,6 +162,7 @@ class PersonFollower(Node):
             reason="node_started",
         )
         self._last_logged_state: FollowState | None = None
+        self._last_logged_velocity_reason: str | None = None
 
         self._vision_timeout_handled = True
         self._lidar_timeout_stop_sent = True
@@ -166,6 +170,16 @@ class PersonFollower(Node):
         self._velocity_publisher = self.create_publisher(
             Twist,
             output_topic,
+            10,
+        )
+
+        # wake_search 가 "추종을 포기했다"를 알 수 있는 유일한 통로
+        # (S15P11E102-376, 엉뚱한 사람 락온 후 영구 정지 버그 수정).
+        # 상태 자체가 아니라 상태 '전이'를 알려야 하므로 QoS depth 는
+        # 작게 두고 최신 전이만 흘려보낸다.
+        self._status_publisher = self.create_publisher(
+            String,
+            status_topic,
             10,
         )
 
@@ -256,6 +270,10 @@ class PersonFollower(Node):
         self.declare_parameter(
             "enable_topic",
             "/person_following/enable",
+        )
+        self.declare_parameter(
+            "status_topic",
+            "/person_following/status",
         )
 
         self.declare_parameter(
@@ -879,6 +897,19 @@ class PersonFollower(Node):
         twist.angular.z = velocity.angular_z
 
         self._velocity_publisher.publish(twist)
+
+        # 판단 근거가 바뀔 때만 남긴다. "사람은 찾았는데 왜 안 다가가는가"는
+        # 이 reason(person_distance_unavailable, lidar_not_ready,
+        # waiting_for_person_resume_distance …) 없이는 밖에서 알 수 없다.
+        if velocity.reason != self._last_logged_velocity_reason:
+            self._last_logged_velocity_reason = velocity.reason
+            self.get_logger().info(
+                "추종 속도 판단: "
+                f"reason={velocity.reason}, "
+                f"linear.x={velocity.linear_x:.2f}, "
+                f"angular.z={velocity.angular_z:.2f}"
+            )
+
         self._last_velocity = velocity
 
     def _publish_stop(self, reason: str) -> None:
@@ -909,6 +940,16 @@ class PersonFollower(Node):
             f"target_track_id={target_track_id}, "
             f"reason={reason}"
         )
+
+        status_msg = String()
+        status_msg.data = json.dumps(
+            {
+                "state": state.value,
+                "target_track_id": target_track_id,
+                "reason": reason,
+            }
+        )
+        self._status_publisher.publish(status_msg)
 
     @staticmethod
     def _is_stopped(

@@ -12,7 +12,8 @@ NODE_PATTERN="slam_toolbox|ydlidar_ros2_driver_node|pico_driver|joy_linux\
 |ekf_node|rviz2|teleop_node|scan_sanitizer|amcl|controller_server\
 |planner_server|bt_navigator|map_server|behavior_server|velocity_smoother\
 |lifecycle_manager|waypoint_follower|smoother_server|mqtt_bridge\
-|nav2_robot_driver|nav2_waypoint_patrol|twist_mux"
+|nav2_robot_driver|nav2_waypoint_patrol|person_follower|wake_search\
+|bomi_vision.udp_main|twist_mux"
 
 bomi_cleanup() {
     # pkill은 일치하는 프로세스가 없으면 1을 반환한다. 이미 깨끗한 상태는
@@ -24,6 +25,22 @@ bomi_cleanup() {
     # launch 부모가 자식만 잃고 남는 경우가 있어 PID 로 확실히 끊는다.
     for pid in $(pgrep -f "ros2 launch" 2>/dev/null || true); do
         kill -9 "$pid" 2>/dev/null || true
+    done
+    sleep 1
+    bomi_release_devices
+}
+
+# 카메라를 붙잡고 있는 프로세스를 이름이 아니라 '장치 점유' 기준으로 끊는다.
+#
+# 이름 패턴만으로는 놓친다: 2026-08-09 실기에서 고아가 된
+# bomi_vision.udp_main 이 /dev/video0 을 쥔 채 남아 있었고, 다음 실행의
+# ai_vision 이 카메라를 못 열고 죽었다. ai_vision 이 죽으면 launch 전체가
+# 함께 내려가므로(on_exit=Shutdown) 로봇이 아무것도 못 한 채 종료됐다.
+bomi_release_devices() {
+    command -v fuser >/dev/null 2>&1 || return 0
+    for device in /dev/video*; do
+        [ -e "$device" ] || continue
+        fuser -k "$device" 2>/dev/null || true
     done
     sleep 1
 }
