@@ -35,6 +35,26 @@ UPDATE robot
  WHERE device_id = 'bomi-AA001'
    AND is_active = TRUE;
 
+-- 3) 복약 슬롯 영수증 무효화 — 이게 없으면 같은 약을 두 번째 리허설부터 못 울린다
+--
+--   MedicationReminderScheduler 는 슬롯마다 slotKey("med-{scheduleId}-{날짜}-{시각}")를
+--   만들어 existsByScenarioTypeAndExternalEventId 로 "오늘 이미 알렸는지"를 판정한다.
+--   판정은 final_status 가 아니라 **행의 존재 여부**만 본다 — 그래서 1) 의 CANCELLED 로는
+--   풀리지 않고, 리셋 후에도 같은 시각 슬롯은 조용히 침묵한다(로그도 안 남는다).
+--
+--   행을 지우지 않고 키만 어긋나게 한다. scenario 를 가리키는 FK 는 하나도 없지만
+--   (conversation.scenario_id 등은 전부 순수 uuid 컬럼), 삭제하면 고아 행이 생기고
+--   시연 후 무엇이 언제 돌았는지 되짚을 근거도 사라진다.
+--
+--   external_event_id 는 varchar(255) 라 접미사 여유가 충분하고, 유니크 인덱스는
+--   scenario_type = 'WAKE_WORD_CALL' 에만 걸려 있어 이 UPDATE 와 무관하다.
+--   NOT LIKE 조건 덕에 여러 번 실행해도 접미사가 겹겹이 쌓이지 않는다.
+UPDATE scenario
+   SET external_event_id = external_event_id || '-reset'
+ WHERE scenario_type = 'MEDICATION_REMINDER'
+   AND external_event_id LIKE 'med-%'
+   AND external_event_id NOT LIKE '%-reset';
+
 COMMIT;
 
 -- (선택) 같은 웨이크워드 eventId 를 재사용해 재시험하려면 영수증도 지운다.
