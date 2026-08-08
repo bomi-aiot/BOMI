@@ -69,6 +69,18 @@ export BOMI_SEARCH_ENABLED=true
 export BOMI_SEARCH_START_TOPIC=/person_following/enable
 export BOMI_HOMECOMING_READY_FILE="$HOMECOMING_READY_FILE"
 
+# 귀가 인사 뒤 추종을 끝내고 완전히 정지한 다음 최신 MQTT 온습도로
+# 후속 대화를 시작한다. 센서가 30초 주기라 최근 90초 값만 사용한다.
+export HOMECOMING_AMBIENT_ENABLED="${HOMECOMING_AMBIENT_ENABLED:-true}"
+export HOMECOMING_HOT_THRESHOLD_C="${HOMECOMING_HOT_THRESHOLD_C:-30}"
+export HOMECOMING_AMBIENT_MAX_AGE_SEC="${HOMECOMING_AMBIENT_MAX_AGE_SEC:-90}"
+export HOMECOMING_FOLLOW_AMBIENT_PHASE="${HOMECOMING_FOLLOW_AMBIENT_PHASE:-true}"
+export HOMECOMING_FOLLOW_SECONDS="${HOMECOMING_FOLLOW_SECONDS:-20}"
+
+if [ -n "${HOMECOMING_AMBIENT_TEST_TEMPERATURE_C:-}" ]; then
+    echo "[테스트] 센서 대신 ${HOMECOMING_AMBIENT_TEST_TEMPERATURE_C}도 값을 사용합니다."
+fi
+
 echo "현관 대화 후 사용자 추종 시나리오를 시작합니다. 종료: Ctrl+C"
 bash "$HERE/run-homecoming-voice.sh" &
 HOMECOMING_PID=$!

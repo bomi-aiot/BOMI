@@ -350,6 +350,39 @@ def test_full_queue_drops_new_command_without_crashing(settings_factory, frozen_
     assert pending.qsize() == 1  # cmd-a 만 남아 있다
 
 
+def test_hot_recent_ambient_builds_post_follow_conversation(
+    monkeypatch, settings_factory, frozen_clock,
+):
+    frozen_clock(start=NOW)
+    monkeypatch.setenv("HOMECOMING_AMBIENT_ENABLED", "true")
+    subscriber, pending = _make_subscriber(settings_factory, client=_Collector())
+
+    assert subscriber._ambient.handle_payload(json.dumps({
+        "type": "AMBIENT_ENVIRONMENT_OBSERVED",
+        "payload": {"temperatureC": 31.5, "humidityPercent": 67},
+    }))
+    text = subscriber._ambient.conversation_text()
+    assert "실내 온도가 31.5도로 조금 높아요" in text
+    assert "습도는 67%예요" in text
+    assert text.endswith("더우시진 않으세요?")
+
+
+def test_comfortable_ambient_builds_normal_post_follow_conversation(
+    monkeypatch, settings_factory, frozen_clock,
+):
+    frozen_clock(start=NOW)
+    monkeypatch.setenv("HOMECOMING_AMBIENT_ENABLED", "true")
+    subscriber, pending = _make_subscriber(settings_factory, client=_Collector())
+    subscriber._ambient.handle_payload(json.dumps({
+        "type": "AMBIENT_ENVIRONMENT_OBSERVED",
+        "payload": {"temperatureC": 27, "humidityPercent": 50},
+    }))
+
+    text = subscriber._ambient.conversation_text()
+    assert "실내 온도는 27도예요" in text
+    assert "지금은 괜찮은 편이에요" in text
+
+
 def test_publish_conversation_ended(settings_factory, frozen_clock):
     frozen_clock(start=NOW)
     client = _Collector()

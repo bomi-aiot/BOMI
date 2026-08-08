@@ -59,6 +59,7 @@ from std_msgs.msg import Bool, String
 # UDP 로 받는 메시지 타입.
 SIGNAL_WAKE = "wake"
 SIGNAL_STOP = "stop"
+SIGNAL_FOLLOW = "follow"
 
 # ai_vision 이 사람 한 명을 확정 추적 중일 때 보내는 status 값
 # (ai_vision/domain/tracking.py 의 TrackingResultStatus.TRACKING).
@@ -357,6 +358,10 @@ class WakeSearchNode(Node):
             return
 
         signal_type = payload.get("type")
+        if signal_type == SIGNAL_FOLLOW:
+            self._publish_follow_enable(True)
+            self.get_logger().info("UDP 직접 추종 신호를 받았습니다.")
+            return
         if signal_type == SIGNAL_STOP:
             reason = str(payload.get("reason") or "udp_stop")
             self._pending_stop_reason = reason

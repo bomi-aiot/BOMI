@@ -54,6 +54,7 @@ logger = logging.getLogger(__name__)
 # wake_search 노드(core/core/wake_search.py)와 맞춘 메시지 타입.
 SIGNAL_WAKE = "wake"
 SIGNAL_STOP = "stop"
+SIGNAL_FOLLOW = "follow"
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 5006
@@ -126,6 +127,10 @@ class SearchSignalSender:
         주의: 몇 번 불려도 안전하다. 탐색 중이 아니면 받는 쪽이 무시한다.
         """
         self._send({"type": SIGNAL_STOP, "reason": str(reason)})
+
+    def send_follow(self) -> None:
+        """회전 탐색 없이 카메라 정면 사용자의 추종을 바로 시작한다."""
+        self._send({"type": SIGNAL_FOLLOW})
 
     def close(self) -> None:
         """소켓을 닫는다. 두 번 불려도 안전하다."""

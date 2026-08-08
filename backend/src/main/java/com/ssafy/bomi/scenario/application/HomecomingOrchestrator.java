@@ -35,6 +35,8 @@ public class HomecomingOrchestrator {
 
     public static final String REASON_AI_START_TIMEOUT = "AI_START_TIMEOUT";
     public static final String REASON_CONVERSATION_TIMEOUT = "CONVERSATION_TIMEOUT";
+    public static final String REASON_HOMECOMING_FOLLOW_COMPLETED =
+        "HOMECOMING_FOLLOW_COMPLETED";
 
     static final String DEFAULT_GREETING = "다녀오셨어요? 오늘 외출은 어떠셨어요?";
 
@@ -271,7 +273,11 @@ public class HomecomingOrchestrator {
         if (scenario.getFinalStatus() == ScenarioStatus.CHECKING_INTERACTION
             || scenario.getFinalStatus() == ScenarioStatus.CONVERSING) {
             if (scenario.getScenarioType() == ScenarioType.HOMECOMING) {
-                beginFollowing(scenario, robot);
+                if (REASON_HOMECOMING_FOLLOW_COMPLETED.equals(reasonCode)) {
+                    beginReturnToDefault(scenario, robot);
+                } else {
+                    beginFollowing(scenario, robot);
+                }
             } else {
                 beginReturnToDefault(scenario, robot);
             }
