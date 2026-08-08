@@ -114,7 +114,7 @@ def main() -> None:
             "로봇 주변과 이동 경로의 물리적 안전을 확인했습니다.",
             key="cancel_confirmed",
         )
-        cancellable = any(item.get("navigationCommandId") for item in scenarios)
+        cancellable = bool(scenarios)
         if st.button(
             "진행 중 내비게이션 취소",
             type="primary",

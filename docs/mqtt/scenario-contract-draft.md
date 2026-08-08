@@ -81,4 +81,4 @@ ai-develop의 `robot/ai_chat`, `robot/ai_vision` 구현본을 robot-develop으�
 
 **센서 ID 등록** — `bomi.homecoming.sensor-to-senior`에 실제 배포 IoT가 보내는 값을 등록: `door-sensor-01`, `pir`. (임시로 `door_sensor`도 남겨둠 — IoT가 `door-sensor-01`로 완전히 돌아오면 제거.)
 
-**시나리오 타임아웃 워치독** — `ScenarioStartGuard`는 타입 무관 활성 시나리오 하나로 이 어르신의 모든 새 시나리오를 막는다(로봇 한 대). 대화 핸드오프(`ConversationGateway`)가 아직 로깅 스텁이라 실제 종료 신호가 없으면 시나리오가 `CONVERSING`에 영원히 머물러 이후 모든 트리거가 막히는 문제가 실측됐다. `bomi.scenario-timeout.active-timeout`(기본 20분)을 넘긴 활성 시나리오는 백엔드가 자동으로 `TIMED_OUT` 처리한다. 정상 경로(대화 종료 신호 등)가 항상 이보다 먼저 끝내므로, 정상 동작 중에는 아무 영향 없음.
+**시나리오 타임아웃 워치독** — `ScenarioStartGuard`는 타입 무관 활성 시나리오 하나로 이 어르신의 모든 새 시나리오를 막는다(로봇 한 대). 대화 핸드오프(`ConversationGateway`)가 아직 로깅 스텁이라 실제 종료 신호가 없으면 시나리오가 `CONVERSING`에 영원히 머물러 이후 모든 트리거가 막히는 문제가 실측됐다. `bomi.scenario-timeout.active-timeout`(기본 10분)을 넘긴 활성 시나리오는 백엔드가 자동으로 `TIMED_OUT` 처리한다. 정상 경로(대화 종료 신호 등)가 항상 이보다 먼저 끝내므로, 정상 동작 중에는 아무 영향 없음.

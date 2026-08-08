@@ -34,9 +34,10 @@ public class OperatorScenarioCancellationController {
 
     @PostMapping
     @Operation(
-        summary = "Cancel a stuck active navigation scenario",
-        description = "Queues a Robot CANCEL command, terminates the Scenario, and moves the "
-            + "Robot mode to SAFE_STOP. Use mode recovery only after confirming it stopped.")
+        summary = "Force-cancel an active scenario",
+        description = "Terminates the active Scenario and moves the Robot mode to SAFE_STOP. "
+            + "When navigation is active, it also queues a Robot CANCEL command. Use mode "
+            + "recovery only after confirming the Robot stopped.")
     public ResponseEntity<OperatorScenarioCancellationResponse> cancel(
         @PathVariable String deviceId,
         @RequestAttribute(OperatorChannelAuthFilter.OPERATOR_ID_ATTRIBUTE) String operatorId,
