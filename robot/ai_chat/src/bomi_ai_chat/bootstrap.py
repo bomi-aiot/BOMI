@@ -700,7 +700,17 @@ def _run_graph_conversation(
             runtime.search_signal.send_stop("user_requested_wait")
             logger.info("search stop requested by the user utterance")
 
-        run_user_turn(runtime.app, runtime.senior_id, text, duration_sec=duration)
+        closing_turn = (
+            session_turn_limit is not None
+            and session_turns + 1 >= session_turn_limit
+        )
+        run_user_turn(
+            runtime.app,
+            runtime.senior_id,
+            text,
+            duration_sec=duration,
+            closing_turn=closing_turn,
+        )
         session = _advance(session, "turn_done")
         turns += 1
         session_turns += 1

@@ -197,9 +197,16 @@ def test_homecoming_ends_after_two_user_turns(
         lambda settings: ScriptedStt("오늘 괜찮았어", "이제 좀 쉬려고"),
     )
     heard: list[str] = []
+    closing_flags: list[bool] = []
+
+    def record_turn(app, senior, text, **kwargs):
+        heard.append(text)
+        closing_flags.append(bool(kwargs.get("closing_turn")))
+        return {}
+
     monkeypatch.setattr(
         "bomi_ai_chat.graph.turn.run_user_turn",
-        lambda app, senior, text, **kw: heard.append(text) or {},
+        record_turn,
     )
 
     subscriber = RecordingSubscriber()
@@ -216,6 +223,7 @@ def test_homecoming_ends_after_two_user_turns(
     )
 
     assert heard == ["오늘 괜찮았어", "이제 좀 쉬려고"]
+    assert closing_flags == [False, True]
     assert subscriber.ended == [("conversation-1", "COMPLETED", None)]
 
 
