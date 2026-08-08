@@ -112,6 +112,17 @@ _ECHOED_SPEAKER = re.compile(r"^(어르신|사용자)\s*[:：]")
 # 모델이 자기 답변에 붙이는 접두사. 이건 내용이 뒤에 있으므로 접두사만 뗀다.
 _ANSWER_PREFIX = re.compile(r"^(답변|응답)\s*[:：]\s*")
 
+# 모델에는 상대 날짜 계산을 위해 현재 시각을 항상 제공하지만, 그 참고값을 일반
+# 대화에서 먼저 읽어서는 안 된다. 프롬프트만으로는 드물게 새므로 응답 단계에서도
+# 명시적인 날짜·시각 질문인지 확인해 안내 문장을 제거한다.
+_TIME_QUERY = re.compile(
+    r"몇\s*(?:시|분|일)|몇시|며칠|무슨\s*요일|오늘\s*날짜|현재\s*시각|지금\s*몇"
+)
+_CURRENT_TIME_ANSWER = re.compile(
+    r"^(?:오늘은\s*)?(?:\d{4}년\s*)?\d{1,2}월\s*\d{1,2}일"
+    r"|^(?:현재\s*시각|지금\s*시각)(?:은|이)?\s*\d{1,2}시"
+)
+
 
 def strip_prompt_scaffolding(text: str) -> str:
     """프롬프트 뼈대가 음성으로 새어 나가는 것을 결정적으로 막는다.
@@ -156,6 +167,16 @@ def strip_prompt_scaffolding(text: str) -> str:
         if cleaned:
             kept.append(cleaned)
     return " ".join(kept)
+
+
+def strip_unasked_current_time(text: str, user_input: str) -> str:
+    """날짜·시각 질문이 아닌 턴에서 모델이 먼저 읽은 현재 정보를 제거한다."""
+    if _TIME_QUERY.search(user_input or ""):
+        return text
+    return " ".join(
+        sentence for sentence in split_sentences(text)
+        if not _CURRENT_TIME_ANSWER.match(sentence.strip())
+    )
 
 
 def response_shaper(state: ConvState) -> dict:
@@ -203,6 +224,14 @@ def response_shaper(state: ConvState) -> dict:
             "(intent=%s). fix the prompt, not the shaper",
             state.get("intent"))
     text = stripped
+
+    without_unasked_time = strip_unasked_current_time(
+        text, state.get("user_input", "") or "")
+    if without_unasked_time != text:
+        logger.warning(
+            "unasked current date/time leaked into the response and was stripped "
+            "(intent=%s)", state.get("intent"))
+    text = without_unasked_time
 
     all_sentences = split_sentences(text)
     sentences = all_sentences[:limit]

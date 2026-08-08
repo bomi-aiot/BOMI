@@ -36,7 +36,7 @@ public class HomecomingOrchestrator {
     public static final String REASON_AI_START_TIMEOUT = "AI_START_TIMEOUT";
     public static final String REASON_CONVERSATION_TIMEOUT = "CONVERSATION_TIMEOUT";
 
-    static final String DEFAULT_GREETING = "어서 오세요. 오늘 외출은 어떠셨어요?";
+    static final String DEFAULT_GREETING = "다녀오셨어요? 오늘 외출은 어떠셨어요?";
 
     private static final Logger log = LoggerFactory.getLogger(HomecomingOrchestrator.class);
     private static final Duration ROBOT_COMMAND_TTL = Duration.ofMinutes(2);
