@@ -30,6 +30,8 @@ import type {
   UpdateConversationPreferenceInput,
   UpdateMedicationInput,
   UpdateScheduleInput,
+  WalkAction,
+  WalkRequestResult,
 } from "../types/domain";
 
 export interface BomiToast {
@@ -87,6 +89,7 @@ export interface BomiContextValue {
   deleteMedication: (id: string) => Promise<void>;
   toggleMedicationReminder: (id: string) => Promise<Medication>;
   addSchedule: (input: CreateScheduleInput) => Promise<Schedule>;
+  requestWalk: (action: WalkAction) => Promise<WalkRequestResult>;
   updateSchedule: (
     id: string,
     input: UpdateScheduleInput,
@@ -116,6 +119,24 @@ interface BomiProviderProps {
  * 걸린다. getDashboard() 하나만 돌리면 탭당 1r/s 라 여유가 크다.
  */
 const DASHBOARD_POLL_INTERVAL_MS = 1000;
+
+/**
+ * 산책 요청이 거절된 이유를 보호자의 말로 옮긴다.
+ * 백엔드 WalkRequestDisposition 의 reasonCode 와 1:1.
+ */
+const WALK_REJECT_COPY: Record<string, string> = {
+  NO_ACTIVE_WALK: "지금 진행 중인 산책이 없습니다.",
+  ALREADY_STOPPING: "산책을 종료하는 중입니다.",
+  UNKNOWN_ROBOT: "등록된 보미를 찾을 수 없습니다.",
+  INACTIVE_ROBOT: "보미가 지금 사용 중이 아닙니다.",
+  UNASSIGNED_ROBOT: "보미가 어르신께 연결되어 있지 않습니다.",
+  SAFE_STOP: "보미가 안전 정지 상태예요. 확인 후 다시 시도해 주세요.",
+  REST_GUARD: "지금은 어르신 휴식 시간이라 산책을 시작하지 않습니다.",
+  ACTIVE_SCENARIO: "보미가 다른 돌봄을 수행 중이에요. 끝난 뒤 다시 시도해 주세요.",
+  BUSY_MODE: "보미가 지금 다른 일을 하고 있어요.",
+  REQUEST_ID_REUSED: "이미 처리된 요청입니다.",
+  MQTT_UNAVAILABLE: "보미와 연결이 끊겨 요청을 전달하지 못했습니다.",
+};
 
 const messageFromError = (error: unknown): string =>
   error instanceof Error
@@ -510,6 +531,41 @@ export function BomiProvider({ children }: BomiProviderProps) {
     [refreshDashboard, runAction],
   );
 
+  /**
+   * 산책 시작·종료 요청.
+   *
+   * 성공 응답이어도 accepted 가 false 일 수 있어(예: 종료할 산책이 없음, 로봇이
+   * SAFE_STOP) reasonCode 를 사람 말로 바꿔 알린다. 백엔드가 거절한 것을 화면이
+   * 성공처럼 보여주면 발표자가 로봇을 계속 기다리게 된다.
+   *
+   * 요청 뒤 대시보드를 한 번 당겨온다 — 1초 폴링이 곧 따라잡지만, 버튼을 누른
+   * 사람에게는 즉시 반응이 보여야 한다.
+   */
+  const requestWalk = useCallback(
+    async (action: WalkAction): Promise<WalkRequestResult> => {
+      const deviceId = dashboard?.robot.deviceId;
+      if (!deviceId) {
+        const message = "보미의 기기 정보를 확인할 수 없어 산책을 요청하지 못했습니다.";
+        showToast(message, "ERROR");
+        throw new Error(message);
+      }
+      const result = await runAction(
+        `walk-${action.toLowerCase()}`,
+        () => bomiService.requestWalk(action, deviceId),
+      );
+      if (result.accepted) {
+        showToast(
+          action === "START" ? "산책을 시작했습니다." : "산책을 종료했습니다.",
+        );
+      } else {
+        showToast(WALK_REJECT_COPY[result.reasonCode ?? ""] ?? "산책 요청이 처리되지 않았습니다.", "INFO");
+      }
+      void refreshDashboard();
+      return result;
+    },
+    [dashboard?.robot.deviceId, refreshDashboard, runAction, showToast],
+  );
+
   const addSchedule = useCallback(
     async (input: CreateScheduleInput): Promise<Schedule> => {
       const created = await runAction(
@@ -605,6 +661,7 @@ export function BomiProvider({ children }: BomiProviderProps) {
       deleteMedication,
       toggleMedicationReminder,
       addSchedule,
+      requestWalk,
       updateSchedule,
       resetDemoData,
       clearError,
@@ -638,6 +695,7 @@ export function BomiProvider({ children }: BomiProviderProps) {
       deleteMedication,
       toggleMedicationReminder,
       addSchedule,
+      requestWalk,
       updateSchedule,
       resetDemoData,
       clearError,
