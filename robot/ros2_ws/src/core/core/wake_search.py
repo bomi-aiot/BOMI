@@ -150,6 +150,7 @@ class WakeSearchNode(Node):
         self._pending_stop_reason: str | None = None
         self._pending_start = False
         self._pending_resume = False
+        self._pending_arrived = False
         self._was_active = False
         self._last_state = SearchState.IDLE
 
@@ -310,6 +311,8 @@ class WakeSearchNode(Node):
             return
         if payload.get("reason") == "target_lost_timeout":
             self._pending_resume = True
+        elif payload.get("state") == "arrived":
+            self._pending_arrived = True
 
     def _on_start(self, message: Bool) -> None:
         """bridge 가 보내는 시작/정지 신호. 실제 처리는 제어 주기에서 한다.
@@ -398,6 +401,7 @@ class WakeSearchNode(Node):
             self._pending_stop_reason = None
             self._pending_start = False
             self._pending_resume = False
+            self._pending_arrived = False
             if self._policy.is_active:
                 self._apply(self._policy.stop(reason))
             else:
@@ -412,7 +416,19 @@ class WakeSearchNode(Node):
         if self._pending_start:
             self._pending_start = False
             self._pending_resume = False
+            self._pending_arrived = False
             self._begin_search(now)
+            return
+
+        # 사람 앞에 도착했으면 추종을 끄고 그 자리에 머문다. 켜 둔 채로 두면
+        # 대화 중 어르신이 조금만 움직여도 계속 재정렬·재접근한다.
+        if self._pending_arrived:
+            self._pending_arrived = False
+            self._pending_resume = False
+            if self._policy.is_active:
+                self.get_logger().info(
+                    "사람 앞에 도착해 추종을 끕니다.")
+                self._apply(self._policy.stop("arrived"))
             return
 
         if self._pending_resume:
