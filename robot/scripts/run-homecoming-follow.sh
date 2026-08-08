@@ -75,10 +75,12 @@ for _ in $(seq 1 90); do
         wait "$HOMECOMING_PID"
         exit $?
     fi
-    if ros2 node list 2>/dev/null | grep -qx '/mqtt_bridge'; then
-        ready=true
-        break
-    fi
+    case "$(ros2 node list 2>/dev/null || true)" in
+        *"/mqtt_bridge"*)
+            ready=true
+            break
+            ;;
+    esac
     sleep 2
 done
 if [ "$ready" != true ]; then
