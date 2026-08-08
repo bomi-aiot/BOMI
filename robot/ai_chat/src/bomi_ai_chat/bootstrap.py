@@ -854,7 +854,9 @@ def _run_backend_conversation(
     )
     if (
         command.intent == "HOMECOMING_GREETING"
-        and result[1] == "max_turns"
+        # 현관 인사에 답하지 않거나 작별 인사를 해도 귀가 시나리오의
+        # 추종·온습도 단계는 계속 진행한다. 실패/취소만 중단한다.
+        and result[1] in ("max_turns", "no_speech", "farewell")
         and os.environ.get("HOMECOMING_FOLLOW_AMBIENT_PHASE", "false").lower()
             in ("1", "true", "yes")
     ):

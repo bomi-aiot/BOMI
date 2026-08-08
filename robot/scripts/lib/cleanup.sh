@@ -19,6 +19,9 @@ bomi_cleanup() {
     # pkill은 일치하는 프로세스가 없으면 1을 반환한다. 이미 깨끗한 상태는
     # 실패가 아니므로 set -e를 쓰는 호출 스크립트에서도 계속 진행시킨다.
     pkill -INT -f "$LAUNCH_PATTERN" 2>/dev/null || true
+    # 이전 기동의 lifecycle 준비 확인이 timeout 자식으로 잠시 남으면
+    # 프로세스 이름에 /amcl 이 포함되어 실제 AMCL 노드로 오인된다.
+    pkill -f "ros2 lifecycle get /" 2>/dev/null || true
     sleep 4
     pkill -f "$NODE_PATTERN" 2>/dev/null || true
     sleep 2
@@ -47,5 +50,7 @@ bomi_release_devices() {
 
 # 정리 후에도 남은 것이 있으면 이름을 돌려준다(비어 있으면 깨끗).
 bomi_leftovers() {
-    pgrep -a -f "ros2 launch|$NODE_PATTERN" 2>/dev/null | grep -v pgrep
+    pgrep -a -f "ros2 launch|$NODE_PATTERN" 2>/dev/null \
+        | grep -v pgrep \
+        | grep -v "ros2 lifecycle get /"
 }
