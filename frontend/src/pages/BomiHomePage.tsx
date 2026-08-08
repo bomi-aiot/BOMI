@@ -41,7 +41,7 @@ export function BomiHomePage() {
   if (isLoading && !dashboard) return <LoadingState label="보미와 집 정보를 확인하고 있어요" rows={5} />
   if (!dashboard) return <ErrorState description={dashboardError ?? undefined} onRetry={() => void refresh()} />
 
-  const { robot, homeEnvironment } = dashboard
+  const { robot, homeEnvironment, safetyAlerts } = dashboard
 
   // 우선순위가 곧 의미다.
   //   1. SAFE_STOP 은 무엇을 하던 중이었든 이긴다 — 안전 상태가 시나리오 이름에
@@ -61,6 +61,9 @@ export function BomiHomePage() {
       ? formatRelativeTime(robot.activeScenarioStartedAt)
       : undefined
   const environmentIsStale = isStale(homeEnvironment.lastObservedAt)
+  // safetyAlerts 는 null(조회 실패)과 []( 성공했고 알림 없음)을 구분한다.
+  // 조회 실패를 "알림 없음"으로 보여주면 보호자가 안심해 버린다 — 셋을 다르게 그린다.
+  const hasUrgentAlert = Boolean(safetyAlerts && safetyAlerts.length > 0)
 
   // 산책 버튼은 지금 상태에서 의미 있는 동작 하나만 보여준다.
   //   산책 중이면 종료만, 대기 중이면 시작만. 둘 다 띄우면 발표자가 잘못 누른다.
@@ -118,6 +121,46 @@ export function BomiHomePage() {
               ? `마지막 측정 ${formatDateTime(homeEnvironment.lastObservedAt)}${environmentIsStale ? ' · 이후 새 기록 없음' : ''}`
               : '마지막 측정 시각을 확인할 수 없어요.'}
           </p>
+        </Card>
+
+        {/*
+          긴급 안전 알림. 보미가 통증·자해 신호를 감지해 보호자에게 올린 것이
+          여기 뜬다(care_record GUARDIAN_ALERT). 1초 폴링으로 갱신되므로
+          어르신이 말한 지 몇 초 안에 이 카드가 붉게 바뀐다.
+        */}
+        <Card
+          className={hasUrgentAlert ? 'safety-alert-card safety-alert-card--urgent' : 'safety-alert-card'}
+          heading="안전 알림"
+          description="보미가 보호자에게 바로 알려야 한다고 판단한 것만 올라와요."
+        >
+          {safetyAlerts === null ? (
+            <div className="unknown-state-panel">
+              <Badge tone="neutral">확인 실패</Badge>
+              <strong>긴급 알림을 확인하지 못했어요.</strong>
+              <p>알림이 없다고 판단하지 않고 다시 조회해 주세요.</p>
+            </div>
+          ) : hasUrgentAlert ? (
+            <div className="safety-alert-card__body" role="alert">
+              <Badge tone="danger">즉시 확인 필요</Badge>
+              <strong>지금 직접 확인이 필요해요.</strong>
+              <ul className="safety-alert-list">
+                {safetyAlerts.map((alert) => (
+                  <li key={alert.id}>
+                    <span>{alert.message}</span>
+                    {alert.occurredAt ? (
+                      <time dateTime={alert.occurredAt}>{formatRelativeTime(alert.occurredAt)}</time>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="safety-alert-card__body">
+              <Badge tone="success">이상 없음</Badge>
+              <strong>현재 도착한 긴급 알림은 없어요.</strong>
+              <p>기록이 없다는 것이 아무 일도 없었다는 뜻은 아니에요.</p>
+            </div>
+          )}
         </Card>
 
       </section>
