@@ -1,5 +1,6 @@
 """사람 추종 ROS2 노드의 입력 파싱과 LiDAR 계산을 검증한다."""
 
+import json
 import math
 
 import pytest
@@ -252,6 +253,16 @@ class _RecordingPublisher:
         self.published.append((twist.linear.x, twist.angular.z))
 
 
+class _RecordingStatusPublisher:
+    """wake_search 가 구독하는 상태 토픽을 흉내 낸다."""
+
+    def __init__(self) -> None:
+        self.published: list[dict] = []
+
+    def publish(self, message) -> None:
+        self.published.append(json.loads(message.data))
+
+
 class _FakeLogger:
     """get_logger().info/warning/debug 를 조용히 삼킨다."""
 
@@ -272,8 +283,15 @@ def _make_follower(*, enabled: bool, clock_sec: float = 100.0) -> PersonFollower
     if not enabled:
         follower._state_machine.disable(clock_sec)
     follower._velocity_publisher = _RecordingPublisher()
+    follower._status_publisher = _RecordingStatusPublisher()
     follower._last_velocity = None
     follower._last_logged_state = None
+    follower._last_logged_velocity_reason = None
+    follower._approach_uses_lidar_only = False
+    follower._hold_motion_on_brief_loss = False
+    follower._linear_accel_limit = 0.0
+    follower._angular_accel_limit = 0.0
+    follower._last_publish_sec = None
     follower._vision_timeout_handled = True
     follower._lidar_timeout_stop_sent = True
     follower.get_clock = lambda: _FakeClock(clock_sec)  # type: ignore[method-assign]
@@ -310,6 +328,51 @@ def test_publish_velocity_publishes_when_enabled() -> None:
     assert follower._velocity_publisher.published == [(0.2, 0.1)]
 
 
+# ── LiDAR 전용 접근 (카메라가 종아리 높이라 비전 거리 판단 불가) ────────────
+
+
+def _command_follower(*, lidar_only: bool) -> PersonFollower:
+    follower = object.__new__(PersonFollower)
+    follower._approach_uses_lidar_only = lidar_only
+    return follower
+
+
+def test_lidar_only_turns_vision_stop_into_forward() -> None:
+    """★ 비전의 "다 왔다"를 무시해야 로봇이 출발한다.
+
+    카메라가 낮아 height_ratio 가 항상 1.0 이라 비전은 몇 m 밖에서도 stop 만
+    낸다. 이걸 그대로 따르면 전진을 영원히 시작하지 못한다.
+    """
+    follower = _command_follower(lidar_only=True)
+
+    assert follower._effective_command("stop", True) == "move_forward"
+
+
+def test_lidar_only_keeps_turn_commands_untouched() -> None:
+    # 좌우 정렬은 화면 좌우 위치 기준이라 카메라 높이와 무관하다.
+    follower = _command_follower(lidar_only=True)
+
+    assert follower._effective_command("turn_left", True) == "turn_left"
+    assert follower._effective_command("turn_right", True) == "turn_right"
+    assert (
+        follower._effective_command("move_forward", True) == "move_forward"
+    )
+
+
+def test_lidar_only_does_not_move_when_target_is_not_confirmed() -> None:
+    # 다중 인물·추적 상실 등으로 이동이 금지된 상태를 전진으로 뒤집지 않는다.
+    follower = _command_follower(lidar_only=True)
+
+    assert follower._effective_command("stop", False) == "stop"
+
+
+def test_vision_stop_is_respected_when_lidar_only_is_off() -> None:
+    # 기본값(꺼짐)에서는 기존 동작 그대로다.
+    follower = _command_follower(lidar_only=False)
+
+    assert follower._effective_command("stop", True) == "stop"
+
+
 def test_enable_callback_turns_on_and_state_machine_leaves_disabled() -> None:
     follower = _make_follower(enabled=False)
     assert follower._state_machine.state.value == "disabled"
@@ -334,6 +397,26 @@ def test_enable_callback_turns_off_and_publishes_a_final_stop_first() -> None:
     assert follower._enabled is False
     assert follower._velocity_publisher.published == [(0.0, 0.0)]
     assert follower._state_machine.state.value == "disabled"
+
+
+def test_enable_callback_turns_on_publishes_the_new_state_to_wake_search() -> None:
+    """wake_search 가 구독하는 상태 토픽에도 같은 전이가 나가야 한다.
+
+    person_follower 가 대상을 놓쳐도 wake_search 는 이 토픽으로만 그 사실을
+    안다(2026-08-08 실기, target_lost_timeout 재개 버그 수정). 발행 자체가
+    안 나가면 그 수정은 무의미해진다.
+    """
+    follower = _make_follower(enabled=False)
+
+    follower._enable_callback(Bool(data=True))
+
+    assert follower._status_publisher.published == [
+        {
+            "state": "waiting_target",
+            "target_track_id": None,
+            "reason": "waiting_for_target",
+        }
+    ]
 
 
 def test_enable_callback_is_idempotent_for_the_same_value() -> None:
