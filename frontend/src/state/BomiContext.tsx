@@ -36,7 +36,10 @@ import type {
 
 export interface BomiToast {
   id: number;
-  tone: "SUCCESS" | "INFO" | "ERROR";
+  // EMERGENCY 는 ERROR 와 다르다. ERROR 는 "내가 누른 것이 실패했다"이고,
+  // EMERGENCY 는 "어르신 쪽에서 지금 무슨 일이 일어났다"이다. 같은 톤으로
+  // 그리면 저장 실패 토스트와 위급 알림이 구분되지 않는다.
+  tone: "SUCCESS" | "INFO" | "ERROR" | "EMERGENCY";
   message: string;
   actionLabel?: string;
   actionRequestId?: string;
@@ -187,6 +190,18 @@ export function BomiProvider({ children }: BomiProviderProps) {
   // 겹쳐 쌓이고, 그대로 두면 스스로 rate limit 을 때린다.
   const dashboardInFlight = useRef(false);
 
+  // 이미 본 위급 알림(T1) id.
+  //
+  // 왜 "지금 알림이 있다"를 조건으로 쓰지 않는가
+  //   폴링이 1초다. 존재 여부로 판정하면 알림이 남아 있는 동안 매 초 토스트가
+  //   다시 뜬다. 화면에 계속 떠 있는 경고는 곧 아무도 안 보는 경고가 된다.
+  //
+  // 왜 첫 응답은 기준선으로만 쓰는가 (null → Set)
+  //   화면을 여는 순간 어제 알림이 위급 토스트로 튀어나오면, 정작 진짜 위급이
+  //   왔을 때 아무도 그 토스트를 믿지 않는다. 첫 응답에 들어 있던 것은
+  //   "이미 있던 것"으로 간주하고, 그 이후에 새로 생긴 id 만 알린다.
+  const seenAlertIds = useRef<Set<string> | null>(null);
+
   const refreshDashboard = useCallback(async () => {
     if (dashboardInFlight.current) return;
     dashboardInFlight.current = true;
@@ -199,6 +214,29 @@ export function BomiProvider({ children }: BomiProviderProps) {
       // (복약 "목록" 자체는 사람이 등록할 때만 바뀌므로 여기서 건드리지 않는다.)
       setMedicationResponses(nextDashboard.medicationResponses);
       setConfirmationRequests(nextDashboard.confirmationRequests);
+
+      // safetyAlerts 가 null 이면 "확인하지 못했다"는 뜻이다. 그 응답으로
+      // 기준선을 세우거나 알림을 지우면 안 된다 — 다음 성공 응답까지 기다린다.
+      const alerts = nextDashboard.safetyAlerts;
+      if (alerts !== null) {
+        const seen = seenAlertIds.current;
+        if (seen === null) {
+          seenAlertIds.current = new Set(alerts.map((alert) => alert.id));
+        } else {
+          const fresh = alerts.filter((alert) => !seen.has(alert.id));
+          fresh.forEach((alert) => seen.add(alert.id));
+          if (fresh.length > 0) {
+            // 여러 건이 한 틱에 같이 오면 가장 위의 한 건만 문장으로 보여주고
+            // 나머지는 건수로 접는다. 토스트를 여러 개 쌓으면 서로를 가린다.
+            showToast(
+              fresh.length === 1
+                ? fresh[0].message
+                : `${fresh[0].message} (외 ${fresh.length - 1}건)`,
+              "EMERGENCY",
+            );
+          }
+        }
+      }
     } catch {
       // 주 변경은 이미 성공했으므로 파생 요약 갱신 실패를 액션 실패로 되돌리지 않는다.
       // 폴링에서도 같은 이유로 삼킨다 — 일시적 실패에 1초마다 에러를 띄우면
@@ -206,7 +244,7 @@ export function BomiProvider({ children }: BomiProviderProps) {
     } finally {
       dashboardInFlight.current = false;
     }
-  }, []);
+  }, [showToast]);
 
   const refreshPersonalizationState = useCallback(async () => {
     try {

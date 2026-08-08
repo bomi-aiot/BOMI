@@ -3835,3 +3835,100 @@ body {
   }
 
 }
+
+
+/* --- 위급 알림 토스트 -----------------------------------------------------
+   왜 평상시 토스트와 다른 자리인가
+     기본 토스트는 오른쪽 아래에 조용히 뜬다. 저장 완료·되돌리기처럼 놓쳐도
+     되는 것들의 자리다. 위급은 놓치면 안 되는 것이므로 시선이 먼저 가는
+     위쪽 가운데로 올리고, 크기와 색으로 나머지 화면을 이긴다.
+
+   왜 파일 끝에 두는가
+     아래쪽 모바일 미디어쿼리가 .toast 의 right/bottom/width 를 다시 잡는다.
+     같은 특정도라면 뒤에 오는 규칙이 이긴다 — 그 뒤에 둬야 모바일에서도
+     가운데 위로 뜬다. */
+
+.toast--critical {
+  top: 18px;
+  right: auto;
+  bottom: auto;
+  left: 50%;
+  width: min(560px, calc(100% - 32px));
+  padding: 17px 19px;
+  color: #fff;
+  background: linear-gradient(135deg, #b0332f, #8c2323);
+  border-color: #8c2323;
+  border-radius: 14px;
+  box-shadow: 0 18px 60px rgb(120 20 20 / 42%);
+  transform: translateX(-50%);
+  animation:
+    toast-critical-in 300ms ease-out,
+    toast-critical-pulse 1.5s ease-in-out 300ms 3;
+}
+
+.toast--critical .toast__indicator {
+  height: 44px;
+  background: rgb(255 255 255 / 88%);
+}
+
+.toast--critical .toast__title {
+  margin-bottom: 4px;
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.toast--critical .toast__message {
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.toast--critical .toast__action {
+  padding: 7px 12px;
+  color: #8c2323;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  background: #fff;
+  border-radius: 999px;
+}
+
+.toast--critical .toast__close {
+  color: rgb(255 255 255 / 78%);
+  font-size: 1.2rem;
+}
+
+@keyframes toast-critical-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -18px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+@keyframes toast-critical-pulse {
+  0%,
+  100% {
+    box-shadow: 0 18px 60px rgb(120 20 20 / 42%);
+  }
+
+  50% {
+    box-shadow:
+      0 18px 60px rgb(120 20 20 / 42%),
+      0 0 0 12px rgb(190 50 50 / 20%);
+  }
+}
+
+/* 애니메이션을 끈 사용자에게 흔들리는 경고를 강요하지 않는다. 위치와 색만으로도
+   충분히 구분된다. */
+@media (prefers-reduced-motion: reduce) {
+  .toast--critical {
+    animation: none;
+  }
+}
