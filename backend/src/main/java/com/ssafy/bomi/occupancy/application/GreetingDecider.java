@@ -100,7 +100,7 @@ public class GreetingDecider {
         if (awaySince != null && Duration.between(awaySince, now).compareTo(LONG_OUTING) >= 0) {
             return Optional.of("오래 걸으셨네요. 좀 쉬시는 게 어떠세요?");
         }
-        return Optional.of("어서 오세요. 물 한 잔 드시겠어요?");
+        return Optional.of("다녀오셨어요? 물 한 잔 드시겠어요?");
     }
 
     /**
