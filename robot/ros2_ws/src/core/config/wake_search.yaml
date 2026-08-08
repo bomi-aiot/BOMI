@@ -13,6 +13,8 @@ wake_search:
     # 사람을 잠깐 락온했다가 놓쳐도 여기로 신호가 오면 남은 방향 탐색을
     # 이어간다(2026-08-08 실기, 오인식 후 영구 정지 수정).
     follow_status_topic: /person_following/status
+    patrol_enable_topic: /person_search/enable
+    enable_patrol_on_not_found: true
     odom_topic: /odom
     vision_topic: /vision/follow_result
     start_topic: /wake_search/start

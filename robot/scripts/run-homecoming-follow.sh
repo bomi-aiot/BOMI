@@ -98,6 +98,10 @@ start_aux person_follower ros2 launch core person_following.launch.py \
 start_aux wake_search ros2 run core wake_search --ros-args \
     --params-file "$ROS_WS/src/core/config/wake_search.yaml" \
     -p follow_timeout_sec:=600.0
+start_aux person_search_patrol ros2 run core person_search_patrol --ros-args \
+    --params-file "$ROS_WS/src/core/config/person_search_patrol.yaml" \
+    -p waypoint_file:="$ROS_WS/src/core/config/room_waypoints.yaml" \
+    -p start_automatically:=false
 start_aux twist_mux ros2 run twist_mux twist_mux --ros-args \
     --params-file "$ROS_WS/src/core/config/twist_mux.yaml" \
     -r cmd_vel_out:=/cmd_vel
