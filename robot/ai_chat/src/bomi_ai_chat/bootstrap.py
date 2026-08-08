@@ -621,6 +621,7 @@ def _advance(session, event: str):
 def _run_graph_conversation(
     runtime, audio_in, stt, turns: int, max_turns,
     *, session_turn_limit: int | None = None,
+    extend_on_wake_word: bool = False,
 ) -> tuple[int, str]:
     """'보미야'로 시작된 하나의 대화를 여러 발화로 이어간다(그래프 경로).
 
@@ -692,6 +693,11 @@ def _run_graph_conversation(
             continue
 
         session = _advance(session, "speech_captured")
+
+        if extend_on_wake_word and "보미야" in text.replace(" ", ""):
+            session_turn_limit = None
+            logger.info(
+                "homecoming wake word detected; extending to free conversation")
 
         # "기다려", "잠깐만" 같은 발화는 대화를 끝내자는 말이 아니라 움직이지
         # 말라는 말이다. 대화는 그대로 이어가고 로봇의 몸만 멈춘다.
@@ -842,6 +848,7 @@ def _run_backend_conversation(
         turns,
         max_turns,
         session_turn_limit=session_turn_limit,
+        extend_on_wake_word=(command.intent == "HOMECOMING_GREETING"),
     )
 
 
