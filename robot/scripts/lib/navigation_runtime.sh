@@ -120,5 +120,7 @@ bomi_run_mqtt_bridge() {
         -p username:="${MQTT_USERNAME:-bomi-jetson}" \
         -p password:="$MQTT_PASSWORD" \
         -p waypoint_file:="$BOMI_WAYPOINTS" \
-        -p approach_enabled:=false
+        -p approach_enabled:=false \
+        -p search_enabled:="${BOMI_SEARCH_ENABLED:-false}" \
+        -p search_start_topic:=/wake_search/start
 }
