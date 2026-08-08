@@ -337,7 +337,7 @@ def test_closing_turn_does_not_leave_an_unanswered_question():
         "response": "날씨가 참 좋았나 봐요. 어디 다녀오셨어요?",
     })
 
-    assert result["final_utterance"] == "날씨가 참 좋았나 봐요. 이제 편히 쉬세요."
+    assert result["final_utterance"] == "날씨가 참 좋았나 봐요. 오늘도 고생 많으셨어요."
     assert not result["final_utterance"].endswith("?")
 
 

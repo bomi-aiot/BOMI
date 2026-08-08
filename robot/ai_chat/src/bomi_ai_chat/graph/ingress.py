@@ -593,7 +593,11 @@ def backend_command(state: ConvState) -> dict:
 
     # 백엔드가 방향까지 판정해 확정 재실 상태를 실어 보냈으면 반영한다.
     # 이것이 HOME/AWAY 가 저장소에 들어오는 두 경로 중 하나다(다른 하나는 발화).
-    out: dict = {}
+    # A checkpoint is reused per senior, so the previous conversation's final
+    # turn flag can otherwise leak into this new backend-initiated greeting.
+    # response_shaper treats that flag as authoritative and would replace the
+    # question-based homecoming greeting with the closing utterance.
+    out: dict = {"closing_turn": False}
     occupancy = command.get("occupancy")
     senior_id = state.get("senior_id")
     if occupancy and senior_id:

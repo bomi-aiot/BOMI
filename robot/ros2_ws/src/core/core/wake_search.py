@@ -112,6 +112,9 @@ class WakeSearchNode(Node):
         self._cmd_vel_topic = self._string_param("cmd_vel_topic")
         self._follow_enable_topic = self._string_param("follow_enable_topic")
         self._follow_status_topic = self._string_param("follow_status_topic")
+        patrol_enable_topic = self._string_param("patrol_enable_topic")
+        self._enable_patrol_on_not_found = bool(
+            self.get_parameter("enable_patrol_on_not_found").value)
         odom_topic = self._string_param("odom_topic")
         vision_topic = self._string_param("vision_topic")
         start_topic = self._string_param("start_topic")
@@ -150,7 +153,6 @@ class WakeSearchNode(Node):
         self._pending_stop_reason: str | None = None
         self._pending_start = False
         self._pending_resume = False
-        self._pending_arrived = False
         self._was_active = False
         self._last_state = SearchState.IDLE
 
@@ -159,6 +161,8 @@ class WakeSearchNode(Node):
             Twist, self._cmd_vel_topic, 10)
         self._follow_publisher = self.create_publisher(
             Bool, self._follow_enable_topic, 10)
+        self._patrol_publisher = self.create_publisher(
+            Bool, patrol_enable_topic, 10)
 
         # ── 구독 ───────────────────────────────────────────────────────────
         self.create_subscription(Odometry, odom_topic, self._on_odom, 10)
@@ -199,6 +203,8 @@ class WakeSearchNode(Node):
             "follow_enable_topic", "/person_following/enable")
         self.declare_parameter(
             "follow_status_topic", "/person_following/status")
+        self.declare_parameter("patrol_enable_topic", "/person_search/enable")
+        self.declare_parameter("enable_patrol_on_not_found", False)
         self.declare_parameter("odom_topic", "/odom")
         self.declare_parameter("vision_topic", "/vision/follow_result")
         self.declare_parameter("start_topic", "/wake_search/start")
@@ -310,9 +316,10 @@ class WakeSearchNode(Node):
         if not isinstance(payload, dict):
             return
         if payload.get("reason") == "target_lost_timeout":
-            self._pending_resume = True
-        elif payload.get("state") == "arrived":
-            self._pending_arrived = True
+            if self._policy.is_active:
+                self._pending_resume = True
+            else:
+                self._pending_start = True
 
     def _on_start(self, message: Bool) -> None:
         """bridge 가 보내는 시작/정지 신호. 실제 처리는 제어 주기에서 한다.
@@ -401,7 +408,6 @@ class WakeSearchNode(Node):
             self._pending_stop_reason = None
             self._pending_start = False
             self._pending_resume = False
-            self._pending_arrived = False
             if self._policy.is_active:
                 self._apply(self._policy.stop(reason))
             else:
@@ -416,19 +422,7 @@ class WakeSearchNode(Node):
         if self._pending_start:
             self._pending_start = False
             self._pending_resume = False
-            self._pending_arrived = False
             self._begin_search(now)
-            return
-
-        # 사람 앞에 도착했으면 추종을 끄고 그 자리에 머문다. 켜 둔 채로 두면
-        # 대화 중 어르신이 조금만 움직여도 계속 재정렬·재접근한다.
-        if self._pending_arrived:
-            self._pending_arrived = False
-            self._pending_resume = False
-            if self._policy.is_active:
-                self.get_logger().info(
-                    "사람 앞에 도착해 추종을 끕니다.")
-                self._apply(self._policy.stop("arrived"))
             return
 
         if self._pending_resume:
@@ -547,6 +541,16 @@ class WakeSearchNode(Node):
         if decision.finished:
             # 끝났으면 마지막으로 확실히 멈춘다.
             self._publish_angular(0.0)
+            if (
+                self._enable_patrol_on_not_found
+                and (
+                    "person_not_found" in decision.reason
+                    or "search_timeout" in decision.reason
+                )
+            ):
+                self.get_logger().info(
+                    "회전 탐색에서 사람을 찾지 못해 웨이포인트 순찰을 시작합니다.")
+                self._patrol_publisher.publish(Bool(data=True))
 
     def _publish_angular(self, angular_z: float) -> None:
         """각속도만 담은 Twist 를 발행한다. 상한으로 한 번 더 자른다."""

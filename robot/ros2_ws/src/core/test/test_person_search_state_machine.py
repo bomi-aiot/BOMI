@@ -53,6 +53,20 @@ def test_one_patrol_pass_finishes_as_not_found() -> None:
     assert machine.complete_without_person().state == PersonSearchState.NOT_FOUND
 
 
+def test_lost_person_can_start_another_patrol_after_following() -> None:
+    """추종 복귀 후 다시 놓쳐도 새로운 순찰을 시작할 수 있어야 한다."""
+    machine = PersonSearchStateMachine(target_confirm_sec=0.5)
+    machine.start()
+    machine.observe("tracking", 4, 2.0)
+    machine.observe("tracking", 4, 2.5)
+    machine.nav2_cancelled()
+
+    restarted = machine.start()
+
+    assert restarted.state == PersonSearchState.PATROLLING
+    assert restarted.reason == "search_started"
+
+
 def test_parse_person_detection_normalizes_status() -> None:
     """비전 메시지의 상태를 소문자로 정규화한다."""
     assert parse_person_detection('{"status":"TRACKING","track_id":8}') == (

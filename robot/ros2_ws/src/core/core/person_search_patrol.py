@@ -113,7 +113,6 @@ class PersonSearchPatrol(Node):
             if self._machine.state in {
                 PersonSearchState.PATROLLING,
                 PersonSearchState.CANCELING_NAV2,
-                PersonSearchState.FOLLOWING,
             }:
                 return
             self._start_requested = True
@@ -134,6 +133,7 @@ class PersonSearchPatrol(Node):
             PersonSearchState.NOT_FOUND,
             PersonSearchState.FAILED,
             PersonSearchState.CANCELLED,
+            PersonSearchState.FOLLOWING,
         }:
             return
         if (
