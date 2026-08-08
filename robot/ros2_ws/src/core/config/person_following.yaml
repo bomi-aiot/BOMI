@@ -41,10 +41,10 @@ person_follower:
     # "보미야" 호출에 응답해 어르신 앞까지 오는 거리. 카메라가 종아리
     # 높이라 박스 크기로는 거리를 못 재므로 접근 정지는 전적으로 LiDAR 가
     # 정한다. 0.2 로 내렸다가 실기에서 몸에 닿을 만큼 붙어 0.4 로 되돌렸다
-    # (2026-08-09). LiDAR 기준 거리라 로봇 앞면과 사람 사이 실제 간격은
-    # 이보다 짧다.
-    person_stop_distance_m: 0.4
-    person_resume_distance_m: 0.6
+    # (2026-08-09). 다시 1.5배로 넓혔다 — LiDAR 기준 거리라 로봇 앞면과
+    # 사람 사이 실제 간격은 이보다 짧다.
+    person_stop_distance_m: 0.6
+    person_resume_distance_m: 0.9
     # person_stop_distance_m 이하여야 한다(컨트롤러 검증).
     emergency_stop_distance_m: 0.3
 
