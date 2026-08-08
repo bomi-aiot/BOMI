@@ -9,6 +9,8 @@ person_follower:
     # CPU 추론)만큼 이 속도로 계속 돈다. 0.5면 한 번의 판정으로 최대 ~30도
     # 돌아 사람을 지나쳐버린다.
     angular_speed: 0.15
+    # 좌우 보정 중에도 직진 속도의 55%로 이동해 자연스러운 곡선 추종을 만든다.
+    turn_linear_ratio: 0.55
 
     # command_timeout_sec/lost_timeout_sec: 1.0 -> 3.0 (2026-08-08 실기).
     # 젯슨은 GPU 드라이버가 낡아 YOLO가 CPU로 폴백되는데, 실측 추론 시간이

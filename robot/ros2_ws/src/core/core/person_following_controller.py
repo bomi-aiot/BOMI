@@ -35,6 +35,7 @@ class PersonFollowingController:
         self,
         linear_speed: float = 0.15,
         angular_speed: float = 0.5,
+        turn_linear_ratio: float = 0.0,
         person_stop_distance_m: float = 0.5,
         person_resume_distance_m: float = 1.0,
         emergency_stop_distance_m: float = 0.3,
@@ -53,6 +54,13 @@ class PersonFollowingController:
             "angular_speed",
             angular_speed,
         )
+        if (
+            isinstance(turn_linear_ratio, bool)
+            or not isinstance(turn_linear_ratio, (int, float))
+            or not math.isfinite(turn_linear_ratio)
+            or not 0.0 <= turn_linear_ratio <= 1.0
+        ):
+            raise ValueError("turn_linear_ratio must be between 0.0 and 1.0.")
         self._validate_positive(
             "person_stop_distance_m",
             person_stop_distance_m,
@@ -80,6 +88,7 @@ class PersonFollowingController:
 
         self.linear_speed = float(linear_speed)
         self.angular_speed = float(angular_speed)
+        self.turn_linear_ratio = float(turn_linear_ratio)
 
         self.person_stop_distance_m = float(
             person_stop_distance_m
@@ -135,16 +144,28 @@ class PersonFollowingController:
 
         if follow_command is FollowCommand.TURN_LEFT:
             return VelocityCommand(
-                linear_x=0.0,
+                linear_x=(
+                    self.linear_speed * self.turn_linear_ratio
+                    if self._approach_enabled else 0.0
+                ),
                 angular_z=self.angular_speed,
-                reason="turning_left",
+                reason=(
+                    "curving_left" if self._approach_enabled
+                    else "turning_left"
+                ),
             )
 
         if follow_command is FollowCommand.TURN_RIGHT:
             return VelocityCommand(
-                linear_x=0.0,
+                linear_x=(
+                    self.linear_speed * self.turn_linear_ratio
+                    if self._approach_enabled else 0.0
+                ),
                 angular_z=-self.angular_speed,
-                reason="turning_right",
+                reason=(
+                    "curving_right" if self._approach_enabled
+                    else "turning_right"
+                ),
             )
 
         if follow_command is FollowCommand.MOVE_FORWARD:
