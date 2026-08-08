@@ -5,7 +5,10 @@ person_follower:
     scan_topic: /scan
 
     linear_speed: 0.15
-    angular_speed: 0.5
+    # 0.5 -> 0.15. 좌우 보정은 비례제어가 아니라 on/off라, 프레임 간격(~1초,
+    # CPU 추론)만큼 이 속도로 계속 돈다. 0.5면 한 번의 판정으로 최대 ~30도
+    # 돌아 사람을 지나쳐버린다.
+    angular_speed: 0.15
 
     # command_timeout_sec/lost_timeout_sec: 1.0 -> 3.0 (2026-08-08 실기).
     # 젯슨은 GPU 드라이버가 낡아 YOLO가 CPU로 폴백되는데, 실측 추론 시간이
