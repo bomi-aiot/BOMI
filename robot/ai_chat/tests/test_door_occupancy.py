@@ -404,6 +404,24 @@ def test_backend_command_carries_the_final_text(frozen_clock):
     assert out["speech_origin"] == "scenario:homecoming"
 
 
+def test_backend_command_clears_stale_closing_turn(frozen_clock):
+    """A new greeting must not inherit the previous conversation's final turn."""
+    frozen_clock(start=MORNING_UTC)
+
+    out = ingress.backend_command({
+        "senior_id": SENIOR,
+        "closing_turn": True,
+        "command": {
+            "text": "다녀오셨어요? 오늘 외출은 어떠셨어요?",
+            "intent": "greeting",
+            "origin": "scenario:HOMECOMING_GREETING",
+        },
+    })
+
+    assert out["closing_turn"] is False
+    assert out["user_input"] == "다녀오셨어요? 오늘 외출은 어떠셨어요?"
+
+
 def test_backend_command_can_confirm_occupancy(frozen_clock):
     """방향을 판정한 쪽이 확정 재실 상태를 함께 내려보낸다."""
     frozen_clock(start=MORNING_UTC)
