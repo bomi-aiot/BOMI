@@ -90,7 +90,7 @@ cd robot\ai_chat
 py -3.10 -m venv venv
 .\venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,mqtt]"
 Copy-Item .env.example .env
 ```
 
@@ -103,7 +103,7 @@ sudo apt-get install -y python3.10-venv libportaudio2
 python3.10 -m venv venv
 source venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,mqtt]"
 cp .env.example .env
 ```
 
