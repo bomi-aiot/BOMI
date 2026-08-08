@@ -16,10 +16,11 @@
     1. 소리 방향 힌트가 있으면 그쪽으로 먼저 돈다 (TURN_TO_HINT).
     2. 멈춰서 관찰한다 (OBSERVE). 카메라가 사람을 확정할 시간을 준다.
     3. 못 찾으면 힌트 방향을 중심으로 좌우 지그재그로 한 스텝씩 넓혀가며
-       본다(+1스텝 → -1스텝 → +2스텝 → -2스텝 → …). 마이크 방향 추정은
-       완벽하지 않으니 "대충 그 근처"부터 촘촘히 본다 — 실기에서 힌트를
-       무시하고 바로 전체 회전부터 시작하는 것처럼 보인다는 피드백으로
-       추가됐다. local_search_range_deg 가 이 좌우 탐색의 총 폭이다.
+       본다(1차 +1스텝 → -1스텝, 2차 +2스텝 → -2스텝, …). 마이크 방향
+       추정은 완벽하지 않으니 "대충 그 근처"부터 촘촘히 본다 — 실기에서
+       힌트를 무시하고 바로 전체 회전부터 시작하는 것처럼 보인다는
+       피드백으로 추가됐다. local_search_max_steps 가 이 좌우 탐색을 몇
+       차까지 할지다.
     4. 좌우 탐색 폭을 다 써도 못 찾으면, 그 시점 방향에서부터 한 방향으로
        계속 스텝 회전하는 기존 방식으로 넘어간다(STEP_TURN → OBSERVE).
        sweep_limit_deg 만큼 돌아 한 바퀴를 다 보면 원래 방향으로 복귀한다
@@ -134,12 +135,24 @@ class SearchConfig:
         sweep_limit_deg 320  40°씩 8스텝이면 관찰 지점이 9곳(0·40·…·320°)이 되어
                             360°를 모두 덮는다. 360으로 두면 마지막 스텝이 첫
                             관찰 지점과 겹쳐 0.8초를 낭비한다.
-        local_search_range_deg 90
-                            힌트를 중심으로 좌우로 볼 총 폭(도). step_angle_deg
-                            40 기준 편도 1스텝(±40°)이 이 폭 안에 들어가
-                            힌트 좌우를 한 번씩 보고 나서야 전체 회전으로
-                            넘어간다. 마이크 방향 추정 오차를 감안한
-                            여유(±45°)다. 힌트가 없으면 쓰이지 않는다.
+        local_search_max_steps 2
+                            힌트를 중심으로 좌우 지그재그를 몇 스텝까지 볼지
+                            (1차 ±1스텝, 2차 ±2스텝, …). 2026-08-08 실기
+                            피드백으로 "1차, 2차, 그다음 전체 회전"으로
+                            명시적으로 굳혔다 — 도(度) 폭으로 계산하면
+                            step_angle_deg 를 바꿀 때마다 몇 차까지 도는지
+                            같이 흔들려서 스텝 수로 직접 정한다. 힌트가
+                            없으면 쓰이지 않는다.
+        step_min_angular_speed 0.3, step_slowdown_band_deg 10
+                            STEP_TURN(지그재그·전체 회전)의 감속 하한과
+                            감속 시작 각도. TURN_TO_HINT 용
+                            min_angular_speed/slowdown_band_deg 를 그대로
+                            같이 쓰면 40° 짜리 스텝의 62%(25°/40°) 구간을
+                            감속만 하다 끝나 "전체 회전이 너무 느리다"는
+                            불만으로 이어졌다(2026-08-08 실기). 힌트 회전은
+                            한 번뿐이라 정밀 착지가 중요하지만, 스텝은
+                            어차피 다음 관찰 지점일 뿐이라 goal_tolerance_deg
+                            안에서만 짧게 감속해도 된다.
         follow_timeout_sec 60
                             추종을 켜 둔 채로 둘 최대 시간(구현계획 결정 C).
         search_timeout_sec 45
@@ -151,10 +164,12 @@ class SearchConfig:
     angular_speed: float = 0.6
     min_angular_speed: float = 0.15
     slowdown_band_deg: float = 15.0
+    step_min_angular_speed: float = 0.3
+    step_slowdown_band_deg: float = 10.0
     goal_tolerance_deg: float = 3.0
     observe_duration_sec: float = 0.8
     sweep_limit_deg: float = 320.0
-    local_search_range_deg: float = 90.0
+    local_search_max_steps: int = 2
     hint_max_age_sec: float = 10.0
     follow_timeout_sec: float = 60.0
     search_timeout_sec: float = 45.0
@@ -170,14 +185,24 @@ class SearchConfig:
         _require_positive(self.angular_speed, "angular_speed")
         _require_positive(self.min_angular_speed, "min_angular_speed")
         _require_positive(self.slowdown_band_deg, "slowdown_band_deg")
+        _require_positive(
+            self.step_min_angular_speed, "step_min_angular_speed")
+        _require_positive(
+            self.step_slowdown_band_deg, "step_slowdown_band_deg")
         _require_positive(self.goal_tolerance_deg, "goal_tolerance_deg")
         _require_positive(self.observe_duration_sec, "observe_duration_sec")
         _require_positive(self.sweep_limit_deg, "sweep_limit_deg")
-        _require_positive(
-            self.local_search_range_deg, "local_search_range_deg")
         _require_positive(self.hint_max_age_sec, "hint_max_age_sec")
         _require_positive(self.follow_timeout_sec, "follow_timeout_sec")
         _require_positive(self.search_timeout_sec, "search_timeout_sec")
+
+        if (
+            isinstance(self.local_search_max_steps, bool)
+            or not isinstance(self.local_search_max_steps, int)
+            or self.local_search_max_steps < 0
+        ):
+            raise ValueError(
+                "local_search_max_steps must be a non-negative integer")
 
         if self.step_angle_deg > 180.0:
             raise ValueError("step_angle_deg must be 180 or less")
@@ -189,6 +214,9 @@ class SearchConfig:
         if self.min_angular_speed > self.angular_speed:
             raise ValueError(
                 "min_angular_speed must not exceed angular_speed")
+        if self.step_min_angular_speed > self.angular_speed:
+            raise ValueError(
+                "step_min_angular_speed must not exceed angular_speed")
         if not isinstance(self.return_to_start, bool):
             raise ValueError("return_to_start must be a boolean")
 
@@ -457,18 +485,15 @@ class WakeSearchPolicy:
     def _try_local_search_step(self, yaw: float) -> SearchDecision | None:
         """힌트를 중심으로 다음 좌우 지그재그 지점을 잡는다.
 
-        순서: +1스텝 -> -1스텝 -> +2스텝 -> -2스텝 -> … 매번 힌트로부터의
-        거리(스텝 수)가 하나씩 늘어난다. 다음 지점이 local_search_range_deg
-        의 절반을 넘으면 탐색 폭을 다 쓴 것이다 — None 을 돌려줘 호출부가
-        전체 회전으로 넘어가게 한다.
+        순서: 1차(+1스텝 -> -1스텝) -> 2차(+2스텝 -> -2스텝) -> … 다음
+        차수가 local_search_max_steps 를 넘으면 좌우 탐색을 다 쓴 것이다
+        — None 을 돌려줘 호출부가 전체 회전으로 넘어가게 한다.
         """
-        half_range_rad = math.radians(self._config.local_search_range_deg) / 2.0
-        step_rad = math.radians(self._config.step_angle_deg)
-        candidate_magnitude_rad = self._local_next_magnitude * step_rad
-        if candidate_magnitude_rad > half_range_rad + _EPSILON:
+        if self._local_next_magnitude > self._config.local_search_max_steps:
             return None
 
-        offset_rad = self._local_next_side * candidate_magnitude_rad
+        step_rad = math.radians(self._config.step_angle_deg)
+        offset_rad = self._local_next_side * self._local_next_magnitude * step_rad
         self._target_yaw = normalize_angle(self._hint_yaw + offset_rad)
 
         if self._local_next_side > 0:
@@ -571,25 +596,40 @@ class WakeSearchPolicy:
         """목표까지의 오차로 각속도를 만든다."""
         error = angle_error(self._target_yaw, yaw)
         return SearchDecision(
-            angular_z=self._speed_for(error),
+            angular_z=self._speed_for(error, state),
             follow_enable=None,
             state=state,
             reason=reason,
             finished=False,
         )
 
-    def _speed_for(self, error_rad: float) -> float:
+    def _speed_for(self, error_rad: float, state: SearchState) -> float:
         """오차 각도에서 목표 각속도를 만든다. 목표 근처에서는 감속한다.
 
         감속이 없으면 제어 주기(50ms) 사이에 목표를 지나쳐 좌우로 떨게 된다.
-        너무 느려지면 정지 마찰을 못 이기므로 min_angular_speed 로 바닥을 둔다.
+        너무 느려지면 정지 마찰을 못 이기므로 바닥 속도를 둔다.
+
+        TURN_TO_HINT 는 단 한 번뿐인 큰 회전이라 정밀 착지가 중요해서
+        일찍·많이 감속한다(slowdown_band_deg/min_angular_speed). 그 밖의
+        회전(STEP_TURN — 지그재그·전체 회전·복귀)은 목표가 정확한 사람
+        방향이 아니라 그냥 다음 관찰 지점이라, 같은 감속 프로파일을 쓰면
+        40° 스텝의 62%(25°/40°) 구간을 감속만 하다 끝나 전체 탐색이
+        느려진다(2026-08-08 실기) — 훨씬 늦게, 짧게 감속하는
+        step_slowdown_band_deg/step_min_angular_speed 를 쓴다.
         """
+        if state is SearchState.TURN_TO_HINT:
+            band_deg = self._config.slowdown_band_deg
+            floor = self._config.min_angular_speed
+        else:
+            band_deg = self._config.step_slowdown_band_deg
+            floor = self._config.step_min_angular_speed
+
         magnitude = abs(error_rad)
-        band = math.radians(self._config.slowdown_band_deg)
+        band = math.radians(band_deg)
         speed = self._config.angular_speed
         if magnitude < band:
             scaled = self._config.angular_speed * (magnitude / band)
-            speed = max(self._config.min_angular_speed, scaled)
+            speed = max(floor, scaled)
         return math.copysign(speed, error_rad)
 
     @property
