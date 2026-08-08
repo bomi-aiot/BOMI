@@ -12,13 +12,23 @@
     안 한다: ROS 발행, 시간 측정, 로그, 하드웨어 접근. 전부 호출부(wake_search
             노드)가 맡는다. 이 모듈은 시계조차 갖지 않고 now_sec 을 받는다.
 
-탐색 대본 (CLAUDE.md 보미야 호출 대본 / 구현계획 §0)
+탐색 대본 (CLAUDE.md 보미야 호출 대본 / 구현계획 §0, 2026-08-08 실기 개정)
     1. 소리 방향 힌트가 있으면 그쪽으로 먼저 돈다 (TURN_TO_HINT).
     2. 멈춰서 관찰한다 (OBSERVE). 카메라가 사람을 확정할 시간을 준다.
-    3. 못 찾으면 step_angle_deg 만큼 돌고 다시 관찰한다 (STEP_TURN → OBSERVE).
-    4. sweep_limit_deg 만큼 돌아 한 바퀴를 다 보면 원래 방향으로 복귀한다
+    3. 못 찾으면 힌트 방향을 중심으로 좌우 지그재그로 한 스텝씩 넓혀가며
+       본다(+1스텝 → -1스텝 → +2스텝 → -2스텝 → …). 마이크 방향 추정은
+       완벽하지 않으니 "대충 그 근처"부터 촘촘히 본다 — 실기에서 힌트를
+       무시하고 바로 전체 회전부터 시작하는 것처럼 보인다는 피드백으로
+       추가됐다. local_search_range_deg 가 이 좌우 탐색의 총 폭이다.
+    4. 좌우 탐색 폭을 다 써도 못 찾으면, 그 시점 방향에서부터 한 방향으로
+       계속 스텝 회전하는 기존 방식으로 넘어간다(STEP_TURN → OBSERVE).
+       sweep_limit_deg 만큼 돌아 한 바퀴를 다 보면 원래 방향으로 복귀한다
        (RETURNING). 복귀 여부는 return_to_start 로 끈다.
-    5. 도중에 사람을 찾으면 즉시 회전을 멈추고 추종을 켠다 (FOLLOWING).
+    5. 힌트가 없으면 1~3 을 건너뛰고 4 부터 시작한다(비교 기준이 없으니
+       좌우를 구분할 수 없다).
+    6. 도중에 사람을 찾으면 즉시 회전을 멈추고 추종을 켠다 (FOLLOWING).
+       그 뒤로 사람 앞까지 다가가 서는 것은 이 모듈이 아니라 person_follower
+       의 몫이다(비전 결과로 거리·좌우 오차를 계산해 접근·정지).
 
 왜 연속 회전이 아니라 스텝 회전인가
     ai_vision 은 "연속 프레임 수"로 추적을 확정한다. 계속 돌면 모션 블러와
@@ -124,6 +134,12 @@ class SearchConfig:
         sweep_limit_deg 320  40°씩 8스텝이면 관찰 지점이 9곳(0·40·…·320°)이 되어
                             360°를 모두 덮는다. 360으로 두면 마지막 스텝이 첫
                             관찰 지점과 겹쳐 0.8초를 낭비한다.
+        local_search_range_deg 90
+                            힌트를 중심으로 좌우로 볼 총 폭(도). step_angle_deg
+                            40 기준 편도 1스텝(±40°)이 이 폭 안에 들어가
+                            힌트 좌우를 한 번씩 보고 나서야 전체 회전으로
+                            넘어간다. 마이크 방향 추정 오차를 감안한
+                            여유(±45°)다. 힌트가 없으면 쓰이지 않는다.
         follow_timeout_sec 60
                             추종을 켜 둔 채로 둘 최대 시간(구현계획 결정 C).
         search_timeout_sec 45
@@ -138,6 +154,7 @@ class SearchConfig:
     goal_tolerance_deg: float = 3.0
     observe_duration_sec: float = 0.8
     sweep_limit_deg: float = 320.0
+    local_search_range_deg: float = 90.0
     hint_max_age_sec: float = 10.0
     follow_timeout_sec: float = 60.0
     search_timeout_sec: float = 45.0
@@ -156,6 +173,8 @@ class SearchConfig:
         _require_positive(self.goal_tolerance_deg, "goal_tolerance_deg")
         _require_positive(self.observe_duration_sec, "observe_duration_sec")
         _require_positive(self.sweep_limit_deg, "sweep_limit_deg")
+        _require_positive(
+            self.local_search_range_deg, "local_search_range_deg")
         _require_positive(self.hint_max_age_sec, "hint_max_age_sec")
         _require_positive(self.follow_timeout_sec, "follow_timeout_sec")
         _require_positive(self.search_timeout_sec, "search_timeout_sec")
@@ -206,6 +225,18 @@ class WakeSearchPolicy:
         self._follow_until_sec = 0.0
         self._last_reason = "idle"
 
+        # 힌트 중심 좌우 지그재그 탐색(local phase)의 진행 상태. 힌트가 없는
+        # 탐색이나, 좌우 탐색 폭을 다 쓴 뒤에는 쓰이지 않는다.
+        self._hint_yaw = 0.0
+        self._local_phase_active = False
+        self._local_next_side = 1
+        self._local_next_magnitude = 1
+        # 지금 진행 중인 STEP_TURN 이 지그재그(local)인지 전체 회전
+        # (global)인지 — 완료됐을 때 swept_rad 에 더할지를 가른다. 지그재그는
+        # 힌트 회전과 같은 이유로 누적 회전량에서 뺀다(전체 커버리지가
+        # 아니라 힌트 근처 재확인일 뿐이므로).
+        self._pending_step_is_local = False
+
     # ── 조회 ────────────────────────────────────────────────────────────────
 
     @property
@@ -225,7 +256,12 @@ class WakeSearchPolicy:
 
     @property
     def swept_deg(self) -> float:
-        """스텝 회전으로 누적한 회전량(도). 힌트 회전은 포함하지 않는다."""
+        """전체 회전(global) 스텝으로 누적한 회전량(도).
+
+        힌트 회전과 힌트 중심 좌우 지그재그(local) 스텝은 포함하지 않는다
+        — 둘 다 "아직 안 본 곳을 새로 본다"가 아니라 힌트 근처를 다시
+        확인하는 것이라 sweep_limit_deg 예산과는 별개다.
+        """
         return math.degrees(self._swept_rad)
 
     # ── 제어 ────────────────────────────────────────────────────────────────
@@ -253,17 +289,24 @@ class WakeSearchPolicy:
         self._started_at_sec = float(now_sec)
         self._swept_rad = 0.0
         self._follow_until_sec = 0.0
+        self._local_phase_active = False
+        self._local_next_side = 1
+        self._local_next_magnitude = 1
+        self._pending_step_is_local = False
 
         if hint_deg is None:
-            # 힌트가 없으면 지금 보고 있는 방향부터 관찰한다.
+            # 힌트가 없으면 좌우를 가를 기준이 없다 — 곧장 전체 회전이다.
             return self._enter_observe(now_sec, "search_started_without_hint")
 
         hint_rad = normalize_angle(math.radians(_as_float(hint_deg, "hint_deg")))
+        self._hint_yaw = normalize_angle(start_yaw + hint_rad)
+        self._local_phase_active = True
+
         if abs(hint_rad) <= self._tolerance_rad:
             # 이미 그 방향을 보고 있다. 굳이 돌지 않는다.
             return self._enter_observe(now_sec, "hint_already_in_front")
 
-        self._target_yaw = normalize_angle(start_yaw + hint_rad)
+        self._target_yaw = self._hint_yaw
         self._state = SearchState.TURN_TO_HINT
         return self._turn_decision(
             current_yaw_rad, SearchState.TURN_TO_HINT, "turning_to_sound")
@@ -341,6 +384,10 @@ class WakeSearchPolicy:
         if self._state is not SearchState.FOLLOWING:
             return self._idle_decision()
 
+        # 한 번 사람을 찾았던 시점의 힌트는 이미 낡았다 — 좌우 지그재그를
+        # 다시 시작하지 않고 곧장 전체 회전으로 이어간다.
+        self._local_phase_active = False
+
         yaw = normalize_angle(current_yaw_rad)
         sweep_limit_rad = math.radians(self._config.sweep_limit_deg)
         if self._swept_rad >= sweep_limit_rad - _EPSILON:
@@ -348,6 +395,7 @@ class WakeSearchPolicy:
 
         step_rad = math.radians(self._config.step_angle_deg)
         self._target_yaw = normalize_angle(yaw + step_rad)
+        self._pending_step_is_local = False
         self._state = SearchState.STEP_TURN
         return self._turn_decision(
             yaw, SearchState.STEP_TURN, "resuming_after_lost")
@@ -387,6 +435,13 @@ class WakeSearchPolicy:
                 finished=False,
             )
 
+        if self._local_phase_active:
+            local_decision = self._try_local_search_step(yaw)
+            if local_decision is not None:
+                return local_decision
+            # 좌우 탐색 폭을 다 썼다 — 여기서부터는 기존 전체 회전이다.
+            self._local_phase_active = False
+
         sweep_limit_rad = math.radians(self._config.sweep_limit_deg)
         if self._swept_rad >= sweep_limit_rad - _EPSILON:
             return self._begin_return(now_sec, "sweep_complete_person_not_found")
@@ -395,14 +450,42 @@ class WakeSearchPolicy:
         # 항상 반시계(왼쪽)로 돈다. 방향을 번갈아 바꾸면 누적 회전량 계산이
         # 복잡해지고, 어느 쪽을 이미 봤는지 사람이 추적하기 어렵다.
         self._target_yaw = normalize_angle(yaw + step_rad)
+        self._pending_step_is_local = False
         self._state = SearchState.STEP_TURN
         return self._turn_decision(yaw, SearchState.STEP_TURN, "stepping")
+
+    def _try_local_search_step(self, yaw: float) -> SearchDecision | None:
+        """힌트를 중심으로 다음 좌우 지그재그 지점을 잡는다.
+
+        순서: +1스텝 -> -1스텝 -> +2스텝 -> -2스텝 -> … 매번 힌트로부터의
+        거리(스텝 수)가 하나씩 늘어난다. 다음 지점이 local_search_range_deg
+        의 절반을 넘으면 탐색 폭을 다 쓴 것이다 — None 을 돌려줘 호출부가
+        전체 회전으로 넘어가게 한다.
+        """
+        half_range_rad = math.radians(self._config.local_search_range_deg) / 2.0
+        step_rad = math.radians(self._config.step_angle_deg)
+        candidate_magnitude_rad = self._local_next_magnitude * step_rad
+        if candidate_magnitude_rad > half_range_rad + _EPSILON:
+            return None
+
+        offset_rad = self._local_next_side * candidate_magnitude_rad
+        self._target_yaw = normalize_angle(self._hint_yaw + offset_rad)
+
+        if self._local_next_side > 0:
+            self._local_next_side = -1
+        else:
+            self._local_next_side = 1
+            self._local_next_magnitude += 1
+
+        self._pending_step_is_local = True
+        self._state = SearchState.STEP_TURN
+        return self._turn_decision(yaw, SearchState.STEP_TURN, "local_search_step")
 
     def _update_turning(self, now_sec: float, yaw: float) -> SearchDecision:
         """힌트 회전 또는 스텝 회전 중. 목표에 닿으면 관찰로 넘어간다."""
         error = angle_error(self._target_yaw, yaw)
         if abs(error) <= self._tolerance_rad:
-            if self._state is SearchState.STEP_TURN:
+            if self._state is SearchState.STEP_TURN and not self._pending_step_is_local:
                 self._swept_rad += math.radians(self._config.step_angle_deg)
             return self._enter_observe(now_sec, "reached_observation_heading")
         return self._turn_decision(yaw, self._state, "turning")

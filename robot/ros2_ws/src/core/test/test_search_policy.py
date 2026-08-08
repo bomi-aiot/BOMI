@@ -190,6 +190,77 @@ def test_slowdown_near_target_but_never_below_the_floor() -> None:
     assert 0.15 <= near.angular_z < 0.6
 
 
+# ── 힌트 좌우 지그재그 ──────────────────────────────────────────────────────
+# 2026-08-08 실기: 힌트가 있어도 못 찾으면 곧장 한 방향으로만 계속 돌아서
+# 힌트를 무시하고 아무 데나 도는 것처럼 보였다. 힌트 좌우를 먼저 지그재그로
+# 본 뒤에야 전체 회전으로 넘어가야 한다.
+
+
+def test_local_search_zigzags_around_hint_then_falls_back_to_global_sweep() -> None:
+    # 관찰 종료 시각(observe_until_sec)이 부동소수 덧셈으로 정확히 떨어지지
+    # 않을 수 있어(예: 0.2+0.1), 다음 update 는 여유를 두고 부른다.
+    policy = WakeSearchPolicy(_config(observe_duration_sec=0.1))
+    policy.start(0.0, 0.0, hint_deg=90.0)
+    policy.update(0.2, math.radians(90.0), person_visible=False)  # -> OBSERVE(힌트)
+
+    # 1) 힌트 + 1스텝(오른쪽 반대편, +40 = 130도).
+    step_1 = policy.update(0.35, math.radians(90.0), person_visible=False)
+    assert step_1.state is SearchState.STEP_TURN
+    assert step_1.reason == "local_search_step"
+    obs_1 = policy.update(0.45, math.radians(130.0), person_visible=False)
+    assert obs_1.state is SearchState.OBSERVE
+
+    # 2) 힌트 - 1스텝(반대쪽, -40 = 50도).
+    step_2 = policy.update(0.6, math.radians(130.0), person_visible=False)
+    assert step_2.state is SearchState.STEP_TURN
+    assert step_2.reason == "local_search_step"
+    obs_2 = policy.update(0.7, math.radians(50.0), person_visible=False)
+    assert obs_2.state is SearchState.OBSERVE
+
+    # 3) 다음 지그재그(±2스텝=80도)는 local_search_range_deg(90)의 절반인
+    #    45도를 넘는다 — 여기서부터 기존 전체 회전으로 넘어간다.
+    step_3 = policy.update(0.85, math.radians(50.0), person_visible=False)
+    assert step_3.state is SearchState.STEP_TURN
+    assert step_3.reason == "stepping"
+    assert policy.swept_deg == pytest.approx(0.0)  # 지그재그는 아직 안 셌다
+
+    arrived = policy.update(0.95, math.radians(90.0), person_visible=False)
+    assert arrived.state is SearchState.OBSERVE
+    # 전체 회전으로 넘어간 뒤의 첫 스텝만 swept_deg 에 들어간다.
+    assert policy.swept_deg == pytest.approx(40.0)
+
+
+def test_local_search_range_smaller_than_step_skips_local_phase() -> None:
+    # 절반 폭(20도)이 한 스텝(40도)보다 좁으면 지그재그를 한 번도 못 해보고
+    # 곧장 전체 회전으로 넘어간다.
+    policy = WakeSearchPolicy(
+        _config(observe_duration_sec=0.1, local_search_range_deg=40.0))
+    policy.start(0.0, 0.0, hint_deg=90.0)
+    policy.update(0.2, math.radians(90.0), person_visible=False)  # -> OBSERVE(힌트)
+
+    decision = policy.update(0.35, math.radians(90.0), person_visible=False)
+    assert decision.reason == "stepping"
+
+
+def test_local_search_is_skipped_entirely_without_a_hint() -> None:
+    policy = WakeSearchPolicy(_config(observe_duration_sec=0.1))
+    policy.start(0.0, 0.0)  # 힌트 없음 -> OBSERVE 부터 시작
+
+    decision = policy.update(0.2, 0.0, person_visible=False)
+    assert decision.reason == "stepping"
+
+
+def test_resume_after_lost_never_repeats_the_local_search() -> None:
+    policy = WakeSearchPolicy(_config())
+    policy.start(0.0, 0.0, hint_deg=90.0)
+    # 힌트 도착 직후 바로 찾았다 — 지그재그를 한 번도 안 썼다.
+    policy.update(0.1, math.radians(90.0), person_visible=True)
+
+    decision = policy.resume_after_lost(0.2, math.radians(90.0))
+
+    assert decision.reason == "resuming_after_lost"
+
+
 # ── 사람 발견 ───────────────────────────────────────────────────────────────
 
 

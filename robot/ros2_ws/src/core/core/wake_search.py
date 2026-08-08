@@ -189,6 +189,7 @@ class WakeSearchNode(Node):
         self.declare_parameter("goal_tolerance_deg", 3.0)
         self.declare_parameter("observe_duration_sec", 0.8)
         self.declare_parameter("sweep_limit_deg", 320.0)
+        self.declare_parameter("local_search_range_deg", 90.0)
         self.declare_parameter("hint_max_age_sec", 10.0)
         self.declare_parameter("follow_timeout_sec", 60.0)
         self.declare_parameter("search_timeout_sec", 45.0)
@@ -217,6 +218,8 @@ class WakeSearchNode(Node):
             observe_duration_sec=float(
                 self.get_parameter("observe_duration_sec").value),
             sweep_limit_deg=float(self.get_parameter("sweep_limit_deg").value),
+            local_search_range_deg=float(
+                self.get_parameter("local_search_range_deg").value),
             hint_max_age_sec=float(
                 self.get_parameter("hint_max_age_sec").value),
             follow_timeout_sec=float(
