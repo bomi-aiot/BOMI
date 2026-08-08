@@ -175,8 +175,15 @@ def generate_launch_description() -> LaunchDescription:
         cwd=ai_vision_dir,
         name="ai_vision",
         output="screen",
-        # PYTHONPATH 가 ROS 2 것으로 오염되면 가상환경 패키지가 가려진다.
-        additional_env={"PYTHONPATH": ""},
+        additional_env={
+            # PYTHONPATH 가 ROS 2 것으로 오염되면 가상환경 패키지가 가려진다.
+            "PYTHONPATH": "",
+            # 파이프로 나가는 stdout 은 기본이 블록 버퍼링이라, ros2 launch
+            # 화면에 실시간이 아니라 프로세스가 죽거나 버퍼가 찰 때 몰아서
+            # 찍힌다(2026-08-08 실기, 시작 로그가 크래시 트레이스백 '뒤'에
+            # 찍혀 시간순 디버깅이 불가능했다).
+            "PYTHONUNBUFFERED": "1",
+        },
         on_exit=Shutdown(),
     )
 
@@ -192,6 +199,7 @@ def generate_launch_description() -> LaunchDescription:
         additional_env={
             "PYTHONPATH": "",
             "AI_CHAT_ENV_FILE": PathJoinSubstitution([ai_chat_dir, ".env"]),
+            "PYTHONUNBUFFERED": "1",
         },
         on_exit=Shutdown(),
     )
