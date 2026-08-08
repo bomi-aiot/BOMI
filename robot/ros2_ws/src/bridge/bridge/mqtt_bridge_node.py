@@ -234,12 +234,12 @@ class MqttBridgeNode(Node):
 
     def _start_search(self) -> None:
         """FOLLOW_START 훅 — 회전 탐색을 시작한다."""
-        self.get_logger().info("FOLLOW_START: 회전 탐색을 시작합니다.")
+        self.get_logger().info("FOLLOW_START: 사용자 탐색/추종을 시작합니다.")
         self._search_publisher.publish(Bool(data=True))
 
     def _stop_search(self) -> None:
         """FOLLOW_STOP 훅 — 회전 탐색을 멈춘다. 몇 번 불려도 안전하다."""
-        self.get_logger().info("FOLLOW_STOP: 회전 탐색을 멈춥니다.")
+        self.get_logger().info("FOLLOW_STOP: 사용자 탐색/추종을 멈춥니다.")
         self._search_publisher.publish(Bool(data=False))
 
     def _publish_linear_velocity(self, linear_x: float) -> None:

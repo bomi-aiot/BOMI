@@ -63,8 +63,10 @@ start_aux() {
     AUX_PIDS+=("$!")
 }
 
-# 기존 현관 실행기의 Nav2 MQTT 브리지가 FOLLOW_START를 wake_search로 전달하게 한다.
+# 시연용 현관 흐름은 회전 탐색을 생략하고, FOLLOW_START 즉시 카메라 정면의
+# 사용자를 추종한다. 공용 기본값은 /wake_search/start 그대로 유지한다.
 export BOMI_SEARCH_ENABLED=true
+export BOMI_SEARCH_START_TOPIC=/person_following/enable
 export BOMI_HOMECOMING_READY_FILE="$HOMECOMING_READY_FILE"
 
 echo "현관 대화 후 사용자 추종 시나리오를 시작합니다. 종료: Ctrl+C"
