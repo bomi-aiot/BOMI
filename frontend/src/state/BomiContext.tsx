@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -103,6 +104,19 @@ interface BomiProviderProps {
   children: ReactNode;
 }
 
+/**
+ * 보호자 화면 자동 갱신 주기(ms).
+ *
+ * 왜 대시보드만인가 — 로봇 모드·실내 온습도·복약 진행·확인 대기 건수가 모두
+ * GET /v1/guardian/dashboard 응답 하나에 담긴다. 나머지(프로필·기억·명부·일정)는
+ * 사람이 고쳐야 바뀌는 값이라 폴링 대상이 아니다.
+ *
+ * 왜 1초인가 — 시연 중 로봇 상태 변화를 즉시 보여야 한다. refresh() 전체는
+ * API 를 9개 때리므로 1초로 돌리면 nginx limit_req(20r/s, IP 기준)에 탭 3개부터
+ * 걸린다. getDashboard() 하나만 돌리면 탭당 1r/s 라 여유가 크다.
+ */
+const DASHBOARD_POLL_INTERVAL_MS = 1000;
+
 const messageFromError = (error: unknown): string =>
   error instanceof Error
     ? error.message
@@ -148,12 +162,22 @@ export function BomiProvider({ children }: BomiProviderProps) {
     [],
   );
 
+  // 진행 중인 대시보드 요청이 있는지. 1초 폴링에서 응답이 1초를 넘기면 요청이
+  // 겹쳐 쌓이고, 그대로 두면 스스로 rate limit 을 때린다.
+  const dashboardInFlight = useRef(false);
+
   const refreshDashboard = useCallback(async () => {
+    if (dashboardInFlight.current) return;
+    dashboardInFlight.current = true;
     try {
       const nextDashboard = await bomiService.getDashboard();
       setDashboard(nextDashboard);
     } catch {
       // 주 변경은 이미 성공했으므로 파생 요약 갱신 실패를 액션 실패로 되돌리지 않는다.
+      // 폴링에서도 같은 이유로 삼킨다 — 일시적 실패에 1초마다 에러를 띄우면
+      // 화면이 더 못 쓰게 된다. 다음 틱에 저절로 복구된다.
+    } finally {
+      dashboardInFlight.current = false;
     }
   }, []);
 
@@ -216,6 +240,16 @@ export function BomiProvider({ children }: BomiProviderProps) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // 대시보드 자동 갱신. isLoading 을 건드리지 않으므로 로딩 스켈레톤이 깜빡이지 않고,
+  // 화면은 바뀐 값만 조용히 다시 그린다. 탭이 보이지 않을 때는 요청하지 않는다.
+  useEffect(() => {
+    const tick = () => {
+      if (document.visibilityState === "visible") void refreshDashboard();
+    };
+    const timer = window.setInterval(tick, DASHBOARD_POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [refreshDashboard]);
 
   const runAction = useCallback(
     async <T,>(
