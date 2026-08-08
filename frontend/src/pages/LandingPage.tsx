@@ -101,7 +101,7 @@ export function LandingPage({ onNavigate }: LandingPageProps) {
           variant="secondary"
           size="small"
           className="landing-header__cta"
-          onClick={() => onNavigate('/dashboard')}
+          onClick={() => onNavigate('/bomi-home')}
         >
           보호자 웹 시작하기
         </Button>
@@ -128,7 +128,7 @@ export function LandingPage({ onNavigate }: LandingPageProps) {
               <Button
                 size="large"
                 className="landing-primary-cta"
-                onClick={() => onNavigate('/dashboard')}
+                onClick={() => onNavigate('/bomi-home')}
               >
                 보호자 웹 만나보기
               </Button>
@@ -244,7 +244,7 @@ export function LandingPage({ onNavigate }: LandingPageProps) {
             <Button
               size="large"
               className="landing-primary-cta landing-final__cta"
-              onClick={() => onNavigate('/dashboard')}
+              onClick={() => onNavigate('/bomi-home')}
             >
               보호자 웹 시작하기
             </Button>

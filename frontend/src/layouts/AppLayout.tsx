@@ -113,6 +113,7 @@ const DEMO_NAV_PATHS: ReadonlySet<string> = new Set([
   '/medications', // 1막 — 보호자가 복약 시각을 등록한다
   '/bomi-home', // 2막 — 로봇 모드·실내 온습도를 1초 폴링으로 관제한다
   '/confirmation-requests', // 3막 — 대화에서 AI 가 건진 사실을 보호자가 확정한다
+  '/schedules', // 병원 일정 등록 — 등록 결과를 웹에서 보여주는 화면
 ]);
 
 const isDemoVisible = (item: NavigationItem): boolean =>
