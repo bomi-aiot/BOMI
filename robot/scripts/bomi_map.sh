@@ -127,7 +127,7 @@ text = open(path, encoding="utf-8").read()
 block = ("  # 실측 좌표. 재매핑하면 지도 좌표계가 바뀌어 무효가 된다.\n"
          "  - name: entrance\n    x: %s\n    y: %s\n    yaw: %s\n" % (x, y, yaw))
 updated = re.sub(
-    r"(?:  #[^\n]*\n)*  - name: entrance\n(?:    \w+: [-0-9.]+\n)+",
+    r"(?:[ ]*#[^\n]*\n)*[ ]*- name: entrance\n(?:[ ]+\w+: [-0-9.]+\n)+",
     block, text, count=1)
 if updated == text:
     print("  ❌ room_waypoints.yaml 의 entrance 항목을 찾지 못했습니다")
@@ -188,7 +188,8 @@ for name, purpose in TARGETS.items():
     # 앞에 붙은 주석 줄까지 함께 갈아끼운다. 남겨두면 옛 근거가 새 좌표
     # 위에 붙어 다음 사람이 잘못된 설명을 읽는다.
     updated = re.sub(
-        r"(?:  #[^\n]*\n)*  - name: " + name + r"\n(?:    \w+: [-0-9.]+\n)+",
+        r"(?:[ ]*#[^\n]*\n)*[ ]*- name: " + name
+        + r"\n(?:[ ]+\w+: [-0-9.]+\n)+",
         block,
         text,
         count=1,
