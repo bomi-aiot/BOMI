@@ -75,6 +75,7 @@ class PersonSearchStateMachine:
             PersonSearchState.NOT_FOUND,
             PersonSearchState.FAILED,
             PersonSearchState.CANCELLED,
+            PersonSearchState.FOLLOWING,
         }:
             return self._decision(reason="already_running")
         self.state = PersonSearchState.PATROLLING

@@ -190,7 +190,7 @@ def test_pending_conversation_skips_wake_ack_and_speaks_the_seed_text(
 def test_homecoming_ends_after_two_user_turns(
     monkeypatch, settings_factory, frozen_clock,
 ):
-    """귀가 인사는 사용자 답변 두 번 뒤 COMPLETED로 닫아 복귀를 시작한다."""
+    """귀가 인사는 사용자 답변 두 번 뒤 COMPLETED로 닫아 추종을 시작한다."""
     frozen_clock(start=NOW)
     monkeypatch.setattr(
         "bomi_ai_chat.stt.client.STTClient",
@@ -227,6 +227,53 @@ def test_homecoming_ends_after_two_user_turns(
     assert subscriber.ended == [("conversation-1", "COMPLETED", None)]
 
 
+def test_homecoming_wake_word_removes_two_turn_limit(
+    monkeypatch, settings_factory, frozen_clock,
+):
+    frozen_clock(start=NOW)
+    monkeypatch.setattr(
+        "bomi_ai_chat.stt.client.STTClient",
+        lambda settings: ScriptedStt(
+            "보미야 오늘 있었던 일 말해줄게",
+            "그리고 친구도 만났어",
+            "이제 갈게",
+        ),
+    )
+    heard: list[str] = []
+    closing_flags: list[bool] = []
+
+    def record_turn(app, senior, text, **kwargs):
+        heard.append(text)
+        closing_flags.append(bool(kwargs.get("closing_turn")))
+        return {}
+
+    monkeypatch.setattr(
+        "bomi_ai_chat.graph.turn.run_user_turn",
+        record_turn,
+    )
+
+    subscriber = RecordingSubscriber()
+    runtime, pending = _make_runtime(subscriber=subscriber)
+    pending.put_nowait(start_conversation_command())
+
+    bootstrap.run_conversation_loop(
+        runtime,
+        ScriptedAudio(b"1", b"2", b"3"),
+        settings_with(settings_factory),
+        wake=InterruptibleWake(wakes=0),
+        event_publisher=RecordingEventPublisher(),
+        max_turns=4,
+    )
+
+    assert heard == [
+        "보미야 오늘 있었던 일 말해줄게",
+        "그리고 친구도 만났어",
+        "이제 갈게",
+    ]
+    assert closing_flags == [False, False, False]
+    assert subscriber.ended == [("conversation-1", "COMPLETED", None)]
+
+
 def test_backend_conversation_queue_is_checked_before_the_real_wake_flow(
     monkeypatch, settings_factory, frozen_clock,
 ):
@@ -240,7 +287,7 @@ def test_backend_conversation_queue_is_checked_before_the_real_wake_flow(
 
     app = RecordingApp()
     runtime, _pending = _make_runtime(app=app)
-    wake = InterruptibleWake(wakes=1)
+    wake = InterruptibleWake(wakes=0)
     event_publisher = RecordingEventPublisher()
 
     bootstrap.run_conversation_loop(
@@ -292,7 +339,7 @@ def test_silence_ends_the_conversation_as_no_response(
     runtime, pending = _make_runtime(subscriber=subscriber)
     command = start_conversation_command()
     pending.put_nowait(command)
-    wake = InterruptibleWake(wakes=0)
+    wake = InterruptibleWake(wakes=1)
 
     bootstrap.run_conversation_loop(
         runtime, ScriptedAudio(), settings_with(settings_factory),

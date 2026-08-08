@@ -76,4 +76,7 @@ fi
 
 echo "현관 이동 및 음성 대화 대기 중 (종료: Ctrl+C)"
 echo "AI 로그 확인: tail -f $AI_CHAT_LOG"
+if [ -n "${BOMI_HOMECOMING_READY_FILE:-}" ]; then
+    : > "$BOMI_HOMECOMING_READY_FILE"
+fi
 bomi_run_mqtt_bridge

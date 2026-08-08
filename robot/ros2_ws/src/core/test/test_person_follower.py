@@ -287,11 +287,6 @@ def _make_follower(*, enabled: bool, clock_sec: float = 100.0) -> PersonFollower
     follower._last_velocity = None
     follower._last_logged_state = None
     follower._last_logged_velocity_reason = None
-    follower._approach_uses_lidar_only = False
-    follower._hold_motion_on_brief_loss = False
-    follower._linear_accel_limit = 0.0
-    follower._angular_accel_limit = 0.0
-    follower._last_publish_sec = None
     follower._vision_timeout_handled = True
     follower._lidar_timeout_stop_sent = True
     follower.get_clock = lambda: _FakeClock(clock_sec)  # type: ignore[method-assign]
@@ -326,51 +321,6 @@ def test_publish_velocity_publishes_when_enabled() -> None:
     )
 
     assert follower._velocity_publisher.published == [(0.2, 0.1)]
-
-
-# ── LiDAR 전용 접근 (카메라가 종아리 높이라 비전 거리 판단 불가) ────────────
-
-
-def _command_follower(*, lidar_only: bool) -> PersonFollower:
-    follower = object.__new__(PersonFollower)
-    follower._approach_uses_lidar_only = lidar_only
-    return follower
-
-
-def test_lidar_only_turns_vision_stop_into_forward() -> None:
-    """★ 비전의 "다 왔다"를 무시해야 로봇이 출발한다.
-
-    카메라가 낮아 height_ratio 가 항상 1.0 이라 비전은 몇 m 밖에서도 stop 만
-    낸다. 이걸 그대로 따르면 전진을 영원히 시작하지 못한다.
-    """
-    follower = _command_follower(lidar_only=True)
-
-    assert follower._effective_command("stop", True) == "move_forward"
-
-
-def test_lidar_only_keeps_turn_commands_untouched() -> None:
-    # 좌우 정렬은 화면 좌우 위치 기준이라 카메라 높이와 무관하다.
-    follower = _command_follower(lidar_only=True)
-
-    assert follower._effective_command("turn_left", True) == "turn_left"
-    assert follower._effective_command("turn_right", True) == "turn_right"
-    assert (
-        follower._effective_command("move_forward", True) == "move_forward"
-    )
-
-
-def test_lidar_only_does_not_move_when_target_is_not_confirmed() -> None:
-    # 다중 인물·추적 상실 등으로 이동이 금지된 상태를 전진으로 뒤집지 않는다.
-    follower = _command_follower(lidar_only=True)
-
-    assert follower._effective_command("stop", False) == "stop"
-
-
-def test_vision_stop_is_respected_when_lidar_only_is_off() -> None:
-    # 기본값(꺼짐)에서는 기존 동작 그대로다.
-    follower = _command_follower(lidar_only=False)
-
-    assert follower._effective_command("stop", True) == "stop"
 
 
 def test_enable_callback_turns_on_and_state_machine_leaves_disabled() -> None:

@@ -125,7 +125,7 @@ _CURRENT_TIME_ANSWER = re.compile(
 _INTERNAL_DATA_ROW = re.compile(
     r"^\s*[-*]?\s*(?:날씨|기온|하늘\s*상태|강수\s*확률)\s*[:：]"
 )
-_CLOSING_UTTERANCE = "이제 편히 쉬세요."
+_CLOSING_UTTERANCE = "오늘도 고생 많으셨어요."
 
 
 def strip_prompt_scaffolding(text: str) -> str:

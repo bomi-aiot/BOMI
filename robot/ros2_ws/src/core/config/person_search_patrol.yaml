@@ -9,5 +9,4 @@ person_search_patrol:
     enable_topic: /person_search/enable
     status_topic: /person_search/status
     target_confirm_sec: 0.5
-    start_automatically: true
-
+    start_automatically: false
