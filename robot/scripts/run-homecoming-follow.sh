@@ -89,7 +89,9 @@ fi
 start_aux vision_udp_bridge ros2 run core vision_udp_bridge
 start_aux person_follower ros2 launch core person_following.launch.py \
     output_topic:=/cmd_vel_follow start_enabled:=false
-start_aux wake_search ros2 run core wake_search
+start_aux wake_search ros2 run core wake_search --ros-args \
+    --params-file "$ROS_WS/src/core/config/wake_search.yaml" \
+    -p follow_timeout_sec:=600.0
 start_aux twist_mux ros2 run twist_mux twist_mux --ros-args \
     --params-file "$ROS_WS/src/core/config/twist_mux.yaml" \
     -r cmd_vel_out:=/cmd_vel
@@ -97,7 +99,13 @@ start_aux twist_mux ros2 run twist_mux twist_mux --ros-args \
 echo "[추종] ai_vision 시작 — 로그: $FOLLOW_LOG_DIR/ai_vision.log"
 (
     cd "$VISION_DIR"
-    exec "$VISION_PYTHON" -m bomi_vision.udp_main --host 127.0.0.1 --port 5005
+    exec "$VISION_PYTHON" -u -m bomi_vision.udp_main \
+        --host 127.0.0.1 \
+        --port 5005 \
+        --no-window \
+        --horizontal-dead-zone 0.25 \
+        --forward-threshold 0.65 \
+        --lost-tolerance-frames 8
 ) >"$FOLLOW_LOG_DIR/ai_vision.log" 2>&1 &
 AUX_PIDS+=("$!")
 
