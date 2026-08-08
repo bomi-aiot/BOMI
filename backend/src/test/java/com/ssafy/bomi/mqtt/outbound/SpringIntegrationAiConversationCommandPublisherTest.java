@@ -83,7 +83,7 @@ class SpringIntegrationAiConversationCommandPublisherTest {
             new StartConversationPayload(
                 UUID.randomUUID(),
                 ConversationIntent.HOMECOMING_GREETING,
-                "어서 오세요. 오늘 외출은 어떠셨어요?",
+                "다녀오셨어요? 오늘 외출은 어떠셨어요?",
                 Map.of("location", "ENTRANCE")));
     }
 }
