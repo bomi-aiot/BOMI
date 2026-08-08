@@ -106,3 +106,19 @@ bomi_navigation_start() {
     fi
     echo "[4/4] Nav2 준비 완료"
 }
+
+bomi_run_mqtt_bridge() {
+    : "${MQTT_PASSWORD:?먼저 MQTT_PASSWORD 환경변수를 설정하세요.}"
+
+    ros2 run bridge mqtt_bridge --ros-args \
+        -p driver_type:=nav2 \
+        -p robot_id:="${ROBOT_ID:-bomi-AA001}" \
+        -p broker_host:="${MQTT_BROKER_HOST:-i15e102.p.ssafy.io}" \
+        -p broker_port:="${MQTT_BROKER_PORT:-8883}" \
+        -p use_tls:=true \
+        -p ca_certs:="${MQTT_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}" \
+        -p username:="${MQTT_USERNAME:-bomi-jetson}" \
+        -p password:="$MQTT_PASSWORD" \
+        -p waypoint_file:="$BOMI_WAYPOINTS" \
+        -p approach_enabled:=false
+}
