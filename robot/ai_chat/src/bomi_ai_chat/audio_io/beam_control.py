@@ -50,6 +50,122 @@ import os
 import subprocess
 
 
+AZIMUTH_COMMAND = "AEC_AZIMUTH_VALUES"
+
+
+def parse_azimuth_radians(output: str) -> list[float] | None:
+    """xvf_host 출력에서 방향 라디안 4개를 뽑는다.
+
+    AEC_AZIMUTH_VALUES 로 시작하는 줄만 본다. 그 앞에 붙는 장치 배너
+    ("... VID: 10374 PID: 26 ...")의 숫자가 섞이면 인덱스가 밀려 엉뚱한
+    빔 각도를 읽게 되기 때문이다.
+
+    Args:
+        output: xvf_host AEC_AZIMUTH_VALUES 실행 결과 전체.
+
+    Returns:
+        라디안 4개. 해당 줄이 없거나 숫자가 4개 미만이면 None.
+    """
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(AZIMUTH_COMMAND):
+            continue
+        values = []
+        for token in stripped[len(AZIMUTH_COMMAND):].split():
+            try:
+                values.append(float(token))
+            except ValueError:
+                continue
+        if len(values) >= 4:
+            return values[:4]
+    return None
+
+
+def azimuth_agreement(
+    samples: list[float],
+    tolerance_deg: float = 30.0,
+) -> tuple[float | None, int]:
+    """가장 큰 무리의 대표 각도와 그 무리의 표본 수를 함께 돌려준다.
+
+    표본 수는 "이 각도를 믿어도 되는가"의 근거다. 마이크는 화자가 옮겨도
+    한동안 이전 방향에 고정돼 있고, 소리가 없으면 값이 마구 튄다 —
+    그럴 때는 무리가 만들어지지 않으므로 수가 작게 나온다.
+    """
+    if not samples:
+        return None, 0
+
+    best_cluster: list[float] = []
+    for candidate in samples:
+        cluster = [
+            value for value in samples
+            if abs(_shortest_delta_deg(value, candidate)) <= tolerance_deg
+        ]
+        if len(cluster) > len(best_cluster):
+            best_cluster = cluster
+
+    sin_sum = sum(math.sin(math.radians(v)) for v in best_cluster)
+    cos_sum = sum(math.cos(math.radians(v)) for v in best_cluster)
+    angle = math.degrees(math.atan2(sin_sum, cos_sum)) % 360.0
+    return angle, len(best_cluster)
+
+
+def robust_azimuth_deg(
+    samples: list[float],
+    tolerance_deg: float = 30.0,
+) -> float | None:
+    """여러 번 읽은 방향에서 튀는 값을 걸러 하나로 모은다.
+
+    마이크의 방향 추정은 말이 이어지는 동안에는 촘촘히 일치하지만
+    (실측 +64.2/+64.1/+64.5/+63.8), 중간에 전혀 다른 값이 하나씩 섞인다
+    (같은 구간에 -152.5). "보미야"는 짧아서 한 번만 읽으면 그 튀는 값을
+    그대로 잡을 확률이 크다 — 그래서 가장 많은 이웃을 가진 값을 고르고
+    그 무리만 평균한다(다수결).
+
+    Args:
+        samples: 0~360 범위의 방향 각도들.
+        tolerance_deg: 같은 무리로 볼 각도 차이.
+
+    Returns:
+        대표 각도(0~360). samples 가 비어 있으면 None.
+    """
+    angle, _ = azimuth_agreement(samples, tolerance_deg)
+    return angle
+
+
+def _shortest_delta_deg(a: float, b: float) -> float:
+    """두 각도의 최단 차이(-180~180)."""
+    return (a - b + 180.0) % 360.0 - 180.0
+
+
+SPEAKER_DIRECTION_COMMAND = "AUDIO_MGR_SELECTED_AZIMUTHS"
+
+
+def parse_speaker_direction_deg(output: str) -> float | None:
+    """xvf_host 출력에서 "화자 방향"(처리된 DoA)을 도 단위로 뽑는다.
+
+    AUDIO_MGR_SELECTED_AZIMUTHS 의 0번 값이 장치가 말소리 에너지로 골라낸
+    화자 방향이다. 방향을 못 정하면 장치가 NaN 을 준다 — 그때는 None 을
+    돌려줘 "모름"으로 다룬다. 쓰레기 각도를 방향인 척 넘기면 로봇이 엉뚱한
+    곳으로 확신 있게 돈다(2026-08-09 실기).
+
+    지금까지 쓰던 AEC_AZIMUTH_VALUES 는 화자 방향이 아니라 빔포머 상태
+    (beam 1, beam 2, free-running)라서 화자가 옮겨도 한참 따라오지 않았다.
+    """
+    for line in output.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(SPEAKER_DIRECTION_COMMAND):
+            continue
+        for token in stripped[len(SPEAKER_DIRECTION_COMMAND):].split():
+            try:
+                value = float(token)
+            except ValueError:
+                continue
+            if math.isnan(value):
+                return None
+            return math.degrees(value) % 360.0
+    return None
+
+
 class BeamController:
     """xvf_host 프로그램을 실행해서 마이크의 빔 방향을 고정/해제한다."""
 
@@ -60,6 +176,12 @@ class BeamController:
         self.protocol = os.getenv("XVF_HOST_PROTOCOL", "").strip()
         self.front_deg = float(os.getenv("BEAM_FRONT_AZIMUTH_DEG", "90"))
         self.gating = os.getenv("BEAM_GATING", "0") == "1"
+        # 방향 판별용 고정 빔 두 개의 각도(장치 좌표계). 공장 초기값은
+        # 둘 다 0도라 방향이 갈리지 않는다 — 좌우로 벌려 놓는다.
+        self.direction_beam_left_deg = float(
+            os.getenv("BEAM_DIRECTION_LEFT_DEG", "90"))
+        self.direction_beam_right_deg = float(
+            os.getenv("BEAM_DIRECTION_RIGHT_DEG", "270"))
         # 간섭 제거기 문턱값. 비워두면(미설정) 장치 기본값을 그대로 둔다.
         raw_noise = os.getenv("BEAM_NOISE_THRESHOLD", "").strip()
         self.noise_threshold = float(raw_noise) if raw_noise else None
@@ -129,6 +251,42 @@ class BeamController:
               f"{', gating 켬' if self.gating else ''}{noise_msg}")
         return True
 
+    def apply_direction_beams(self) -> bool:
+        """방향 판별용으로 고정 빔 두 개를 좌/우에 벌려 놓는다.
+
+        왜 필요한가 (2026-08-09 실기)
+            AUDIO_MGR_SELECTED_AZIMUTHS 의 "화자 방향"은 문서대로 *각 고정
+            빔의 DoA 중에서* 고른다. 공장 초기값은 두 빔이 모두 0도라 고를
+            것이 없어, 방향이 물리적 위치와 무관하게 흩어졌다. 좌/우로
+            벌려 놓으면 값이 그 두 각도로 스냅되어 좌우 판별이 안정된다
+            (실측: 왼쪽 270.0, 오른쪽 90.0, 표본 8/8 일치).
+
+        apply_fixed_beam 과 달리 **녹음 경로(AUDIO_MGR_OP_L)는 건드리지
+        않는다.** 우리는 방향 판별만 원하지, 마이크가 한 방향만 듣게 만들
+        생각은 없다.
+
+        주의: 이 설정은 USB 재연결·재부팅으로 초기화된다. 그래서 기동할
+        때마다 다시 걸어야 한다.
+
+        Returns:
+            실제로 걸었으면 True, 장치가 없어 건너뛰었으면 False.
+        """
+        if not self._available():
+            print(f"[BeamController] xvf_host 없음({self.host_path!r}) "
+                  "-> 방향 빔 설정 건너뜀")
+            return False
+
+        left = math.radians(self.direction_beam_left_deg)
+        right = math.radians(self.direction_beam_right_deg)
+        self._run(
+            "AEC_FIXEDBEAMSAZIMUTH_VALUES", f"{left:.5f}", f"{right:.5f}")
+        self._run("AEC_FIXEDBEAMSONOFF", "1")
+        print(
+            "[BeamController] 방향 판별용 빔 설정: "
+            f"{self.direction_beam_left_deg:.0f}도 / "
+            f"{self.direction_beam_right_deg:.0f}도")
+        return True
+
     def reset(self) -> None:
         """빔 고정을 풀고 원래 상태(방향 자동 추적)로 되돌린다."""
         if not self._available():
@@ -137,7 +295,7 @@ class BeamController:
         self._run("AEC_FIXEDBEAMSONOFF", "0")   # 고정 모드 끄기
         print("[BeamController] 빔 고정 해제(자동 추적으로 복귀)")
 
-    def read_direction_deg(self) -> float:
+    def read_direction_deg(self, samples: int = 1) -> float:
         """지금 마이크가 소리를 잡고 있는 방향을 '도(0~360)' 단위로 읽어온다.
 
         로봇 정면 각도를 측정할 때 사용한다(calibrate_beam.py에서 호출).
@@ -152,26 +310,31 @@ class BeamController:
                 1.20925 (69.28 deg) 1.20925 (69.28 deg)
         여기서 라디안 숫자 4개(1.57080, 1.57080, 1.20925, 1.20925)만 뽑는다.
 
+        ⚠️ 반드시 AEC_AZIMUTH_VALUES 로 시작하는 줄에서만 숫자를 뽑는다.
+        xvf_host 는 그 앞에 장치 배너를 함께 찍을 때가 있는데,
+            Device (USB)::device_init() -- Found device VID: 10374 PID: 26 ...
+        여기 섞인 10374·26 이 숫자로 잡히면 인덱스가 밀려 4번째 값 대신
+        고정 빔 각도를 읽는다. 그러면 사람이 어디서 부르든 늘 같은 각도가
+        나와 로봇이 엉뚱한 방향으로 돈다(2026-08-09 실기에서 세 번의 호출이
+        소수점까지 같은 값이라 발견).
+
         마이크(xvf_host)를 못 찾으면 방향을 읽을 수 없으므로 에러를 낸다.
         (호출하는 쪽에서 이 에러를 잡아 '방향 모름'으로 처리하면 된다.)
         """
         if not self._available():
             raise RuntimeError(f"xvf_host를 찾을 수 없어 방향을 읽을 수 없음: {self.host_path!r}")
 
-        out = self._run("AEC_AZIMUTH_VALUES")
+        readings: list[float] = []
+        last_out = ""
+        for _ in range(max(1, samples)):
+            last_out = self._run(SPEAKER_DIRECTION_COMMAND)
+            degrees = parse_speaker_direction_deg(last_out)
+            if degrees is not None:
+                # 4번째 값이 최종 선택된 빔이다.
+                readings.append(degrees)
 
-        # 결과 글자를 공백으로 쪼갠 뒤, 숫자로 바꿀 수 있는 것만 모은다.
-        # 괄호가 붙은 "(90.00" 이나 "deg)" 같은 조각은 숫자로 못 바꿔서 자동으로 걸러진다.
-        # 그래서 순수한 라디안 값 4개만 남는다.
-        rads = []
-        for token in out.split():
-            try:
-                rads.append(float(token))
-            except ValueError:
-                continue
-
-        if len(rads) < 4:
-            raise RuntimeError(f"AEC_AZIMUTH_VALUES 결과 해석 실패: {out!r}")
-
-        # 4번째 값(라디안)을 사람이 보기 쉬운 '도'로 바꿔서 돌려준다.
-        return math.degrees(rads[3]) % 360.0
+        direction = robust_azimuth_deg(readings)
+        if direction is None:
+            raise RuntimeError(
+                f"AEC_AZIMUTH_VALUES 결과 해석 실패: {last_out!r}")
+        return direction

@@ -34,6 +34,9 @@
     SEARCH_USE_BEAM_DIRECTION "1"이면 마이크에서 소리 방향을 읽는다(기본 "1").
                               끄면 각도 없이 보내고 로봇은 전체 탐색을 한다.
     SEARCH_AZIMUTH_SIGN       "1" 또는 "-1". 로봇이 반대로 돌면 뒤집는다.
+    SEARCH_AZIMUTH_WINDOW_SEC 웨이크워드 직전 몇 초의 방향을 쓸지(기본 2.0).
+    SEARCH_AZIMUTH_INTERVAL_SEC 방향을 몇 초마다 기록할지(기본 0.2).
+    SEARCH_AZIMUTH_MIN_AGREEMENT 몇 개가 일치해야 방향을 믿을지(기본 5).
 """
 
 from __future__ import annotations
@@ -42,6 +45,9 @@ import json
 import logging
 import os
 import socket
+
+from bomi_ai_chat.audio_io.beam_sampler import BeamDirectionSampler
+from bomi_ai_chat.audio_io.beam_control import azimuth_agreement
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +132,9 @@ class SearchSignalSender:
         if self._closed:
             return
         self._closed = True
+        sampler = getattr(self._direction_provider, "sampler", None)
+        if sampler is not None:
+            sampler.stop()
         try:
             self._socket.close()
         except OSError:
@@ -258,9 +267,80 @@ def _build_direction_provider(beam):
 
     front_deg = float(getattr(beam, "front_deg", 0.0) or 0.0)
 
-    def provider() -> float:
-        """마이크 절대 각도를 로봇 정면 기준 상대 각도로 바꾼다."""
-        absolute_deg = beam.read_direction_deg()
-        return normalize_relative_deg(absolute_deg - front_deg)
+    # 방향은 "말하는 동안"에만 정확하다. 웨이크워드는 다 말한 뒤에 감지되므로
+    # 그때 읽으면 이미 말이 끝난 뒤의 무작위 값을 잡는다(2026-08-09 실기:
+    # 왼쪽에서 불렀는데 오른쪽으로 돎). 그래서 계속 기록해 두고, 감지 시점의
+    # '직전 몇 초' — 즉 사람이 실제로 말하던 구간 — 을 쓴다.
+    window_sec = _float_env("SEARCH_AZIMUTH_WINDOW_SEC", 3.0)
+    interval_sec = _float_env(
+        "SEARCH_AZIMUTH_INTERVAL_SEC", 0.15)
+    # 이 개수만큼 서로 일치해야 방향을 믿는다.
+    #
+    # 장치가 방향을 못 정하면 NaN 을 주고 표본이 아예 안 쌓인다. 즉 쌓인
+    # 값은 이미 "말소리로 판정된" 것이라 신뢰도가 높다. 게다가 고정 빔을
+    # 좌/우로 벌려 둔 뒤로는 값이 그 두 각도로 스냅되어 서로 어긋나지
+    # 않는다(실측 8/8 일치). "보미야" 한 마디는 짧아 2초 창에 1~2개만
+    # 잡히므로 5 는 지나치게 빡빡했다 — 정확한 값을 버리고 전체 탐색으로
+    # 떨어졌다(2026-08-09 실기). 2 로 낮춘다.
+    min_agreement = int(_float_env("SEARCH_AZIMUTH_MIN_AGREEMENT", 2.0))
 
+    # 방향 판별용 고정 빔을 매 기동마다 다시 건다(USB 재연결로 초기화된다).
+    try:
+        beam.apply_direction_beams()
+    except Exception:  # noqa: BLE001 - 방향이 없어도 대화는 계속된다
+        logger.warning("방향 판별용 빔 설정 실패 — 방향 정확도가 떨어집니다.",
+                       exc_info=True)
+
+    sampler = BeamDirectionSampler(
+        beam.read_direction_deg,
+        interval_sec=interval_sec,
+        history_sec=max(window_sec * 2.0, 4.0),
+    )
+    sampler.start()
+
+    def provider() -> float | None:
+        """말하던 구간의 방향들을 모으되, 서로 충분히 일치할 때만 쓴다.
+
+        마이크는 화자가 옮겨도 한동안 이전 방향에 고정돼 있고, 소리가 없으면
+        값이 마구 튄다(2026-08-09 실기: 뒤에서 불렀는데 +90도로 읽음). 그런
+        값을 그대로 믿으면 로봇이 **엉뚱한 방향으로 확신 있게** 돈다. 표본이
+        서로 모이지 않으면 방향을 포기하고 None 을 돌려준다 — 그러면 로봇은
+        지금 보는 방향부터 좌우로 훑어 사람을 찾는다(느릴 뿐 확실하다).
+        """
+        samples = sampler.recent(window_sec)
+        absolute_deg, agreed = azimuth_agreement(samples)
+
+        if absolute_deg is None or agreed < min_agreement:
+            logger.info(
+                "소리 방향 표본 %d개 중 %d개만 일치 — 신뢰할 수 없어 "
+                "방향 없이 전체 탐색합니다: %s",
+                len(samples), agreed, [round(v, 1) for v in samples])
+            return None
+
+        relative = normalize_relative_deg(absolute_deg - front_deg)
+        logger.info(
+            "소리 방향 표본 %d개 중 %d개 일치 -> 절대 %.1f도, "
+            "정면(%.1f도) 기준 %+.1f도",
+            len(samples), agreed, absolute_deg, front_deg, relative)
+        return relative
+
+    provider.sampler = sampler
     return provider
+
+
+def _float_env(name: str, default: float) -> float:
+    """환경변수를 실수로 읽는다. 잘못된 값이면 기본값을 쓴다."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("%s 가 숫자가 아닙니다(%r). %s 를 씁니다.",
+                       name, raw, default)
+        return default
+    if value <= 0.0:
+        logger.warning("%s 는 양수여야 합니다(%r). %s 를 씁니다.",
+                       name, raw, default)
+        return default
+    return value
