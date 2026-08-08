@@ -32,15 +32,18 @@ public class FollowResultRouter {
 
     private final ScenarioRepository scenarioRepository;
     private final WakeWordCallOrchestrator wakeWordCallOrchestrator;
+    private final HomecomingOrchestrator homecomingOrchestrator;
     private final WalkOrchestrator walkOrchestrator;
 
     public FollowResultRouter(
         ScenarioRepository scenarioRepository,
         WakeWordCallOrchestrator wakeWordCallOrchestrator,
+        HomecomingOrchestrator homecomingOrchestrator,
         WalkOrchestrator walkOrchestrator
     ) {
         this.scenarioRepository = scenarioRepository;
         this.wakeWordCallOrchestrator = wakeWordCallOrchestrator;
+        this.homecomingOrchestrator = homecomingOrchestrator;
         this.walkOrchestrator = walkOrchestrator;
     }
 
@@ -60,6 +63,12 @@ public class FollowResultRouter {
             log.debug("Routing FOLLOW_RESULT to the wake-word call: scenarioId={}", scenarioId);
             wakeWordCallOrchestrator.onFollowResult(
                 scenarioId, sourceRobotId, commandId, false,
+                outcome, resultCode, reasonCode);
+            return;
+        }
+        if (scenario != null && scenario.getScenarioType() == ScenarioType.HOMECOMING) {
+            homecomingOrchestrator.onFollowResult(
+                eventId, scenarioId, sourceRobotId, commandId, occurredAt,
                 outcome, resultCode, reasonCode);
             return;
         }
