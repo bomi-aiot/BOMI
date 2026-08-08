@@ -46,10 +46,10 @@ public class OperatorScenarioCancellationAudit {
     @Column(name = "previous_robot_mode", nullable = false, updatable = false, length = 30)
     private RobotMode previousRobotMode;
 
-    @Column(name = "target_navigation_command_id", nullable = false, updatable = false, length = 64)
+    @Column(name = "target_navigation_command_id", updatable = false, length = 64)
     private String targetNavigationCommandId;
 
-    @Column(name = "cancel_command_id", nullable = false, updatable = false, length = 64)
+    @Column(name = "cancel_command_id", updatable = false, length = 64)
     private String cancelCommandId;
 
     @Column(name = "physical_safety_confirmed", nullable = false, updatable = false)
@@ -74,9 +74,9 @@ public class OperatorScenarioCancellationAudit {
         audit.operatorId = text(operatorId, "operatorId", 100);
         audit.previousScenarioStatus = require(previousScenarioStatus, "previousScenarioStatus");
         audit.previousRobotMode = require(previousRobotMode, "previousRobotMode");
-        audit.targetNavigationCommandId = text(targetNavigationCommandId,
+        audit.targetNavigationCommandId = optionalText(targetNavigationCommandId,
             "targetNavigationCommandId", 64);
-        audit.cancelCommandId = text(cancelCommandId, "cancelCommandId", 64);
+        audit.cancelCommandId = optionalText(cancelCommandId, "cancelCommandId", 64);
         audit.physicalSafetyConfirmed = true;
         audit.reason = text(reason, "reason", 500);
         audit.cancelledAt = require(cancelledAt, "cancelledAt");
@@ -97,5 +97,9 @@ public class OperatorScenarioCancellationAudit {
             throw new IllegalArgumentException(field + " must not exceed " + max + " characters");
         }
         return normalized;
+    }
+
+    private static String optionalText(String value, String field, int max) {
+        return value == null ? null : text(value, field, max);
     }
 }
