@@ -28,9 +28,11 @@ class FollowResultRouterTest {
     private final ScenarioRepository scenarioRepository = mock(ScenarioRepository.class);
     private final WakeWordCallOrchestrator wakeWordOrchestrator =
         mock(WakeWordCallOrchestrator.class);
+    private final HomecomingOrchestrator homecomingOrchestrator =
+        mock(HomecomingOrchestrator.class);
     private final WalkOrchestrator walkOrchestrator = mock(WalkOrchestrator.class);
     private final FollowResultRouter router = new FollowResultRouter(
-        scenarioRepository, wakeWordOrchestrator, walkOrchestrator);
+        scenarioRepository, wakeWordOrchestrator, homecomingOrchestrator, walkOrchestrator);
 
     @Test
     void wakeWordFollowResultGoesOnlyToTheWakeWordOrchestrator() {
@@ -60,6 +62,21 @@ class FollowResultRouterTest {
             "evt-02", scenario.getId(), "robot-01", "cmd-02", OCCURRED_AT,
             "FAILED", "STOPPED", "PERSON_LOST");
         verifyNoInteractions(wakeWordOrchestrator);
+    }
+
+    @Test
+    void homecomingFollowResultGoesOnlyToTheHomecomingOrchestrator() {
+        Scenario scenario = scenario(ScenarioType.HOMECOMING);
+        when(scenarioRepository.findById(scenario.getId())).thenReturn(Optional.of(scenario));
+
+        router.route(
+            "evt-home", scenario.getId(), "robot-01", "cmd-home", OCCURRED_AT,
+            "SUCCEEDED", "STARTED", null);
+
+        verify(homecomingOrchestrator).onFollowResult(
+            "evt-home", scenario.getId(), "robot-01", "cmd-home", OCCURRED_AT,
+            "SUCCEEDED", "STARTED", null);
+        verifyNoInteractions(wakeWordOrchestrator, walkOrchestrator);
     }
 
     @Test
