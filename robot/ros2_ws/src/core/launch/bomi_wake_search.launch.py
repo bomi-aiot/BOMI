@@ -156,12 +156,18 @@ def generate_launch_description() -> LaunchDescription:
     # 건 ai_vision 단독 실행 시 다중 인물 상황에서 안전하게 멈추기 위해서다).
     # 2026-08-08 실기: 이걸 안 켠 채로는 부르지 않은 사람이 잠깐 화각에
     # 들어와도 그 사람을 그대로 추종 대상으로 확정해 버렸다.
+    # --no-window: 이 launch 는 SSH 로 접속한 젯슨에서 헤드리스로 뜬다.
+    # udp_main 기본값(show_window=True)은 DISPLAY 가 없으면 OpenCV 의 Qt
+    # 플러그인 로딩에서 그대로 죽는다(2026-08-08 실기, ai_vision 즉시 종료로
+    # 전체 launch 가 함께 내려감) — 물리 디스플레이가 붙은 디버그 세션에서만
+    # 수동으로 udp_main 을 따로 띄워 확인한다.
     ai_vision_process = ExecuteProcess(
         condition=IfCondition(use_ai_vision),
         cmd=[
             ai_vision_python, "-m", "bomi_vision.udp_main",
             "--host", robot_udp_host,
             "--port", vision_udp_port,
+            "--no-window",
             "--select-primary-person",
             "--primary-min-confidence", primary_min_confidence,
             "--primary-min-height-ratio", primary_min_height_ratio,
