@@ -193,6 +193,12 @@ export function BomiProvider({ children }: BomiProviderProps) {
     try {
       const nextDashboard = await bomiService.getDashboard();
       setDashboard(nextDashboard);
+      // 대시보드 응답 하나가 복약 응답과 확인 요청까지 이미 담고 있다.
+      // 이 값을 각 화면의 상태로 흘려보내면 요청 수를 늘리지 않고도
+      // 복약 관리·확인할 일 화면이 같은 1초 주기로 살아난다.
+      // (복약 "목록" 자체는 사람이 등록할 때만 바뀌므로 여기서 건드리지 않는다.)
+      setMedicationResponses(nextDashboard.medicationResponses);
+      setConfirmationRequests(nextDashboard.confirmationRequests);
     } catch {
       // 주 변경은 이미 성공했으므로 파생 요약 갱신 실패를 액션 실패로 되돌리지 않는다.
       // 폴링에서도 같은 이유로 삼킨다 — 일시적 실패에 1초마다 에러를 띄우면
