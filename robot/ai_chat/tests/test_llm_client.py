@@ -87,3 +87,14 @@ def test_gemini_call_is_recorded_in_the_active_turn(settings_factory):
         client.generate("안녕")
 
     assert timer.stages["llm"] >= 0
+
+
+def test_current_time_is_marked_as_internal_context(settings_factory):
+    session = StubSession(gemini_response())
+    client = LLMClient(llm_settings(settings_factory), session=session)
+
+    client.generate("오늘 산책하고 왔어")
+
+    system_prompt = session.calls[0]["json"]["system_instruction"]["parts"][0]["text"]
+    assert "사용자가 날짜, 요일 또는 현재 시각을 직접 질문한 경우에만" in system_prompt
+    assert "일상 대화, 안부 대화, 건강 대화에서는 날짜와 시각을 먼저 말하지 않습니다" in system_prompt
