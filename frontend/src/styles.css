@@ -3158,6 +3158,58 @@ body {
   gap: 18px;
 }
 
+/* 안전 알림 카드 — 보미와 집 그리드의 오른쪽 자리.
+   평상시엔 다른 카드와 같은 톤이고, 알림이 있을 때만 붉은 테두리로 눈에 띈다. */
+.safety-alert-card--urgent {
+  border-color: var(--red-700);
+  background: var(--red-50);
+}
+
+.safety-alert-card__body {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.safety-alert-card__body strong {
+  font-size: 0.98rem;
+  line-height: 1.5;
+}
+
+.safety-alert-card__body p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.safety-alert-list {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+.safety-alert-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--red-100);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.safety-alert-list time {
+  flex: none;
+  color: var(--ink-muted);
+  font-size: 0.74rem;
+}
+
 .today-summary-card {
   background: linear-gradient(145deg, #fff, #f1f8f4);
 }
