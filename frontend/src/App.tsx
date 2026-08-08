@@ -56,6 +56,8 @@ function GuardianExperience({ pathname, navigate }: GuardianExperienceProps) {
     clearToast,
   } = useBomi()
 
+  const isEmergencyToast = toast?.tone === 'EMERGENCY'
+
   const renderPage = () => {
     switch (pathname) {
       case '/dashboard':
@@ -125,23 +127,43 @@ function GuardianExperience({ pathname, navigate }: GuardianExperienceProps) {
       }
     >
       {renderPage()}
-      {toast && !LOCAL_TOAST_ROUTES.has(pathname) ? (
+      {/*
+        LOCAL_TOAST_ROUTES 는 그 화면이 자기 토스트를 따로 그리므로 전역 토스트를
+        접어 두는 목록이다. 위급 알림만은 그 규칙에서 빼야 한다 — 어르신 설정
+        화면을 열어 둔 채로 위급이 도착했는데 아무것도 안 뜨는 것이 최악이다.
+      */}
+      {toast && (isEmergencyToast || !LOCAL_TOAST_ROUTES.has(pathname)) ? (
         <Toast
           open
+          emphasis={isEmergencyToast ? 'critical' : 'normal'}
           title={
-            toast.tone === 'ERROR'
-              ? '처리하지 못했습니다'
-              : toast.tone === 'INFO'
-                ? '안내'
-                : '완료'
+            isEmergencyToast
+              ? '위급 상황'
+              : toast.tone === 'ERROR'
+                ? '처리하지 못했습니다'
+                : toast.tone === 'INFO'
+                  ? '안내'
+                  : '완료'
           }
           message={toast.message}
-          tone={toast.tone === 'ERROR' ? 'danger' : toast.tone === 'INFO' ? 'info' : 'success'}
-          actionLabel={toast.actionLabel}
+          tone={
+            isEmergencyToast || toast.tone === 'ERROR'
+              ? 'danger'
+              : toast.tone === 'INFO'
+                ? 'info'
+                : 'success'
+          }
+          // 위급은 5초로 사라지면 안 된다. 자리를 비운 사이 지나가 버리면
+          // 알린 적이 없는 것과 같다. 20초 두고, 그동안 안전 알림 카드가
+          // 같은 내용을 계속 들고 있다.
+          durationMs={isEmergencyToast ? 20000 : undefined}
+          actionLabel={isEmergencyToast ? '지금 확인하기' : toast.actionLabel}
           onAction={
-            toast.actionRequestId
-              ? () => void undoConfirmationRequest(toast.actionRequestId as string)
-              : undefined
+            isEmergencyToast
+              ? () => navigate('/bomi-home')
+              : toast.actionRequestId
+                ? () => void undoConfirmationRequest(toast.actionRequestId as string)
+                : undefined
           }
           onDismiss={clearToast}
         />
