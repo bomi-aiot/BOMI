@@ -112,13 +112,9 @@ public class OperatorScenarioCancellationService {
 
         Scenario scenario = active.get(0);
         String targetCommandId = scenario.getActiveNavigationCommandId();
-        if (targetCommandId == null || targetCommandId.isBlank()) {
-            return rejected(
-                OperatorScenarioCancellationDisposition.REJECTED_NO_ACTIVE_NAVIGATION,
-                robot.getId(), robot.getDeviceId(), robot.getCurrentMode(),
-                "The active scenario has no navigation command to cancel");
-        }
-        if (commandPublishers.size() != 1) {
+        boolean navigationCancellationRequired =
+            targetCommandId != null && !targetCommandId.isBlank();
+        if (navigationCancellationRequired && commandPublishers.size() != 1) {
             return rejected(
                 OperatorScenarioCancellationDisposition.REJECTED_MQTT_UNAVAILABLE,
                 robot.getId(), robot.getDeviceId(), robot.getCurrentMode(),
@@ -126,7 +122,9 @@ public class OperatorScenarioCancellationService {
         }
 
         OffsetDateTime now = OffsetDateTime.now(clock);
-        String cancelCommandId = UUID.randomUUID().toString();
+        String cancelCommandId = navigationCancellationRequired
+            ? UUID.randomUUID().toString()
+            : null;
         ScenarioStatus previousStatus = scenario.getFinalStatus();
         RobotMode previousMode = robot.getCurrentMode();
 
@@ -138,17 +136,22 @@ public class OperatorScenarioCancellationService {
                 previousStatus, previousMode, targetCommandId, cancelCommandId,
                 normalizedReason, now));
 
-        commandPublishers.get(0).publish(new RobotCommand(
-            cancelCommandId, scenario.getId(), robot.getDeviceId(), RobotCommandType.CANCEL,
-            now, now.plusMinutes(2),
-            Map.of("targetCommandId", targetCommandId, "reasonCode", REASON_CODE)));
+        if (navigationCancellationRequired) {
+            commandPublishers.get(0).publish(new RobotCommand(
+                cancelCommandId, scenario.getId(), robot.getDeviceId(), RobotCommandType.CANCEL,
+                now, now.plusMinutes(2),
+                Map.of("targetCommandId", targetCommandId, "reasonCode", REASON_CODE)));
+        }
 
         return new OperatorScenarioCancellationResult(
             OperatorScenarioCancellationDisposition.CANCELLED,
             robot.getId(), robot.getDeviceId(), scenario.getId(), previousStatus,
             ScenarioStatus.CANCELLED, previousMode, RobotMode.SAFE_STOP,
             cancelCommandId, audit.getId(), now,
-            "Navigation cancellation queued; recover SAFE_STOP to IDLE after verifying the robot stopped");
+            navigationCancellationRequired
+                ? "Scenario cancelled and navigation cancellation queued; recover SAFE_STOP "
+                    + "to IDLE after verifying the robot stopped"
+                : "Scenario cancelled; recover SAFE_STOP to IDLE after verifying the robot stopped");
     }
 
     private static OperatorScenarioCancellationResult noOp(Robot robot) {

@@ -27,7 +27,7 @@ public class ScenarioTimeoutProperties {
      * 둔다 — 너무 짧으면 정상적으로 길어진 대화 중에 시나리오가 끊긴다. 너무 길면
      * 안전망으로서의 가치가 줄어든다.</p>
      */
-    private Duration activeTimeout = Duration.ofMinutes(20);
+    private Duration activeTimeout = Duration.ofMinutes(10);
 
     public Duration getActiveTimeout() {
         return activeTimeout;

@@ -134,7 +134,7 @@ services:
       # 활성 시나리오 강제 타임아웃(ScenarioTimeoutWatchdog). 대화 핸드오프가 로깅
       # 스텁이거나 이벤트가 유실됐을 때의 마지막 안전망 — 너무 짧으면 정상적으로
       # 길어진 대화를 끊으므로, 재배포 없이 현장에서 조정 가능해야 한다.
-      SCENARIO_ACTIVE_TIMEOUT: ${SCENARIO_ACTIVE_TIMEOUT:-20m}
+      SCENARIO_ACTIVE_TIMEOUT: ${SCENARIO_ACTIVE_TIMEOUT:-10m}
       # AI 시작 확인 10초, 전체 대화 5분. 시연 환경에서는 env로만 조정한다.
       AI_CONVERSATION_START_TIMEOUT: ${AI_CONVERSATION_START_TIMEOUT:-10s}
       AI_CONVERSATION_MAX_DURATION: ${AI_CONVERSATION_MAX_DURATION:-5m}

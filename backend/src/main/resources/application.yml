@@ -188,7 +188,7 @@ bomi:
     # 활성 상태로 이 시간을 넘긴 시나리오는 강제로 TIMED_OUT 처리한다
     # (ScenarioTimeoutWatchdog). 대화 핸드오프가 로깅 스텁이거나 이벤트가 유실돼도
     # 다음 시나리오가 영원히 막히지 않도록 하는 마지막 안전망.
-    active-timeout: ${SCENARIO_ACTIVE_TIMEOUT:20m}
+    active-timeout: ${SCENARIO_ACTIVE_TIMEOUT:10m}
   walk:
     # FOLLOWING은 정상적으로 20분을 넘길 수 있어 공용 watchdog에서 제외한다.
     follow-start-ack-timeout: ${WALK_FOLLOW_START_ACK_TIMEOUT:10s}
