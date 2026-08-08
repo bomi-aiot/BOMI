@@ -12,7 +12,8 @@ NODE_PATTERN="slam_toolbox|ydlidar_ros2_driver_node|pico_driver|joy_linux\
 |ekf_node|rviz2|teleop_node|scan_sanitizer|amcl|controller_server\
 |planner_server|bt_navigator|map_server|behavior_server|velocity_smoother\
 |lifecycle_manager|waypoint_follower|smoother_server|mqtt_bridge\
-|nav2_robot_driver|nav2_waypoint_patrol|person_follower|wake_search"
+|nav2_robot_driver|nav2_waypoint_patrol|person_follower|wake_search\
+|bomi_vision.udp_main"
 
 bomi_cleanup() {
     # pkill은 일치하는 프로세스가 없으면 1을 반환한다. 이미 깨끗한 상태는

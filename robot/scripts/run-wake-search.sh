@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # "보미야" 웨이크워드 → 방향 탐색 → 추종 실기 실행 원클릭 스크립트.
 #
-# 이전 실행이 완전히 안 죽고 pico/lidar 시리얼 포트를 붙잡고 있으면 이번
-# 실행이 조용히 실패한다(2026-08-09 실기, pico_driver가 포트 응답 없음으로
-# 죽어 로봇이 아예 안 움직였다) — 시작 전에 항상 정리한다.
+# 이전 실행이 완전히 안 죽고 pico/lidar 시리얼 포트나 카메라를 붙잡고
+# 있으면 이번 실행이 조용히 실패한다 — 시작 전에 항상 정리한다.
 
 set -euo pipefail
 
@@ -57,6 +56,7 @@ setsid ros2 launch core bomi_wake_search.launch.py \
 WAKE_PGID=$!
 
 bomi_require_pico "$WAKE_LOG"
+bomi_require_camera "$WAKE_LOG"
 
 echo "[3/3] 준비 완료 — '보미야'로 불러보세요 (종료: Ctrl+C)"
 echo "로그 실시간 확인: tail -f $WAKE_LOG"

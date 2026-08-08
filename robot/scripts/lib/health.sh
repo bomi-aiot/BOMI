@@ -9,6 +9,7 @@
 # 프로세스 유무만 보면 이 상태를 놓치므로 구독자 수까지 확인한다.
 
 PICO_PATTERN="core/lib/core/pico_driver"
+AI_VISION_PATTERN="bomi_vision.udp_main"
 
 # 모터 드라이버가 살아 있고 /cmd_vel 이 실제로 이어졌는지 확인한다.
 # 실패하면 로그에서 원인 줄만 뽑아 보여주고 1을 돌려준다.
@@ -47,6 +48,51 @@ bomi_require_pico() {
 
     echo "  pico_driver OK (/cmd_vel 구독자 $subs)"
     return 0
+}
+
+# 카메라가 열려서 ai_vision 이 살아 있는지 확인한다. 이 프로세스가 죽으면
+# launch 전체가 같이 내려가므로(on_exit=Shutdown), 죽은 뒤엔 이미 늦다 —
+# 뜬 직후 몇 초 안에 확인해야 한다.
+#   $1  런치 출력 로그 경로
+bomi_require_camera() {
+    local log=$1
+    local waited=0
+
+    while [ "$waited" -lt 8 ]; do
+        pgrep -f "$AI_VISION_PATTERN" >/dev/null && break
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    if ! pgrep -f "$AI_VISION_PATTERN" >/dev/null; then
+        echo "❌ ai_vision(카메라)이 떠 있지 않습니다 — 사람을 아예 못 찾습니다."
+        _bomi_camera_reason "$log"
+        return 1
+    fi
+
+    echo "  ai_vision OK (카메라 열림)"
+    return 0
+}
+
+# 런치 로그에서 ai_vision(카메라) 관련 원인만 뽑아 보여준다.
+_bomi_camera_reason() {
+    local log=$1
+
+    echo
+    echo "── 원인 (로그: $log) ──"
+    if [ -r "$log" ]; then
+        grep -E "ai_vision|Failed to open camera|VIDEOIO" "$log" | tail -15
+    else
+        echo "  로그를 읽을 수 없습니다: $log"
+    fi
+    cat <<'HINT'
+
+자주 겪는 원인:
+  · 이전 실행이 남긴 bomi_vision.udp_main 프로세스가 카메라를 붙잡고 있다.
+    → fuser /dev/video0 로 PID 확인, bomi_cleanup 이 자동으로 정리한다.
+  · USB 카메라가 빠졌거나 장치 번호가 바뀌었다.
+    → ls -l /dev/video* 로 확인.
+HINT
 }
 
 # 런치 로그에서 pico_driver 가 죽은 이유만 뽑아 보여준다.
