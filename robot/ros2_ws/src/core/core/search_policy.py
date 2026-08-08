@@ -16,11 +16,14 @@
     1. 소리 방향 힌트가 있으면 그쪽으로 먼저 돈다 (TURN_TO_HINT).
     2. 멈춰서 관찰한다 (OBSERVE). 카메라가 사람을 확정할 시간을 준다.
     3. 못 찾으면 힌트 방향을 중심으로 좌우 지그재그로 한 스텝씩 넓혀가며
-       본다(1차 +1스텝 → -1스텝, 2차 +2스텝 → -2스텝, …). 마이크 방향
-       추정은 완벽하지 않으니 "대충 그 근처"부터 촘촘히 본다 — 실기에서
-       힌트를 무시하고 바로 전체 회전부터 시작하는 것처럼 보인다는
-       피드백으로 추가됐다. local_search_max_steps 가 이 좌우 탐색을 몇
-       차까지 할지다.
+       본다 — **힌트로 돈 방향을 먼저 잇는다**(예: 오른쪽에서 불렀으면
+       오른쪽으로 한 스텝 더) → 반대쪽 → 먼저 방향으로 2스텝 → 반대쪽으로
+       2스텝 → …. 마이크 방향 추정은 완벽하지 않으니 "대충 그 근처"부터
+       촘촘히 본다 — 실기에서 힌트를 무시하고 바로 전체 회전부터
+       시작하는 것처럼 보인다는 피드백으로 추가됐다. 처음엔 항상 왼쪽부터
+       봐서, 오른쪽에서 불렀을 때는 오히려 반대편(중앙 쪽)부터 보는
+       것처럼 느껴진다는 후속 피드백으로 힌트 방향을 따라가도록 고쳤다.
+       local_search_max_steps 가 이 좌우 탐색을 몇 차까지 할지다.
     4. 좌우 탐색 폭을 다 써도 못 찾으면, 그 시점 방향에서부터 한 방향으로
        계속 스텝 회전하는 기존 방식으로 넘어간다(STEP_TURN → OBSERVE).
        sweep_limit_deg 만큼 돌아 한 바퀴를 다 보면 원래 방향으로 복귀한다
@@ -329,6 +332,12 @@ class WakeSearchPolicy:
         hint_rad = normalize_angle(math.radians(_as_float(hint_deg, "hint_deg")))
         self._hint_yaw = normalize_angle(start_yaw + hint_rad)
         self._local_phase_active = True
+        # 지그재그 1차는 힌트로 돈 방향을 이어간다(오른쪽에서 불렀으면
+        # 오른쪽으로 한 스텝 더, 왼쪽이면 왼쪽으로) — 항상 +1(왼쪽)부터
+        # 시작하면, 오른쪽에서 부른 경우 첫 스텝이 오히려 중앙 쪽으로
+        # 되돌아가 "반대편부터 본다"로 보였다(2026-08-08 실기).
+        if hint_rad < 0.0:
+            self._local_next_side = -1
 
         if abs(hint_rad) <= self._tolerance_rad:
             # 이미 그 방향을 보고 있다. 굳이 돌지 않는다.
@@ -485,9 +494,11 @@ class WakeSearchPolicy:
     def _try_local_search_step(self, yaw: float) -> SearchDecision | None:
         """힌트를 중심으로 다음 좌우 지그재그 지점을 잡는다.
 
-        순서: 1차(+1스텝 -> -1스텝) -> 2차(+2스텝 -> -2스텝) -> … 다음
-        차수가 local_search_max_steps 를 넘으면 좌우 탐색을 다 쓴 것이다
-        — None 을 돌려줘 호출부가 전체 회전으로 넘어가게 한다.
+        순서: 힌트로 돈 방향을 먼저 잇는다 -> 반대쪽 -> 먼저 방향으로
+        2스텝 -> 반대쪽으로 2스텝 -> … (start() 에서 hint_rad 부호로
+        _local_next_side 의 첫 값을 정한다). 다음 차수가
+        local_search_max_steps 를 넘으면 좌우 탐색을 다 쓴 것이다 — None
+        을 돌려줘 호출부가 전체 회전으로 넘어가게 한다.
         """
         if self._local_next_magnitude > self._config.local_search_max_steps:
             return None

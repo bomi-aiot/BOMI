@@ -263,6 +263,21 @@ def test_local_search_zigzags_around_hint_then_falls_back_to_global_sweep() -> N
     assert policy.swept_deg == pytest.approx(40.0)
 
 
+def test_local_search_first_step_continues_the_hint_turn_direction() -> None:
+    # 2026-08-08 실기: 오른쪽(음수 힌트)에서 불렀는데 지그재그 1차가 항상
+    # 왼쪽(+1)부터 시작해서 "반대편(중앙 쪽)부터 본다"로 느껴졌다. 힌트가
+    # 오른쪽이면 1차도 오른쪽(-1)으로 더 가야 한다.
+    policy = WakeSearchPolicy(_config(observe_duration_sec=0.1))
+    policy.start(0.0, 0.0, hint_deg=-90.0)  # 오른쪽(시계 방향)에서 부름
+    policy.update(0.2, math.radians(-90.0), person_visible=False)  # -> OBSERVE(힌트)
+
+    step_1 = policy.update(0.35, math.radians(-90.0), person_visible=False)
+    assert step_1.reason == "local_search_step"
+    # 힌트(-90도)에서 오른쪽으로 한 스텝 더 -> -130도. angular_z 는 그
+    # 방향(음수)이어야 한다.
+    assert step_1.angular_z < 0.0
+
+
 def test_local_search_max_steps_zero_skips_local_phase_entirely() -> None:
     # 0이면 지그재그를 한 번도 못 해보고 곧장 전체 회전으로 넘어간다.
     policy = WakeSearchPolicy(
