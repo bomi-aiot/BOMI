@@ -619,7 +619,8 @@ def _advance(session, event: str):
 
 
 def _run_graph_conversation(
-    runtime, audio_in, stt, turns: int, max_turns
+    runtime, audio_in, stt, turns: int, max_turns,
+    *, session_turn_limit: int | None = None,
 ) -> tuple[int, str]:
     """'보미야'로 시작된 하나의 대화를 여러 발화로 이어간다(그래프 경로).
 
@@ -653,10 +654,17 @@ def _run_graph_conversation(
     from bomi_ai_chat.graph.turn import run_user_turn
 
     session = conversation_control.SessionState.LISTENING
+    session_turns = 0
     logger.info("SESSION_STARTED senior=%s", runtime.senior_id)
     print("[대화 시작] 말씀하세요. ('보미야' 다시 부를 필요 없음)")
     end_reason = "max_turns"
-    while max_turns is None or turns < max_turns:
+    while (
+        (max_turns is None or turns < max_turns)
+        and (
+            session_turn_limit is None
+            or session_turns < session_turn_limit
+        )
+    ):
         try:
             text, duration, no_speech = _listen(
                 audio_in, stt,
@@ -692,9 +700,20 @@ def _run_graph_conversation(
             runtime.search_signal.send_stop("user_requested_wait")
             logger.info("search stop requested by the user utterance")
 
-        run_user_turn(runtime.app, runtime.senior_id, text, duration_sec=duration)
+        closing_turn = (
+            session_turn_limit is not None
+            and session_turns + 1 >= session_turn_limit
+        )
+        run_user_turn(
+            runtime.app,
+            runtime.senior_id,
+            text,
+            duration_sec=duration,
+            closing_turn=closing_turn,
+        )
         session = _advance(session, "turn_done")
         turns += 1
+        session_turns += 1
 
         # 응답 재생이 끝날 때까지 기다린다(의도적으로 barge-in 없음). 안 기다리면 재생
         # 중에 다음 리슨이 열려 마이크가 로봇 자기 목소리를 사용자 발화로 수음한다.
@@ -779,6 +798,8 @@ def _run_backend_conversation(
           end_reason 을 보고 발행한다) — 실패 상황에서도 백엔드에 뭔가는
           알려야 5분 워치독까지 기다리지 않는다.
     """
+    from bomi_ai_chat import policy
+
     config = {"configurable": {"thread_id": runtime.senior_id}}
     try:
         runtime.app.invoke(
@@ -806,7 +827,22 @@ def _run_backend_conversation(
 
     turns += 1
     _wait_for_playback(runtime.echo_guard)
-    return _run_graph_conversation(runtime, audio_in, stt, turns, max_turns)
+    # 귀가 인사는 짧은 현관 시나리오다. 두 번의 사용자 응답을 처리한 뒤
+    # COMPLETED를 발행해야 백엔드가 NAVIGATE(DEFAULT) 복귀를 이어갈 수 있다.
+    # 다른 능동 대화와 일반 웨이크워드 대화는 기존처럼 작별/무응답까지 계속한다.
+    session_turn_limit = (
+        policy.HOMECOMING_USER_TURN_LIMIT
+        if command.intent == "HOMECOMING_GREETING"
+        else None
+    )
+    return _run_graph_conversation(
+        runtime,
+        audio_in,
+        stt,
+        turns,
+        max_turns,
+        session_turn_limit=session_turn_limit,
+    )
 
 
 def _publish_conversation_ended(runtime, command, end_reason: str) -> None:

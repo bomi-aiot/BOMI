@@ -35,7 +35,7 @@ class ScenarioRepositoryTest {
             UUID.randomUUID(), UUID.randomUUID(), ScenarioType.HOMECOMING, "door-open-01");
         scenario.prepareConversation(
             ConversationIntent.HOMECOMING_GREETING,
-            "어서 오세요. 오늘 외출은 어떠셨어요?",
+            "다녀오셨어요? 오늘 외출은 어떠셨어요?",
             java.util.Map.of("sourceId", "door-open-01", "location", "ENTRANCE"));
         Scenario saved = scenarioRepository.saveAndFlush(scenario);
         em.clear();

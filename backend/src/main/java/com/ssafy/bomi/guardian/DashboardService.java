@@ -23,6 +23,9 @@ import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
 import com.ssafy.bomi.robot.domain.Robot;
 import com.ssafy.bomi.robot.repository.RobotRepository;
+import com.ssafy.bomi.scenario.domain.Scenario;
+import com.ssafy.bomi.scenario.domain.ScenarioStatus;
+import com.ssafy.bomi.scenario.repository.ScenarioRepository;
 import com.ssafy.bomi.user.domain.AppUser;
 import com.ssafy.bomi.user.domain.ConsentStatus;
 import com.ssafy.bomi.user.repository.AppUserRepository;
@@ -76,11 +79,26 @@ public class DashboardService {
             FactCandidateStatus.NEEDS_CLARIFICATION,
             FactCandidateStatus.COORDINATION_REQUIRED);
 
+    /**
+     * "아직 끝나지 않은" 시나리오 상태. 종료 4값의 여집합으로 잡는다.
+     *
+     * <p>여집합으로 쓰는 이유 — ScenarioStatus 에 진행 상태가 새로 늘어날 때
+     * (산책의 STARTING_FOLLOW/FOLLOWING 이 그렇게 늘었다) 이 목록을 고치는 것을
+     * 잊으면 그 시나리오만 화면에서 조용히 사라진다. 종료 상태는 거의 늘지 않는다.</p>
+     */
+    private static final Set<ScenarioStatus> ACTIVE_SCENARIO_STATUSES =
+            EnumSet.complementOf(EnumSet.of(
+                    ScenarioStatus.COMPLETED,
+                    ScenarioStatus.FAILED,
+                    ScenarioStatus.CANCELLED,
+                    ScenarioStatus.TIMED_OUT));
+
     private final AppUserRepository appUserRepository;
     private final RobotRepository robotRepository;
     private final CareRecordRepository careRecordRepository;
     private final FactCandidateRepository factCandidateRepository;
     private final MemoryRepository memoryRepository;
+    private final ScenarioRepository scenarioRepository;
     private final FactCandidateMapper factCandidateMapper;
 
     public DashboardService(
@@ -89,12 +107,14 @@ public class DashboardService {
             CareRecordRepository careRecordRepository,
             FactCandidateRepository factCandidateRepository,
             MemoryRepository memoryRepository,
+            ScenarioRepository scenarioRepository,
             FactCandidateMapper factCandidateMapper) {
         this.appUserRepository = appUserRepository;
         this.robotRepository = robotRepository;
         this.careRecordRepository = careRecordRepository;
         this.factCandidateRepository = factCandidateRepository;
         this.memoryRepository = memoryRepository;
+        this.scenarioRepository = scenarioRepository;
         this.factCandidateMapper = factCandidateMapper;
     }
 
@@ -356,8 +376,10 @@ public class DashboardService {
 
     private RobotDto toRobotDto(Robot robot, UUID seniorId) {
         if (robot == null) {
-            return new RobotDto(null, seniorId.toString(), null, null, false, null, null, null);
+            return new RobotDto(
+                    null, seniorId.toString(), null, null, false, null, null, null, null, null);
         }
+        Scenario active = activeScenarioOrNull(robot.getId());
         return new RobotDto(
                 robot.getId().toString(),
                 seniorId.toString(),
@@ -366,7 +388,26 @@ public class DashboardService {
                 robot.isActive(),
                 robot.getAmbientTemperatureC(),
                 robot.getAmbientHumidityPercent(),
-                iso(robot.getAmbientObservedAt()));
+                iso(robot.getAmbientObservedAt()),
+                active == null || active.getScenarioType() == null
+                        ? null : active.getScenarioType().name(),
+                active == null ? null : iso(active.getCreatedAt()));
+    }
+
+    /**
+     * 이 로봇에서 지금 진행 중인 시나리오 하나. 없으면 null.
+     *
+     * <p>정상 상태에서는 로봇 하나에 활성 시나리오가 하나다(ACTIVE_SCENARIO_EXISTS 가
+     * 두 번째 시작을 막는다). 그래도 리스트로 받는 조회를 쓰는 이유는, 리셋이 덜 된
+     * 잔여물이 남아 있을 수 있어서다 — 그럴 땐 가장 최근에 갱신된 것을 보여준다.</p>
+     *
+     * <p>읽기 전용 집계이므로 잠금(ForUpdate) 계열 조회를 쓰지 않는다.</p>
+     */
+    private Scenario activeScenarioOrNull(UUID robotId) {
+        List<Scenario> active = scenarioRepository
+                .findByRobotIdAndFinalStatusInOrderByUpdatedAtDesc(
+                        robotId, ACTIVE_SCENARIO_STATUSES);
+        return active.isEmpty() ? null : active.get(0);
     }
 
     private HomeEnvironmentDto toEnvironmentDto(Robot robot) {
@@ -458,10 +499,36 @@ public class DashboardService {
                 case "not_returned" -> "나가신 뒤 오래 돌아오지 않으셨어요.";
                 case "self_harm_override" -> "마음이 많이 힘드신 것 같아요.";
                 case "explicit_request" -> "직접 연락을 요청하셨어요.";
+                case "emergency" -> emergencySummary(alert);
                 default -> "확인이 필요한 일이 있었어요.";
             };
         }
         return "오늘 하루 요약이 도착했어요.";
+    }
+
+    /**
+     * reason = "emergency" 인 T1 의 문구.
+     *
+     * <p>이 사유가 여기 없었던 동안, 로봇이 증상을 듣고 확인까지 거쳐 올린 알림이
+     * 보호자 화면에 "확인이 필요한 일이 있었어요."로 떴다. 사유를 안다는 사실을
+     * 알면서 모른다고 말하는 문구였다.</p>
+     *
+     * <p>왜 {@code confirmed_by} 로 두 갈래를 나누는가 — 이 둘은 보호자가 해야 할
+     * 일이 다르다. 어르신이 "그렇다"고 답한 것은 상황을 아는 상태이고, 답이 없는
+     * 것은 아무도 지금 상태를 모르는 상태다. 후자가 더 급하다. 같은 문장으로
+     * 뭉개면 그 차이가 화면에서 사라진다.</p>
+     *
+     * <p>증상 자체는 쓰지 않는다("가슴이 아프다고 하셨어요"). 로봇이 원문도
+     * 부위도 보내지 않기 때문이다 — 없는 것을 지어내면 그 순간부터 이 화면은
+     * 근거가 아니라 추측이 된다 (CLAUDE.md §9).</p>
+     */
+    private static String emergencySummary(CareRecord alert) {
+        String confirmedBy = str(alert.getDetails(), "confirmed_by");
+        return switch (confirmedBy == null ? "" : confirmedBy) {
+            case "senior_reply" -> "몸이 불편하다고 하셨고, 확인 요청에 그렇다고 답하셨어요.";
+            case "no_reply_to_safety_check" -> "몸이 불편하다고 하신 뒤 확인 질문에 답이 없으셨어요.";
+            default -> "몸이 불편하다고 하셨어요.";
+        };
     }
 
     private static String iso(OffsetDateTime value) {

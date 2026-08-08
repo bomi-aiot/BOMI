@@ -213,6 +213,10 @@ class ConvState(TypedDict, total=False):
     # 필요하다. 텍스트만으로는 부족하다.
     user_input_duration_sec: float
 
+    # 짧은 시나리오의 마지막 사용자 턴. 생성기는 새 질문을 만들지 않고 대화를
+    # 마무리하며, 출력 정제기는 질문형 누출을 한 번 더 막는다.
+    closing_turn: bool
+
     messages: Annotated[list, add_messages]
 
     # ── 게이트 (§7) ──

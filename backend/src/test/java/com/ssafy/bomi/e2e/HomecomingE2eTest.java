@@ -152,7 +152,8 @@ class HomecomingE2eTest {
         // E2E 의 범위 밖이라 대역으로 둔다 — 여기 도착하는 결과는 전부
         // WAKE_WORD_CALL 시나리오다.
         FollowResultRouter followResultRouter = new FollowResultRouter(
-            scenarioRepository, wakeWordCallOrchestrator, mock(WalkOrchestrator.class));
+            scenarioRepository, wakeWordCallOrchestrator, orchestrator,
+            mock(WalkOrchestrator.class));
 
         RobotObservationService observationService = new RobotObservationService(
             robotRepository, careRecordRepository, observationProperties);
@@ -297,9 +298,11 @@ class HomecomingE2eTest {
         dispatcher.dispatch(conversationEnded(
             "conv-end-1", scenarioId, conversation.getId(), "COMPLETED", null));
         sync();
-        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.STARTING_FOLLOW);
         assertThat(robotPublisher.commands).hasSize(2);
-        assertThat(robotPublisher.commands.get(1).payload()).containsEntry("target", "DEFAULT");
+        assertThat(robotPublisher.commands.get(1).type())
+            .isEqualTo(RobotCommandType.FOLLOW_START);
+        assertThat(robotPublisher.commands.get(1).payload()).isEmpty();
 
         // A distinct duplicate event must also be harmless after an app restart lost eventId memory.
         dispatcher.dispatch(conversationEnded(
@@ -307,12 +310,12 @@ class HomecomingE2eTest {
         sync();
         assertThat(robotPublisher.commands).hasSize(2);
 
-        RobotCommand returnToDefault = robotPublisher.commands.get(1);
-        dispatcher.dispatch(navigationResult(
-            "nav-2", scenarioId, returnToDefault.commandId(), "SUCCEEDED"));
+        RobotCommand followStart = robotPublisher.commands.get(1);
+        dispatcher.dispatch(followResult(
+            "follow-1", scenarioId, followStart.commandId(), "SUCCEEDED"));
         sync();
-        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.COMPLETED);
-        assertThat(mode()).isEqualTo(RobotMode.IDLE);
+        assertThat(status(scenarioId)).isEqualTo(ScenarioStatus.FOLLOWING);
+        assertThat(mode()).isEqualTo(RobotMode.SCENARIO_ACTIVE);
         Conversation ended = conversationRepository.findById(conversation.getId()).orElseThrow();
         assertThat(ended.getStatus()).isEqualTo(ConversationStatus.COMPLETED);
         assertThat(ended.getEndOutcome()).isEqualTo(ConversationOutcome.COMPLETED);

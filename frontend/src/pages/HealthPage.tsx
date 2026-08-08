@@ -12,7 +12,7 @@ import {
 } from '../components'
 import { useBomi } from '../state/BomiContext'
 import type { Medication, MedicationResponseStatus } from '../types/domain'
-import { formatDate, formatTime } from '../utils/date'
+import { formatTime } from '../utils/date'
 
 interface HealthPageProps {
   onNavigate: (path: string) => void
@@ -57,14 +57,6 @@ const responseTone: Record<
   MISSED: 'warning',
   DECLINED: 'neutral',
   UNKNOWN: 'neutral',
-}
-
-const medicationSourceLabel: Record<Medication['sourceType'], string> = {
-  USER: '어르신 입력',
-  GUARDIAN: '보호자 입력',
-  ROBOT: '로봇 기록',
-  AI: 'AI 제안',
-  SYSTEM: '출처 확인 중',
 }
 
 export function HealthPage({ onNavigate }: HealthPageProps) {
@@ -313,10 +305,6 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
                       ? '알림 설정됨'
                       : '알림 꺼짐'}
                 </span>
-              </div>
-              <div className="medication-card__meta">
-                <span>출처: {medicationSourceLabel[medication.sourceType]}</span>
-                <span>수정: {formatDate(medication.updatedAt)}</span>
               </div>
               <div className="medication-card__actions">
                 <Button

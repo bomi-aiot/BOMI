@@ -16,7 +16,7 @@ export interface NavigationGroup {
   items: readonly NavigationItem[];
 }
 
-export const NAVIGATION_GROUPS = [
+const ALL_NAVIGATION_GROUPS = [
   {
     label: '돌봄 보기',
     items: [
@@ -68,7 +68,7 @@ export const NAVIGATION_GROUPS = [
   },
 ] as const satisfies readonly NavigationGroup[];
 
-const MOBILE_NAV_ITEMS: readonly NavigationItem[] = [
+const ALL_MOBILE_NAV_ITEMS: readonly NavigationItem[] = [
   {
     label: '오늘',
     shortLabel: '오늘',
@@ -94,6 +94,37 @@ const MOBILE_NAV_ITEMS: readonly NavigationItem[] = [
     path: '/bomi-home',
   },
 ];
+
+/**
+ * 시연 대본에 등장하는 화면만 네비게이션에 남긴다 (S15P11E102-378).
+ *
+ * 왜 — 화면이 9개라 리허설 때 어디를 눌러야 하는지 매번 헤맸다. 남기지 않은 화면은
+ * 대본 밖이거나(생활 기록·돌봄 계획) 쓰기가 아직 백엔드에 없다
+ * (어르신 설정·공유된 생활 정보 — docs/backend-api-todo.md 2·3번).
+ *
+ * 라우트는 그대로 살려둔다. 주소창으로는 여전히 들어갈 수 있어서 개발 중 확인에
+ * 걸리는 게 없고, 시연 중 실수로 눌릴 일만 사라진다.
+ *
+ * 되돌리기 — 이 집합에 경로를 더하면 그 화면이 다시 보인다. 전부 되살리려면
+ * 아래 두 파생 선언을 지우고 ALL_ 접두사를 떼면 원래대로다.
+ *   '/dashboard'  오늘 — 종합 화면. 시간이 남으면 3막 마무리 컷으로 되살릴 후보.
+ */
+const DEMO_NAV_PATHS: ReadonlySet<string> = new Set([
+  '/medications', // 1막 — 보호자가 복약 시각을 등록한다
+  '/bomi-home', // 2막 — 로봇 모드·실내 온습도를 1초 폴링으로 관제한다
+  '/confirmation-requests', // 3막 — 대화에서 AI 가 건진 사실을 보호자가 확정한다
+  '/schedules', // 병원 일정 등록 — 등록 결과를 웹에서 보여주는 화면
+]);
+
+const isDemoVisible = (item: NavigationItem): boolean =>
+  item.path !== undefined && DEMO_NAV_PATHS.has(item.path);
+
+export const NAVIGATION_GROUPS: readonly NavigationGroup[] = ALL_NAVIGATION_GROUPS
+  .map((group) => ({ ...group, items: group.items.filter(isDemoVisible) }))
+  .filter((group) => group.items.length > 0);
+
+const MOBILE_NAV_ITEMS: readonly NavigationItem[] =
+  ALL_MOBILE_NAV_ITEMS.filter(isDemoVisible);
 
 export interface AppLayoutProps {
   children: ReactNode;

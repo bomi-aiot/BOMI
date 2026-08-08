@@ -294,6 +294,53 @@ def test_terse_shaping_is_shorter():
     assert len(normal["sentences"]) >= len(terse["sentences"])
 
 
+def test_response_shaper_strips_unasked_current_date():
+    result = output.response_shaper({
+        "user_input": "오늘 산책하고 왔어",
+        "intent": "companion",
+        "response": (
+            "오늘은 2026년 08월 08일 토요일, 현재 시각은 23시 22분입니다. "
+            "산책하고 오셨군요. 바깥 공기는 어떠셨어요?"
+        ),
+    })
+
+    assert result["final_utterance"] == "산책하고 오셨군요. 바깥 공기는 어떠셨어요?"
+
+
+def test_response_shaper_keeps_current_date_when_asked():
+    response = "오늘은 2026년 08월 08일 토요일입니다."
+
+    result = output.response_shaper({
+        "user_input": "오늘 며칠이야?",
+        "intent": "info",
+        "response": response,
+    })
+
+    assert result["final_utterance"] == response
+
+
+def test_response_shaper_removes_internal_weather_row():
+    result = output.response_shaper({
+        "user_input": "좋았어",
+        "intent": "companion",
+        "response": "- 날씨: 맑음\n기분 좋은 외출이셨겠어요.",
+    })
+
+    assert result["final_utterance"] == "기분 좋은 외출이셨겠어요."
+
+
+def test_closing_turn_does_not_leave_an_unanswered_question():
+    result = output.response_shaper({
+        "user_input": "산책 좋더라",
+        "intent": "companion",
+        "closing_turn": True,
+        "response": "날씨가 참 좋았나 봐요. 어디 다녀오셨어요?",
+    })
+
+    assert result["final_utterance"] == "날씨가 참 좋았나 봐요. 이제 편히 쉬세요."
+    assert not result["final_utterance"].endswith("?")
+
+
 # ── emit: 비블로킹 ─────────────────────────────────────────────────────────
 
 

@@ -187,6 +187,46 @@ def test_pending_conversation_skips_wake_ack_and_speaks_the_seed_text(
     assert turns == ["고마워요"]
 
 
+def test_homecoming_ends_after_two_user_turns(
+    monkeypatch, settings_factory, frozen_clock,
+):
+    """귀가 인사는 사용자 답변 두 번 뒤 COMPLETED로 닫아 복귀를 시작한다."""
+    frozen_clock(start=NOW)
+    monkeypatch.setattr(
+        "bomi_ai_chat.stt.client.STTClient",
+        lambda settings: ScriptedStt("오늘 괜찮았어", "이제 좀 쉬려고"),
+    )
+    heard: list[str] = []
+    closing_flags: list[bool] = []
+
+    def record_turn(app, senior, text, **kwargs):
+        heard.append(text)
+        closing_flags.append(bool(kwargs.get("closing_turn")))
+        return {}
+
+    monkeypatch.setattr(
+        "bomi_ai_chat.graph.turn.run_user_turn",
+        record_turn,
+    )
+
+    subscriber = RecordingSubscriber()
+    runtime, pending = _make_runtime(subscriber=subscriber)
+    pending.put_nowait(start_conversation_command())
+
+    bootstrap.run_conversation_loop(
+        runtime,
+        ScriptedAudio(b"1", b"2"),
+        settings_with(settings_factory),
+        wake=InterruptibleWake(wakes=0),
+        event_publisher=RecordingEventPublisher(),
+        max_turns=3,  # seed 1 + 사용자 발화 2
+    )
+
+    assert heard == ["오늘 괜찮았어", "이제 좀 쉬려고"]
+    assert closing_flags == [False, True]
+    assert subscriber.ended == [("conversation-1", "COMPLETED", None)]
+
+
 def test_backend_conversation_queue_is_checked_before_the_real_wake_flow(
     monkeypatch, settings_factory, frozen_clock,
 ):

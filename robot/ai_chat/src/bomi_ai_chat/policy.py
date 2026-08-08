@@ -154,6 +154,11 @@ WAKEWORD_FRAME_SAMPLES = 1280
 #   내리면 -> 빨리 끝난다. 대신 말이 느린 분의 대화를 성급히 끊을 수 있다.
 CONVERSATION_IDLE_TIMEOUT_SEC = 15
 
+# 현관 귀가 인사는 오래 붙잡고 대화하는 시나리오가 아니다. 백엔드의 첫 인사 뒤
+# 사용자 발화를 이 횟수만큼 처리하면 CONVERSATION_ENDED(COMPLETED)를 보내고,
+# 백엔드가 NAVIGATE(DEFAULT)로 원위치 복귀를 이어간다.
+HOMECOMING_USER_TURN_LIMIT = 2
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 이동 중 침묵  (보미야 호출, S15P11E102 통합 스프린트 2026-08, CLAUDE.md §3a)
 #
