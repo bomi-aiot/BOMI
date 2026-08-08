@@ -37,6 +37,7 @@ def run_user_turn(
     *,
     conversation_id: str | None = None,
     duration_sec: float = 0.0,
+    closing_turn: bool = False,
     timer: TurnTimer | None = None,
 ) -> ConvState:
     """어르신 발화 한 번을 그래프에 태운다.
@@ -79,6 +80,7 @@ def run_user_turn(
         "senior_id": senior_id,
         "user_input": text,
         "user_input_duration_sec": duration_sec,
+        "closing_turn": closing_turn,
     }
 
     # conversation_id 는 '조건부로만' 넣는다 (S15P11E102-306).

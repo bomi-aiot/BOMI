@@ -122,6 +122,10 @@ _CURRENT_TIME_ANSWER = re.compile(
     r"^(?:오늘은\s*)?(?:\d{4}년\s*)?\d{1,2}월\s*\d{1,2}일"
     r"|^(?:현재\s*시각|지금\s*시각)(?:은|이)?\s*\d{1,2}시"
 )
+_INTERNAL_DATA_ROW = re.compile(
+    r"^\s*[-*]?\s*(?:날씨|기온|하늘\s*상태|강수\s*확률)\s*[:：]"
+)
+_CLOSING_UTTERANCE = "이제 편히 쉬세요."
 
 
 def strip_prompt_scaffolding(text: str) -> str:
@@ -179,6 +183,14 @@ def strip_unasked_current_time(text: str, user_input: str) -> str:
     )
 
 
+def strip_internal_data_rows(text: str) -> str:
+    """모델이 답변처럼 복사한 날씨 데이터 행을 음성에서 제거한다."""
+    return "\n".join(
+        line for line in text.splitlines()
+        if not _INTERNAL_DATA_ROW.match(line)
+    ).strip()
+
+
 def response_shaper(state: ConvState) -> dict:
     """발화 규칙을 강제하고 재생용 문장을 준비한다.
 
@@ -233,8 +245,25 @@ def response_shaper(state: ConvState) -> dict:
             "(intent=%s)", state.get("intent"))
     text = without_unasked_time
 
+    without_data_rows = strip_internal_data_rows(text)
+    if without_data_rows != text:
+        logger.warning(
+            "internal data row leaked into the response and was stripped "
+            "(intent=%s)", state.get("intent"))
+    text = without_data_rows
+
     all_sentences = split_sentences(text)
-    sentences = all_sentences[:limit]
+    if state.get("closing_turn"):
+        statements = [
+            sentence for sentence in all_sentences
+            if not sentence.rstrip().endswith(("?", "？"))
+        ]
+        if statements and statements[-1] == _CLOSING_UTTERANCE:
+            sentences = statements[:limit]
+        else:
+            sentences = statements[:max(0, limit - 1)] + [_CLOSING_UTTERANCE]
+    else:
+        sentences = all_sentences[:limit]
 
     if len(all_sentences) > limit:
         # 정제는 대부분 프롬프트에서 이뤄져야 한다(CLAUDE.md §16 9단계). 여기서
