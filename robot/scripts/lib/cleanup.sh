@@ -27,6 +27,22 @@ bomi_cleanup() {
         kill -9 "$pid" 2>/dev/null || true
     done
     sleep 1
+    bomi_release_devices
+}
+
+# 카메라를 붙잡고 있는 프로세스를 이름이 아니라 '장치 점유' 기준으로 끊는다.
+#
+# 이름 패턴만으로는 놓친다: 2026-08-09 실기에서 고아가 된
+# bomi_vision.udp_main 이 /dev/video0 을 쥔 채 남아 있었고, 다음 실행의
+# ai_vision 이 카메라를 못 열고 죽었다. ai_vision 이 죽으면 launch 전체가
+# 함께 내려가므로(on_exit=Shutdown) 로봇이 아무것도 못 한 채 종료됐다.
+bomi_release_devices() {
+    command -v fuser >/dev/null 2>&1 || return 0
+    for device in /dev/video*; do
+        [ -e "$device" ] || continue
+        fuser -k "$device" 2>/dev/null || true
+    done
+    sleep 1
 }
 
 # 정리 후에도 남은 것이 있으면 이름을 돌려준다(비어 있으면 깨끗).

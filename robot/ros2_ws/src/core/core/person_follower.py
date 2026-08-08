@@ -162,6 +162,7 @@ class PersonFollower(Node):
             reason="node_started",
         )
         self._last_logged_state: FollowState | None = None
+        self._last_logged_velocity_reason: str | None = None
 
         self._vision_timeout_handled = True
         self._lidar_timeout_stop_sent = True
@@ -896,6 +897,19 @@ class PersonFollower(Node):
         twist.angular.z = velocity.angular_z
 
         self._velocity_publisher.publish(twist)
+
+        # 판단 근거가 바뀔 때만 남긴다. "사람은 찾았는데 왜 안 다가가는가"는
+        # 이 reason(person_distance_unavailable, lidar_not_ready,
+        # waiting_for_person_resume_distance …) 없이는 밖에서 알 수 없다.
+        if velocity.reason != self._last_logged_velocity_reason:
+            self._last_logged_velocity_reason = velocity.reason
+            self.get_logger().info(
+                "추종 속도 판단: "
+                f"reason={velocity.reason}, "
+                f"linear.x={velocity.linear_x:.2f}, "
+                f"angular.z={velocity.angular_z:.2f}"
+            )
+
         self._last_velocity = velocity
 
     def _publish_stop(self, reason: str) -> None:

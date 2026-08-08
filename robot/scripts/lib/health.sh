@@ -50,28 +50,34 @@ bomi_require_pico() {
     return 0
 }
 
-# 카메라가 열려서 ai_vision 이 살아 있는지 확인한다. 이 프로세스가 죽으면
-# launch 전체가 같이 내려가므로(on_exit=Shutdown), 죽은 뒤엔 이미 늦다 —
-# 뜬 직후 몇 초 안에 확인해야 한다.
+# 카메라가 실제로 열렸는지 확인한다.
+#
+# 프로세스 유무로는 판정할 수 없다: ai_vision 은 torch/ultralytics 로딩에
+# 6초 넘게 걸리고, 카메라를 여는 것은 그 뒤다. 뜬 직후엔 살아 있다가
+# 카메라 열기에 실패해 죽는다. 그래서 "카메라를 열었다"를 뜻하는 로그
+# 한 줄(udp_main 의 시작 배너)이 나올 때까지 기다린다.
 #   $1  런치 출력 로그 경로
+CAMERA_READY_PATTERN="BOMI UDP tracking sender started"
+
 bomi_require_camera() {
     local log=$1
     local waited=0
 
-    while [ "$waited" -lt 8 ]; do
-        pgrep -f "$AI_VISION_PATTERN" >/dev/null && break
+    while [ "$waited" -lt 40 ]; do
+        if grep -q "$CAMERA_READY_PATTERN" "$log" 2>/dev/null; then
+            echo "  ai_vision OK (카메라 열림)"
+            return 0
+        fi
+        if ! pgrep -f "$AI_VISION_PATTERN" >/dev/null; then
+            break
+        fi
         sleep 1
         waited=$((waited + 1))
     done
 
-    if ! pgrep -f "$AI_VISION_PATTERN" >/dev/null; then
-        echo "❌ ai_vision(카메라)이 떠 있지 않습니다 — 사람을 아예 못 찾습니다."
-        _bomi_camera_reason "$log"
-        return 1
-    fi
-
-    echo "  ai_vision OK (카메라 열림)"
-    return 0
+    echo "❌ ai_vision 이 카메라를 열지 못했습니다 — 사람을 아예 못 찾습니다."
+    _bomi_camera_reason "$log"
+    return 1
 }
 
 # 런치 로그에서 ai_vision(카메라) 관련 원인만 뽑아 보여준다.

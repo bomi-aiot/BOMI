@@ -286,6 +286,7 @@ def _make_follower(*, enabled: bool, clock_sec: float = 100.0) -> PersonFollower
     follower._status_publisher = _RecordingStatusPublisher()
     follower._last_velocity = None
     follower._last_logged_state = None
+    follower._last_logged_velocity_reason = None
     follower._vision_timeout_handled = True
     follower._lidar_timeout_stop_sent = True
     follower.get_clock = lambda: _FakeClock(clock_sec)  # type: ignore[method-assign]
