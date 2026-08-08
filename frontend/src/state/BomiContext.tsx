@@ -206,7 +206,26 @@ export function BomiProvider({ children }: BomiProviderProps) {
     if (dashboardInFlight.current) return;
     dashboardInFlight.current = true;
     try {
-      const nextDashboard = await bomiService.getDashboard();
+      // 왜 allSettled 인가 (Promise.all 이 아니라)
+      //   일정 조회가 실패하면 all 은 대시보드 응답까지 버린다. 그러면 백엔드의
+      //   일정 엔드포인트 하나가 흔들릴 때 위급 알림이 그 틱 동안 화면에 안 뜬다.
+      //   안전 경로를 부가 정보의 가용성에 묶으면 안 된다 — 각각 성공한 것만 쓴다.
+      //
+      // 왜 일정만 추가하는가
+      //   대시보드 응답 하나가 복약 응답과 확인 요청을 이미 담고 있어서 그 둘은
+      //   공짜다. 일정은 별도 엔드포인트라 따로 쳐야 한다. 복약 '목록'은 사람이
+      //   등록할 때만 바뀌므로 여기에 넣지 않는다 — 요청만 늘고 얻는 것이 없다.
+      const [dashboardResult, schedulesResult] = await Promise.allSettled([
+        bomiService.getDashboard(),
+        bomiService.getSchedules(),
+      ]);
+
+      if (schedulesResult.status === "fulfilled") {
+        setSchedules(schedulesResult.value);
+      }
+
+      if (dashboardResult.status !== "fulfilled") return;
+      const nextDashboard = dashboardResult.value;
       setDashboard(nextDashboard);
       // 대시보드 응답 하나가 복약 응답과 확인 요청까지 이미 담고 있다.
       // 이 값을 각 화면의 상태로 흘려보내면 요청 수를 늘리지 않고도
