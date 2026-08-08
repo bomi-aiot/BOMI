@@ -261,3 +261,41 @@ class PersonFollowingController:
             raise ValueError(
                 f"{name} must be a positive number."
             )
+
+
+def ramp_toward(
+    target: float,
+    previous: float,
+    accel_limit: float,
+    elapsed_sec: float,
+) -> float:
+    """속도를 목표까지 서서히 올린다(가속만 제한).
+
+    사람에게 다가갈 때 정지 상태에서 곧바로 목표 속도로 튀어나가면 바로 앞에
+    선 사람에게 위협적으로 느껴진다. 한 주기에 바꿀 수 있는 속도를
+    accel_limit * elapsed_sec 로 묶어 완만하게 붙인다.
+
+    감속과 방향 전환은 제한하지 않는다 — 늦게 멈추는 것은 안전 문제다.
+    긴급 정지·추적 상실 정지가 이 함수 때문에 미뤄지면 안 된다.
+
+    Args:
+        target: 이번에 내고 싶은 속도.
+        previous: 직전에 실제로 낸 속도.
+        accel_limit: 초당 허용 속도 변화량. 0 이하면 제한하지 않는다.
+        elapsed_sec: 직전 발행 이후 경과 시간(초).
+
+    Returns:
+        이번 주기에 낼 속도.
+    """
+    if accel_limit <= 0.0 or elapsed_sec <= 0.0:
+        return target
+    if not math.isfinite(target) or not math.isfinite(previous):
+        return target
+    # 감속하거나 방향을 바꾸는 중이면 그대로 통과시킨다.
+    if abs(target) <= abs(previous) or target * previous < 0.0:
+        return target
+
+    max_change = accel_limit * elapsed_sec
+    if abs(target - previous) <= max_change:
+        return target
+    return previous + math.copysign(max_change, target - previous)

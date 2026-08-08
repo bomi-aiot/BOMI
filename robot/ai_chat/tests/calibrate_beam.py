@@ -27,7 +27,10 @@ import time
 
 from dotenv import load_dotenv
 
-from bomi_ai_chat.audio_io.beam_control import BeamController
+from bomi_ai_chat.audio_io.beam_control import (
+    BeamController,
+    robust_azimuth_deg,
+)
 
 # BeamController 는 import 시점이 아니라 __init__ 에서 os.getenv 를 읽는다. 실제로 env 를
 # 읽는 시점은 main() 의 BeamController() 이므로, 이 한 줄이 그보다 앞서면 충분하다.
@@ -79,11 +82,25 @@ def main():
     if not samples:
         raise SystemExit("방향을 하나도 읽지 못했습니다. 마이크 연결과 말소리를 확인하세요.")
 
-    # 모은 방향들의 원형 평균이 곧 '정면 각도'다.
-    front = circular_mean_deg(samples)
+    # 말이 끊기면 마이크가 전혀 다른 방향을 잡는다. 단순 평균은 그런 값까지
+    # 섞어 두 무리 사이의 무의미한 각도를 내므로, 가장 큰 무리만 평균한다.
+    front = robust_azimuth_deg(samples)
+    agreed = [
+        value for value in samples
+        if abs((value - front + 180.0) % 360.0 - 180.0) <= 30.0
+    ]
+
     print("\n=== 측정 결과 ===")
-    print(f"읽은 횟수: {len(samples)}회")
-    print(f"정면 각도(평균): {front:.1f} 도")
+    print(f"읽은 횟수: {len(samples)}회 (그 중 일치 {len(agreed)}회)")
+    print(f"정면 각도: {front:.1f} 도")
+
+    if len(agreed) < len(samples) * 0.6:
+        print(
+            "\n⚠️ 일치하는 값이 적습니다. 10초 내내 쉬지 않고 말해야 합니다 —"
+            "\n   말이 끊기면 마이크가 엉뚱한 방향을 잡습니다. 다시 측정하세요."
+        )
+        return
+
     print(f"\n아래 값을 .env에 넣으세요:\n  BEAM_FRONT_AZIMUTH_DEG={front:.1f}")
 
 
