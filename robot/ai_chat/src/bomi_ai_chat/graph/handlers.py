@@ -168,6 +168,11 @@ def _generate(state: ConvState, *, fallback: str = _FALLBACK_RESPONSE) -> str:
             is_medical=bool(state.get("is_medical_query")),
             retrieval_status=state.get("retrieval_status"),
         )
+        if state.get("closing_turn"):
+            prompt += (
+                "\n\n이번 답변은 대화의 마지막 답변입니다. 새로운 질문을 하지 말고, "
+                "사용자의 말을 짧게 받아준 뒤 편히 쉬시라는 마무리 문장으로 끝내세요."
+            )
         # 참고 자료가 실제로 이 프롬프트에 실렸는지 확인할 방법이 없었다 —
         # context_read 가 문서를 찾아도, 그게 build_prompt 를 거쳐 실제로
         # "참고 자료" 섹션으로 들어갔는지는 지금까지 아무 데도 안 남았다.
