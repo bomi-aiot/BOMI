@@ -109,9 +109,11 @@ echo "[추종] ai_vision 시작 — 로그: $FOLLOW_LOG_DIR/ai_vision.log"
         --host 127.0.0.1 \
         --port 5005 \
         --no-window \
-        --horizontal-dead-zone 0.25 \
-        --forward-threshold 0.65 \
-        --lost-tolerance-frames 8
+        --confidence 0.30 \
+        --horizontal-dead-zone 0.40 \
+        --forward-threshold 0.80 \
+        --lost-tolerance-frames 12 \
+        --select-primary-person
 ) >"$FOLLOW_LOG_DIR/ai_vision.log" 2>&1 &
 AUX_PIDS+=("$!")
 
