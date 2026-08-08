@@ -32,6 +32,14 @@ public record DashboardResponse(
             String lastCheckedAt) {
     }
 
+    /**
+     * 로봇 현황.
+     *
+     * <p>{@code currentMode} 는 RobotMode(IDLE/SCENARIO_ACTIVE/REST_GUARD/SAFE_STOP)
+     * 4값뿐이라 현관 인사·"보미야" 호출·복약 알림·산책이 모두 SCENARIO_ACTIVE 하나로
+     * 뭉개진다. {@code activeScenarioType} 은 그 넷을 화면에서 구분하기 위한 값이며
+     * scenario 테이블에서 온다. 진행 중인 시나리오가 없으면 두 값 모두 null 이다.</p>
+     */
     public record RobotDto(
             String id,
             String elderId,
@@ -40,7 +48,9 @@ public record DashboardResponse(
             boolean isActive,
             BigDecimal ambientTemperatureC,
             BigDecimal ambientHumidityPercent,
-            String ambientObservedAt) {
+            String ambientObservedAt,
+            String activeScenarioType,
+            String activeScenarioStartedAt) {
     }
 
     public record HomeEnvironmentDto(

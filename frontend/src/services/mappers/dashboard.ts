@@ -8,6 +8,7 @@ import type {
   RobotMode,
   RobotStatus,
   SafetyAlert,
+  ScenarioType,
   Schedule,
   ScheduleStatus,
   ScheduleType,
@@ -31,6 +32,8 @@ interface DashboardRobotDto {
   ambientTemperatureC?: number | null
   ambientHumidityPercent?: number | null
   ambientObservedAt?: string | null
+  activeScenarioType?: string | null
+  activeScenarioStartedAt?: string | null
 }
 
 interface DashboardEnvDto {
@@ -98,11 +101,26 @@ const ROBOT_MODES = new Set<RobotMode>([
   'SCENARIO_ACTIVE',
   'REST_GUARD',
   'SAFE_STOP',
+])
+
+const SCENARIO_TYPES = new Set<ScenarioType>([
   'HOMECOMING',
+  'WELLNESS_CHECK',
+  'MEDICATION_REMINDER',
+  'WAKE_WORD_CALL',
+  'WALK',
+  'FALL_RESPONSE',
+  'MANUAL_INTERACTION',
 ])
 
 function mapRobotMode(value: string | null | undefined): RobotMode | undefined {
   return ROBOT_MODES.has(value as RobotMode) ? (value as RobotMode) : undefined
+}
+
+// 모르는 값은 버린다 — 백엔드에 시나리오 종류가 늘어도 화면이 깨지지 않고,
+// 배너는 모드 라벨로 조용히 폴백한다.
+function mapScenarioType(value: string | null | undefined): ScenarioType | undefined {
+  return SCENARIO_TYPES.has(value as ScenarioType) ? (value as ScenarioType) : undefined
 }
 
 function mapRobot(dto: DashboardRobotDto): RobotStatus {
@@ -111,6 +129,10 @@ function mapRobot(dto: DashboardRobotDto): RobotStatus {
     elderId: dto.elderId,
     deviceId: undef(dto.deviceId),
     currentMode: mapRobotMode(dto.currentMode),
+    activeScenarioType: mapScenarioType(dto.activeScenarioType),
+    activeScenarioStartedAt: isValidDateTime(dto.activeScenarioStartedAt)
+      ? dto.activeScenarioStartedAt
+      : undefined,
     registrationActive: dto.isActive,
     ambientTemperatureC: undef(dto.ambientTemperatureC),
     ambientHumidityPercent: undef(dto.ambientHumidityPercent),
