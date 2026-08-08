@@ -788,6 +788,8 @@ def _run_backend_conversation(
           end_reason 을 보고 발행한다) — 실패 상황에서도 백엔드에 뭔가는
           알려야 5분 워치독까지 기다리지 않는다.
     """
+    from bomi_ai_chat import policy
+
     config = {"configurable": {"thread_id": runtime.senior_id}}
     try:
         runtime.app.invoke(
