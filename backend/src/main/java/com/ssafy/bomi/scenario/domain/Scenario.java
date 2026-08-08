@@ -273,8 +273,20 @@ public class Scenario {
     /** Stores and starts the WALK FOLLOW_START command lifecycle. */
     public void beginFollowStart(String commandId, OffsetDateTime requestedAt) {
         requireWalk();
+        beginFollowStartCommand(commandId, requestedAt);
+    }
+
+    /** Starts person following after a homecoming conversation has ended. */
+    public void beginHomecomingFollowStart(String commandId, OffsetDateTime requestedAt) {
+        if (scenarioType != ScenarioType.HOMECOMING) {
+            throw new IllegalStateException("Homecoming follow requires HOMECOMING: " + id);
+        }
+        beginFollowStartCommand(commandId, requestedAt);
+    }
+
+    private void beginFollowStartCommand(String commandId, OffsetDateTime requestedAt) {
         if (followStartCommandId != null) {
-            throw new IllegalStateException("WALK already has a FOLLOW_START command: " + id);
+            throw new IllegalStateException("Scenario already has a FOLLOW_START command: " + id);
         }
         transitionTo(ScenarioStatus.STARTING_FOLLOW);
         this.followStartCommandId = requireText(commandId, "commandId", 64);
@@ -293,6 +305,30 @@ public class Scenario {
         requireWalk();
         transitionTo(ScenarioStatus.FOLLOWING);
         recordFollowResult(eventId, commandId, resultCode, reasonCode, resultOccurredAt);
+        this.followingStartedAt = requireNonNull(confirmedAt, "confirmedAt");
+    }
+
+    /** Applies the correlated FOLLOW_START acknowledgement for HOMECOMING. */
+    public void confirmHomecomingFollowing(
+        String eventId,
+        String commandId,
+        String resultCode,
+        String reasonCode,
+        OffsetDateTime resultOccurredAt,
+        OffsetDateTime confirmedAt
+    ) {
+        if (scenarioType != ScenarioType.HOMECOMING) {
+            throw new IllegalStateException("Homecoming follow requires HOMECOMING: " + id);
+        }
+        if (!Objects.equals(commandId, followStartCommandId)) {
+            throw new IllegalArgumentException("FOLLOW_RESULT commandId does not match HOMECOMING start");
+        }
+        transitionTo(ScenarioStatus.FOLLOWING);
+        this.lastFollowResultEventId = requireText(eventId, "eventId", 64);
+        this.lastFollowCommandId = requireText(commandId, "commandId", 64);
+        this.lastFollowResultCode = normalizeCode(resultCode, "resultCode", 50);
+        this.lastFollowReasonCode = normalizeCode(reasonCode, "reasonCode", 100);
+        this.lastFollowResultAt = requireNonNull(resultOccurredAt, "resultOccurredAt");
         this.followingStartedAt = requireNonNull(confirmedAt, "confirmedAt");
     }
 
@@ -443,6 +479,9 @@ public class Scenario {
         map.get(ScenarioStatus.CHECKING_INTERACTION).add(ScenarioStatus.RETURN_DECISION);
         putTransition(map, ScenarioStatus.CONVERSING, ScenarioStatus.RETURN_DECISION, terminals);
         putTransition(map, ScenarioStatus.RETURN_DECISION, ScenarioStatus.RETURNING_TO_DEFAULT, terminals);
+        map.get(ScenarioStatus.RETURN_DECISION).add(ScenarioStatus.STARTING_FOLLOW);
+        putTransition(map, ScenarioStatus.STARTING_FOLLOW, ScenarioStatus.FOLLOWING, terminals);
+        map.put(ScenarioStatus.FOLLOWING, terminals);
         putTransition(map, ScenarioStatus.RETURNING_TO_DEFAULT, ScenarioStatus.COMPLETED, terminals);
         // Terminal statuses admit no outgoing transitions.
         map.put(ScenarioStatus.COMPLETED, Set.of());
