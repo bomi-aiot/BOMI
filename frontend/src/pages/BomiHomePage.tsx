@@ -1,14 +1,32 @@
 import { Badge, Button, Card, ErrorState, LoadingState, PageHeader } from '../components'
 import { useBomi } from '../state/BomiContext'
-import type { RobotMode } from '../types/domain'
-import { formatDateTime } from '../utils/date'
+import type { RobotMode, ScenarioType } from '../types/domain'
+import { formatDateTime, formatRelativeTime } from '../utils/date'
 
 const MODE_COPY: Record<RobotMode, string> = {
   IDLE: '돌봄 대기 중',
   SCENARIO_ACTIVE: '돌봄 수행 중',
   REST_GUARD: '휴식 지킴 중',
   SAFE_STOP: '안전 정지 · 확인 필요',
+}
+
+/**
+ * 시나리오 종류별 배너 문구.
+ *
+ * 모드만 쓰면 현관 인사·"보미야" 호출·복약 알림·산책이 전부 '돌봄 수행 중' 하나로
+ * 뭉개진다. 보호자에게 "지금 무엇을 하고 있는지"는 "무언가 하고 있다"와 전혀 다른
+ * 정보라 종류를 우선해 보여준다.
+ *
+ * FALL_RESPONSE·MANUAL_INTERACTION 은 백엔드에 값만 예약돼 있고 흐름이 없어서
+ * 일부러 비워 둔다 — 없는 기능에 이름을 붙이면 있는 것처럼 보인다. 빠진 값은
+ * 아래 modeLabel 이 모드 라벨로 폴백한다.
+ */
+const SCENARIO_COPY: Partial<Record<ScenarioType, string>> = {
   HOMECOMING: '귀가 맞이 중',
+  WAKE_WORD_CALL: '부르심에 가는 중',
+  MEDICATION_REMINDER: '복약 알림 중',
+  WELLNESS_CHECK: '안부 확인 중',
+  WALK: '산책 동행 중',
 }
 
 const isStale = (value: string | undefined, hours = 6): boolean => {
@@ -18,14 +36,43 @@ const isStale = (value: string | undefined, hours = 6): boolean => {
 }
 
 export function BomiHomePage() {
-  const { dashboard, isLoading, error, dataErrors, refresh } = useBomi()
+  const { dashboard, isLoading, error, dataErrors, refresh, requestWalk, pendingActionId } = useBomi()
   const dashboardError = dataErrors.dashboard ?? error
   if (isLoading && !dashboard) return <LoadingState label="보미와 집 정보를 확인하고 있어요" rows={5} />
   if (!dashboard) return <ErrorState description={dashboardError ?? undefined} onRetry={() => void refresh()} />
 
   const { robot, homeEnvironment } = dashboard
-  const modeLabel = robot.currentMode ? MODE_COPY[robot.currentMode] : '현재 모드를 확인할 수 없어요.'
+
+  // 우선순위가 곧 의미다.
+  //   1. SAFE_STOP 은 무엇을 하던 중이었든 이긴다 — 안전 상태가 시나리오 이름에
+  //      가려지면 보호자가 조치가 필요한 상황을 놓친다.
+  //   2. 진행 중인 시나리오가 있으면 그 종류를 보여준다.
+  //   3. 없으면(또는 백엔드가 아직 이 필드를 안 주면) 기존 모드 라벨로 폴백한다.
+  const scenarioLabel = robot.activeScenarioType
+    ? SCENARIO_COPY[robot.activeScenarioType]
+    : undefined
+  const modeLabel =
+    robot.currentMode === 'SAFE_STOP'
+      ? MODE_COPY.SAFE_STOP
+      : (scenarioLabel ??
+        (robot.currentMode ? MODE_COPY[robot.currentMode] : '현재 모드를 확인할 수 없어요.'))
+  const scenarioElapsed =
+    robot.currentMode !== 'SAFE_STOP' && scenarioLabel && robot.activeScenarioStartedAt
+      ? formatRelativeTime(robot.activeScenarioStartedAt)
+      : undefined
   const environmentIsStale = isStale(homeEnvironment.lastObservedAt)
+
+  // 산책 버튼은 지금 상태에서 의미 있는 동작 하나만 보여준다.
+  //   산책 중이면 종료만, 대기 중이면 시작만. 둘 다 띄우면 발표자가 잘못 누른다.
+  // SAFE_STOP·다른 시나리오 진행 중에는 어차피 백엔드가 거절하므로(IDLE_ONLY)
+  // 버튼을 비활성화해 헛클릭을 막는다.
+  const isWalking = robot.activeScenarioType === 'WALK'
+  const walkAction = isWalking ? 'STOP' : 'START'
+  const walkBusy = pendingActionId === `walk-${walkAction.toLowerCase()}`
+  const walkDisabled =
+    walkBusy ||
+    !robot.deviceId ||
+    (!isWalking && (robot.currentMode === 'SAFE_STOP' || Boolean(robot.activeScenarioType)))
 
   return (
     <div className="page-stack bomi-home-page">
@@ -41,11 +88,23 @@ export function BomiHomePage() {
         <div>
           <p>현재 모드</p>
           <h2>{modeLabel}</h2>
-          <span>{robot.id && robot.registrationActive ? '보미가 어르신 댁에 등록되어 있어요.' : '보미의 등록 상태를 확인 중이에요.'}</span>
+          <span>
+            {scenarioElapsed ? `${scenarioElapsed} 시작 · ` : ''}
+            {robot.id && robot.registrationActive ? '보미가 어르신 댁에 등록되어 있어요.' : '보미의 등록 상태를 확인 중이에요.'}
+          </span>
         </div>
-        <Badge tone={robot.currentMode === 'SAFE_STOP' ? 'danger' : robot.currentMode ? 'info' : 'neutral'}>
-          {robot.currentMode === 'SAFE_STOP' ? '직접 확인 필요' : '모드 정보'}
-        </Badge>
+        <div className="bomi-status-hero__actions">
+          <Button
+            variant={isWalking ? 'secondary' : 'primary'}
+            disabled={walkDisabled}
+            onClick={() => void requestWalk(walkAction)}
+          >
+            {walkBusy ? '요청 중…' : isWalking ? '산책 종료' : '산책 시작'}
+          </Button>
+          <Badge tone={robot.currentMode === 'SAFE_STOP' ? 'danger' : robot.currentMode ? 'info' : 'neutral'}>
+            {robot.currentMode === 'SAFE_STOP' ? '직접 확인 필요' : '모드 정보'}
+          </Badge>
+        </div>
       </section>
 
       <section className="bomi-detail-grid">
@@ -61,29 +120,6 @@ export function BomiHomePage() {
           </p>
         </Card>
 
-        <Card heading="집 상태" description="현관 사건 하나만으로 외출·귀가를 판단하지 않아요.">
-          <div className="unknown-state-panel">
-            <Badge tone="neutral">확인 중</Badge>
-            <strong>현재 집 상태를 확인 중이에요.</strong>
-            <p>확정된 재실 상태와 관찰 시각을 제공하는 Guardian DTO가 아직 연결되지 않았어요.</p>
-          </div>
-        </Card>
-
-        <Card heading="최근 돌봄 수행" description="시나리오 내부 명령이나 원문은 표시하지 않아요.">
-          <div className="unknown-state-panel">
-            <Badge tone="neutral">아직 연결되지 않음</Badge>
-            <strong>최근 수행 결과를 현재 확인할 수 없어요.</strong>
-            <p>안전한 시나리오 상태·결과 API가 준비되면 이곳에 표시됩니다.</p>
-          </div>
-        </Card>
-
-        <Card heading="제공하지 않는 정보" description="수집하거나 계약되지 않은 값을 만들어 보여주지 않아요.">
-          <ul className="not-collected-list">
-            <li>배터리·충전 상태</li>
-            <li>실시간 위치·이동 경로</li>
-            <li>영상·심박·낙상 확정</li>
-          </ul>
-        </Card>
       </section>
     </div>
   )

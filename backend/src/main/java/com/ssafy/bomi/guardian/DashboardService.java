@@ -23,6 +23,9 @@ import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
 import com.ssafy.bomi.robot.domain.Robot;
 import com.ssafy.bomi.robot.repository.RobotRepository;
+import com.ssafy.bomi.scenario.domain.Scenario;
+import com.ssafy.bomi.scenario.domain.ScenarioStatus;
+import com.ssafy.bomi.scenario.repository.ScenarioRepository;
 import com.ssafy.bomi.user.domain.AppUser;
 import com.ssafy.bomi.user.domain.ConsentStatus;
 import com.ssafy.bomi.user.repository.AppUserRepository;
@@ -76,11 +79,26 @@ public class DashboardService {
             FactCandidateStatus.NEEDS_CLARIFICATION,
             FactCandidateStatus.COORDINATION_REQUIRED);
 
+    /**
+     * "아직 끝나지 않은" 시나리오 상태. 종료 4값의 여집합으로 잡는다.
+     *
+     * <p>여집합으로 쓰는 이유 — ScenarioStatus 에 진행 상태가 새로 늘어날 때
+     * (산책의 STARTING_FOLLOW/FOLLOWING 이 그렇게 늘었다) 이 목록을 고치는 것을
+     * 잊으면 그 시나리오만 화면에서 조용히 사라진다. 종료 상태는 거의 늘지 않는다.</p>
+     */
+    private static final Set<ScenarioStatus> ACTIVE_SCENARIO_STATUSES =
+            EnumSet.complementOf(EnumSet.of(
+                    ScenarioStatus.COMPLETED,
+                    ScenarioStatus.FAILED,
+                    ScenarioStatus.CANCELLED,
+                    ScenarioStatus.TIMED_OUT));
+
     private final AppUserRepository appUserRepository;
     private final RobotRepository robotRepository;
     private final CareRecordRepository careRecordRepository;
     private final FactCandidateRepository factCandidateRepository;
     private final MemoryRepository memoryRepository;
+    private final ScenarioRepository scenarioRepository;
     private final FactCandidateMapper factCandidateMapper;
 
     public DashboardService(
@@ -89,12 +107,14 @@ public class DashboardService {
             CareRecordRepository careRecordRepository,
             FactCandidateRepository factCandidateRepository,
             MemoryRepository memoryRepository,
+            ScenarioRepository scenarioRepository,
             FactCandidateMapper factCandidateMapper) {
         this.appUserRepository = appUserRepository;
         this.robotRepository = robotRepository;
         this.careRecordRepository = careRecordRepository;
         this.factCandidateRepository = factCandidateRepository;
         this.memoryRepository = memoryRepository;
+        this.scenarioRepository = scenarioRepository;
         this.factCandidateMapper = factCandidateMapper;
     }
 
@@ -356,8 +376,10 @@ public class DashboardService {
 
     private RobotDto toRobotDto(Robot robot, UUID seniorId) {
         if (robot == null) {
-            return new RobotDto(null, seniorId.toString(), null, null, false, null, null, null);
+            return new RobotDto(
+                    null, seniorId.toString(), null, null, false, null, null, null, null, null);
         }
+        Scenario active = activeScenarioOrNull(robot.getId());
         return new RobotDto(
                 robot.getId().toString(),
                 seniorId.toString(),
@@ -366,7 +388,26 @@ public class DashboardService {
                 robot.isActive(),
                 robot.getAmbientTemperatureC(),
                 robot.getAmbientHumidityPercent(),
-                iso(robot.getAmbientObservedAt()));
+                iso(robot.getAmbientObservedAt()),
+                active == null || active.getScenarioType() == null
+                        ? null : active.getScenarioType().name(),
+                active == null ? null : iso(active.getCreatedAt()));
+    }
+
+    /**
+     * 이 로봇에서 지금 진행 중인 시나리오 하나. 없으면 null.
+     *
+     * <p>정상 상태에서는 로봇 하나에 활성 시나리오가 하나다(ACTIVE_SCENARIO_EXISTS 가
+     * 두 번째 시작을 막는다). 그래도 리스트로 받는 조회를 쓰는 이유는, 리셋이 덜 된
+     * 잔여물이 남아 있을 수 있어서다 — 그럴 땐 가장 최근에 갱신된 것을 보여준다.</p>
+     *
+     * <p>읽기 전용 집계이므로 잠금(ForUpdate) 계열 조회를 쓰지 않는다.</p>
+     */
+    private Scenario activeScenarioOrNull(UUID robotId) {
+        List<Scenario> active = scenarioRepository
+                .findByRobotIdAndFinalStatusInOrderByUpdatedAtDesc(
+                        robotId, ACTIVE_SCENARIO_STATUSES);
+        return active.isEmpty() ? null : active.get(0);
     }
 
     private HomeEnvironmentDto toEnvironmentDto(Robot robot) {
