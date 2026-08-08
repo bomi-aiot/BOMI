@@ -222,9 +222,22 @@ function mapKnownT1Alert(dto: DashboardActivityDto): SafetyAlert | null {
   ) {
     return null
   }
+  // 문구를 왜 여기서 만들지 않는가
+  //   백엔드는 이미 사유별 문구를 만들어 보낸다(DashboardService.alertSummary:
+  //   no_response / not_returned / self_harm_override / explicit_request).
+  //   지금까지 그 값을 버리고 고정 문구 한 줄을 썼고, 그래서 사유가 다른 알림
+  //   세 건이 화면에서 한 글자도 다르지 않게 보였다 — 보호자는 무슨 일이
+  //   있었는지 화면만 봐서는 끝내 알 수 없었다.
+  //
+  //   고정 문구는 폴백으로만 남긴다. summary 가 비어 오는 경우(구버전 백엔드,
+  //   details.reason 누락)에도 카드가 빈 줄을 그리면 안 되기 때문이다.
+  const summary = dto.summary?.trim()
   return {
     id: dto.id,
-    message: '보미의 안전 확인 요청이 보호자에게 도착했어요.',
+    message:
+      summary && summary.length > 0
+        ? summary
+        : '보미의 안전 확인 요청이 보호자에게 도착했어요.',
     occurredAt: isValidDateTime(dto.occurredAt) ? dto.occurredAt : undefined,
     status: 'OPEN',
   }
@@ -296,9 +309,18 @@ export function mapDashboard(dto: DashboardDto): HomeDashboardSummary {
       ]),
     },
     robot,
-    // 현재 DTO는 T1을 최근 활동 5건에 섞어 주므로, 관측된 T1은 표시하되
-    // 없을 때는 전체 알림 조회 성공으로 간주하지 않는다.
-    safetyAlerts: knownT1Alerts.length > 0 ? knownT1Alerts : null,
+    // null 과 [] 를 무엇으로 가르는가
+    //   null = "알림이 있는지 확인하지 못했다", [] = "확인했고 없다". 화면이 이 둘을
+    //   다르게 그리므로 판정이 곧 문구가 된다.
+    //
+    // 판정 기준은 recentActivities 가 배열로 왔는지다. 배열이면 서버가 활동 피드를
+    // 정상으로 돌려준 것이므로 그 안에 T1 이 없다는 것은 "없음"으로 읽어도 된다.
+    // 이전 판정(T1 이 하나도 없으면 무조건 null)은 평상시에도 화면에 "확인하지
+    // 못했어요"를 띄워, 정상 상태를 오류처럼 보이게 만들었다.
+    //
+    // 남아 있는 한계 — 백엔드가 활동을 5건으로 잘라 주므로, 더 최근 활동 5건에
+    // 밀려난 오래된 T1 은 보이지 않는다. 방금 도착한 알림을 놓치지는 않는다.
+    safetyAlerts: Array.isArray(dto.recentActivities) ? knownT1Alerts : null,
     homeEnvironment: {
       temperatureC: undef(dto.homeEnvironment.temperatureC),
       humidityPercent: undef(dto.homeEnvironment.humidityPercent),

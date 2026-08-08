@@ -32,8 +32,10 @@ bomi_require_pico() {
 
     # 프로세스가 살아 있어도 구독자가 0이면 명령이 아무 데도 가지 않는다.
     # 드라이버가 늦게 붙을 수 있어 몇 초 기다렸다가 판정한다.
+    # ROS 2 디스커버리가 늦게 붙는 일이 잦아 첫 몇 초는 0 으로 보인다
+    # (2026-08-09 실기: 실행마다 한 번은 여기서 실패하고 재시도하면 붙었다).
     local subs=0
-    for _ in 1 2 3 4 5 6; do
+    for _ in $(seq 1 15); do
         subs=$(timeout 10 ros2 topic info /cmd_vel 2>/dev/null \
             | sed -n 's/^Subscription count: //p')
         [ -n "$subs" ] && [ "$subs" -gt 0 ] 2>/dev/null && break

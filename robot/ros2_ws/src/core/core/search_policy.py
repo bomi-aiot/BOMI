@@ -375,8 +375,11 @@ class WakeSearchPolicy:
         if self._state is SearchState.FOLLOWING:
             return self._update_following(now_sec)
 
-        # 사람을 찾았으면 무엇을 하고 있었든 즉시 멈추고 추종에 넘긴다.
-        if person_visible:
+        # 사람을 찾았으면 멈추고 추종에 넘긴다. 단 힌트로 도는 중에는
+        # 무시한다 — 부른 사람은 힌트 방향에 있는데, 마침 정면에 있던 다른
+        # 사람에게 가 버리면 "부르면 나에게 온다"가 성립하지 않는다
+        # (2026-08-09 실기 논의). 힌트 회전을 마친 뒤부터 인정한다.
+        if person_visible and self._state is not SearchState.TURN_TO_HINT:
             return self._enter_following(now_sec)
 
         # 전체 상한. 어떤 이유로든 여기서 반드시 끝난다.
