@@ -134,10 +134,17 @@ export function BomiHomePage() {
           description="보미가 보호자에게 바로 알려야 한다고 판단한 것만 올라와요."
         >
           {safetyAlerts === null ? (
+            /*
+              "확인 실패 / 다시 조회해 주세요" 였다. 두 가지가 틀렸다.
+                1. 화면은 1초마다 스스로 다시 조회한다 — 사람에게 시킬 일이 아니다.
+                2. '실패'는 조치를 요구하는 말인데, 보호자가 할 수 있는 조치가 없다.
+              모르는 상태라는 사실은 그대로 남기고(초록으로 안심시키지 않는다),
+              문장만 '지금 무슨 일이 일어나고 있는지'로 바꾼다.
+            */
             <div className="unknown-state-panel">
-              <Badge tone="neutral">확인 실패</Badge>
-              <strong>긴급 알림을 확인하지 못했어요.</strong>
-              <p>알림이 없다고 판단하지 않고 다시 조회해 주세요.</p>
+              <Badge tone="warning">확인 중</Badge>
+              <strong>알림 상태를 확인하지 못했어요.</strong>
+              <p>연결이 회복되면 자동으로 다시 확인해요.</p>
             </div>
           ) : hasUrgentAlert ? (
             <div className="safety-alert-card__body" role="alert">
@@ -155,10 +162,16 @@ export function BomiHomePage() {
               </ul>
             </div>
           ) : (
+            /*
+              앞 문장은 "기록이 없다는 것이 아무 일도 없었다는 뜻은 아니에요" 였다.
+              틀린 말은 아니지만, 정상 상태에서 읽는 사람에게 남는 인상이
+              "그럼 이 화면을 믿지 말라는 건가"다. 같은 정직함을 유지하되
+              — 보미는 지켜보는 중이고, 생기면 먼저 알린다 — 로 방향을 바꾼다.
+            */
             <div className="safety-alert-card__body">
               <Badge tone="success">이상 없음</Badge>
-              <strong>현재 도착한 긴급 알림은 없어요.</strong>
-              <p>기록이 없다는 것이 아무 일도 없었다는 뜻은 아니에요.</p>
+              <strong>지금 확인이 필요한 일은 없어요.</strong>
+              <p>보미가 계속 지켜보고 있어요. 새 알림이 오면 바로 알려드릴게요.</p>
             </div>
           )}
         </Card>

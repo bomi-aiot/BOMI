@@ -55,6 +55,31 @@ UPDATE scenario
    AND external_event_id LIKE 'med-%'
    AND external_event_id NOT LIKE '%-reset';
 
+-- 4) 지난 위급 알림(T1) 닫기 — 이게 없으면 시연 첫 화면에 어제 알림이 떠 있다
+--
+--   DashboardService.buildActivities 는 care_record 에서
+--   record_type='GUARDIAN_ALERT' AND status='ACTIVE' 인 행을 전부 읽어 활동 피드에
+--   섞고, notification_tier='T1' 인 것만 statusLevel='URGENT' 로 올린다. 프론트의
+--   안전 알림 카드는 그 URGENT 만 골라 "즉시 확인 필요"로 그린다. 즉 행이
+--   ACTIVE 로 남아 있는 한, 그것이 사흘 전 리허설의 잔재여도 화면은 지금 위급인
+--   것처럼 보인다.
+--
+--   왜 DELETE 가 아니라 status 변경인가
+--     T1 은 어르신 안전에 관한 관찰 기록이다. 지우면 "언제 무엇을 감지했는지"를
+--     되짚을 근거가 사라지고, 시연 후 심사위원 질문("그건 실제로 남나요?")에
+--     답할 것이 없어진다. 카드의 필터는 status='ACTIVE' 하나이므로 상태만
+--     바꾸면 화면에서는 사라지고 행은 남는다.
+--
+--   COMPLETED 를 쓰는 이유: 이 알림은 취소된 것이 아니라 "확인되어 닫힌" 것이다
+--   (CareRecordStatus 자바독 — SUPERSEDED 는 값이 바뀔 때 쓴다).
+--
+--   T2/T3 까지 같이 닫는다. 활동 피드가 5건으로 잘리기 때문에, 남은 일일 요약
+--   행들이 시연 중 새로 도착한 T1 을 목록 밖으로 밀어낼 수 있다.
+UPDATE care_record
+   SET status = 'COMPLETED'
+ WHERE record_type = 'GUARDIAN_ALERT'
+   AND status = 'ACTIVE';
+
 COMMIT;
 
 -- (선택) 같은 웨이크워드 eventId 를 재사용해 재시험하려면 영수증도 지운다.
