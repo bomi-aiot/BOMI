@@ -9,10 +9,12 @@ ROS_WS="$REPO_ROOT/robot/ros2_ws"
 VISION_DIR="$REPO_ROOT/robot/ai_vision"
 VISION_PYTHON=${AI_VISION_PYTHON:-$VISION_DIR/venv/bin/python}
 FOLLOW_LOG_DIR=${FOLLOW_LOG_DIR:-/tmp/bomi_homecoming_follow}
+HOMECOMING_READY_FILE="$FOLLOW_LOG_DIR/homecoming.ready"
 AUX_PIDS=()
 HOMECOMING_PID=""
 
 follow_finish() {
+    rm -f "$HOMECOMING_READY_FILE"
     if [ -n "$HOMECOMING_PID" ]; then
         kill -INT "$HOMECOMING_PID" 2>/dev/null || true
     fi
@@ -46,6 +48,7 @@ if [ ! -x "$VISION_PYTHON" ]; then
 fi
 
 mkdir -p "$FOLLOW_LOG_DIR"
+rm -f "$HOMECOMING_READY_FILE"
 
 set +u
 source /opt/ros/humble/setup.bash
@@ -62,6 +65,7 @@ start_aux() {
 
 # 기존 현관 실행기의 Nav2 MQTT 브리지가 FOLLOW_START를 wake_search로 전달하게 한다.
 export BOMI_SEARCH_ENABLED=true
+export BOMI_HOMECOMING_READY_FILE="$HOMECOMING_READY_FILE"
 
 echo "현관 대화 후 사용자 추종 시나리오를 시작합니다. 종료: Ctrl+C"
 bash "$HERE/run-homecoming-voice.sh" &
@@ -75,12 +79,10 @@ for _ in $(seq 1 90); do
         wait "$HOMECOMING_PID"
         exit $?
     fi
-    case "$(ros2 node list 2>/dev/null || true)" in
-        *"/mqtt_bridge"*)
-            ready=true
-            break
-            ;;
-    esac
+    if [ -f "$HOMECOMING_READY_FILE" ]; then
+        ready=true
+        break
+    fi
     sleep 2
 done
 if [ "$ready" != true ]; then
