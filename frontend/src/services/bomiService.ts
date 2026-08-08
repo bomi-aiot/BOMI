@@ -50,6 +50,8 @@ import type {
   UpdateConversationPreferenceInput,
   UpdateMedicationInput,
   UpdateScheduleInput,
+  WalkAction,
+  WalkRequestResult,
 } from "../types/domain";
 import { toDateInputValue } from "../utils/date";
 
@@ -72,6 +74,7 @@ export const API_ENDPOINTS = {
   medications: `${API_BASE_URL}/v1/care-records/medications`,
   medicationResponses: `${API_BASE_URL}/v1/care-records/medication-responses`,
   schedules: `${API_BASE_URL}/v1/care-records/schedules`,
+  walkRequests: `${API_BASE_URL}/v1/guardian/walk-requests`,
 } as const;
 
 const MOCK_LATENCY_MS = 180;
@@ -242,6 +245,7 @@ export interface BomiService {
   getSchedules(): Promise<Schedule[]>;
   createSchedule(input: CreateScheduleInput): Promise<Schedule>;
   updateSchedule(id: string, input: UpdateScheduleInput): Promise<Schedule>;
+  requestWalk(action: WalkAction, robotDeviceId: string): Promise<WalkRequestResult>;
   resetMockData(): Promise<BomiInitialData>;
 }
 
@@ -1125,6 +1129,18 @@ class MockBomiService implements BomiService {
     });
   }
 
+  requestWalk(
+    action: WalkAction,
+    _robotDeviceId: string,
+  ): Promise<WalkRequestResult> {
+    return withLatency(() => ({
+      requestId: `mock-walk-${action.toLowerCase()}`,
+      action,
+      accepted: true,
+      duplicate: false,
+    }));
+  }
+
   resetMockData(): Promise<BomiInitialData> {
     return withLatency(() => {
       this.elderProfile = clone(mockElderProfile);
@@ -1400,6 +1416,30 @@ class HttpBomiService implements BomiService {
       activities: dashboard?.recentActivities ?? [],
       errors,
     };
+  }
+
+  /**
+   * POST /v1/guardian/walk-requests — 보호자가 산책을 시작·종료한다.
+   *
+   * robotDeviceId 는 deviceId 공간("bomi-AA001")이다. REST 온보딩의 UUID 를 넣으면
+   * 백엔드가 UNKNOWN_ROBOT 으로 404 를 돌려준다 — 두 식별자를 섞지 않는다.
+   *
+   * requestId 는 멱등 키다. 같은 값으로 다시 부르면 백엔드가 duplicate=true 로
+   * 이전 결과를 그대로 돌려주므로, 호출마다 새 UUID 를 만든다.
+   *
+   * 성공 코드가 둘이다 — 202(수락)와 200("종료할 활성 산책 없음"). 후자는
+   * accepted=false 이므로 호출자는 상태 코드가 아니라 accepted 를 봐야 한다.
+   */
+  async requestWalk(
+    action: WalkAction,
+    robotDeviceId: string,
+  ): Promise<WalkRequestResult> {
+    assertGuardianApiReady();
+    return httpPost<WalkRequestResult>(API_ENDPOINTS.walkRequests, {
+      requestId: crypto.randomUUID(),
+      robotId: robotDeviceId,
+      action,
+    });
   }
 
   async resetMockData(): Promise<BomiInitialData> {

@@ -16,7 +16,6 @@ const ROBOT_MODE_COPY: Record<RobotMode, string> = {
   SCENARIO_ACTIVE: '돌봄 수행 중',
   REST_GUARD: '휴식 지킴 중',
   SAFE_STOP: '안전 정지 · 확인 필요',
-  HOMECOMING: '귀가 맞이 중',
 }
 
 const MEDICATION_RESPONSE_COPY: Record<MedicationResponseStatus, string> = {
