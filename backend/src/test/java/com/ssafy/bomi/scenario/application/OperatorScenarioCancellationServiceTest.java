@@ -120,16 +120,18 @@ class OperatorScenarioCancellationServiceTest {
     }
 
     @Test
-    void activeNonNavigationScenarioIsRejectedWithoutMutation() {
+    void activeNonNavigationScenarioIsCancelledWithoutMqttCommand() {
         when(scenario.getActiveNavigationCommandId()).thenReturn(null);
 
         OperatorScenarioCancellationResult result = service.cancelActiveNavigation(
             "bomi-AA001", "operator-a", true, "inspect non-navigation flow");
 
         assertThat(result.disposition())
-            .isEqualTo(OperatorScenarioCancellationDisposition.REJECTED_NO_ACTIVE_NAVIGATION);
-        verify(scenario, never()).cancel(any(), any());
-        verify(robot, never()).changeMode(any());
+            .isEqualTo(OperatorScenarioCancellationDisposition.CANCELLED);
+        assertThat(result.cancelCommandId()).isNull();
+        verify(scenario).cancel("CANCELLED", "OPERATOR_CANCELLED");
+        verify(robot).changeMode(RobotMode.SAFE_STOP);
+        verify(auditRepository).save(any(OperatorScenarioCancellationAudit.class));
         verify(publisher, never()).publish(any());
     }
 
