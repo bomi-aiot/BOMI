@@ -80,6 +80,26 @@ def yaw_from_quaternion(x: float, y: float, z: float, w: float) -> float:
     return math.atan2(siny_cosp, cosy_cosp)
 
 
+def is_person_currently_visible(
+    *,
+    vision_tracking: bool,
+    vision_stamp_sec: float,
+    now_sec: float,
+    vision_timeout_sec: float,
+    search_started_at_sec: float,
+) -> bool:
+    """비전 결과가 최신이고, 이번 탐색이 시작된 뒤에 도착했는지 확인한다.
+
+    search_started_at_sec 조건이 없으면 탐색 시작 전부터 남아있던 낡은
+    결과를 "방금 찾았다"로 오인해 회전 없이 즉시 추종으로 넘어간다.
+    """
+    return (
+        vision_tracking
+        and (now_sec - vision_stamp_sec) <= vision_timeout_sec
+        and vision_stamp_sec >= search_started_at_sec
+    )
+
+
 class WakeSearchNode(Node):
     """회전 탐색 정책을 ROS 2 토픽과 UDP 에 연결하는 노드다."""
 
@@ -124,6 +144,7 @@ class WakeSearchNode(Node):
         self._yaw_stamp_sec = 0.0
         self._vision_tracking = False
         self._vision_stamp_sec = 0.0
+        self._search_started_at_sec = 0.0
         self._hint_deg: float | None = None
         self._hint_stamp_sec = 0.0
         self._pending_stop_reason: str | None = None
@@ -420,9 +441,12 @@ class WakeSearchNode(Node):
             self._apply(self._policy.stop("odom_timeout"))
             return
 
-        person_visible = (
-            self._vision_tracking
-            and (now - self._vision_stamp_sec) <= self._vision_timeout_sec
+        person_visible = is_person_currently_visible(
+            vision_tracking=self._vision_tracking,
+            vision_stamp_sec=self._vision_stamp_sec,
+            now_sec=now,
+            vision_timeout_sec=self._vision_timeout_sec,
+            search_started_at_sec=self._search_started_at_sec,
         )
         self._apply(
             self._policy.update(now, float(self._yaw_rad), person_visible))
@@ -435,6 +459,7 @@ class WakeSearchNode(Node):
             self._publish_follow_enable(False)
             return
 
+        self._search_started_at_sec = now
         hint = self._fresh_hint_deg(now)
         # 한 번 쓴 힌트는 비운다. 남겨 두면 다음 시작(예: 백엔드 재시도)이 지난
         # 호출의 방향으로 돌아 버린다 — 그때는 소리가 어디서 났는지 모르는
