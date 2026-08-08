@@ -91,6 +91,7 @@ class WakeSearchNode(Node):
 
         self._cmd_vel_topic = self._string_param("cmd_vel_topic")
         self._follow_enable_topic = self._string_param("follow_enable_topic")
+        self._follow_status_topic = self._string_param("follow_status_topic")
         odom_topic = self._string_param("odom_topic")
         vision_topic = self._string_param("vision_topic")
         start_topic = self._string_param("start_topic")
@@ -127,6 +128,7 @@ class WakeSearchNode(Node):
         self._hint_stamp_sec = 0.0
         self._pending_stop_reason: str | None = None
         self._pending_start = False
+        self._pending_resume = False
         self._was_active = False
         self._last_state = SearchState.IDLE
 
@@ -140,6 +142,8 @@ class WakeSearchNode(Node):
         self.create_subscription(Odometry, odom_topic, self._on_odom, 10)
         self.create_subscription(String, vision_topic, self._on_vision, 10)
         self.create_subscription(Bool, start_topic, self._on_start, 10)
+        self.create_subscription(
+            String, self._follow_status_topic, self._on_follow_status, 10)
 
         # ── UDP 힌트 수신 ──────────────────────────────────────────────────
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -171,6 +175,8 @@ class WakeSearchNode(Node):
         self.declare_parameter("cmd_vel_topic", "/cmd_vel_search")
         self.declare_parameter(
             "follow_enable_topic", "/person_following/enable")
+        self.declare_parameter(
+            "follow_status_topic", "/person_following/status")
         self.declare_parameter("odom_topic", "/odom")
         self.declare_parameter("vision_topic", "/vision/follow_result")
         self.declare_parameter("start_topic", "/wake_search/start")
@@ -256,6 +262,24 @@ class WakeSearchNode(Node):
             return
         self._vision_tracking = payload.get("status") == VISION_STATUS_TRACKING
         self._vision_stamp_sec = self._now_sec()
+
+    def _on_follow_status(self, message: String) -> None:
+        """person_follower 가 추종을 포기했음을 알리면 표시만 남긴다.
+
+        엉뚱한 사람이 화각에 잠깐 들어와도 person_visible 은 참이 되어 바로
+        FOLLOWING 으로 넘어간다. person_follower 가 그 사람을 놓치고
+        완전히 포기(target_lost_timeout)해도 이 노드는 그 사실을 몰라
+        FOLLOWING 에 멈춰 서 있었다(2026-08-08 실기, 팀원 오인식으로 재현).
+        실제 정책 호출은 제어 주기에서만 한다 — 다른 콜백들과 같은 이유.
+        """
+        try:
+            payload = json.loads(message.data)
+        except (TypeError, ValueError):
+            return
+        if not isinstance(payload, dict):
+            return
+        if payload.get("reason") == "target_lost_timeout":
+            self._pending_resume = True
 
     def _on_start(self, message: Bool) -> None:
         """bridge 가 보내는 시작/정지 신호. 실제 처리는 제어 주기에서 한다.
@@ -343,6 +367,7 @@ class WakeSearchNode(Node):
             reason = self._pending_stop_reason
             self._pending_stop_reason = None
             self._pending_start = False
+            self._pending_resume = False
             if self._policy.is_active:
                 self._apply(self._policy.stop(reason))
             else:
@@ -356,7 +381,23 @@ class WakeSearchNode(Node):
 
         if self._pending_start:
             self._pending_start = False
+            self._pending_resume = False
             self._begin_search(now)
+            return
+
+        if self._pending_resume:
+            self._pending_resume = False
+            if self._policy.is_active:
+                if not self._odom_is_fresh(now):
+                    self.get_logger().error(
+                        "odom 이 끊겨 재탐색을 시작하지 못합니다.")
+                    self._apply(self._policy.stop("odom_timeout"))
+                else:
+                    self.get_logger().info(
+                        "추종 대상을 놓쳐 남은 방향 탐색을 재개합니다.")
+                    self._apply(
+                        self._policy.resume_after_lost(
+                            now, float(self._yaw_rad)))
             return
 
         if not self._policy.is_active:

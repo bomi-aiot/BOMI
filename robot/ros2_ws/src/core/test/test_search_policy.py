@@ -230,6 +230,53 @@ def test_following_ends_after_the_time_limit(  # noqa: D103
     assert after.state is SearchState.FINISHED
 
 
+# ── 추종 포기 후 재개 ────────────────────────────────────────────────────────
+# person_follower 가 대상을 놓치고 완전히 포기(target_lost_timeout)했을 때
+# wake_search 노드가 이 메서드를 부른다. 2026-08-08 실기: 엉뚱한 사람을
+# 잠깐 락온했다가 놓쳤을 때 이 신호가 없어 FOLLOWING 에 영원히 멈춰 섰다.
+
+
+def test_resume_after_lost_steps_from_the_current_heading() -> None:
+    policy = WakeSearchPolicy(_config())
+    policy.start(0.0, 0.0)
+    policy.update(0.1, 0.0, person_visible=True)  # OBSERVE -> FOLLOWING
+
+    decision = policy.resume_after_lost(0.2, math.radians(10.0))
+
+    assert decision.state is SearchState.STEP_TURN
+    assert decision.angular_z != 0.0
+    assert decision.reason == "resuming_after_lost"
+
+
+def test_resume_after_lost_is_a_no_op_outside_following() -> None:
+    policy = WakeSearchPolicy(_config())
+    policy.start(0.0, 0.0)  # OBSERVE, not FOLLOWING
+
+    decision = policy.resume_after_lost(0.1, 0.0)
+
+    # 이미 새 탐색이 시작됐거나 아직 시작 전인 상태를 그대로 돌려준다 —
+    # 뒤늦게 도착한 신호가 진행 중인 상태를 건드리지 않는다.
+    assert decision.state is SearchState.OBSERVE
+    assert decision.angular_z == 0.0
+
+
+def test_resume_after_lost_returns_when_sweep_budget_is_spent() -> None:
+    config = _config(observe_duration_sec=0.1, sweep_limit_deg=40.0)
+    policy = WakeSearchPolicy(config)
+    policy.start(0.0, 0.0)
+    policy.update(0.2, 0.0, person_visible=False)  # OBSERVE -> STEP_TURN
+    # 스텝 회전을 끝까지 마쳐야 swept_rad 가 쌓인다(도중에 사람이 보이면
+    # 그 자리에서 바로 FOLLOWING 으로 빠져 이번 스텝은 안 쌓인다).
+    policy.update(0.3, math.radians(40.0), person_visible=False)  # -> OBSERVE
+    policy.update(0.4, math.radians(40.0), person_visible=True)  # -> FOLLOWING
+    assert policy.swept_deg == pytest.approx(40.0)
+
+    decision = policy.resume_after_lost(0.5, math.radians(40.0))
+
+    assert decision.state is SearchState.RETURNING
+    assert decision.reason == "resumed_sweep_complete"
+
+
 # ── 한 바퀴 → 복귀 ──────────────────────────────────────────────────────────
 
 

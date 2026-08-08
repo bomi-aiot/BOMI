@@ -9,6 +9,10 @@ wake_search:
     # 않는다 — person_follower 와 같은 토픽에 동시에 쓰면 명령이 충돌한다.
     cmd_vel_topic: /cmd_vel_search
     follow_enable_topic: /person_following/enable
+    # person_follower 가 추종을 포기했을 때만 알려주는 상태 토픽. 엉뚱한
+    # 사람을 잠깐 락온했다가 놓쳐도 여기로 신호가 오면 남은 방향 탐색을
+    # 이어간다(2026-08-08 실기, 오인식 후 영구 정지 수정).
+    follow_status_topic: /person_following/status
     odom_topic: /odom
     vision_topic: /vision/follow_result
     start_topic: /wake_search/start

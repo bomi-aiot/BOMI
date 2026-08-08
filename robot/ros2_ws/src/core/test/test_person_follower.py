@@ -1,5 +1,6 @@
 """사람 추종 ROS2 노드의 입력 파싱과 LiDAR 계산을 검증한다."""
 
+import json
 import math
 
 import pytest
@@ -252,6 +253,16 @@ class _RecordingPublisher:
         self.published.append((twist.linear.x, twist.angular.z))
 
 
+class _RecordingStatusPublisher:
+    """wake_search 가 구독하는 상태 토픽을 흉내 낸다."""
+
+    def __init__(self) -> None:
+        self.published: list[dict] = []
+
+    def publish(self, message) -> None:
+        self.published.append(json.loads(message.data))
+
+
 class _FakeLogger:
     """get_logger().info/warning/debug 를 조용히 삼킨다."""
 
@@ -272,6 +283,7 @@ def _make_follower(*, enabled: bool, clock_sec: float = 100.0) -> PersonFollower
     if not enabled:
         follower._state_machine.disable(clock_sec)
     follower._velocity_publisher = _RecordingPublisher()
+    follower._status_publisher = _RecordingStatusPublisher()
     follower._last_velocity = None
     follower._last_logged_state = None
     follower._vision_timeout_handled = True
@@ -334,6 +346,26 @@ def test_enable_callback_turns_off_and_publishes_a_final_stop_first() -> None:
     assert follower._enabled is False
     assert follower._velocity_publisher.published == [(0.0, 0.0)]
     assert follower._state_machine.state.value == "disabled"
+
+
+def test_enable_callback_turns_on_publishes_the_new_state_to_wake_search() -> None:
+    """wake_search 가 구독하는 상태 토픽에도 같은 전이가 나가야 한다.
+
+    person_follower 가 대상을 놓쳐도 wake_search 는 이 토픽으로만 그 사실을
+    안다(2026-08-08 실기, target_lost_timeout 재개 버그 수정). 발행 자체가
+    안 나가면 그 수정은 무의미해진다.
+    """
+    follower = _make_follower(enabled=False)
+
+    follower._enable_callback(Bool(data=True))
+
+    assert follower._status_publisher.published == [
+        {
+            "state": "waiting_target",
+            "target_track_id": None,
+            "reason": "waiting_for_target",
+        }
+    ]
 
 
 def test_enable_callback_is_idempotent_for_the_same_value() -> None:

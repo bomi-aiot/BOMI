@@ -315,6 +315,43 @@ class WakeSearchPolicy:
         # 여기에 오면 상태 정의가 빠진 것이다. 조용히 도는 것보다 멈추는 편이 낫다.
         return self._finish(f"unhandled_state_{self._state.value}")
 
+    def resume_after_lost(
+        self, now_sec: float, current_yaw_rad: float
+    ) -> SearchDecision:
+        """추종이 대상을 완전히 놓쳤을 때, 남은 탐색을 이어간다.
+
+        왜 필요한가 (2026-08-08 실기)
+            엉뚱한 사람(부르지 않은 사람)이 화각에 잠깐 들어와도 person_visible
+            은 참이 되어 즉시 FOLLOWING 으로 넘어간다(person_search_patrol 과
+            달리 이 정책엔 아직 대상 확정 지연이 없다). person_follower 가
+            그 사람을 놓치고 완전히 포기해도, 이 정책은 그 사실을 몰라 계속
+            FOLLOWING 에 머물며 아무 것도 하지 않는다 — 로봇이 "멈춘 것처럼"
+            보이는 원인이었다. wake_search 노드가 person_follower 의 상태
+            토픽에서 "target_lost_timeout" 을 받으면 이 메서드를 부른다.
+
+        역할: 처음부터 다시 찾지 않는다 — 원래 탐색의 남은 스윕 예산
+            (sweep_limit_deg 중 아직 안 돈 만큼)과 전체 시간 상한
+            (search_timeout_sec, _started_at_sec 기준)을 그대로 이어받아
+            지금 방향에서 한 스텝 더 돈다.
+        입력값: now_sec - 단조 증가 시각(초). current_yaw_rad - 현재 yaw.
+        반환값: 이번 주기에 발행할 SearchDecision.
+        주의: FOLLOWING 상태가 아니면 아무 것도 하지 않는다 — 이미 새
+            탐색이 시작됐거나 끝난 뒤에 뒤늦게 도착한 신호를 걸러낸다.
+        """
+        if self._state is not SearchState.FOLLOWING:
+            return self._idle_decision()
+
+        yaw = normalize_angle(current_yaw_rad)
+        sweep_limit_rad = math.radians(self._config.sweep_limit_deg)
+        if self._swept_rad >= sweep_limit_rad - _EPSILON:
+            return self._begin_return(now_sec, "resumed_sweep_complete")
+
+        step_rad = math.radians(self._config.step_angle_deg)
+        self._target_yaw = normalize_angle(yaw + step_rad)
+        self._state = SearchState.STEP_TURN
+        return self._turn_decision(
+            yaw, SearchState.STEP_TURN, "resuming_after_lost")
+
     def stop(self, reason: str = "external_stop") -> SearchDecision:
         """외부 요청으로 즉시 끝낸다("보미야" 재호출, 대화 종료, 종료 정리).
 

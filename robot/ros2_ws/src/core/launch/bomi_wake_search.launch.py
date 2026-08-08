@@ -87,6 +87,9 @@ def generate_launch_description() -> LaunchDescription:
     ai_chat_python = LaunchConfiguration("ai_chat_python")
     ai_chat_dir = LaunchConfiguration("ai_chat_dir")
     robot_udp_host = LaunchConfiguration("robot_udp_host")
+    primary_min_confidence = LaunchConfiguration("primary_min_confidence")
+    primary_min_height_ratio = LaunchConfiguration(
+        "primary_min_height_ratio")
 
     robot_id = LaunchConfiguration("robot_id")
     broker_host = LaunchConfiguration("broker_host")
@@ -148,12 +151,20 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     # ── 4) AI 비전 (별도 가상환경) ──────────────────────────────────────────
+    # --select-primary-person: 이 launch 는 "웨이크워드 방향으로 돈 뒤 화면
+    # 중앙 사람을 따라간다"는 시나리오 전용이라 항상 켠다(기본값이 꺼져 있는
+    # 건 ai_vision 단독 실행 시 다중 인물 상황에서 안전하게 멈추기 위해서다).
+    # 2026-08-08 실기: 이걸 안 켠 채로는 부르지 않은 사람이 잠깐 화각에
+    # 들어와도 그 사람을 그대로 추종 대상으로 확정해 버렸다.
     ai_vision_process = ExecuteProcess(
         condition=IfCondition(use_ai_vision),
         cmd=[
             ai_vision_python, "-m", "bomi_vision.udp_main",
             "--host", robot_udp_host,
             "--port", vision_udp_port,
+            "--select-primary-person",
+            "--primary-min-confidence", primary_min_confidence,
+            "--primary-min-height-ratio", primary_min_height_ratio,
         ],
         cwd=ai_vision_dir,
         name="ai_vision",
@@ -216,6 +227,12 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             "vision_udp_port", default_value="5005",
             description="ai_vision → vision_udp_bridge 수신 포트"),
+        DeclareLaunchArgument(
+            "primary_min_confidence", default_value="0.5",
+            description="화면 중앙 사람 선택 후보의 최소 검출 신뢰도"),
+        DeclareLaunchArgument(
+            "primary_min_height_ratio", default_value="0.0",
+            description="화면 중앙 사람 선택 후보의 최소 박스 높이 비율"),
 
         # ── 구성 요소 켜고 끄기 ─────────────────────────────────────────────
         DeclareLaunchArgument(
