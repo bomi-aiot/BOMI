@@ -297,7 +297,7 @@ def _build_direction_provider(beam):
                        exc_info=True)
 
     sampler = BeamDirectionSampler(
-        beam.read_direction_deg,
+        beam.read_speaker_direction_deg,
         interval_sec=interval_sec,
         history_sec=max(window_sec * 2.0, 4.0),
     )
