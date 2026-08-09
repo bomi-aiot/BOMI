@@ -14,6 +14,12 @@
 * 노드/executor/액션 클라이언트는 생성자로 명시적으로 주입한다. 실제 ROS 2 객체는
   ``create_nav2_robot_driver`` 팩터리가 만들고, 단위 테스트는 Fake를 주입한다.
 * 좌표는 이 모듈에 하드코딩하지 않고 core의 room_waypoints.yaml에서 읽는다.
+* 현관(ENTRANCE)만은 직선 대신 좌우로 번갈아 기운 지그재그로 다가간다 —
+  어르신을 반기러 나가는 걸음을 표현하기 위해서다. 경로를 직접 그리지 않고
+  ``bridge.zigzag`` 가 만든 경유 좌표를 ``NavigateThroughPoses`` 로 넘기므로,
+  costmap·장애물 회피·복구는 전부 Nav2 가 그대로 담당한다. 출발점(TF
+  map->base_link)을 못 얻거나 거리가 짧으면 조용히 직선 주행으로 내려간다 —
+  애교 때문에 귀가 대본이 실패하는 일은 없어야 한다.
 
 이 모듈은 ROS 2 노드 실행 경로에서만 사용한다. 순수 paho MQTT 러너처럼 rclpy가
 없는 실행 경로에서는 import하거나 생성하지 않는다.
@@ -29,14 +35,22 @@ from typing import Any
 from action_msgs.msg import GoalStatus
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import PoseStamped
-from nav2_msgs.action import NavigateToPose
+from nav2_msgs.action import NavigateThroughPoses, NavigateToPose
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.executors import SingleThreadedExecutor
+from rclpy.time import Time
+from tf2_ros import Buffer, TransformListener
 
 from bridge import contract
 from bridge.robot_driver import RobotDriver
 from bridge.waypoint_lookup import load_waypoint, resolve_waypoint_name
+from bridge.zigzag import (
+    DEFAULT_ZIGZAG_ANGLE_DEG,
+    DEFAULT_ZIGZAG_LEG_LENGTH_M,
+    DEFAULT_ZIGZAG_MIN_DISTANCE_M,
+    zigzag_path,
+)
 from core.waypoint_route import Waypoint, yaw_to_quaternion
 
 # 목표 전송 후 도착까지 기다리는 최대 시간(초). 기존 문서에 기준이 없어 기본값으로
@@ -48,6 +62,11 @@ _SPIN_ONCE_TIMEOUT_SECONDS = 0.1
 
 # 취소 요청을 보낸 뒤 취소 응답을 기다리는 최대 시간(초).
 _CANCEL_RESULT_WAIT_SECONDS = 5.0
+
+# 현재 위치(TF map->base_link)를 기다리는 최대 시간(초). 지그재그는 출발점을
+# 알아야 그릴 수 있는데, 이걸 위해 주행 예산을 크게 쓰면 안 된다. 못 얻으면
+# 지그재그를 포기하고 평소의 직선 주행으로 내려간다.
+_POSE_LOOKUP_TIMEOUT_SECONDS = 2.0
 
 
 class Nav2RobotDriver(RobotDriver):
@@ -79,6 +98,13 @@ class Nav2RobotDriver(RobotDriver):
         *,
         frame_id: str = "map",
         goal_timeout_seconds: float = DEFAULT_GOAL_TIMEOUT_SECONDS,
+        through_poses_client: Any | None = None,
+        tf_buffer: Any | None = None,
+        base_frame_id: str = "base_link",
+        zigzag_enabled: bool = False,
+        zigzag_angle_deg: float = DEFAULT_ZIGZAG_ANGLE_DEG,
+        zigzag_leg_length_m: float = DEFAULT_ZIGZAG_LEG_LENGTH_M,
+        zigzag_min_distance_m: float = DEFAULT_ZIGZAG_MIN_DISTANCE_M,
     ) -> None:
         """전용 노드/executor/액션 클라이언트와 주행 설정을 저장한다."""
         if goal_timeout_seconds <= 0.0:
@@ -93,6 +119,19 @@ class Nav2RobotDriver(RobotDriver):
         self._frame_id = frame_id
         self._goal_timeout_seconds = float(goal_timeout_seconds)
         self._logger = navigation_node.get_logger()
+
+        # 현관 지그재그 접근. 킬 스위치가 기본 꺼짐인 이유는 approach·search 와
+        # 같다(CLAUDE.md §5) — 실기에서 처음 검증되는 동작이라, 이상하면
+        # 파라미터 하나로 검증된 직선 주행으로 되돌릴 수 있어야 한다.
+        # through_poses_client 나 tf_buffer 가 없으면(단위 테스트의 Fake 주입
+        # 경로) 켜져 있어도 지그재그를 시도하지 않는다.
+        self._through_poses_client = through_poses_client
+        self._tf_buffer = tf_buffer
+        self._base_frame_id = base_frame_id
+        self._zigzag_enabled = zigzag_enabled
+        self._zigzag_angle_deg = float(zigzag_angle_deg)
+        self._zigzag_leg_length_m = float(zigzag_leg_length_m)
+        self._zigzag_min_distance_m = float(zigzag_min_distance_m)
 
         # 진행 중인 Nav2 목표 핸들. 목표가 없으면 None이다. 완료/실패/취소 시
         # 반드시 None으로 정리해 다음 명령에서 재사용되지 않게 한다.
@@ -141,7 +180,7 @@ class Nav2RobotDriver(RobotDriver):
             return contract.STATUS_FAILED
 
         try:
-            return self._navigate_to_waypoint(waypoint)
+            return self._navigate_to_waypoint(waypoint, target)
         except Exception as error:
             # 예외가 실행 스레드로 새어 나가 브릿지 전체를 멈추지 않도록
             # 드라이버 경계에서 잡는다. 원인을 남기고 진행 중 목표를 정리한다.
@@ -218,22 +257,41 @@ class Nav2RobotDriver(RobotDriver):
 
         self._navigation_node.destroy_node()
 
-    def _navigate_to_waypoint(self, waypoint: Waypoint) -> str:
-        """웨이포인트 하나로 Nav2 목표를 보내고 도착 결과를 기다린다."""
+    def _navigate_to_waypoint(self, waypoint: Waypoint, target: str) -> str:
+        """웨이포인트 하나로 Nav2 목표를 보내고 도착 결과를 기다린다.
+
+        현관이면 먼저 지그재그 경유 좌표를 만들어 보고, 만들어졌으면
+        NavigateThroughPoses 로 그 경로를 지나가게 한다. 그 밖의 모든 경우는
+        지금까지와 똑같이 NavigateToPose 목표 하나다.
+        """
         deadline = time.monotonic() + self._goal_timeout_seconds
 
-        if not self._wait_for_action_server(deadline):
+        zigzag_poses = self._build_zigzag_poses(waypoint, target)
+        client = (
+            self._through_poses_client if zigzag_poses else self._action_client
+        )
+
+        if not self._wait_for_action_server(client, deadline):
             self._logger.error(
                 "Nav2 action server was not available before timeout"
             )
             self.last_reason_code = contract.REASON_EXECUTION_TIMEOUT
             return contract.STATUS_FAILED
 
-        goal_message = NavigateToPose.Goal()
-        goal_message.pose = self._create_goal_pose(waypoint)
+        if zigzag_poses:
+            goal_message = NavigateThroughPoses.Goal()
+            goal_message.poses = zigzag_poses
+            self._logger.info(
+                f"Sending Nav2 zigzag goal: {waypoint.name} "
+                f"({len(zigzag_poses)} poses, "
+                f"±{self._zigzag_angle_deg:.0f}°)"
+            )
+        else:
+            goal_message = NavigateToPose.Goal()
+            goal_message.pose = self._create_goal_pose(waypoint)
+            self._logger.info(f"Sending Nav2 goal: {waypoint.name}")
 
-        send_goal_future = self._action_client.send_goal_async(goal_message)
-        self._logger.info(f"Sending Nav2 goal: {waypoint.name}")
+        send_goal_future = client.send_goal_async(goal_message)
 
         if not self._spin_until_complete(send_goal_future, deadline):
             self._logger.error(
@@ -288,13 +346,96 @@ class Nav2RobotDriver(RobotDriver):
         self.last_reason_code = contract.REASON_PATH_BLOCKED
         return contract.STATUS_FAILED
 
-    def _wait_for_action_server(self, deadline: float) -> bool:
+    def _wait_for_action_server(self, client: Any, deadline: float) -> bool:
         """전용 executor를 spin하며 액션 서버가 준비될 때까지 기다린다."""
-        while not self._action_client.server_is_ready():
+        while not client.server_is_ready():
             if time.monotonic() >= deadline:
                 return False
             self._executor.spin_once(timeout_sec=_SPIN_ONCE_TIMEOUT_SECONDS)
         return True
+
+    def _build_zigzag_poses(
+        self, waypoint: Waypoint, target: str
+    ) -> list[PoseStamped]:
+        """현관이면 지그재그 경유 PoseStamped 목록을, 아니면 빈 목록을 만든다.
+
+        빈 목록은 "지그재그 없이 평소대로 가라"는 뜻이다. 아래 어느 조건에서든
+        조용히 빈 목록으로 내려간다 — 애교는 있으면 좋은 것이지, 이것 때문에
+        귀가 대본이 실패해서는 안 된다.
+
+        * 킬 스위치가 꺼져 있다(기본값).
+        * 목적지가 현관이 아니다.
+        * NavigateThroughPoses 클라이언트나 TF 버퍼가 없다(단위 테스트의
+          Fake 주입 경로).
+        * 현재 위치를 제때 얻지 못했다(TF 미준비).
+        * 거리가 짧아 zigzag_path 가 목표 하나만 돌려줬다.
+        """
+        if not self._zigzag_enabled:
+            return []
+        if target != contract.TARGET_ENTRANCE:
+            return []
+        if self._through_poses_client is None or self._tf_buffer is None:
+            return []
+
+        current = self._current_pose()
+        if current is None:
+            self._logger.warning(
+                "Could not read the current pose; "
+                "falling back to a straight approach"
+            )
+            return []
+
+        try:
+            path = zigzag_path(
+                current[0],
+                current[1],
+                waypoint.x,
+                waypoint.y,
+                waypoint.yaw,
+                angle_deg=self._zigzag_angle_deg,
+                leg_length_m=self._zigzag_leg_length_m,
+                min_distance_m=self._zigzag_min_distance_m,
+            )
+        except ValueError as error:
+            # 잘못된 파라미터는 설정 실수다. 주행을 막지 않고 직선으로 간다.
+            self._logger.warning(f"Zigzag parameters are invalid: {error}")
+            return []
+
+        # 목표 하나뿐이면 지그재그가 아니다 — 평소 경로로 보내는 편이
+        # NavigateToPose 한 번으로 끝나 더 단순하다.
+        if len(path) <= 1:
+            return []
+
+        return [
+            self._create_pose_stamped(pose.x, pose.y, pose.yaw)
+            for pose in path
+        ]
+
+    def _current_pose(self) -> tuple[float, float] | None:
+        """TF map->base_link 로 현재 위치를 읽는다. 못 얻으면 None.
+
+        /amcl_pose 구독이 아니라 TF 를 쓰는 이유: AMCL 은 갱신 임계값을 넘을
+        때만 pose 를 발행하므로 로봇이 서 있는 동안에는 한참 조용할 수 있다.
+        반면 map->odom(AMCL)과 odom->base_link(EKF) 변환은 계속 발행되므로
+        멈춰 있어도 언제나 읽힌다.
+        """
+        deadline = time.monotonic() + _POSE_LOOKUP_TIMEOUT_SECONDS
+        while time.monotonic() < deadline:
+            try:
+                transform = self._tf_buffer.lookup_transform(
+                    self._frame_id, self._base_frame_id, Time())
+            except Exception:  # noqa: BLE001 - TF 미준비는 정상 상황이다
+                # 버퍼를 채우려면 spin 해야 한다. 여기서 도는 executor 는
+                # 드라이버 전용이라 상위 노드와 부딪히지 않는다.
+                self._executor.spin_once(
+                    timeout_sec=_SPIN_ONCE_TIMEOUT_SECONDS)
+                continue
+            translation = transform.transform.translation
+            return (translation.x, translation.y)
+
+        # 원인은 호출자가 경고로 남긴다 — 여기서 또 남기면 2초 동안 쌓인
+        # 같은 실패가 로그를 덮는다.
+        return None
 
     def _spin_until_complete(self, future: Any, deadline: float) -> bool:
         """남은 시간 동안 전용 executor를 spin하며 future 완료를 기다린다.
@@ -340,13 +481,20 @@ class Nav2RobotDriver(RobotDriver):
         core의 nav2_waypoint_patrol과 같은 방식으로 frame_id, 현재 시각, x, y,
         yaw->quaternion 변환을 채운다.
         """
+        return self._create_pose_stamped(
+            waypoint.x, waypoint.y, waypoint.yaw)
+
+    def _create_pose_stamped(
+        self, x: float, y: float, yaw: float
+    ) -> PoseStamped:
+        """좌표 셋을 Nav2 PoseStamped로 채운다(경유점·목표 공용)."""
         pose = PoseStamped()
         pose.header.frame_id = self._frame_id
         pose.header.stamp = self._navigation_node.get_clock().now().to_msg()
-        pose.pose.position.x = waypoint.x
-        pose.pose.position.y = waypoint.y
+        pose.pose.position.x = x
+        pose.pose.position.y = y
 
-        qx, qy, qz, qw = yaw_to_quaternion(waypoint.yaw)
+        qx, qy, qz, qw = yaw_to_quaternion(yaw)
         pose.pose.orientation.x = qx
         pose.pose.orientation.y = qy
         pose.pose.orientation.z = qz
@@ -371,6 +519,12 @@ def create_nav2_robot_driver(
     action_name: str = "navigate_to_pose",
     frame_id: str = "map",
     goal_timeout_seconds: float = DEFAULT_GOAL_TIMEOUT_SECONDS,
+    through_poses_action_name: str = "navigate_through_poses",
+    base_frame_id: str = "base_link",
+    zigzag_enabled: bool = False,
+    zigzag_angle_deg: float = DEFAULT_ZIGZAG_ANGLE_DEG,
+    zigzag_leg_length_m: float = DEFAULT_ZIGZAG_LEG_LENGTH_M,
+    zigzag_min_distance_m: float = DEFAULT_ZIGZAG_MIN_DISTANCE_M,
 ) -> Nav2RobotDriver:
     """실제 ROS 2 객체를 만들어 Nav2RobotDriver를 구성하는 팩터리.
 
@@ -392,6 +546,20 @@ def create_nav2_robot_driver(
     executor = SingleThreadedExecutor()
     executor.add_node(navigation_node)
 
+    # 지그재그를 쓸 때만 필요한 자원이다. 꺼져 있으면 만들지 않는다 — 액션
+    # 클라이언트와 TF 리스너는 각각 구독을 열므로, 안 쓰는 기능이 토픽
+    # 그래프에 나타나 있으면 실기에서 원인을 찾을 때 혼란만 준다.
+    through_poses_client = None
+    tf_buffer = None
+    if zigzag_enabled:
+        through_poses_client = ActionClient(
+            navigation_node, NavigateThroughPoses, through_poses_action_name)
+        tf_buffer = Buffer()
+        # TransformListener 는 생성만으로 navigation_node 에 구독을 건다.
+        # 참조를 노드에 붙여 두지 않으면 GC 되어 버퍼가 채워지지 않는다.
+        navigation_node._bomi_tf_listener = TransformListener(  # noqa: SLF001
+            tf_buffer, navigation_node, spin_thread=False)
+
     return Nav2RobotDriver(
         navigation_node=navigation_node,
         action_client=action_client,
@@ -399,4 +567,11 @@ def create_nav2_robot_driver(
         waypoint_file=resolved_waypoint_file,
         frame_id=frame_id,
         goal_timeout_seconds=goal_timeout_seconds,
+        through_poses_client=through_poses_client,
+        tf_buffer=tf_buffer,
+        base_frame_id=base_frame_id,
+        zigzag_enabled=zigzag_enabled,
+        zigzag_angle_deg=zigzag_angle_deg,
+        zigzag_leg_length_m=zigzag_leg_length_m,
+        zigzag_min_distance_m=zigzag_min_distance_m,
     )
