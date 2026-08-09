@@ -44,6 +44,8 @@ from bomi_ai_chat.backend_client.fact_contract import to_intake_payload
 from bomi_ai_chat.backend_client.session import build_backend_session
 from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.http import (
+    AUTH_FAILURE_STATUS_CODES,
+    RETRYABLE_STATUS_CODES,
     ExternalServiceError,
     is_auth_failure,
     request_with_retry,
@@ -58,7 +60,45 @@ class FactSubmissionError(RuntimeError):
     누가 잡는가
         jobs.ticks.extraction_flush. 잡으면 그 큐 행을 extracted=1 로 표시하지
         '않고' 다음 flush 로 넘긴다 — 재시도가 이 예외의 존재 이유다.
+
+    permanent
+        재시도해도 결과가 달라지지 않는 실패인가 (S15P11E102-393). True 면
+        호출부가 그 행을 포기로 닫는다(extraction.mark_given_up). 판정은
+        is_permanent_rejection 이 하고, 기본값 False 는 "모르면 재시도" 다 —
+        틀린 쪽으로 기울 때 기억을 잃지 않는 방향이다.
     """
+
+    def __init__(self, message: str, *, permanent: bool = False) -> None:
+        super().__init__(message)
+        self.permanent = permanent
+
+
+def is_permanent_rejection(error: BaseException) -> bool:
+    """서버가 "이 요청 자체가 틀렸다"고 답했는가.
+
+    무엇이 영구 실패인가
+        4xx 중 401/403(인증)과 429(과부하)를 뺀 것. 남는 것은 400·404·409·422
+        처럼 요청의 내용이 틀렸다는 답이고, 같은 내용을 다시 보내면 같은 답이
+        온다. 실제로 밟은 경로: 리허설 사이에 서버 DB 를 초기화하면 로컬 큐에
+        남은 행의 conversationId 가 서버에 없어 영원히 400 을 받는다.
+
+    왜 401/403 은 빼는가
+        시크릿 설정 오류는 사람이 고치면 그날 안에 낫는다. 그 사이 쌓인 기억을
+        버리면 고쳐도 돌아오지 않는다. 재시도 쪽에 남긴다(http.is_auth_failure
+        가 이미 이 실패를 시끄럽게 로그로 남긴다).
+
+    왜 5xx·네트워크는 빼는가
+        서버가 돌아오면 그대로 성공할 요청이다. 포기할 이유가 없다.
+    """
+    if not isinstance(error, ExternalServiceError):
+        return False
+    status = error.status_code
+    if status is None or not (400 <= status < 500):
+        return False
+    return (
+        status not in AUTH_FAILURE_STATUS_CODES
+        and status not in RETRYABLE_STATUS_CODES
+    )
 
 
 class BackendFactClient:
@@ -85,6 +125,7 @@ class BackendFactClient:
         source_message_id: str | None,
         facts: list[dict[str, Any]],
         now_local: datetime | None = None,
+        utterance: str | None = None,
     ) -> None:
         """추출된 사실을 백엔드에 올린다. 실패하면 FactSubmissionError 를 올린다.
 
@@ -99,6 +140,9 @@ class BackendFactClient:
                 형태(추출 프롬프트의 어휘). 서버 계약으로의 변환은
                 fact_contract.to_intake_payload 가 맡는다. 빈 리스트면 아무것도
                 하지 않는다 — 호출할 이유가 없다.
+            utterance: 이 사실들이 나온 어르신 발화 **원문**. 약속의 요일 검산에만
+                쓴다(fact_contract._appointment_starts_at). 모델이 만든 content 가
+                아니라 원문이어야 채점이 성립한다.
 
         왜 max_attempts 를 설정값 그대로 쓰는가(conversation_client 와 다르게
         max_attempts=1 로 낮추지 않는가)
@@ -116,6 +160,7 @@ class BackendFactClient:
                 conversation_id=conversation_id,
                 source_message_id=source_message_id,
                 now_local=now_local,
+                utterance=utterance,
             )
             try:
                 request_with_retry(
@@ -140,7 +185,10 @@ class BackendFactClient:
                         error.status_code,
                     )
                 raise FactSubmissionError(
-                    f"fact candidate submission failed: {error}"
+                    f"fact candidate submission failed: {error}",
+                    # 400 처럼 "요청이 틀렸다"는 답은 재시도가 의미 없다. 호출부가
+                    # 그 행을 포기로 닫아야 뒤에 쌓인 발화가 흐른다 (S15P11E102-393).
+                    permanent=is_permanent_rejection(error),
                 ) from error
 
     def cancel_conversation(self, senior_id: str, conversation_id: str) -> None:

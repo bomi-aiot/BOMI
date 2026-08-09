@@ -486,6 +486,7 @@ def run_conversation_loop(
                     turns, end_reason = _run_backend_conversation(
                         runtime, audio_in, stt, turns, max_turns, pending)
                     _publish_conversation_ended(runtime, pending, end_reason)
+                    _flush_extraction_after_conversation(runtime)
                     continue
 
                 # 감지 사실을 백엔드에 알린다 (S15P11E102-349). paho 의 publish 는
@@ -532,6 +533,7 @@ def run_conversation_loop(
                 if runtime.search_signal is not None:
                     runtime.search_signal.send_stop(
                         f"conversation_ended:{_end_reason}")
+                _flush_extraction_after_conversation(runtime)
             else:
                 # 웨이크워드 없음(팀원 기본): 매 발화를 그냥 처리한다.
                 text, duration, _ = _listen(audio_in, stt)
@@ -917,6 +919,35 @@ def _run_homecoming_follow_ambient_phase(runtime, audio_in, stt, turns: int):
     )
     _wait_for_playback(runtime.echo_guard)
     return turns + 1, "homecoming_follow_complete"
+
+
+def _flush_extraction_after_conversation(runtime) -> None:
+    """대화가 끝났으니 추출 큐를 바로 한 번 비운다 (S15P11E102-393).
+
+    왜 여기인가
+        방금 나눈 이야기에서 뽑을 사실이 큐에 들어 있는 순간이다. 이 호출이
+        없으면 다음 스케줄러 틱까지 최대 policy.EXTRACTION_FLUSH_INTERVAL_SEC
+        (60초)를 기다린다 — 어르신이 말한 약속이 보호자 화면에 뜨는 시각이
+        그만큼 늦는다.
+
+    왜 결과를 기다리지 않는가
+        flush 는 대기 행마다 LLM 을 부른다. 여기서 기다리면 그 시간 동안
+        웨이크워드 대기가 열리지 않아 로봇이 "보미야"에 반응하지 못한다.
+        스케줄러의 다음 실행 시각을 '지금'으로 당기기만 하고 즉시 돌아온다 —
+        실제 실행은 스케줄러 워커 스레드가 한다.
+
+    주의사항
+        스케줄러가 없으면(시작 실패, 테스트) 아무 일도 일어나지 않는다. 실패해도
+        대화 루프를 죽이지 않는다 — 큐 행은 그대로 남아 다음 틱이 다시 집으므로
+        여기서의 실패는 "조금 늦어진다" 이상이 아니다.
+    """
+    try:
+        from bomi_ai_chat.jobs.scheduler import run_extraction_flush_now
+
+        run_extraction_flush_now(getattr(runtime, "scheduler", None))
+    except Exception:  # noqa: BLE001 - 추출은 부가 기능, 대화 루프가 본체다
+        logger.warning("could not bring the post-conversation extraction flush forward",
+                       exc_info=True)
 
 
 def _publish_conversation_ended(runtime, command, end_reason: str) -> None:
