@@ -66,14 +66,17 @@ class ScriptedLLM:
 class RecordingFactClient:
     """제출된 사실을 순서대로 모은다. 지정한 senior_id 에서는 실패한다."""
 
-    def __init__(self, *, fail_for: set[str] | None = None):
+    def __init__(self, *, fail_for: set[str] | None = None, permanent: bool = False):
         self.submissions = []
         self.fail_for = fail_for or set()
+        # 영구 거부(4xx)인가. 참이면 호출부가 재시도를 포기하고 행을 닫아야 한다.
+        self.permanent = permanent
 
     def submit_fact_candidates(self, senior_id, *, conversation_id, source_message_id,
                                facts, now_local=None, utterance=None):
         if senior_id in self.fail_for:
-            raise FactSubmissionError("backend rejected the batch")
+            raise FactSubmissionError(
+                "backend rejected the batch", permanent=self.permanent)
         self.submissions.append({
             "senior_id": senior_id,
             "conversation_id": conversation_id,
@@ -489,3 +492,37 @@ def test_extraction_flush_runs_inside_run_all_ticks_once(monkeypatch, frozen_clo
     scheduler_module.run_all_ticks_once(SENIOR)
 
     assert calls == [SENIOR]
+
+
+# ── 영구 거부는 큐를 막지 않는다 (2026-08-10) ────────────────────────────────
+
+
+def test_a_permanent_rejection_closes_the_job_instead_of_retrying(frozen_clock):
+    """4xx 는 다시 보내도 같다 — 그 행을 닫는다.
+
+    실제로 밟은 사고: 뷰어의 삭제 버튼이 서버의 conversation 을 지우자, 그 대화를
+    참조하는 큐 행이 매번 400 "unknown conversationId" 를 받았다. 그 대화는 돌아오지
+    않으므로 재시도는 영원히 실패하면서 큐를 막고 LLM 호출만 계속 썼다.
+    """
+    frozen_clock(start=1_700_000_000.0)
+    _enqueue()
+    llm = ScriptedLLM(['[{"factType": "FAMILY", "content": "손자가 자주 놀러 온다."}]'])
+    fact_client = RecordingFactClient(fail_for={SENIOR}, permanent=True)
+
+    result = ticks.extraction_flush(SENIOR, llm=llm, fact_client=fact_client)
+
+    assert result == {"processed": 0, "submitted": 0, "failed": 0, "given_up": 1}
+    assert extraction.pending_count(SENIOR) == 0, "영구 거부된 행이 큐에 남으면 안 된다"
+
+
+def test_a_temporary_failure_still_stays_in_the_queue(frozen_clock):
+    """5xx·네트워크 실패는 기다리면 되므로 예전처럼 남긴다 — 둘을 섞으면 안 된다."""
+    frozen_clock(start=1_700_000_000.0)
+    _enqueue()
+    llm = ScriptedLLM(['[{"factType": "FAMILY", "content": "손자가 자주 놀러 온다."}]'])
+    fact_client = RecordingFactClient(fail_for={SENIOR}, permanent=False)
+
+    result = ticks.extraction_flush(SENIOR, llm=llm, fact_client=fact_client)
+
+    assert result == {"processed": 0, "submitted": 0, "failed": 1, "given_up": 0}
+    assert extraction.pending_count(SENIOR) == 1

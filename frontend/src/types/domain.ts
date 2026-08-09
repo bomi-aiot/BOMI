@@ -526,6 +526,12 @@ export interface ConfirmationRequest {
   riskLevel: RiskLevel;
   coordinationStatus: CoordinationStatus;
   source: InformationSource;
+  /**
+   * 이 말이 어디서 나왔는가. 카드가 "언제 어디서 들은 말인지"를 한 줄로 말하는 데 쓴다.
+   * 서버 sourceType(CONVERSATION_MESSAGE / ONBOARDING_ANSWER)을 그대로 옮긴 값이라,
+   * 모르면 undefined 로 두고 화면은 출처를 아예 말하지 않는다 — 지어내지 않는다.
+   */
+  origin?: "CONVERSATION" | "ONBOARDING";
   sourceConversationId?: string;
   sourceMessageId?: string;
   createdAt: string;
@@ -592,7 +598,15 @@ export interface MedicationProgress {
   missed: number;
 }
 
+/** 지금 이 화면을 보는 보호자. 연결된 보호자가 없으면 undefined. */
+export interface GuardianSummary {
+  id: string;
+  name: string;
+  priority: "PRIMARY" | "SECONDARY";
+}
+
 export interface HomeDashboardSummary {
+  guardian?: GuardianSummary;
   elder: {
     id: string;
     displayName: string;

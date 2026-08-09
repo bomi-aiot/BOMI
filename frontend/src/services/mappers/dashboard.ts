@@ -1,5 +1,6 @@
 import type {
   ActivitySummary,
+  GuardianSummary,
   HomeDashboardSummary,
   InformationSource,
   MedicationProgress,
@@ -75,8 +76,15 @@ interface DashboardActivityDto {
   visibility?: string | null
 }
 
+interface DashboardGuardianDto {
+  id?: string | null
+  name?: string | null
+  priority?: string | null
+}
+
 export interface DashboardDto {
   elder: DashboardElderDto
+  guardian?: DashboardGuardianDto | null
   robot: DashboardRobotDto
   homeEnvironment: DashboardEnvDto
   todayIncidentCount?: number | null
@@ -293,6 +301,20 @@ function latestObservedAt(values: Array<string | undefined>): string | undefined
     .sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0]
 }
 
+// 이름이 비어 오면 보호자 정보 자체를 없는 것으로 본다 — 빈 이름표를 띄우느니
+// 헤더가 그 자리를 비우는 편이 정직하다.
+function mapGuardian(
+  dto: DashboardGuardianDto | null | undefined,
+): GuardianSummary | undefined {
+  const name = dto?.name?.trim()
+  if (!dto?.id || !name) return undefined
+  return {
+    id: dto.id,
+    name,
+    priority: dto.priority === 'SECONDARY' ? 'SECONDARY' : 'PRIMARY',
+  }
+}
+
 export function mapDashboard(dto: DashboardDto): HomeDashboardSummary {
   const elderId = dto.elder.id
   const activityDtos = dto.recentActivities ?? []
@@ -312,6 +334,7 @@ export function mapDashboard(dto: DashboardDto): HomeDashboardSummary {
   const robot = mapRobot(dto.robot)
 
   return {
+    guardian: mapGuardian(dto.guardian),
     elder: {
       id: elderId,
       displayName: dto.elder.displayName?.trim() || '어르신',
