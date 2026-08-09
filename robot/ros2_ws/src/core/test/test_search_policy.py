@@ -300,8 +300,9 @@ def test_local_search_is_skipped_entirely_without_a_hint() -> None:
 def test_resume_after_lost_never_repeats_the_local_search() -> None:
     policy = WakeSearchPolicy(_config())
     policy.start(0.0, 0.0, hint_deg=90.0)
-    # 힌트 도착 직후 바로 찾았다 — 지그재그를 한 번도 안 썼다.
-    policy.update(0.1, math.radians(90.0), person_visible=True)
+    # 힌트 회전을 마친 뒤(OBSERVE) 바로 찾았다 — 지그재그를 한 번도 안 썼다.
+    policy.update(0.1, math.radians(90.0), person_visible=False)
+    policy.update(0.2, math.radians(90.0), person_visible=True)
 
     decision = policy.resume_after_lost(0.2, math.radians(90.0))
 
@@ -312,8 +313,9 @@ def test_resume_after_lost_never_repeats_the_local_search() -> None:
 
 
 def test_person_found_stops_rotation_and_enables_follow() -> None:
+    # 힌트 회전 중에는 사람을 인정하지 않으므로, 힌트 없이 시작해 확인한다.
     policy = WakeSearchPolicy(_config())
-    policy.start(0.0, 0.0, hint_deg=90.0)
+    policy.start(0.0, 0.0)
 
     decision = policy.update(0.1, math.radians(30.0), person_visible=True)
 
@@ -501,3 +503,25 @@ def test_update_rejects_non_finite_yaw() -> None:
     policy.start(0.0, 0.0)
     with pytest.raises(ValueError):
         policy.update(0.1, float("nan"), person_visible=False)
+
+
+def test_person_in_view_is_ignored_while_turning_to_the_hint() -> None:
+    """★ 부른 사람은 힌트 방향에 있다 — 정면의 다른 사람에게 가면 안 된다."""
+    policy = WakeSearchPolicy(_config())
+    policy.start(0.0, 0.0, hint_deg=90.0)
+
+    turning = policy.update(0.1, math.radians(10.0), person_visible=True)
+
+    assert turning.state is SearchState.TURN_TO_HINT
+    assert turning.angular_z != 0.0
+
+
+def test_person_is_accepted_once_the_hint_turn_is_done() -> None:
+    policy = WakeSearchPolicy(_config())
+    policy.start(0.0, 0.0, hint_deg=90.0)
+    policy.update(0.1, math.radians(89.0), person_visible=False)  # -> OBSERVE
+
+    found = policy.update(0.2, math.radians(89.0), person_visible=True)
+
+    assert found.state is SearchState.FOLLOWING
+    assert found.follow_enable is True
