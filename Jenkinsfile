@@ -45,7 +45,7 @@ pipeline {
                     docker compose \
                       --env-file "$BOMI_ENV_FILE" \
                       -f "$BOMI_COMPOSE_FILE" \
-                      build backend frontend
+                      build backend operator-console waypoint-editor frontend
                 '''
             }
         }
