@@ -12,6 +12,7 @@ import com.ssafy.bomi.fact.web.FactCandidateMapper;
 import com.ssafy.bomi.guardian.dto.DashboardResponse;
 import com.ssafy.bomi.guardian.dto.DashboardResponse.ActivityDto;
 import com.ssafy.bomi.guardian.dto.DashboardResponse.ElderDto;
+import com.ssafy.bomi.guardian.dto.DashboardResponse.GuardianDto;
 import com.ssafy.bomi.guardian.dto.DashboardResponse.HomeEnvironmentDto;
 import com.ssafy.bomi.guardian.dto.DashboardResponse.MedicationProgressDto;
 import com.ssafy.bomi.guardian.dto.DashboardResponse.MedicationResponseDto;
@@ -21,8 +22,12 @@ import com.ssafy.bomi.memory.domain.Memory;
 import com.ssafy.bomi.memory.domain.MemoryLifecycleStatus;
 import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
+import com.ssafy.bomi.relationship.domain.RelationshipPriority;
+import com.ssafy.bomi.relationship.domain.RelationshipStatus;
+import com.ssafy.bomi.relationship.repository.CareRelationshipRepository;
 import com.ssafy.bomi.robot.domain.Robot;
 import com.ssafy.bomi.robot.repository.RobotRepository;
+import com.ssafy.bomi.scenario.config.MedicationReminderProperties;
 import com.ssafy.bomi.scenario.domain.Scenario;
 import com.ssafy.bomi.scenario.domain.ScenarioStatus;
 import com.ssafy.bomi.scenario.repository.ScenarioRepository;
@@ -42,6 +47,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -80,6 +86,13 @@ public class DashboardService {
     private static final Set<MemoryVisibility> GUARDIAN_VISIBLE_MEMORY_VISIBILITIES =
         EnumSet.of(MemoryVisibility.SHARED_WITH_PRIMARY, MemoryVisibility.SHARED_WITH_GUARDIANS);
 
+    /**
+     * 활동 피드에 싣는 "덜 급한" 항목(기억·T2 알림)의 상한.
+     *
+     * <p>위급(T1)에는 걸지 않는다 — {@link #buildActivities} 참고.</p>
+     */
+    private static final int ACTIVITY_LIMIT = 5;
+
     /** 확인요청 목록에 노출할 대기 계열 상태. (P0 필드매핑 A-3) */
     private static final List<FactCandidateStatus> PENDING_STATUSES = List.of(
             FactCandidateStatus.NEEDS_CONFIRMATION,
@@ -108,6 +121,18 @@ public class DashboardService {
     private final ScenarioRepository scenarioRepository;
     private final FactCandidateMapper factCandidateMapper;
 
+    private final CareRelationshipRepository careRelationshipRepository;
+
+    /**
+     * 복약 알림 창 설정.
+     *
+     * <p>읽기 전용 조회 서비스가 시나리오 설정을 참조하는 것이 어색해 보이지만, 그것이
+     * 정확히 이 값의 성격이다 — "보호자 화면이 이 슬롯을 놓쳤다고 말해도 되는 시각"은
+     * "로봇이 더는 묻지 않는 시각"과 같아야 한다. 이 숫자를 읽기 모델에 따로 적어 두면
+     * 한쪽만 바뀌는 날 화면과 로봇의 말이 조용히 어긋난다.</p>
+     */
+    private final MedicationReminderProperties medicationReminderProperties;
+
     public DashboardService(
             AppUserRepository appUserRepository,
             RobotRepository robotRepository,
@@ -115,7 +140,9 @@ public class DashboardService {
             FactCandidateRepository factCandidateRepository,
             MemoryRepository memoryRepository,
             ScenarioRepository scenarioRepository,
-            FactCandidateMapper factCandidateMapper) {
+            FactCandidateMapper factCandidateMapper,
+            CareRelationshipRepository careRelationshipRepository,
+            MedicationReminderProperties medicationReminderProperties) {
         this.appUserRepository = appUserRepository;
         this.robotRepository = robotRepository;
         this.careRecordRepository = careRecordRepository;
@@ -123,6 +150,8 @@ public class DashboardService {
         this.memoryRepository = memoryRepository;
         this.scenarioRepository = scenarioRepository;
         this.factCandidateMapper = factCandidateMapper;
+        this.careRelationshipRepository = careRelationshipRepository;
+        this.medicationReminderProperties = medicationReminderProperties;
     }
 
     @Transactional(readOnly = true)
@@ -155,9 +184,10 @@ public class DashboardService {
 
         return new DashboardResponse(
                 elder,
+                primaryGuardian(seniorId),
                 toRobotDto(robot, seniorId),
                 toEnvironmentDto(robot),
-                confirmations.size(),
+                countTodayIncidents(records, today),
                 schedules,
                 medicationResponses,
                 progress,
@@ -256,7 +286,19 @@ public class DashboardService {
                     str(td, "responseText"));
         }
         // 응답 없음: 시각 상대 상태(FE도 동일 규칙으로 재파생).
-        String status = scheduledAt.isAfter(now) ? "UPCOMING" : "MISSED";
+        //
+        // ★ 예정 시각을 1분 지났다고 곧바로 '놓침'이 아니다.
+        //   로봇의 알림 창은 [예정 - reminderLeadMinutes, 예정 + graceMinutes) 이고
+        //   (MedicationReminderScheduler.remindIfDue), 그 안에서는 아직 어르신께 묻는
+        //   중이거나 곧 물어본다. 그 시간에 보호자 화면이 경고색으로 "아직 응답이
+        //   확인되지 않았어요" 를 띄우면, 정상 진행을 실패로 읽게 만든다 — 매일 뜨는
+        //   거짓 경고는 진짜 경고까지 같이 죽인다.
+        //
+        //   graceMinutes 를 여기에 숫자로 다시 적지 않고 스케줄러와 같은 설정을 읽는다.
+        //   두 곳에 15를 적어 두면 한쪽만 바뀌는 날 조용히 어긋난다.
+        OffsetDateTime reminderWindowEnd =
+                scheduledAt.plusMinutes(medicationReminderProperties.getGraceMinutes());
+        String status = now.isBefore(reminderWindowEnd) ? "UPCOMING" : "MISSED";
         String responseText = medicationName == null ? null : medicationName + " 복약 알림";
         return new MedicationResponseDto(id, medicationId, scheduleId, iso(scheduledAt), null, status, responseText);
     }
@@ -300,7 +342,7 @@ public class DashboardService {
     // 티켓이 요약을 실제로 채우기 시작하면 그 우연이 사라진다.
 
     private List<ActivityDto> buildActivities(UUID seniorId) {
-        record Timed(ActivityDto dto, OffsetDateTime at) {
+        record Timed(ActivityDto dto, OffsetDateTime at, boolean urgent) {
         }
         List<Timed> merged = new ArrayList<>();
 
@@ -309,7 +351,7 @@ public class DashboardService {
         // 경로가 이것이었다. 씨앗이 2건뿐이던 지금까지는 우연히 조용했을 뿐이다.
         for (Memory m : memoryRepository.findVisibleToGuardianBySeniorIdAndLifecycleStatus(
                 seniorId, MemoryLifecycleStatus.ACTIVE, GUARDIAN_VISIBLE_MEMORY_VISIBILITIES,
-                PageRequest.of(0, 5))) {
+                PageRequest.of(0, ACTIVITY_LIMIT))) {
             merged.add(new Timed(
                     new ActivityDto(
                             m.getId().toString(),
@@ -319,7 +361,8 @@ public class DashboardService {
                             "AI",
                             "NORMAL",
                             m.getVisibility() == null ? null : m.getVisibility().name()),
-                    m.getFirstObservedAt()));
+                    m.getFirstObservedAt(),
+                    false));
         }
 
         // 로봇이 올린 알림. T1 과 T2 가 화면에서 구분되어야 한다 (S15P11E102-211).
@@ -398,12 +441,36 @@ public class DashboardService {
                             // 보호자에게 보내려고 만든 기록이다. memory 처럼 건별 공개범위
                             // 컬럼이 없으므로 여기서 그 사실을 명시한다.
                             "SHARED_WITH_PRIMARY"),
-                    at));
+                    at,
+                    tier == NotificationTier.T1));
         }
 
-        return merged.stream()
-                .sorted(Comparator.comparing(Timed::at, Comparator.nullsLast(Comparator.reverseOrder())))
-                .limit(5)
+        // ★ T1(위급)은 상한에 걸려 사라지지 않는다.
+        //
+        //   이전에는 기억과 알림을 한 줄에 세워 시간순 5건으로 잘랐다. 그러면 위급
+        //   알림보다 새로운 기억이 다섯 건만 쌓여도 그 알림이 응답에서 통째로 빠진다.
+        //   가디언웹은 이 피드 안의 URGENT 만 보고 안전 알림을 그리므로(FE
+        //   mappers/dashboard.ts), 화면은 "지금 확인이 필요한 일은 없어요" 로 돌아가고
+        //   새 알림 토스트도 뜨지 않는다. 게다가 한 번 밀려난 알림은 기억이 더 쌓일수록
+        //   영영 돌아오지 않는다 — 조용히, 되돌릴 수 없이 알림을 잃는 경로였다.
+        //   (실서버에서 이미 그 상태였다: 피드 5칸이 전부 기억이었다.)
+        //
+        //   그래서 상한은 "덜 급한 것"에만 건다. 위급이 여섯 건이면 여섯 건 다 나가고
+        //   피드가 잠깐 길어지는 편이, 여섯 번째를 안 보여 주는 것보다 낫다.
+        //
+        //   T2 는 여기서 보호하지 않는다 — 위의 사유별 최신 1건 접기가 이미 그쪽의
+        //   폭주(door_node_offline 여덟 건)를 막고 있고, T2 는 놓쳐도 되돌릴 수 있다.
+        Comparator<Timed> newestFirst =
+                Comparator.comparing(Timed::at, Comparator.nullsLast(Comparator.reverseOrder()));
+        List<Timed> urgent = merged.stream().filter(Timed::urgent).toList();
+        List<Timed> rest = merged.stream()
+                .filter(timed -> !timed.urgent())
+                .sorted(newestFirst)
+                .limit(Math.max(0, ACTIVITY_LIMIT - urgent.size()))
+                .toList();
+
+        return Stream.concat(urgent.stream(), rest.stream())
+                .sorted(newestFirst)
                 .map(Timed::dto)
                 .toList();
     }
@@ -459,6 +526,28 @@ public class DashboardService {
     }
 
     // --- 공통 유틸 ---------------------------------------------------------
+
+    /**
+     * 이 어르신의 1차 보호자.
+     *
+     * <p>이미 있는 조회를 그대로 쓴다 — T1 알림·일일 요약이 "받을 사람"을 찾을 때 쓰는
+     * 바로 그 관계다(CareRelationshipRepository). 화면 상단에 띄우는 이름이 알림을 받는
+     * 사람과 다르면, 보호자는 자기가 받는 줄 알고 안 오는 알림을 기다리게 된다.</p>
+     *
+     * <p>연결된 보호자가 없거나 그 계정을 못 찾으면 null 이다. 온보딩 중인 어르신에게
+     * 실제로 있는 상태이고, 화면은 이름 자리를 비우는 것으로 그 사실을 말한다.</p>
+     */
+    private GuardianDto primaryGuardian(UUID seniorId) {
+        return careRelationshipRepository
+                .findFirstBySeniorIdAndPriorityAndStatus(
+                        seniorId, RelationshipPriority.PRIMARY, RelationshipStatus.ACTIVE)
+                .flatMap(relationship -> appUserRepository.findById(relationship.getGuardianId())
+                        .map(guardian -> new GuardianDto(
+                                guardian.getId().toString(),
+                                displayName(guardian),
+                                RelationshipPriority.PRIMARY.name())))
+                .orElse(null);
+    }
 
     private static String displayName(AppUser user) {
         return user.getPreferredName() != null ? user.getPreferredName() : user.getName();
@@ -518,6 +607,31 @@ public class DashboardService {
      */
     private static OffsetDateTime alertTime(CareRecord alert) {
         return alert.getOccurredAt();
+    }
+
+    /**
+     * 오늘 올라온 보호자 알림(T1+T2) 건수.
+     *
+     * <p>이 자리에는 {@code confirmations.size()} 가 들어 있었다 — 바로 아래
+     * {@code pendingConfirmationCount} 와 <b>같은 값</b>을 "오늘 이상 징후"라는 이름으로
+     * 내보내고 있었다는 뜻이다. 지금은 화면이 이 필드를 읽지 않아 아무 증상이 없지만,
+     * 이름을 믿고 쓰는 사람이 나오는 날 조용히 틀린다. 값이 이름을 배신하는 필드는
+     * 없는 필드보다 나쁘다 — 틀렸다는 사실조차 눈에 띄지 않기 때문이다.</p>
+     *
+     * <p>세는 축을 알림으로 잡는 이유는, 보호자가 "오늘 무슨 일이 있었나"를 물을 때
+     * 답이 되는 것이 확인 대기 건수가 아니라 로봇이 올린 알림이기 때문이다. 여기서는
+     * 등급을 나누지 않는다 — 등급별 표시는 안전 알림 카드와 활동 피드가 이미 한다.</p>
+     */
+    private static int countTodayIncidents(List<CareRecord> records, LocalDate today) {
+        return (int) records.stream()
+                .filter(r -> GUARDIAN_ALERT_TYPE.equals(r.getRecordType()))
+                .filter(r -> r.getStatus() == CareRecordStatus.ACTIVE)
+                .filter(r -> {
+                    OffsetDateTime at = alertTime(r);
+                    // 시각을 모르는 기록은 "오늘"이라고 단정하지 않는다.
+                    return at != null && at.atZoneSameInstant(SEOUL).toLocalDate().equals(today);
+                })
+                .count();
     }
 
     /** 둘 중 어느 쪽이 더 최근인가. null 은 "모르는 시각"이라 이기지 못한다. */
