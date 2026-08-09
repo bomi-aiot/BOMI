@@ -44,6 +44,11 @@ from bridge.robot_driver import (
     MockRobotDriver,
     create_driver,
 )
+from bridge.zigzag import (
+    DEFAULT_ZIGZAG_ANGLE_DEG,
+    DEFAULT_ZIGZAG_LEG_LENGTH_M,
+    DEFAULT_ZIGZAG_MIN_DISTANCE_M,
+)
 from bridge.timed_drive_driver import (
     DEFAULT_DRIVE_DURATION_SEC,
     DEFAULT_LINEAR_SPEED,
@@ -110,6 +115,22 @@ class MqttBridgeNode(Node):
         self.declare_parameter("search_enabled", False)
         self.declare_parameter("search_start_topic", "/wake_search/start")
 
+        # 현관 지그재그 접근. 어르신을 반기러 나가는 걸음을 표현한다 —
+        # 직진 축 기준 좌우 zigzag_angle_deg 씩 번갈아 기운 경유 좌표를
+        # NavigateThroughPoses 로 넘기므로 회피·복구는 Nav2 가 그대로
+        # 담당한다(bridge/zigzag.py). 킬 스위치가 기본 꺼짐인 이유는
+        # approach·search 와 같다 — 실기에서 이상하면
+        # zigzag_enabled:=false 로 검증된 직선 주행으로 되돌린다.
+        self.declare_parameter("zigzag_enabled", False)
+        self.declare_parameter("zigzag_angle_deg", DEFAULT_ZIGZAG_ANGLE_DEG)
+        self.declare_parameter(
+            "zigzag_leg_length_m", DEFAULT_ZIGZAG_LEG_LENGTH_M)
+        self.declare_parameter(
+            "zigzag_min_distance_m", DEFAULT_ZIGZAG_MIN_DISTANCE_M)
+        self.declare_parameter(
+            "nav_through_poses_action_name", "navigate_through_poses")
+        self.declare_parameter("nav_base_frame_id", "base_link")
+
         robot_id = str(self.get_parameter("robot_id").value)
         host = str(self.get_parameter("broker_host").value)
         port = int(self.get_parameter("broker_port").value)
@@ -155,6 +176,18 @@ class MqttBridgeNode(Node):
         search_start_topic = str(
             self.get_parameter("search_start_topic").value)
 
+        zigzag_enabled = bool(self.get_parameter("zigzag_enabled").value)
+        zigzag_angle_deg = float(
+            self.get_parameter("zigzag_angle_deg").value)
+        zigzag_leg_length_m = float(
+            self.get_parameter("zigzag_leg_length_m").value)
+        zigzag_min_distance_m = float(
+            self.get_parameter("zigzag_min_distance_m").value)
+        nav_through_poses_action_name = str(
+            self.get_parameter("nav_through_poses_action_name").value)
+        nav_base_frame_id = str(
+            self.get_parameter("nav_base_frame_id").value)
+
         # timed 를 고른 경우에만 속도 발행자를 만든다. 다른 드라이버에서
         # /cmd_vel 발행자가 떠 있으면 혼동을 부른다.
         self._cmd_vel_publisher = None
@@ -172,6 +205,12 @@ class MqttBridgeNode(Node):
                 action_name=nav_action_name,
                 frame_id=nav_frame_id,
                 goal_timeout_seconds=goal_timeout_seconds,
+                through_poses_action_name=nav_through_poses_action_name,
+                base_frame_id=nav_base_frame_id,
+                zigzag_enabled=zigzag_enabled,
+                zigzag_angle_deg=zigzag_angle_deg,
+                zigzag_leg_length_m=zigzag_leg_length_m,
+                zigzag_min_distance_m=zigzag_min_distance_m,
             ),
             create_timed=lambda: TimedDriveRobotDriver(
                 self._publish_linear_velocity,
