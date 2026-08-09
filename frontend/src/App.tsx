@@ -62,12 +62,26 @@ function GuardianExperience({ pathname, navigate }: GuardianExperienceProps) {
     elderProfile,
     confirmationRequests,
     toast,
+    isLoading,
     isMockMode,
     apiBaseUrl,
     refresh,
     undoConfirmationRequest,
     clearToast,
   } = useBomi()
+
+  useEffect(() => {
+    if (isLoading) return
+
+    const section = ROUTE_SECTIONS[pathname]
+    if (!section) return
+
+    // 브라우저의 스크롤 복원은 첫 렌더의 scrollIntoView 뒤에
+    // 돌아올 수 있다. 데이터까지 그려진 뒤 다시 맞춰야 고정 헤더 뒤로
+    // 카드 상단이 숨지 않고, 확인 영역 전체가 한 화면에 들어온다.
+    const frame = window.requestAnimationFrame(() => scrollToSection(section))
+    return () => window.cancelAnimationFrame(frame)
+  }, [isLoading, pathname])
 
   const isEmergencyToast = toast?.tone === 'EMERGENCY'
 
