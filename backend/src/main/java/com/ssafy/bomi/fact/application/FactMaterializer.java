@@ -7,6 +7,7 @@ import com.ssafy.bomi.fact.domain.FactCandidate;
 import com.ssafy.bomi.fact.domain.FactTargetDomain;
 import com.ssafy.bomi.memory.domain.Memory;
 import com.ssafy.bomi.memory.domain.MemoryType;
+import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
 import java.time.OffsetDateTime;
 import java.util.Map;
@@ -88,8 +89,23 @@ public class FactMaterializer {
 
         FactTargetDomain domain = candidate.getTargetDomain();
         if (domain == FactTargetDomain.MEMORY) {
+            // ⚠️ 시연 임시 조치 (2026-08-10) — 되돌릴 것.
+            //
+            //   기본값은 PRIVATE 이고, 그것을 SHARED_WITH_PRIMARY 로 올리는 경로는
+            //   보호자 승인 하나뿐이다(ConfirmationRequestService). 그런데 위험도
+            //   NORMAL 인 사실은 자동 CONFIRMED 로 지나가 승인 요청 자체가 생기지
+            //   않는다(pendingConfirmationCount=0 으로 실측). 그래서 대화에서 뽑힌
+            //   기억은 만들어지자마자 PRIVATE 로 굳고, 대시보드의 4중 SHARED 필터에
+            //   걸려 보호자 화면에 영원히 나타나지 않는다.
+            //
+            //   시연은 "대화한 내용이 화면에 뜬다"를 보여야 하므로 여기서만 공유로
+            //   만든다. 이것은 T4 프라이버시 계약(CLAUDE.md §9)을 우회하는 것이다 —
+            //   어르신이 승인한 적 없는 대화 파생 내용이 보호자에게 자동 공개된다.
+            //   시연이 끝나면 이 커밋을 revert 한다. 제대로 된 해결은 승인 플로우를
+            //   태우거나(risk_level 상향) 보호자 화면에 승인 UI 를 붙이는 것이다.
             Memory memory = Memory.create(
-                candidate.getSeniorId(), memoryType(confirmedValue, recordType), memoryContent(confirmedValue));
+                candidate.getSeniorId(), memoryType(confirmedValue, recordType), memoryContent(confirmedValue),
+                MemoryVisibility.SHARED_WITH_PRIMARY);
             memory.attachSources(candidate.getConversationId(), null, candidate.getId());
             Memory saved = memoryRepository.save(memory);
             candidate.materialize(saved.getId());
