@@ -59,6 +59,7 @@ from std_msgs.msg import Bool, String
 # UDP 로 받는 메시지 타입.
 SIGNAL_WAKE = "wake"
 SIGNAL_STOP = "stop"
+SIGNAL_FOLLOW = "follow"
 
 # ai_vision 이 사람 한 명을 확정 추적 중일 때 보내는 status 값
 # (ai_vision/domain/tracking.py 의 TrackingResultStatus.TRACKING).
@@ -112,6 +113,9 @@ class WakeSearchNode(Node):
         self._cmd_vel_topic = self._string_param("cmd_vel_topic")
         self._follow_enable_topic = self._string_param("follow_enable_topic")
         self._follow_status_topic = self._string_param("follow_status_topic")
+        patrol_enable_topic = self._string_param("patrol_enable_topic")
+        self._enable_patrol_on_not_found = bool(
+            self.get_parameter("enable_patrol_on_not_found").value)
         odom_topic = self._string_param("odom_topic")
         vision_topic = self._string_param("vision_topic")
         start_topic = self._string_param("start_topic")
@@ -161,6 +165,8 @@ class WakeSearchNode(Node):
             Twist, self._cmd_vel_topic, 10)
         self._follow_publisher = self.create_publisher(
             Bool, self._follow_enable_topic, 10)
+        self._patrol_publisher = self.create_publisher(
+            Bool, patrol_enable_topic, 10)
 
         # ── 구독 ───────────────────────────────────────────────────────────
         self.create_subscription(Odometry, odom_topic, self._on_odom, 10)
@@ -201,6 +207,8 @@ class WakeSearchNode(Node):
             "follow_enable_topic", "/person_following/enable")
         self.declare_parameter(
             "follow_status_topic", "/person_following/status")
+        self.declare_parameter("patrol_enable_topic", "/person_search/enable")
+        self.declare_parameter("enable_patrol_on_not_found", False)
         self.declare_parameter("odom_topic", "/odom")
         self.declare_parameter("vision_topic", "/vision/follow_result")
         self.declare_parameter("start_topic", "/wake_search/start")
@@ -313,7 +321,10 @@ class WakeSearchNode(Node):
         if not isinstance(payload, dict):
             return
         if payload.get("reason") == "target_lost_timeout":
-            self._pending_resume = True
+            if self._policy.is_active:
+                self._pending_resume = True
+            else:
+                self._pending_start = True
         elif payload.get("state") == "arrived":
             self._pending_arrived = True
 
@@ -353,6 +364,10 @@ class WakeSearchNode(Node):
             return
 
         signal_type = payload.get("type")
+        if signal_type == SIGNAL_FOLLOW:
+            self._publish_follow_enable(True)
+            self.get_logger().info("UDP 직접 추종 신호를 받았습니다.")
+            return
         if signal_type == SIGNAL_STOP:
             reason = str(payload.get("reason") or "udp_stop")
             self._pending_stop_reason = reason
@@ -564,6 +579,16 @@ class WakeSearchNode(Node):
         if decision.finished:
             # 끝났으면 마지막으로 확실히 멈춘다.
             self._publish_angular(0.0)
+            if (
+                self._enable_patrol_on_not_found
+                and (
+                    "person_not_found" in decision.reason
+                    or "search_timeout" in decision.reason
+                )
+            ):
+                self.get_logger().info(
+                    "회전 탐색에서 사람을 찾지 못해 웨이포인트 순찰을 시작합니다.")
+                self._patrol_publisher.publish(Bool(data=True))
 
     def _publish_angular(self, angular_z: float) -> None:
         """각속도만 담은 Twist 를 발행한다. 상한으로 한 번 더 자른다."""

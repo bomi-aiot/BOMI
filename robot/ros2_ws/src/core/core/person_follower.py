@@ -147,6 +147,9 @@ class PersonFollower(Node):
             angular_speed=float(
                 self.get_parameter("angular_speed").value
             ),
+            turn_linear_ratio=float(
+                self.get_parameter("turn_linear_ratio").value
+            ),
             person_stop_distance_m=float(
                 self.get_parameter(
                     "person_stop_distance_m"
@@ -300,6 +303,10 @@ class PersonFollower(Node):
         self.declare_parameter(
             "angular_speed",
             0.5,
+        )
+        self.declare_parameter(
+            "turn_linear_ratio",
+            0.0,
         )
 
         self.declare_parameter(
@@ -485,10 +492,7 @@ class PersonFollower(Node):
                     self._front_obstacle_distance_m
                 )
 
-                if command == "move_forward":
-                    person_distance_m = (
-                        self._front_person_distance_m
-                    )
+                person_distance_m = self._front_person_distance_m
 
         velocity = self._controller.calculate_velocity(
             command=command,

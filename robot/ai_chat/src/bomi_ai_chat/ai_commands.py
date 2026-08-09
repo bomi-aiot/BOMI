@@ -36,8 +36,11 @@ CONVERSATION_STARTED 를 왜 여기서(수신 스레드) 바로 발행하는가
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import queue
+import time
 from collections import OrderedDict
 from json import dumps as _json_dumps
 
@@ -57,6 +60,77 @@ SEEN_COMMANDS_MAX = 64
 # 크게 잡으면 오래된(이미 의미 없어진) 명령이 뒤늦게 처리되는 쪽이 더 위험하다.
 QUEUE_MAX_SIZE = 4
 
+AMBIENT_EVENT_TYPE = "AMBIENT_ENVIRONMENT_OBSERVED"
+AMBIENT_TOPIC = "bomi/v1/iot/+/events"
+
+
+class HomecomingAmbientContext:
+    """귀가 인사에 사용할 최근 온습도 관측값을 보관한다."""
+
+    def __init__(self) -> None:
+        self.enabled = os.environ.get("HOMECOMING_AMBIENT_ENABLED", "false").lower() in (
+            "1", "true", "yes",
+        )
+        self.hot_threshold_c = float(os.environ.get("HOMECOMING_HOT_THRESHOLD_C", "30"))
+        self.max_age_sec = float(os.environ.get("HOMECOMING_AMBIENT_MAX_AGE_SEC", "90"))
+        self.temperature_c: float | None = None
+        self.humidity_percent: float | None = None
+        self.received_at: float | None = None
+
+        # 실물 센서 없이 대화만 확인할 때 사용하는 명시적 테스트 값이다.
+        test_temperature = os.environ.get("HOMECOMING_AMBIENT_TEST_TEMPERATURE_C")
+        if self.enabled and test_temperature:
+            self.temperature_c = float(test_temperature)
+            self.received_at = time.monotonic()
+
+    def handle_payload(self, raw: bytes | str) -> bool:
+        if not self.enabled:
+            return False
+        try:
+            body = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+            if body.get("type") != AMBIENT_EVENT_TYPE:
+                return False
+            payload = body.get("payload") or {}
+            temperature = payload.get("temperatureC")
+            humidity = payload.get("humidityPercent")
+            if temperature is None:
+                return False
+            self.temperature_c = float(temperature)
+            self.humidity_percent = float(humidity) if humidity is not None else None
+            self.received_at = time.monotonic()
+            logger.info(
+                "latest ambient context updated: temperature=%.1fC humidity=%s%%",
+                self.temperature_c, self.humidity_percent,
+            )
+            return True
+        except (TypeError, ValueError, json.JSONDecodeError):
+            logger.warning("dropping malformed ambient event for homecoming context")
+            return False
+
+    def conversation_text(self) -> str | None:
+        if (
+            not self.enabled
+            or self.temperature_c is None
+            or self.received_at is None
+            or time.monotonic() - self.received_at > self.max_age_sec
+        ):
+            return None
+
+        temperature = f"{self.temperature_c:g}"
+        humidity = (
+            f" 습도는 {self.humidity_percent:g}%예요."
+            if self.humidity_percent is not None else ""
+        )
+        if self.temperature_c >= self.hot_threshold_c:
+            return (
+                f"할머니, 지금 실내 온도가 {temperature}도로 조금 높아요."
+                f"{humidity} 더우시진 않으세요?"
+            )
+        return (
+            f"할머니, 지금 실내 온도는 {temperature}도예요."
+            f"{humidity} 지금은 괜찮은 편이에요."
+        )
+
 
 class AiCommandSubscriber:
     """`bomi/v1/ai/{robotId}/commands` 를 구독해 대화 명령을 큐에 넘긴다."""
@@ -72,6 +146,7 @@ class AiCommandSubscriber:
         self.pending_queue = pending_queue
         self._client = client
         self._seen: OrderedDict[str, None] = OrderedDict()
+        self._ambient = HomecomingAmbientContext()
 
     # ── 메시지 처리: 브로커 없이도 테스트할 수 있는 부분 ──────────────────────
 
@@ -240,8 +315,14 @@ class AiCommandSubscriber:
         topic = self._commands_topic()
         client.subscribe(topic, qos=1)
         logger.info("ai command subscriber subscribed to %s", topic)
+        if self._ambient.enabled:
+            client.subscribe(AMBIENT_TOPIC, qos=1)
+            logger.info("homecoming ambient context subscribed to %s", AMBIENT_TOPIC)
 
     def _on_message(self, client, userdata, message) -> None:
+        if message.topic.startswith("bomi/v1/iot/"):
+            self._ambient.handle_payload(message.payload)
+            return
         self.handle_payload(message.payload)
 
 

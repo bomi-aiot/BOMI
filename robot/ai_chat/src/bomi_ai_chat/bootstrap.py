@@ -30,7 +30,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -621,6 +623,7 @@ def _advance(session, event: str):
 def _run_graph_conversation(
     runtime, audio_in, stt, turns: int, max_turns,
     *, session_turn_limit: int | None = None,
+    extend_on_wake_word: bool = False,
 ) -> tuple[int, str]:
     """'보미야'로 시작된 하나의 대화를 여러 발화로 이어간다(그래프 경로).
 
@@ -692,6 +695,11 @@ def _run_graph_conversation(
             continue
 
         session = _advance(session, "speech_captured")
+
+        if extend_on_wake_word and "보미야" in text.replace(" ", ""):
+            session_turn_limit = None
+            logger.info(
+                "homecoming wake word detected; extending to free conversation")
 
         # "기다려", "잠깐만" 같은 발화는 대화를 끝내자는 말이 아니라 움직이지
         # 말라는 말이다. 대화는 그대로 이어가고 로봇의 몸만 멈춘다.
@@ -835,14 +843,80 @@ def _run_backend_conversation(
         if command.intent == "HOMECOMING_GREETING"
         else None
     )
-    return _run_graph_conversation(
+    result = _run_graph_conversation(
         runtime,
         audio_in,
         stt,
         turns,
         max_turns,
         session_turn_limit=session_turn_limit,
+        extend_on_wake_word=(command.intent == "HOMECOMING_GREETING"),
     )
+    if (
+        command.intent == "HOMECOMING_GREETING"
+        # 현관 인사에 답하지 않거나 작별 인사를 해도 귀가 시나리오의
+        # 추종·온습도 단계는 계속 진행한다. 실패/취소만 중단한다.
+        and result[1] in ("max_turns", "no_speech", "farewell")
+        and os.environ.get("HOMECOMING_FOLLOW_AMBIENT_PHASE", "false").lower()
+            in ("1", "true", "yes")
+    ):
+        return _run_homecoming_follow_ambient_phase(
+            runtime, audio_in, stt, result[0])
+    return result
+
+
+def _run_homecoming_follow_ambient_phase(runtime, audio_in, stt, turns: int):
+    """현관 대화 뒤 추종하고, 완전히 정지한 다음 최신 온습도로 대화한다."""
+    from bomi_ai_chat import policy
+
+    signal = runtime.search_signal
+    subscriber = runtime.ai_command_subscriber
+    ambient = getattr(subscriber, "_ambient", None)
+    if signal is None or ambient is None:
+        logger.warning("homecoming follow/ambient phase is unavailable")
+        return turns, "max_turns"
+
+    follow_seconds = max(0.0, float(os.environ.get("HOMECOMING_FOLLOW_SECONDS", "20")))
+    send_follow = getattr(signal, "send_follow", None)
+    if callable(send_follow):
+        send_follow()
+    else:
+        signal.send_wake()
+    logger.info("homecoming follow phase started for %.1f seconds", follow_seconds)
+    try:
+        time.sleep(follow_seconds)
+    finally:
+        # wake_search가 0속도와 follow_enable=false를 함께 발행한다.
+        signal.send_stop("homecoming_follow_phase_complete")
+    time.sleep(0.5)
+
+    text = ambient.conversation_text()
+    if text is None:
+        text = "할머니, 온도와 습도 센서 값이 아직 들어오지 않았어요. 몸은 괜찮으세요?"
+    config = {"configurable": {"thread_id": runtime.senior_id}}
+    runtime.app.invoke({
+        "trigger_type": "backend_command",
+        "senior_id": runtime.senior_id,
+        "command": {
+            "text": text,
+            "intent": "greeting",
+            "origin": "homecoming:post_follow_ambient",
+        },
+    }, config)
+    turns += 1
+    _wait_for_playback(runtime.echo_guard)
+
+    user_text, _duration, no_speech = _listen(
+        audio_in, stt, onset_timeout_seconds=policy.CONVERSATION_IDLE_TIMEOUT_SEC)
+    if no_speech or not user_text:
+        return turns, "homecoming_follow_complete"
+    from bomi_ai_chat.graph.turn import run_user_turn
+    run_user_turn(
+        runtime.app, runtime.senior_id, user_text,
+        closing_turn=True,
+    )
+    _wait_for_playback(runtime.echo_guard)
+    return turns + 1, "homecoming_follow_complete"
 
 
 def _publish_conversation_ended(runtime, command, end_reason: str) -> None:
@@ -866,6 +940,8 @@ def _publish_conversation_ended(runtime, command, end_reason: str) -> None:
         "no_speech": (ai_contract.OUTCOME_NO_RESPONSE, None),
         "interrupted": (ai_contract.OUTCOME_CANCELLED, None),
         "failed": (ai_contract.OUTCOME_FAILED, "INTERNAL_ERROR"),
+        "homecoming_follow_complete": (
+            ai_contract.OUTCOME_COMPLETED, "HOMECOMING_FOLLOW_COMPLETED"),
     }
     outcome, reason_code = end_reason_to_outcome.get(
         end_reason, (ai_contract.OUTCOME_COMPLETED, None))

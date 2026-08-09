@@ -96,6 +96,22 @@ class RecordingEventPublisher:
         pass
 
 
+class RecordingSearchSignal:
+    def __init__(self):
+        self.events = []
+
+    def send_wake(self):
+        self.events.append(("wake", None))
+
+    def send_stop(self, reason):
+        self.events.append(("stop", reason))
+
+
+class FixedAmbient:
+    def conversation_text(self):
+        return "할머니, 지금 실내 온도가 31도로 조금 높아요. 더우시진 않으세요?"
+
+
 class InterruptibleWake:
     """실제 WakeWordDetector 의 interrupt_check 계약을 흉내 낸 대역.
 
@@ -190,7 +206,7 @@ def test_pending_conversation_skips_wake_ack_and_speaks_the_seed_text(
 def test_homecoming_ends_after_two_user_turns(
     monkeypatch, settings_factory, frozen_clock,
 ):
-    """귀가 인사는 사용자 답변 두 번 뒤 COMPLETED로 닫아 복귀를 시작한다."""
+    """귀가 인사는 사용자 답변 두 번 뒤 COMPLETED로 닫아 추종을 시작한다."""
     frozen_clock(start=NOW)
     monkeypatch.setattr(
         "bomi_ai_chat.stt.client.STTClient",
@@ -227,6 +243,53 @@ def test_homecoming_ends_after_two_user_turns(
     assert subscriber.ended == [("conversation-1", "COMPLETED", None)]
 
 
+def test_homecoming_wake_word_removes_two_turn_limit(
+    monkeypatch, settings_factory, frozen_clock,
+):
+    frozen_clock(start=NOW)
+    monkeypatch.setattr(
+        "bomi_ai_chat.stt.client.STTClient",
+        lambda settings: ScriptedStt(
+            "보미야 오늘 있었던 일 말해줄게",
+            "그리고 친구도 만났어",
+            "이제 갈게",
+        ),
+    )
+    heard: list[str] = []
+    closing_flags: list[bool] = []
+
+    def record_turn(app, senior, text, **kwargs):
+        heard.append(text)
+        closing_flags.append(bool(kwargs.get("closing_turn")))
+        return {}
+
+    monkeypatch.setattr(
+        "bomi_ai_chat.graph.turn.run_user_turn",
+        record_turn,
+    )
+
+    subscriber = RecordingSubscriber()
+    runtime, pending = _make_runtime(subscriber=subscriber)
+    pending.put_nowait(start_conversation_command())
+
+    bootstrap.run_conversation_loop(
+        runtime,
+        ScriptedAudio(b"1", b"2", b"3"),
+        settings_with(settings_factory),
+        wake=InterruptibleWake(wakes=0),
+        event_publisher=RecordingEventPublisher(),
+        max_turns=4,
+    )
+
+    assert heard == [
+        "보미야 오늘 있었던 일 말해줄게",
+        "그리고 친구도 만났어",
+        "이제 갈게",
+    ]
+    assert closing_flags == [False, False, False]
+    assert subscriber.ended == [("conversation-1", "COMPLETED", None)]
+
+
 def test_backend_conversation_queue_is_checked_before_the_real_wake_flow(
     monkeypatch, settings_factory, frozen_clock,
 ):
@@ -240,7 +303,7 @@ def test_backend_conversation_queue_is_checked_before_the_real_wake_flow(
 
     app = RecordingApp()
     runtime, _pending = _make_runtime(app=app)
-    wake = InterruptibleWake(wakes=1)
+    wake = InterruptibleWake(wakes=0)
     event_publisher = RecordingEventPublisher()
 
     bootstrap.run_conversation_loop(
@@ -254,6 +317,50 @@ def test_backend_conversation_queue_is_checked_before_the_real_wake_flow(
 
 
 # ── 3. CONVERSATION_ENDED outcome 매핑 ───────────────────────────────────────
+
+
+def test_post_homecoming_follow_stops_before_ambient_conversation(monkeypatch):
+    app = RecordingApp()
+    subscriber = RecordingSubscriber()
+    subscriber._ambient = FixedAmbient()
+    signal = RecordingSearchSignal()
+    runtime = bootstrap.Runtime(
+        app=app,
+        senior_id=SENIOR,
+        ai_command_subscriber=subscriber,
+        search_signal=signal,
+    )
+    heard = []
+    monkeypatch.setenv("HOMECOMING_FOLLOW_SECONDS", "0")
+    monkeypatch.setattr(bootstrap.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        "bomi_ai_chat.graph.turn.run_user_turn",
+        lambda app, senior, text, **kwargs: heard.append((text, kwargs)) or {},
+    )
+
+    turns, reason = bootstrap._run_homecoming_follow_ambient_phase(
+        runtime, ScriptedAudio(b"reply"), ScriptedStt("조금 덥구나"), 3)
+
+    assert signal.events == [
+        ("wake", None),
+        ("stop", "homecoming_follow_phase_complete"),
+    ]
+    assert app.invocations[0][0]["command"]["origin"] == "homecoming:post_follow_ambient"
+    assert "31도로 조금 높아요" in app.invocations[0][0]["command"]["text"]
+    assert heard == [("조금 덥구나", {"closing_turn": True})]
+    assert (turns, reason) == (5, "homecoming_follow_complete")
+
+
+def test_post_follow_completion_tells_backend_to_return():
+    subscriber = RecordingSubscriber()
+    runtime, _pending = _make_runtime(subscriber=subscriber)
+    command = start_conversation_command()
+
+    bootstrap._publish_conversation_ended(
+        runtime, command, "homecoming_follow_complete")
+
+    assert subscriber.ended == [(
+        "conversation-1", "COMPLETED", "HOMECOMING_FOLLOW_COMPLETED")]
 
 
 def test_farewell_ends_the_conversation_as_completed(
@@ -292,7 +399,7 @@ def test_silence_ends_the_conversation_as_no_response(
     runtime, pending = _make_runtime(subscriber=subscriber)
     command = start_conversation_command()
     pending.put_nowait(command)
-    wake = InterruptibleWake(wakes=0)
+    wake = InterruptibleWake(wakes=1)
 
     bootstrap.run_conversation_loop(
         runtime, ScriptedAudio(), settings_with(settings_factory),

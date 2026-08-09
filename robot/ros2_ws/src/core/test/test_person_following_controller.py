@@ -60,6 +60,27 @@ def test_turn_right_command() -> None:
     assert result.reason == "turning_right"
 
 
+def test_turn_command_curves_forward_when_person_is_far() -> None:
+    controller = PersonFollowingController(
+        linear_speed=0.15,
+        angular_speed=0.15,
+        turn_linear_ratio=0.55,
+        person_stop_distance_m=0.4,
+        person_resume_distance_m=0.6,
+    )
+
+    result = controller.calculate_velocity(
+        "turn_left",
+        movement_allowed=True,
+        person_distance_m=1.0,
+        emergency_obstacle_distance_m=1.0,
+    )
+
+    assert result.linear_x == pytest.approx(0.0825)
+    assert result.angular_z == pytest.approx(0.15)
+    assert result.reason == "curving_left"
+
+
 def test_stop_command() -> None:
     """비전 정지 명령에서 모든 속도를 0으로 만든다."""
     controller = PersonFollowingController()

@@ -57,10 +57,17 @@ def _status(payload: dict) -> String:
     return message
 
 
-def _status_node() -> WakeSearchNode:
+class _StubPolicy:
+    def __init__(self, active: bool) -> None:
+        self.is_active = active
+
+
+def _status_node(*, searching: bool = True) -> WakeSearchNode:
     node = object.__new__(WakeSearchNode)
     node._pending_resume = False
     node._pending_arrived = False
+    node._pending_start = False
+    node._policy = _StubPolicy(searching)
     return node
 
 
@@ -75,13 +82,24 @@ def test_arrival_status_requests_stopping_the_follow() -> None:
 
 
 def test_lost_status_requests_resuming_the_search() -> None:
-    node = _status_node()
+    node = _status_node(searching=True)
 
     node._on_follow_status(
         _status({"state": "waiting_target", "reason": "target_lost_timeout"}))
 
     assert node._pending_resume is True
     assert node._pending_arrived is False
+
+
+def test_lost_status_starts_a_new_search_when_none_is_running() -> None:
+    """탐색이 끝난 뒤 놓치면 재개할 것이 없으므로 새로 시작한다(팀원 383)."""
+    node = _status_node(searching=False)
+
+    node._on_follow_status(
+        _status({"state": "waiting_target", "reason": "target_lost_timeout"}))
+
+    assert node._pending_start is True
+    assert node._pending_resume is False
 
 
 def test_other_status_changes_nothing() -> None:

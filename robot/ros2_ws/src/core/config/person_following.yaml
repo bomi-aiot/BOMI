@@ -15,10 +15,16 @@ person_follower:
     # 돌아 사람을 지나쳐버린다.
     angular_speed: 0.15
 
+    # 좌우 보정 중에도 직진 속도의 55%로 이동해 자연스러운 곡선 추종을 만든다.
+    turn_linear_ratio: 0.55
+
     # YOLO 가 CPU 로 돌던 시절(프레임 간격 ~1초) 매 프레임 사이마다 "비전이
     # 끊겼다"고 오판하는 것을 막으려 3.0 까지 늘렸던 값이다. 2026-08-09 에
     # GPU 가 살아나 추론이 0.04초로 빨라졌으므로 되돌린다 — 비전이 실제로
     # 죽었을 때 그만큼 빨리 멈춘다.
+    #
+    # ⚠️ 이 값들은 GPU 추론을 전제로 한다. ai_vision 을 CPU venv 로 띄우면
+    # 프레임 간격이 다시 ~1초가 되어 추종이 매 프레임 끊긴다.
     command_timeout_sec: 1.0
     target_confirm_sec: 0.5
     lost_timeout_sec: 1.5
