@@ -15,6 +15,8 @@ import psycopg
 import streamlit as st
 from psycopg import sql
 
+import reset_actions
+
 EXCLUDED_SCHEMAS = ["pg_catalog", "information_schema"]
 # 마이그레이션 관리 테이블은 화면을 차지할 뿐 시연 중에 볼 일이 없다.
 EXCLUDED_TABLES = ["flyway_schema_history"]
@@ -48,10 +50,16 @@ def _dsn() -> str:
     )
 
 
-def _connect() -> psycopg.Connection:
+def _connect(*, writable: bool = False) -> psycopg.Connection:
+    """기본은 읽기 전용이다.
+
+    쓰기는 리셋 버튼에서만, 그 호출에 한해 `writable=True` 로 연다. 보기 화면이
+    실수로 무언가를 쓰는 경로를 남기지 않기 위해 기본값을 뒤집지 않는다.
+    """
     conn = psycopg.connect(_dsn(), connect_timeout=5, autocommit=True)
-    conn.execute("SET default_transaction_read_only = on")
-    conn.execute("SET statement_timeout = '10s'")
+    if not writable:
+        conn.execute("SET default_transaction_read_only = on")
+    conn.execute("SET statement_timeout = '30s'" if writable else "SET statement_timeout = '10s'")
     return conn
 
 
@@ -154,6 +162,56 @@ CSS = """
 """
 
 
+def _report(results: list[reset_actions.StepResult], verb: str) -> None:
+    total = sum(r.affected for r in results)
+    st.success(f"{verb} 완료 — 총 {total:,}행")
+    st.code("\n".join(f"{r.affected:>7,}  {r.label}" for r in results), language=None)
+
+
+def _render_reset_panel() -> None:
+    """리허설 사이 초기화. A 는 상태만, B 는 실제 삭제(2단계 확인)."""
+    st.markdown("### 리셋")
+
+    if st.button("① 시나리오 상태 리셋", width="stretch",
+                 help="SAFE_STOP·고착 시나리오·복약 슬롯·지난 T1 알림을 푼다. 행은 지우지 않는다."):
+        try:
+            with _connect(writable=True) as conn:
+                _report(reset_actions.run_state_reset(conn), "상태 리셋")
+        except psycopg.Error as exc:
+            st.error(f"실패: {exc}")
+
+    st.divider()
+    st.caption("② 테스트 잔여 데이터 삭제 — **되돌릴 수 없다**")
+
+    if st.session_state.get("confirm_delete"):
+        preview = st.session_state.get("delete_preview", [])
+        total = sum(r.affected for r in preview)
+        st.warning(f"아래 {total:,}행을 지운다.")
+        st.code("\n".join(f"{r.affected:>7,}  {r.label}" for r in preview), language=None)
+        st.caption("어르신 기억(memory·fact_candidate)과 복약 시드는 남는다.")
+
+        left, right = st.columns(2)
+        if left.button("정말 삭제", type="primary", width="stretch"):
+            try:
+                with _connect(writable=True) as conn:
+                    results = reset_actions.run_residue_delete(conn)
+                st.session_state["confirm_delete"] = False
+                _report(results, "삭제")
+            except psycopg.Error as exc:
+                st.error(f"삭제 실패(전부 롤백됨): {exc}")
+        if right.button("취소", width="stretch"):
+            st.session_state["confirm_delete"] = False
+            st.rerun()
+    elif st.button("② 삭제 대상 미리보기", width="stretch"):
+        try:
+            with _connect() as conn:
+                st.session_state["delete_preview"] = reset_actions.preview_residue(conn)
+            st.session_state["confirm_delete"] = True
+            st.rerun()
+        except psycopg.Error as exc:
+            st.error(f"조회 실패: {exc}")
+
+
 def main() -> None:
     st.set_page_config(page_title="BOMI DB 실시간 뷰어", layout="wide")
 
@@ -167,6 +225,8 @@ def main() -> None:
         font = st.slider("글자 크기(px)", 5, 14, 8)
         max_chars = st.slider("셀 최대 글자 수", 8, 200, 48)
         st.caption("컬럼은 화면 폭에 맞춰 접힌다 — 가로 스크롤 없음.")
+        st.divider()
+        _render_reset_panel()
 
     css = CSS.replace("__FONT__", str(font)).replace("__CAP__", str(font + 4))
     st.markdown(css, unsafe_allow_html=True)
