@@ -4,6 +4,7 @@ import com.ssafy.bomi.care.domain.CareRecord;
 import com.ssafy.bomi.care.domain.CareRecordStatus;
 import com.ssafy.bomi.care.domain.NotificationTier;
 import com.ssafy.bomi.care.repository.CareRecordRepository;
+import com.ssafy.bomi.care.repository.CareRecordRepository.GuardianAlertView;
 import com.ssafy.bomi.fact.domain.FactCandidate;
 import com.ssafy.bomi.fact.domain.FactCandidateStatus;
 import com.ssafy.bomi.fact.repository.FactCandidateRepository;
@@ -22,8 +23,6 @@ import com.ssafy.bomi.memory.domain.Memory;
 import com.ssafy.bomi.memory.domain.MemoryLifecycleStatus;
 import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
-import com.ssafy.bomi.relationship.domain.RelationshipPriority;
-import com.ssafy.bomi.relationship.domain.RelationshipStatus;
 import com.ssafy.bomi.relationship.repository.CareRelationshipRepository;
 import com.ssafy.bomi.robot.domain.Robot;
 import com.ssafy.bomi.robot.repository.RobotRepository;
@@ -34,10 +33,12 @@ import com.ssafy.bomi.scenario.repository.ScenarioRepository;
 import com.ssafy.bomi.user.domain.AppUser;
 import com.ssafy.bomi.user.domain.ConsentStatus;
 import com.ssafy.bomi.user.repository.AppUserRepository;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -62,9 +63,11 @@ public class DashboardService {
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
     private static final String SENIOR_USER_TYPE = "SENIOR";
     private static final Set<String> SCHEDULE_TYPES = Set.of("APPOINTMENT", "PERSONAL_SCHEDULE");
-    /** 로봇이 올린 보호자 알림의 기록 타입 (S15P11E102-211). */
-    private static final String GUARDIAN_ALERT_TYPE = "GUARDIAN_ALERT";
-
+    private static final Set<String> DASHBOARD_RECORD_TYPES = Set.of(
+            "APPOINTMENT",
+            "PERSONAL_SCHEDULE",
+            "MEDICATION_SCHEDULE",
+            "MEDICATION_TAKEN");
     /**
      * 활동 피드 공개범위 계약 버전. buildActivities 가 건별 visibility 를 채워 보낼 때만
      * 이 값을 실을 수 있다 — 값과 계약이 같이 움직여야 FE 가 "확인했다"고 읽어도 된다.
@@ -163,7 +166,14 @@ public class DashboardService {
         LocalDate today = LocalDate.now(SEOUL);
 
         Robot robot = robotRepository.findBySeniorId(seniorId).orElse(null);
-        List<CareRecord> records = careRecordRepository.findBySeniorId(seniorId);
+        // ENVIRONMENT_OBSERVATION 같은 무한 시계열까지 전부 엔티티로 펼치지 않는다.
+        // 이 화면이 실제로 조립하는 일정·복약 타입만 읽고, 안전 알림은 아래의 전용
+        // scalar projection 으로 분리한다. 한 관찰 행의 무관한 JSON/enum 문제가
+        // 보호자 이름과 T1 알림까지 함께 500으로 만드는 결합을 끊는다.
+        List<CareRecord> records = careRecordRepository.findBySeniorIdAndStatusAndRecordTypeIn(
+                seniorId, CareRecordStatus.ACTIVE, DASHBOARD_RECORD_TYPES);
+        List<GuardianAlertView> guardianAlerts =
+                careRecordRepository.findActiveGuardianAlertViews(seniorId);
 
         List<ScheduleDto> schedules = buildSchedules(records, today);
         List<MedicationResponseDto> medicationResponses = buildMedicationResponses(records, today, now);
@@ -173,7 +183,7 @@ public class DashboardService {
                 factCandidateRepository.findBySeniorIdAndStatusInOrderByCreatedAtDesc(seniorId, PENDING_STATUSES);
         List<FactCandidateDto> confirmations = pending.stream().map(factCandidateMapper::toDto).toList();
 
-        List<ActivityDto> activities = buildActivities(seniorId);
+        List<ActivityDto> activities = buildActivities(seniorId, guardianAlerts);
 
         ElderDto elder = new ElderDto(
                 seniorId.toString(),
@@ -187,7 +197,7 @@ public class DashboardService {
                 primaryGuardian(seniorId),
                 toRobotDto(robot, seniorId),
                 toEnvironmentDto(robot),
-                countTodayIncidents(records, today),
+                countTodayIncidents(guardianAlerts, today),
                 schedules,
                 medicationResponses,
                 progress,
@@ -341,7 +351,8 @@ public class DashboardService {
     // 장치가 요약에는 없다. 예전에는 요약이 0건이라 우연히 무해했을 뿐이다: 이
     // 티켓이 요약을 실제로 채우기 시작하면 그 우연이 사라진다.
 
-    private List<ActivityDto> buildActivities(UUID seniorId) {
+    private List<ActivityDto> buildActivities(
+            UUID seniorId, List<GuardianAlertView> guardianAlerts) {
         record Timed(ActivityDto dto, OffsetDateTime at, boolean urgent) {
         }
         List<Timed> merged = new ArrayList<>();
@@ -404,11 +415,10 @@ public class DashboardService {
         //   다르지 않으면서 나머지를 잃는 교환이다.
         //
         //   T1 은 묶지 않는다. 응급은 사유가 같아도 건마다 별개의 사건이다.
-        List<CareRecord> alertsToShow = new ArrayList<>();
-        Map<String, CareRecord> latestT2ByReason = new LinkedHashMap<>();
-        for (CareRecord alert : careRecordRepository.findBySeniorIdAndRecordTypeAndStatus(
-                seniorId, GUARDIAN_ALERT_TYPE, CareRecordStatus.ACTIVE)) {
-            NotificationTier tier = alert.getNotificationTier();
+        List<GuardianAlertView> alertsToShow = new ArrayList<>();
+        Map<String, GuardianAlertView> latestT2ByReason = new LinkedHashMap<>();
+        for (GuardianAlertView alert : guardianAlerts) {
+            NotificationTier tier = notificationTier(alert);
             if (tier == null) {
                 continue;
             }
@@ -419,7 +429,7 @@ public class DashboardService {
             if (!sharingGranted) {
                 continue;
             }
-            String reason = str(alert.getDetails(), "reason");
+            String reason = alert.getReason();
             latestT2ByReason.merge(
                     reason == null ? "" : reason,
                     alert,
@@ -427,8 +437,8 @@ public class DashboardService {
         }
         alertsToShow.addAll(latestT2ByReason.values());
 
-        for (CareRecord alert : alertsToShow) {
-            NotificationTier tier = alert.getNotificationTier();
+        for (GuardianAlertView alert : alertsToShow) {
+            NotificationTier tier = notificationTier(alert);
             OffsetDateTime at = alertTime(alert);
             merged.add(new Timed(
                     new ActivityDto(
@@ -539,13 +549,11 @@ public class DashboardService {
      */
     private GuardianDto primaryGuardian(UUID seniorId) {
         return careRelationshipRepository
-                .findFirstBySeniorIdAndPriorityAndStatus(
-                        seniorId, RelationshipPriority.PRIMARY, RelationshipStatus.ACTIVE)
-                .flatMap(relationship -> appUserRepository.findById(relationship.getGuardianId())
-                        .map(guardian -> new GuardianDto(
-                                guardian.getId().toString(),
-                                displayName(guardian),
-                                RelationshipPriority.PRIMARY.name())))
+                .findActivePrimaryGuardian(seniorId)
+                .map(guardian -> new GuardianDto(
+                        guardian.getId().toString(),
+                        guardian.getName(),
+                        guardian.getPriority()))
                 .orElse(null);
     }
 
@@ -605,8 +613,9 @@ public class DashboardService {
      * <p>null 이면 정렬에서 맨 뒤로 밀린다. 시각을 지어내면 어제 알림이 오늘 맨 위에
      * 뜨고, 보호자는 그것을 새 알림으로 읽는다.</p>
      */
-    private static OffsetDateTime alertTime(CareRecord alert) {
-        return alert.getOccurredAt();
+    private static OffsetDateTime alertTime(GuardianAlertView alert) {
+        Instant occurredAt = alert.getOccurredAt();
+        return occurredAt == null ? null : occurredAt.atOffset(ZoneOffset.UTC);
     }
 
     /**
@@ -622,10 +631,9 @@ public class DashboardService {
      * 답이 되는 것이 확인 대기 건수가 아니라 로봇이 올린 알림이기 때문이다. 여기서는
      * 등급을 나누지 않는다 — 등급별 표시는 안전 알림 카드와 활동 피드가 이미 한다.</p>
      */
-    private static int countTodayIncidents(List<CareRecord> records, LocalDate today) {
-        return (int) records.stream()
-                .filter(r -> GUARDIAN_ALERT_TYPE.equals(r.getRecordType()))
-                .filter(r -> r.getStatus() == CareRecordStatus.ACTIVE)
+    private static int countTodayIncidents(
+            List<GuardianAlertView> alerts, LocalDate today) {
+        return (int) alerts.stream()
                 .filter(r -> {
                     OffsetDateTime at = alertTime(r);
                     // 시각을 모르는 기록은 "오늘"이라고 단정하지 않는다.
@@ -649,11 +657,11 @@ public class DashboardService {
      * "하루 요약"이라는 이름을 붙이면 보호자는 매일 오는 정기 보고로 읽고 넘긴다.
      * 실제로 T2 를 만드는 곳은 일일 요약 스케줄러 하나가 아니라 로봇의 알림 API 도 있다.</p>
      */
-    private static String alertTitle(CareRecord alert, NotificationTier tier) {
+    private static String alertTitle(GuardianAlertView alert, NotificationTier tier) {
         if (tier == NotificationTier.T1) {
             return "확인이 필요해요";
         }
-        return "daily_summary".equals(str(alert.getDetails(), "reason")) ? "하루 요약" : "알아두면 좋아요";
+        return "daily_summary".equals(alert.getReason()) ? "하루 요약" : "알아두면 좋아요";
     }
 
     /**
@@ -663,8 +671,8 @@ public class DashboardService {
      * 통째로 펼치지 않는다 — 필드가 늘어날 때마다 화면에 알 수 없는 값이 새는 경로가
      * 된다. 보호자에게 필요한 것은 "가서 봐 주세요"이지 진단 근거가 아니다.</p>
      */
-    private static String alertSummary(CareRecord alert, NotificationTier tier) {
-        String reason = str(alert.getDetails(), "reason");
+    private static String alertSummary(GuardianAlertView alert, NotificationTier tier) {
+        String reason = alert.getReason();
         if (tier == NotificationTier.T1) {
             return switch (reason == null ? "" : reason) {
                 case "no_response" -> "한참 대답이 없으셨어요.";
@@ -701,8 +709,8 @@ public class DashboardService {
      * 부위도 보내지 않기 때문이다 — 없는 것을 지어내면 그 순간부터 이 화면은
      * 근거가 아니라 추측이 된다 (CLAUDE.md §9).</p>
      */
-    private static String emergencySummary(CareRecord alert) {
-        String confirmedBy = str(alert.getDetails(), "confirmed_by");
+    private static String emergencySummary(GuardianAlertView alert) {
+        String confirmedBy = alert.getConfirmedBy();
         return switch (confirmedBy == null ? "" : confirmedBy) {
             case "senior_reply" -> "몸이 불편하다고 하셨고, 확인 요청에 그렇다고 답하셨어요.";
             case "no_reply_to_safety_check" -> "몸이 불편하다고 하신 뒤 확인 질문에 답이 없으셨어요.";
@@ -712,5 +720,19 @@ public class DashboardService {
 
     private static String iso(OffsetDateTime value) {
         return value == null ? null : value.toString();
+    }
+
+    private static NotificationTier notificationTier(GuardianAlertView alert) {
+        String value = alert.getNotificationTier();
+        if (value == null) {
+            return null;
+        }
+        try {
+            return NotificationTier.valueOf(value);
+        } catch (IllegalArgumentException ignored) {
+            // 알 수 없는 새 등급을 안전 화면 전체의 500으로 바꾸지 않는다. 지원하는
+            // 등급이 배포되기 전까지 이 행만 제외하고 T1/T2는 계속 보여 준다.
+            return null;
+        }
     }
 }
