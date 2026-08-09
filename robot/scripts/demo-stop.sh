@@ -17,6 +17,7 @@ pkill -9 -f 'run-homecoming' 2>/dev/null
 pkill -f 'bomi_ai_chat' 2>/dev/null
 pkill -f 'bomi_vision.udp_main' 2>/dev/null
 pkill -f 'mosquitto_sub' 2>/dev/null
+pkill -INT -f 'bomi_display.*/face_display|ros2 run bomi_display face_display' 2>/dev/null
 sleep 3
 
 # shellcheck source=lib/cleanup.sh
@@ -29,7 +30,8 @@ pkill -9 -f 'bomi_navigation_real' 2>/dev/null
 sleep 2
 
 leftovers=$(bomi_leftovers | head -8)
-extra=$(pgrep -af 'bomi_ai_chat|bomi_vision' | grep -v pgrep | head -3)
+extra=$(pgrep -af 'bomi_ai_chat|bomi_vision|bomi_display.*/face_display' \
+    | grep -v pgrep | head -3)
 if [ -n "$leftovers$extra" ]; then
     echo "남은 프로세스:"
     [ -n "$leftovers" ] && echo "$leftovers"
