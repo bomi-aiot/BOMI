@@ -165,10 +165,37 @@ GUIDE
 read -rp "옮겼으면 Enter > " _
 
 echo "▶ 3/4 출발 좌표 기록"
-START=$(timeout 40 python3 "$HERE/lib/read_pose.py") || {
-    echo "❌ 좌표를 읽지 못했습니다"; exit 1; }
-echo "  출발: $START"
-read -r SX SY SYAW <<<"$START"
+
+# 현관과 출발이 너무 가까우면 되묻는다. 2026-08-10 실기에서 로봇을 옮기지 않고
+# Enter 를 눌러 둘이 0.555m 로 찍혔고, 그대로 시연에 들어가 Nav2 가 팽창 영역
+# 안에서 출발하느라 경로 생성부터 실패했다. 조용히 지나가는 것이 문제였다.
+# 하한 1.0m 은 지그재그 min_distance_m 과 같은 값이다 — 이보다 가까우면
+# 현관 지그재그도 자동으로 꺼진다.
+MIN_START_GAP_M=1.0
+while :; do
+    START=$(timeout 40 python3 "$HERE/lib/read_pose.py") || {
+        echo "❌ 좌표를 읽지 못했습니다"; exit 1; }
+    read -r SX SY SYAW <<<"$START"
+
+    GAP=$(python3 -c 'import math,sys; print("%.3f" % math.hypot(
+        float(sys.argv[1])-float(sys.argv[3]),
+        float(sys.argv[2])-float(sys.argv[4])))' "$SX" "$SY" "$EX" "$EY")
+
+    if python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)' \
+        "$GAP" "$MIN_START_GAP_M"; then
+        echo "  출발: $START  (현관까지 ${GAP}m)"
+        break
+    fi
+
+    echo "  ⚠ 현관에서 ${GAP}m 뿐입니다 (최소 ${MIN_START_GAP_M}m)."
+    echo "    로봇을 실제로 옮기지 않았을 가능성이 큽니다."
+    read -rp "  옮기고 Enter (이대로 쓰려면 s 입력) > " ANSWER
+    if [ "$ANSWER" = "s" ]; then
+        echo "  ⚠ 경고를 무시하고 ${GAP}m 로 진행합니다"
+        echo "  출발: $START"
+        break
+    fi
+done
 
 # 출발 좌표를 sofa(=LIVING_ROOM)와 charging(=DEFAULT)에도 넣는다.
 #
