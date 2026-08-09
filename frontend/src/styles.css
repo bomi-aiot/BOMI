@@ -3421,6 +3421,84 @@ body {
 .safety-alert-card--urgent {
   border-color: var(--red-700);
   background: var(--red-50);
+  box-shadow: 0 0 0 2px rgb(176 51 47 / 12%);
+}
+
+/*
+  T1 응급은 카드 그리드 안의 두 번째 정보가 아니다. 보미 구역 제목 바로 아래에서
+  가장 먼저 읽히게 하고, 진한 빨강 배경으로 정상 상태 카드와 한눈에 구분한다.
+*/
+.bomi-emergency-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-height: 88px;
+  padding: 16px 20px;
+  color: #fff;
+  background: linear-gradient(135deg, #b52f2f, #851c1c);
+  border: 2px solid #721616;
+  border-radius: 16px;
+  box-shadow: 0 14px 32px rgb(126 25 25 / 24%);
+}
+
+.bomi-emergency-banner__icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  place-items: center;
+  color: #941f1f;
+  font-size: 1.45rem;
+  font-weight: 950;
+  background: #fff;
+  border-radius: 50%;
+}
+
+.bomi-emergency-banner__copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.bomi-emergency-banner p,
+.bomi-emergency-banner h2,
+.bomi-emergency-banner ul {
+  margin: 0;
+}
+
+.bomi-emergency-banner p {
+  color: #ffd9d4;
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.bomi-emergency-banner h2 {
+  margin-top: 2px;
+  font-size: 1.2rem;
+  line-height: 1.35;
+}
+
+.bomi-emergency-banner ul {
+  display: grid;
+  gap: 2px;
+  padding: 0;
+  margin-top: 7px;
+  list-style: none;
+}
+
+.bomi-emergency-banner li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.bomi-emergency-banner time {
+  flex: none;
+  color: #ffd9d4;
+  font-size: 0.72rem;
 }
 
 .safety-alert-card__body {
@@ -3908,6 +3986,139 @@ body {
   font-size: 0.8rem;
 }
 
+/* 보미 구역은 제목·응급·모드·환경·알림을 한 뷰포트에서 읽을 수 있게 조인다. */
+.one-page__section .bomi-home-page {
+  gap: 9px;
+}
+
+.one-page__section .bomi-home-page .page-header {
+  padding: 0;
+  margin-bottom: 0;
+}
+
+.one-page__section .bomi-home-page .page-header__eyebrow {
+  margin-bottom: 3px;
+  font-size: 0.66rem;
+}
+
+.one-page__section .bomi-home-page .page-header__title {
+  font-size: 1.2rem;
+  line-height: 1.15;
+}
+
+.one-page__section .bomi-home-page .page-header__description {
+  margin-top: 4px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.one-page__section .bomi-home-page .page-header__actions .button {
+  min-height: 36px;
+  padding-inline: 13px;
+}
+
+.one-page__section .bomi-emergency-banner {
+  min-height: 0;
+  gap: 11px;
+  padding: 10px 15px;
+  border-radius: 13px;
+}
+
+.one-page__section .bomi-emergency-banner__icon {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+  font-size: 1.2rem;
+}
+
+.one-page__section .bomi-emergency-banner h2 {
+  font-size: 1.05rem;
+  line-height: 1.25;
+}
+
+.one-page__section .bomi-emergency-banner ul {
+  margin-top: 4px;
+}
+
+.one-page__section .bomi-emergency-banner li {
+  font-size: 0.75rem;
+  line-height: 1.3;
+}
+
+.one-page__section .bomi-status-hero {
+  gap: 11px;
+  padding: 10px 15px;
+  border-radius: 14px;
+}
+
+.one-page__section .bomi-status-hero__orb {
+  width: 44px;
+  height: 44px;
+  flex-basis: 44px;
+}
+
+.one-page__section .bomi-status-hero__orb span {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px 9px 9px 3px;
+}
+
+.one-page__section .bomi-status-hero h2 {
+  margin: 1px 0 2px;
+  font-size: 1.15rem;
+  line-height: 1.2;
+}
+
+.one-page__section .bomi-status-hero__actions .button {
+  min-height: 36px;
+  padding-inline: 13px;
+}
+
+.one-page__section .bomi-detail-grid {
+  gap: 9px;
+}
+
+.one-page__section .bomi-detail-grid .card__header {
+  padding: 9px 13px 0;
+}
+
+.one-page__section .bomi-detail-grid .card__content {
+  padding: 7px 13px 10px;
+}
+
+.one-page__section .bomi-detail-grid .card__description {
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
+.one-page__section .environment-readings {
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.one-page__section .environment-readings > div {
+  padding: 7px 10px;
+}
+
+.one-page__section .environment-readings dd {
+  margin-top: 1px;
+  font-size: 1.08rem;
+}
+
+.one-page__section .safety-alert-card__body {
+  gap: 4px;
+}
+
+.one-page__section .safety-alert-card__body strong {
+  font-size: 0.9rem;
+  line-height: 1.3;
+}
+
+.one-page__section .safety-alert-card__body p,
+.one-page__section .observation-note {
+  line-height: 1.35;
+}
+
 .environment-readings {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4010,6 +4221,16 @@ body {
 
   .urgent-care-alert {
     flex-wrap: wrap;
+  }
+
+  .bomi-emergency-banner {
+    padding: 14px 16px;
+  }
+
+  .bomi-emergency-banner li {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 1px;
   }
 
   .urgent-care-alert__copy {
