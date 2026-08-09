@@ -112,8 +112,10 @@ export MQTT_PASSWORD
 if [ -x "$REPO_ROOT/robot/ai_chat/.venv/bin/python" ]; then
     export AI_CHAT_PYTHON="$REPO_ROOT/robot/ai_chat/.venv/bin/python"
 fi
-# 추종이 길수록 AMCL 이 어긋날 여지가 커진다. 시연에는 10초면 충분하다.
-export HOMECOMING_FOLLOW_SECONDS="${HOMECOMING_FOLLOW_SECONDS:-10}"
+# 추종이 길수록 AMCL 이 어긋날 여지가 커진다. 다만 10초는 어르신이 따라올
+# 새도 없이 끝나 온습도 대화로 넘어가 버려서 20초로 늘렸다(2026-08-10).
+# run-homecoming-follow.sh 기본값 및 bootstrap.py 기본값과도 이제 같다.
+export HOMECOMING_FOLLOW_SECONDS="${HOMECOMING_FOLLOW_SECONDS:-20}"
 
 rm -f "$RUN_LOG"
 nohup setsid bash "$HERE/run-homecoming-follow.sh" \
