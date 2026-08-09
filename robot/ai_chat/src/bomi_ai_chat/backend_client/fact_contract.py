@@ -60,6 +60,44 @@ _ISO_OFFSET_DATE_TIME = re.compile(
 # 놓치는 쪽(기억으로 강등)이 지어내는 쪽보다 싸다.
 _MAX_APPOINTMENT_HORIZON = timedelta(days=365)
 
+# 발화에 적힌 요일. '화요일'과 '화욜'만 받는다.
+#
+# 접미사를 요구하는 이유: '월'·'일'은 그 자체로 달·날을 뜻해서("8월 10일") 홑글자를
+# 받으면 절반이 오탐이 된다. 요일을 말하지 않은 발화는 검산 대상이 아니고, 그건
+# 손해가 아니다 — 아래 스냅은 '요일을 말했을 때만' 개입한다.
+_NAMED_WEEKDAY = re.compile(r"([월화수목금토일])(?:요일|욜)")
+
+# datetime.weekday() 와 같은 순서(월=0 … 일=6).
+_WEEKDAY_INDEX = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
+
+
+def _named_weekday(utterance: str | None) -> int | None:
+    """발화가 요일을 하나로 지목하면 그 인덱스를, 아니면 None.
+
+    두 개 이상 나오면 None 이다. "지난 화요일에 갔는데 다음 주 수요일에 또 가요"
+    처럼 요일이 여러 개인 문장에서는 어느 쪽이 약속의 요일인지 이 함수가 알 방법이
+    없다. 모르는 것을 고르면 맞는 날짜를 틀리게 만들 수 있으므로 손대지 않는다.
+    """
+    if not utterance:
+        return None
+    found = {_WEEKDAY_INDEX[m] for m in _NAMED_WEEKDAY.findall(utterance)}
+    return found.pop() if len(found) == 1 else None
+
+
+def _snap_to_named_weekday(parsed: datetime, target_weekday: int) -> datetime:
+    """parsed 를 target_weekday 의 '가장 가까운' 날짜로 옮긴다. 시각은 그대로.
+
+    왜 가장 가까운 쪽인가 — 주(週)는 모델이 정하고 요일만 코드가 고친다
+        어떤 요일이든 가장 가까운 발생일은 반드시 ±3일 안에 있다(7일 주기의 성질).
+        그래서 이 함수는 **주를 건너뛸 수 없다.** 모델이 "다음 주"를 옳게 골랐다면
+        그 선택은 보존되고, 그 안에서 요일만 제자리를 찾는다. 관측된 오류(8/19 수요일
+        ← "화요일")가 정확히 이 형태였다.
+    """
+    delta = (target_weekday - parsed.weekday()) % 7
+    if delta > 3:
+        delta -= 7
+    return parsed + timedelta(days=delta)
+
 # 추출 프롬프트의 factType -> (targetDomain, 서버 factType, riskLevel)
 #
 # 서버 factType 은 MEMORY 면 MemoryType enum, CARE_RECORD 면 care_record.record_type
@@ -104,9 +142,17 @@ _FALLBACK = ("MEMORY", "OTHER", "NORMAL")
 
 
 def _appointment_starts_at(
-    fact: dict[str, Any], *, now_local: datetime | None = None
+    fact: dict[str, Any],
+    *,
+    now_local: datetime | None = None,
+    utterance: str | None = None,
 ) -> str | None:
     """약속의 startsAt 을 검증해서 돌려준다. 못 믿을 값이면 None.
+
+    utterance
+        어르신 발화 **원문**. 요일 검산에만 쓴다. None 이면 그 검산을 건너뛴다.
+        모델이 만든 content 가 아니라 원문이어야 하는 이유: content 도 같은 모델의
+        출력이라, 그걸로 대조하면 틀린 답을 틀린 답으로 채점하게 된다.
 
     now_local
         "지금"의 기준점. tz-aware 여야 한다. 과거·먼 미래 판정에만 쓴다.
@@ -216,7 +262,52 @@ def _appointment_starts_at(
             )
             return None
 
-    return text
+    # ★ 요일 검산 — 모델의 산수를 코드가 채점한다 (S15P11E102-392).
+    #
+    #   왜 필요한가. 여기까지의 검사는 전부 "읽히는가 / 시간축 위에 말이 되는가"였고,
+    #   **날짜가 맞는가**는 아무도 보지 않았다. startsAt 은 모델이 "다음 주 화요일"
+    #   같은 말을 직접 계산한 결과이고, 그 계산은 비결정적이다 — 실측(2026-08-10,
+    #   care_record 8행)에서 같은 대화의 같은 표현이 8/18(화, 맞음)과 8/19(수, 하루
+    #   밀림)로 갈렸다. APPOINTMENT 는 사람 확인 없이 자동 반영되므로 그 사이에
+    #   아무도 보지 않고, care_record 에는 created_at 이 없어 나중에 대조할 기준조차
+    #   없다. 그래서 여기가 마지막이자 유일한 채점 지점이다.
+    #
+    #   왜 강등이 아니라 교정인가. 이 파일의 다른 검사들은 의심스러우면 버린다
+    #   ("놓치는 쪽이 지어내는 쪽보다 싸다"). 요일만 예외인 이유는, 여기서는 옳은
+    #   답을 **알기** 때문이다 — 어르신이 요일을 말했고, 모델은 주(週)를 골랐다.
+    #   버리면 맞출 수 있었던 약속을 잃는다.
+    #
+    #   왜 검사 순서가 여기인가. 과거·먼 미래 판정을 통과한 값만 옮긴다. 먼저 옮기면
+    #   "지난 화요일에 갔다 왔어"를 APPOINTMENT 로 오분류한 과거 날짜가 스냅으로
+    #   미래에 올라타 되살아난다. 이미 유효한 미래 약속의 요일만 고친다.
+    target_weekday = _named_weekday(utterance)
+    if target_weekday is None or parsed.weekday() == target_weekday:
+        return text
+
+    snapped = _snap_to_named_weekday(parsed, target_weekday)
+    if now_local is not None and snapped <= now_local:
+        # 하루 앞으로 당긴 결과가 과거가 됐다. 위 과거 판정과 같은 이유로 버린다.
+        logger.warning(
+            "appointment startsAt corrected to the named weekday lands in the past; "
+            "demoting the fact to a memory"
+        )
+        return None
+
+    corrected = snapped.isoformat()
+    if not _ISO_OFFSET_DATE_TIME.fullmatch(corrected):
+        # 여기 오지 않는다(입력이 이미 그 모양이었고 날짜만 옮겼다). 그래도 남긴다 —
+        # 서버가 못 읽는 값을 만들어 보내는 것이 이 함수가 막으려던 실패 그 자체다.
+        logger.warning(
+            "corrected appointment startsAt is not in the shape the server parses; "
+            "keeping the model's original value"
+        )
+        return text
+
+    logger.info(
+        "appointment startsAt moved to the weekday the senior named: %s -> %s",
+        text, corrected,
+    )
+    return corrected
 
 
 def to_intake_payload(
@@ -226,6 +317,7 @@ def to_intake_payload(
     conversation_id: str | None,
     source_message_id: str | None,
     now_local: datetime | None = None,
+    utterance: str | None = None,
 ) -> dict[str, Any]:
     """추출된 사실 하나를 백엔드 요청 본문 하나로 바꾼다.
 
@@ -261,7 +353,9 @@ def to_intake_payload(
     #   그대로 유지하고, 값이 아니라 '값의 검증'만 이 분기에 둔다 — 표에 네 번째
     #   칸을 만들면 나머지 네 줄에 영원히 빈칸이 남는다.
     if server_fact_type == "APPOINTMENT":
-        starts_at = _appointment_starts_at(fact, now_local=now_local)
+        starts_at = _appointment_starts_at(
+            fact, now_local=now_local, utterance=utterance
+        )
         if starts_at is None:
             # 시각을 확정하지 못한 약속은 일정이 아니라 기억으로 남긴다.
             # 여기가 강등이 일어나는 유일한 지점이다.
