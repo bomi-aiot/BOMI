@@ -212,12 +212,22 @@ def test_factory_converts_mic_angle_to_robot_relative(monkeypatch) -> None:
         enabled = False
         front_deg = 90.0
 
-        def read_direction_deg(self) -> float:
+        def apply_direction_beams(self) -> None:
+            """방향 판별용 좌·우 고정 빔. 실기에서는 매 기동마다 다시 건다."""
+
+        def read_speaker_direction_deg(self) -> float:
             return 170.0
 
     sender = build_search_signal_sender(TrackingBeam())
     try:
         assert sender is not None
+        # 방향은 한 번 읽어 쓰지 않는다. 표본을 모아 서로 일치할 때만 믿는다
+        # (SEARCH_AZIMUTH_MIN_AGREEMENT). 표본은 백그라운드 스레드가 0.15초마다
+        # 쌓으므로, 스레드 타이밍에 기대면 테스트가 흔들린다 — 판정에 필요한
+        # 만큼 여기서 직접 채워 결과를 결정적으로 만든다.
+        sampler = sender._direction_provider.sampler
+        for _ in range(3):
+            sampler.sample_once()
         # 마이크 기준 170도, 정면이 90도이므로 로봇 기준 왼쪽 80도.
         assert sender.send_wake() == pytest.approx(80.0)
     finally:
