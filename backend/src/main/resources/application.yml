@@ -144,6 +144,9 @@ bomi:
     # 앞쪽(미리 알림)은 기록별 reminderLeadMinutes 가 담당한다.
     grace-minutes: ${MEDICATION_GRACE_MINUTES:15}
   wellness:
+    # false이면 관측은 저장하되 독립 WELLNESS_CHECK 이동·대화는 시작하지 않는다.
+    # 귀가 시연에서는 AI Chat이 같은 MQTT 관측값을 추종 후 대화 문맥으로 사용한다.
+    scenario-enabled: ${WELLNESS_SCENARIO_ENABLED:true}
     # 온습도 안부 확인(WELLNESS_CHECK) 임계값. 이 값 이상이면 로봇이 이동해
     # 안부를 묻는다. 시연 연출(드라이기 등)로 유발 가능한 수준이 기본값.
     temperature-threshold-c: ${WELLNESS_TEMP_THRESHOLD:30.0}
