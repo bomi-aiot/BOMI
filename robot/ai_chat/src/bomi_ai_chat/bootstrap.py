@@ -72,6 +72,10 @@ class Runtime:
     # 엿들어 NAVIGATE(ENTRANCE) 를 보면 "야호" 하고 외친다. None 이면 이
     # 기능이 꺼져 있다는 뜻 — 로봇은 조용히 현관으로 간다.
     entrance_cheer: Any = None
+    # 그래프 밖에서 한 마디를 바로 말해야 하는 경로(현관 환호 등)가 쓰는 합성기와
+    # 재생기. 그래프 응답은 output.set_player 를 타지만 그쪽은 턴이 있어야 돌아간다.
+    tts: Any = None
+    audio_out: Any = None
 
     def shutdown(self, *, wait_for_speech_sec: float = 0.0) -> None:
         """백그라운드 스레드를 정리한다. 실패해도 종료를 막지 않는다.
@@ -160,7 +164,7 @@ def build_runtime(
     echo_guard = EchoGuard()
 
     app = _compile_graph()
-    _wire_player(settings, audio_out, echo_guard)
+    tts = _wire_player(settings, audio_out, echo_guard)
     _wire_backend_clients()
     _restore_runtime_state(app, senior_id)
 
@@ -173,6 +177,7 @@ def build_runtime(
     runtime = Runtime(
         app=app, senior_id=senior_id, echo_guard=echo_guard,
         backend_conversation_queue=backend_conversation_queue,
+        tts=tts, audio_out=audio_out,
     )
     if start_background:
         runtime.scheduler = _start_scheduler(senior_id, app)
@@ -209,8 +214,11 @@ def _compile_graph():
     return build_graph()
 
 
-def _wire_player(settings: Settings, audio_out, echo_guard) -> None:
-    """emit 이 쓸 재생기를 붙인다. TTS 와 오디오 출력은 기존 것을 그대로 쓴다.
+def _wire_player(settings: Settings, audio_out, echo_guard):
+    """emit 이 쓸 재생기를 붙이고, 만든 TTS 를 돌려준다.
+
+    돌려주는 이유: 그래프 밖에서 한 마디를 바로 말해야 하는 경로(현관 환호)가
+    같은 합성기를 써야 한다. 여기서 버리면 그쪽이 쓸 TTS 가 없어진다.
 
     에코 가드를 밖에서 받는 이유
         재생기는 재생 시작/끝을 이 가드에 표시하고, 대화 루프는 같은 가드의 is_playing
@@ -224,7 +232,7 @@ def _wire_player(settings: Settings, audio_out, echo_guard) -> None:
     if audio_out is None:
         logger.warning("no audio output wired; the robot will decide what to say but "
                        "will not say it")
-        return
+        return None
 
     tts = TTSClient(settings)
     output.set_player(SentencePlayer(
@@ -232,6 +240,7 @@ def _wire_player(settings: Settings, audio_out, echo_guard) -> None:
         play=audio_out.play,
         echo_guard=echo_guard,
     ))
+    return tts
 
 
 def _wire_backend_clients() -> None:

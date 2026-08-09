@@ -175,3 +175,52 @@ def test_real_thread_factory_is_the_default() -> None:
 
     assert watcher.handle_payload(_command()) is True
     assert done.wait(5.0) is True
+
+
+# ── 환호가 실제로 소리까지 가는지 ──────────────────────────────────────────────
+
+def test_cheer_speaker_reaches_the_audio_output() -> None:
+    """Runtime 에서 합성기와 재생기를 찾아 실제로 재생까지 간다.
+
+    2026-08-10 실기에서 이 경로가 AttributeError('Runtime' object has no
+    attribute 'tts') 로 죽어, 현관 환호가 한 번도 소리 난 적이 없었다.
+    """
+    from bomi_ai_chat import bootstrap
+
+    class _Tts:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def synthesize(self, text: str) -> bytes:
+            self.calls.append(text)
+            return b"wav"
+
+    class _AudioOut:
+        def __init__(self) -> None:
+            self.played: list[bytes] = []
+
+        def play(self, audio: bytes) -> None:
+            self.played.append(audio)
+
+    tts = _Tts()
+    audio_out = _AudioOut()
+    runtime = bootstrap.Runtime(
+        app=None, senior_id="senior", tts=tts, audio_out=audio_out)
+
+    speak = bootstrap._build_cheer_speaker(runtime)
+    speak("야호")
+    speak("야호")
+
+    assert audio_out.played == [b"wav", b"wav"]
+    # 문구가 매번 같으므로 합성은 첫 번째만 네트워크를 탄다.
+    assert tts.calls == ["야호"]
+
+
+def test_cheer_speaker_stays_quiet_without_audio() -> None:
+    """출력이 없는 실행(--once, 테스트)에서는 조용히 넘어간다."""
+    from bomi_ai_chat import bootstrap
+
+    speak = bootstrap._build_cheer_speaker(
+        bootstrap.Runtime(app=None, senior_id="senior"))
+
+    speak("야호")  # 예외가 나지 않으면 통과다.
