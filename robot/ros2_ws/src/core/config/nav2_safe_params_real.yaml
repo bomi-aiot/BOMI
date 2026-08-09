@@ -114,7 +114,9 @@ controller_server:
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.5
     min_theta_velocity_threshold: 0.001
-    failure_tolerance: 0.3
+    # 0.3 은 사람이 앞을 스쳐 지나가는 것만으로도 주행을 실패시킨다.
+    # 대화 직후 어르신이 로봇 앞에 있는 것은 정상 상황이므로 그 정도는 흡수한다.
+    failure_tolerance: 2.0
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]
@@ -207,6 +209,10 @@ local_costmap:
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
+        # 지도 밖(미지)을 통행 가능으로 본다. 추종은 지도 범위를 넘어가는데,
+        # 미지를 통행 불가로 두면 복귀 시 출발 칸부터 막혀 경로가 안 나온다.
+        # 실제 장애물 회피는 아래 voxel_layer(라이다)가 계속 담당한다.
+        track_unknown_space: False
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
@@ -244,7 +250,9 @@ global_costmap:
       # 위 local_costmap 의 robot_radius 주석 참고(같은 실측 근거, 같은 값).
       robot_radius: 0.20
       resolution: 0.05
-      track_unknown_space: true
+      # 코스트맵 전체 기본값을 자유 공간으로 둔다. true 로 두면 아래
+      # static_layer 의 track_unknown_space:False 가 상쇄된다.
+      track_unknown_space: false
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -263,6 +271,8 @@ global_costmap:
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: True
+        # local_costmap 의 같은 항목과 동일한 이유(지도 밖에서의 복귀).
+        track_unknown_space: False
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
