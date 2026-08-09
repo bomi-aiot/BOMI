@@ -46,8 +46,8 @@ import logging
 import os
 import socket
 
-from bomi_ai_chat.audio_io.beam_sampler import BeamDirectionSampler
 from bomi_ai_chat.audio_io.beam_control import azimuth_agreement
+from bomi_ai_chat.audio_io.beam_sampler import BeamDirectionSampler
 
 logger = logging.getLogger(__name__)
 

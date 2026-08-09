@@ -129,13 +129,17 @@ def test_unknown_fact_type_falls_back_to_an_other_memory(settings_factory):
 # ── 6. 약속(APPOINTMENT) ─────────────────────────────────────────────────────
 
 
-def _submit_one(settings_factory, fact: dict, *, now_local=None) -> dict:
+def _submit_one(settings_factory, fact: dict, *, now_local=None, utterance=None) -> dict:
     """사실 하나를 제출하고 서버로 나간 JSON 본문을 돌려준다.
 
     now_local
         발화가 말해진 시각(tz-aware). 과거·먼 미래 판정에만 쓰인다. 기본 None 은
         "기준 시각을 모른다"이고, 그때는 그 두 검사를 건너뛴다 — 모르는 채로
         "이건 과거다"라고 단정하면 정상적인 약속을 조용히 버리게 된다.
+
+    utterance
+        어르신 발화 원문. 요일 검산에만 쓰인다. 기본 None 은 "원문을 모른다"이고,
+        그때는 모델이 준 날짜를 그대로 둔다.
     """
     settings = settings_factory(BACKEND_BASE_URL="https://backend.example")
     session = StubSession(StubResponse(200, json_data={}))
@@ -143,7 +147,7 @@ def _submit_one(settings_factory, fact: dict, *, now_local=None) -> dict:
 
     client.submit_fact_candidates(
         SENIOR, conversation_id="conv-1", source_message_id="msg-1", facts=[fact],
-        now_local=now_local)
+        now_local=now_local, utterance=utterance)
 
     return session.calls[0]["json"]
 
@@ -338,6 +342,117 @@ def test_an_appointment_inside_the_horizon_survives(settings_factory):
     assert payload["factType"] == "APPOINTMENT"
 
 
+SEOUL = timezone(timedelta(hours=9))
+# 2026-08-10 은 월요일이다. 아래 요일 검산 테스트가 전부 이 날을 기준으로 읽힌다.
+MONDAY_2026_08_10 = datetime(2026, 8, 10, 9, 0, tzinfo=SEOUL)
+
+
+def test_an_appointment_moves_to_the_weekday_the_senior_named(settings_factory):
+    """★ 실측 회귀 (S15P11E102-392).
+
+    2026-08-10(월) 대화에서 어르신은 "다음 주 화요일"이라고 말했는데, 모델이
+    계산한 startsAt 은 8/19 **수요일**이었다. 같은 대화의 같은 표현이 8/18(화)로
+    나온 행도 있었다 — 즉 모델의 산수가 비결정적이다.
+
+    APPOINTMENT 는 사람 확인 없이 자동 반영되고 care_record 에는 created_at 도
+    없어서, 하루 밀린 이 값을 나중에 대조할 방법이 없다. 그래서 여기서 고친다.
+    """
+    payload = _submit_one(settings_factory, {
+        "factType": "APPOINTMENT",
+        "content": "다음 주 화요일에 병원에 간다.",
+        "title": "병원 진료",
+        "startsAt": "2026-08-19T14:00:00+09:00",   # 수요일 — 하루 밀렸다
+    }, now_local=MONDAY_2026_08_10, utterance="다음 주 화요일 오후 두 시에 병원 가요")
+
+    assert payload["targetDomain"] == "CARE_RECORD"
+    assert payload["factType"] == "APPOINTMENT"
+    # 날짜만 옮기고 시각은 건드리지 않는다.
+    assert payload["proposedValue"]["startsAt"] == "2026-08-18T14:00:00+09:00"
+
+
+def test_an_appointment_already_on_the_named_weekday_is_left_alone(settings_factory):
+    """맞은 값은 손대지 않는다 — 모델의 원문을 그대로 실어 보낸다.
+
+    이 파일의 다른 검사들과 같은 이유다. 재포맷조차 하지 않아야 파이썬과 자바의
+    해석이 갈릴 여지가 없다.
+    """
+    payload = _submit_one(settings_factory, {
+        "factType": "APPOINTMENT",
+        "content": "다음 주 화요일에 병원에 간다.",
+        "startsAt": "2026-08-18T00:00:00+09:00",   # 화요일 — 맞다
+    }, now_local=MONDAY_2026_08_10, utterance="다음 주 화요일에 병원 가요")
+
+    assert payload["proposedValue"]["startsAt"] == "2026-08-18T00:00:00+09:00"
+
+
+@pytest.mark.parametrize(
+    "case,utterance",
+    [
+        ("요일을 말하지 않았다", "8월 19일 오후 두 시에 병원 가요"),
+        ("요일이 둘이라 어느 쪽인지 모른다", "지난 화요일에 갔는데 다음 주 수요일에 또 가요"),
+        ("원문을 모른다", None),
+    ],
+)
+def test_the_weekday_check_stays_out_when_it_cannot_judge(settings_factory, case, utterance):
+    """검산할 근거가 없으면 개입하지 않는다.
+
+    모르는 채로 날짜를 옮기면, 맞았을 수도 있는 값을 틀리게 만든다. 이 파일의
+    다른 검사들이 "의심스러우면 버린다"인 것과 같은 보수성이다.
+    """
+    payload = _submit_one(settings_factory, {
+        "factType": "APPOINTMENT",
+        "content": "병원에 간다.",
+        "startsAt": "2026-08-19T14:00:00+09:00",
+    }, now_local=MONDAY_2026_08_10, utterance=utterance)
+
+    assert payload["proposedValue"]["startsAt"] == "2026-08-19T14:00:00+09:00", case
+
+
+def test_the_weekday_snap_never_jumps_a_week(settings_factory):
+    """주(週)는 모델이 정하고 요일만 코드가 고친다 — 가장 가까운 발생일로만 옮긴다.
+
+    토요일(8/22)에서 "화요일"은 뒤로 4일(8/18)보다 앞으로 3일(8/25)이 가깝다.
+    어떤 요일이든 가장 가까운 발생일은 ±3일 안에 있어서, 이 규칙은 구조적으로
+    주를 건너뛸 수 없다. 모델이 고른 주를 코드가 덮어쓰면 그건 더 큰 오류다.
+    """
+    payload = _submit_one(settings_factory, {
+        "factType": "APPOINTMENT",
+        "content": "화요일에 병원에 간다.",
+        "startsAt": "2026-08-22T10:00:00+09:00",   # 토요일
+    }, now_local=MONDAY_2026_08_10, utterance="화요일에 병원 가요")
+
+    assert payload["proposedValue"]["startsAt"] == "2026-08-25T10:00:00+09:00"
+
+
+def test_a_correction_that_lands_in_the_past_is_demoted(settings_factory):
+    """당긴 결과가 과거면 버린다 — 과거 판정과 같은 이유다.
+
+    스냅은 최대 3일까지 앞으로 당긴다. 그 결과가 기준 시각보다 앞서면 '지나간
+    일'이 되고, 지나간 일은 일정이 아니라 기억이다. 조회 경로에 뜨지 않아
+    어르신이 알림도 못 받는 행을 만드는 것보다, 기억으로 남기는 편이 낫다.
+    """
+    payload = _submit_one(settings_factory, {
+        "factType": "APPOINTMENT",
+        "content": "월요일에 병원에 간다.",
+        "startsAt": "2026-08-11T08:00:00+09:00",   # 화요일 → 월요일로 당기면 8/10 08:00
+    }, now_local=MONDAY_2026_08_10, utterance="월요일에 병원 가요")
+
+    assert payload["targetDomain"] == "MEMORY"
+    assert payload["factType"] == "OTHER"
+    assert payload["proposedValue"] == {"content": "월요일에 병원에 간다."}
+
+
+def test_the_short_weekday_form_is_understood(settings_factory):
+    """'화욜' 같은 줄임말도 요일이다. 실제로 그렇게 말한다."""
+    payload = _submit_one(settings_factory, {
+        "factType": "APPOINTMENT",
+        "content": "병원에 간다.",
+        "startsAt": "2026-08-19T14:00:00+09:00",
+    }, now_local=MONDAY_2026_08_10, utterance="담주 화욜에 병원 가요")
+
+    assert payload["proposedValue"]["startsAt"] == "2026-08-18T14:00:00+09:00"
+
+
 def test_a_non_appointment_fact_never_carries_schedule_keys(settings_factory):
     """약속이 아닌 사실에 모델이 startsAt 을 붙여도 서버로 나가지 않는다.
 
@@ -416,3 +531,65 @@ def test_auth_failure_logs_a_distinct_warning_then_raises(settings_factory, capl
 
     assert raised is True
     assert "AUTH FAILURE" in caplog.text
+
+
+# ── 7. 되돌릴 수 없는 실패의 구분 (S15P11E102-393) ───────────────────────────
+
+
+def _submission_error(settings_factory, status: int) -> FactSubmissionError:
+    """주어진 상태 코드로 실패시키고 올라온 예외를 돌려준다."""
+    settings = settings_factory(
+        HTTP_MAX_ATTEMPTS="1", BACKEND_BASE_URL="https://backend.example")
+    client = BackendFactClient(
+        settings=settings, session=StubSession(StubResponse(status, json_data={})))
+
+    with pytest.raises(FactSubmissionError) as caught:
+        client.submit_fact_candidates(
+            SENIOR,
+            conversation_id="conv-1",
+            source_message_id="msg-1",
+            facts=[{"factType": "FAMILY", "content": "손자가 자주 놀러 온다."}],
+        )
+    return caught.value
+
+
+def test_a_bad_request_is_flagged_as_permanent(settings_factory):
+    """★ 400 은 재시도해도 같은 답이 온다 — 호출부가 그 큐 행을 닫아야 한다.
+
+    실측 경로: 리허설 사이에 서버 DB 만 초기화하면 로컬 큐에 남은 행의
+    conversationId 가 서버에 없어 영원히 400 을 받는다. 그 행이 큐 맨 앞에
+    남으면 뒤의 새 발화가 영영 제출되지 않는다.
+    """
+    assert _submission_error(settings_factory, 400).permanent is True
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_an_auth_failure_is_not_permanent(settings_factory, status):
+    """시크릿 설정 오류는 사람이 고치면 낫는다 — 그 사이의 기억을 버리지 않는다."""
+    assert _submission_error(settings_factory, status).permanent is False
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+def test_a_transient_failure_is_not_permanent(settings_factory, status):
+    """서버가 돌아오면 그대로 성공할 요청이다. 포기할 이유가 없다."""
+    assert _submission_error(settings_factory, status).permanent is False
+
+
+def test_a_network_failure_is_not_permanent(settings_factory):
+    """상태 코드가 아예 없는 실패(연결 끊김)도 재시도 대상이다."""
+    import requests
+
+    settings = settings_factory(
+        HTTP_MAX_ATTEMPTS="1", BACKEND_BASE_URL="https://backend.example")
+    client = BackendFactClient(
+        settings=settings, session=StubSession(requests.ConnectionError("no route")))
+
+    with pytest.raises(FactSubmissionError) as caught:
+        client.submit_fact_candidates(
+            SENIOR,
+            conversation_id="conv-1",
+            source_message_id="msg-1",
+            facts=[{"factType": "FAMILY", "content": "손자가 자주 놀러 온다."}],
+        )
+
+    assert caught.value.permanent is False

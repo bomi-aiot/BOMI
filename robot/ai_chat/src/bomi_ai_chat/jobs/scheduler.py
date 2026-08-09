@@ -147,6 +147,49 @@ def build_scheduler(senior_id: str, app=None):
     return scheduler
 
 
+def run_extraction_flush_now(scheduler) -> bool:
+    """추출 flush 를 다음 주기까지 기다리지 않고 지금 한 번 돌린다 (S15P11E102-393).
+
+    무엇을 하는가
+        등록된 extraction_flush 작업의 다음 실행 시각을 '지금'으로 당긴다.
+        스케줄러가 자기 워커 스레드에서 곧바로 그 작업을 돌리고, 그 뒤로는
+        policy.EXTRACTION_FLUSH_INTERVAL_SEC 주기가 이 시점부터 다시 센다.
+        돌렸으면(당겼으면) True.
+
+    왜 필요한가
+        대화가 끝난 직후가 방금 말한 내용이 큐에 들어 있는 순간이다. 그런데
+        틱은 60초 주기라 거기서 최대 1분을 그냥 기다린다 — 어르신이 말한 약속이
+        보호자 화면에 뜨는 시각이 그만큼 늦는다.
+
+    ★ 왜 직접 스레드를 만들지 않는가
+        flush 는 대기 행마다 LLM 을 부르므로 대화 루프에서 그대로 부르면 그동안
+        로봇이 "보미야"를 못 듣는다. 그렇다고 threading.Thread 를 띄우면 아무도
+        그 스레드의 수명을 모른다 — 프로세스가 내려가면서 SQLite 연결을 닫는데
+        그 스레드가 아직 쿼리 중이면 인터프리터가 죽는다(실제로 테스트에서
+        세그폴트로 재현됐다). 스케줄러는 이미 종료 절차(runtime 의 shutdown)에
+        묶여 있는 유일한 배경 실행자다. 새 실행자를 만들지 않고 그것을 쓴다.
+
+    주의사항
+        스케줄러가 없거나(시작 실패, --once 같은 경로) 작업이 등록되지 않았으면
+        아무것도 하지 않고 False 를 돌려준다. 그 경우 손해는 "다음 틱까지
+        기다린다"뿐이다.
+    """
+    if scheduler is None:
+        return False
+    try:
+        from datetime import datetime, timezone
+
+        # clock 이 아니라 실제 시각이다. APScheduler 는 SimClock 을 모르고 벽시계로
+        # 발동한다(이 파일 상단의 '수동 틱 경로' 주석과 같은 이유).
+        scheduler.modify_job(
+            "extraction_flush", next_run_time=datetime.now(timezone.utc)
+        )
+    except Exception:  # noqa: BLE001 - 앞당기기 실패가 대화 루프를 죽이면 안 된다
+        logger.warning("could not bring the extraction flush forward", exc_info=True)
+        return False
+    return True
+
+
 def _contract_tick_job(senior_id: str) -> None:
     """contract_tick 을 부르되, '지금' 열려 있는 대화 id 를 매 호출마다 새로 읽는다.
 
