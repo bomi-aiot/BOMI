@@ -66,6 +66,7 @@ log "Starting deployment for Git commit $GIT_SHA"
 log 'Updating Backend and Frontend image tags'
 set_env_value BACKEND_IMAGE_TAG "$GIT_SHA"
 set_env_value OPERATOR_CONSOLE_IMAGE_TAG "$GIT_SHA"
+set_env_value WAYPOINT_EDITOR_IMAGE_TAG "$GIT_SHA"
 set_env_value FRONTEND_IMAGE_TAG "$GIT_SHA"
 
 log 'Validating Docker Compose configuration'
@@ -74,18 +75,18 @@ compose config --quiet
 log 'Ensuring PostgreSQL is healthy'
 compose up -d --wait --wait-timeout 60 postgres
 
-log 'Building Backend, Operator Console and Frontend images'
-compose build backend operator-console frontend
+log 'Building Backend, operator tools and Frontend images'
+compose build backend operator-console waypoint-editor frontend
 
 log 'Starting application containers'
-compose up -d --wait --wait-timeout 120 backend operator-console frontend
+compose up -d --wait --wait-timeout 120 backend operator-console waypoint-editor frontend
 
 log 'Recreating public Nginx with the current configuration'
 compose up -d --force-recreate --wait --wait-timeout 60 nginx
 
 log 'Verifying container health'
-compose ps postgres backend operator-console frontend nginx
-for container in bomi-postgres bomi-backend bomi-operator-console bomi-frontend bomi-nginx; do
+compose ps postgres backend operator-console waypoint-editor frontend nginx
+for container in bomi-postgres bomi-backend bomi-operator-console bomi-waypoint-editor bomi-frontend bomi-nginx; do
   health="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")"
   [[ "$health" == 'healthy' ]] || fail "$container is not healthy (state: $health)"
 done
@@ -99,5 +100,9 @@ operator_console_status="$(curl --silent --output /dev/null --write-out '%{http_
   "https://$BOMI_DOMAIN/operator-console/")"
 [[ "$operator_console_status" == 401 ]] \
   || fail "Operator Console must reject unauthenticated requests (HTTP $operator_console_status)"
+waypoint_editor_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  "https://$BOMI_DOMAIN/waypoint-editor/")"
+[[ "$waypoint_editor_status" == 401 ]] \
+  || fail "Waypoint Editor must reject unauthenticated requests (HTTP $waypoint_editor_status)"
 
 log "Deployment completed successfully for Git commit $GIT_SHA"

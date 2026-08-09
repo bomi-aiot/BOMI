@@ -160,16 +160,18 @@ pipeline {
         // BACKEND_IMAGE_TAG 를 셸 환경으로 넘겨 새 SHA 태그로만 빌드한다. Compose 의
         // 변수 우선순위는 셸 환경 > --env-file 이므로 production.env 는 읽기만 하고
         // 쓰지 않으며, 지금 돌고 있는 이미지의 태그도 덮어쓰지 않는다.
-        stage('Build Backend and Operator Console') {
+        stage('Build Backend and Operator Tools') {
             steps {
                 sh '''set -eu
                     BACKEND_IMAGE_TAG="$BOMI_GIT_SHA" \
-                    OPERATOR_CONSOLE_IMAGE_TAG="$BOMI_GIT_SHA" docker compose \
+                    OPERATOR_CONSOLE_IMAGE_TAG="$BOMI_GIT_SHA" \
+                    WAYPOINT_EDITOR_IMAGE_TAG="$BOMI_GIT_SHA" docker compose \
                       --env-file "$BOMI_ENV_FILE" \
                       -f "$BOMI_COMPOSE_FILE" \
-                      build backend operator-console
+                      build backend operator-console waypoint-editor
                     docker image inspect "bomi-backend:$BOMI_GIT_SHA" >/dev/null
-                    docker image inspect "bomi-operator-console:$BOMI_GIT_SHA" >/dev/null'''
+                    docker image inspect "bomi-operator-console:$BOMI_GIT_SHA" >/dev/null
+                    docker image inspect "bomi-waypoint-editor:$BOMI_GIT_SHA" >/dev/null'''
             }
         }
 

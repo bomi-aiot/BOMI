@@ -31,7 +31,9 @@ docker inspect bomi-operator-console \
 docker run --rm httpd:2.4-alpine \
   htpasswd -Bbn <운영자 아이디> '<강한 비밀번호>' \
   > /home/ubuntu/bomi/secrets/operator-console.htpasswd
-chmod 600 /home/ubuntu/bomi/secrets/operator-console.htpasswd
+NGINX_GID="$(docker run --rm nginx:1.30.4-alpine id -g nginx)"
+sudo chown root:"$NGINX_GID" /home/ubuntu/bomi/secrets/operator-console.htpasswd
+sudo chmod 640 /home/ubuntu/bomi/secrets/operator-console.htpasswd
 ```
 
 `/home/ubuntu/bomi/secrets/production.env`에는 다음 경로를 설정한다.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from io import BytesIO
 import math
+import os
 from pathlib import Path
 import shutil
 
@@ -30,6 +31,11 @@ DEFAULT_WAYPOINT_FILE = (
     REPOSITORY_ROOT / "ros2_ws" / "src" / "core" / "config" / "room_waypoints.yaml"
 )
 MAX_DISPLAY_WIDTH = 900
+ALLOW_SERVER_WRITE = os.getenv("WAYPOINT_EDITOR_ALLOW_SERVER_WRITE", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+}
 
 IMAGE_CLICKER_HTML = """
 <img class="waypoint-map" alt="클릭해서 웨이포인트를 지정할 지도" />
@@ -190,10 +196,14 @@ def main() -> None:
             map_files,
             format_func=lambda path: path.name,
         )
-        waypoint_text = st.text_input("웨이포인트 YAML", str(DEFAULT_WAYPOINT_FILE))
-        waypoint_path = Path(waypoint_text).expanduser()
-        if not waypoint_path.is_absolute():
-            waypoint_path = REPOSITORY_ROOT / waypoint_path
+        if ALLOW_SERVER_WRITE:
+            waypoint_text = st.text_input("웨이포인트 YAML", str(DEFAULT_WAYPOINT_FILE))
+            waypoint_path = Path(waypoint_text).expanduser()
+            if not waypoint_path.is_absolute():
+                waypoint_path = REPOSITORY_ROOT / waypoint_path
+        else:
+            waypoint_path = DEFAULT_WAYPOINT_FILE
+            st.caption("운영 서버에서는 기본 웨이포인트를 불러오며 결과는 다운로드합니다.")
 
         if st.button("웨이포인트 다시 불러오기", use_container_width=True):
             try:
@@ -332,7 +342,17 @@ def main() -> None:
     st.divider()
     yaml_text = dump_waypoint_document(waypoints, st.session_state.patrol_options)
     save_column, download_column = st.columns(2)
-    if save_column.button("room_waypoints.yaml에 저장", type="primary", use_container_width=True):
+    if save_column.button(
+        "room_waypoints.yaml에 저장",
+        type="primary",
+        use_container_width=True,
+        disabled=not ALLOW_SERVER_WRITE,
+        help=(
+            None
+            if ALLOW_SERVER_WRITE
+            else "운영 서버에서는 직접 저장하지 않습니다. YAML을 다운로드해 적용하세요."
+        ),
+    ):
         try:
             backup_path = waypoint_path.with_suffix(waypoint_path.suffix + ".bak")
             if waypoint_path.exists():

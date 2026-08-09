@@ -26,6 +26,22 @@ pip install --upgrade -r tools/waypoint_editor/requirements.txt
 
 Windows 브라우저에서 <http://localhost:8501>을 엽니다.
 
+## 운영 배포
+
+운영 배포에서는 기존 운영자 대시보드와 같은 Basic 인증을 사용하며 다음 주소로
+접속합니다.
+
+<https://i15e102.p.ssafy.io/waypoint-editor/>
+
+Docker 이미지는 저장소의 지도와 기본 `room_waypoints.yaml`을 포함합니다. EC2에서
+파일을 바꿔도 Jetson에는 자동으로 반영되지 않으므로 운영 화면의 서버 저장 버튼은
+비활성화됩니다. 편집 결과를 YAML로 다운로드한 뒤 검토하여 Jetson의 파일에
+적용합니다.
+
+배포는 `scripts/deploy/deploy-backend.sh`와 통합 Jenkins 파이프라인에 포함됩니다.
+별도의 포트를 인터넷에 공개하지 않고 Nginx가 Docker 네트워크의
+`waypoint-editor:8501`로 연결합니다.
+
 ## 사용 방법
 
 1. 사이드바에서 `mapping/maps`의 지도 YAML을 선택합니다.
