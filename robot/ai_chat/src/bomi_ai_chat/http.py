@@ -74,6 +74,40 @@ def is_auth_failure(error: BaseException) -> bool:
     )
 
 
+# 다시 보내도 결과가 같은 상태 코드. 4xx 는 "우리가 보낸 것이 틀렸다"는 뜻이라
+# 같은 요청을 몇 번 더 보내도 같은 답이 온다.
+#
+# 408(Timeout)과 429(Too Many Requests)는 뺀다 — 둘은 4xx 지만 "지금은 안 되니
+# 나중에 다시"라는 뜻이라 재시도가 맞다.
+_RETRYABLE_CLIENT_ERROR_STATUS_CODES = frozenset({408, 429})
+
+
+def is_permanent_rejection(error: BaseException) -> bool:
+    """다시 보내도 소용없는 거부인가.
+
+    왜 필요한가 (2026-08-10)
+        추출 큐는 제출 실패를 전부 "일시적"으로 보고 그 행을 남겨 다음 틱에 다시
+        보냈다. 그런데 뷰어의 삭제 버튼이 서버의 conversation 을 지우자, 그 대화를
+        참조하는 큐 행이 매번 400 "unknown conversationId" 를 받게 됐다. 그 대화는
+        영원히 돌아오지 않으므로 이 재시도는 영원히 실패한다 — 큐가 막히고,
+        LLM 호출과 네트워크만 계속 쓰며, 로그에는 같은 경고가 무한히 쌓인다.
+
+        로컬 큐와 서버 DB 는 서로 다른 저장소이고 함께 지워지지 않는다. 그 어긋남을
+        '못 고치는 것'으로 인정하고, 못 고칠 실패는 재시도 대상에서 빼는 것이 맞다.
+
+    왜 401/403 은 여기 포함해도 되는가
+        시크릿이 틀린 것은 배포를 고쳐야 풀리지 재시도로는 안 풀린다. 다만 호출부는
+        is_auth_failure 로 그 경우를 먼저 걸러 별도 경고를 남긴다 — 조용히 버려지지
+        않게 하려는 것이고, 이 함수와 목적이 다르다.
+    """
+    if not isinstance(error, ExternalServiceError):
+        return False
+    status = error.status_code
+    if status is None:
+        return False
+    return 400 <= status < 500 and status not in _RETRYABLE_CLIENT_ERROR_STATUS_CODES
+
+
 def _retry_delay(
     *,
     attempt: int,

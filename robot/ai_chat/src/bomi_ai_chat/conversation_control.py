@@ -132,12 +132,69 @@ def is_search_stop_request(text: str) -> bool:
     return any(cue in normalized for cue in policy.SEARCH_STOP_CUES)
 
 
-def is_farewell(text: str) -> bool:
-    """사용자 발화가 '대화를 그만하겠다'는 뜻인지 부분일치로 판단한다.
+#: 마무리 판정에서 무시하는 문장부호·군말. 공백과 함께 지운 뒤 매칭한다 —
+#: STT 는 "알겠어, 고마워." 처럼 쉼표·마침표를 붙여 주기도 하고 안 붙이기도 한다.
+_CLOSING_NOISE = " \t\n.,!?~…·'\"’”ㅋㅎ"
+
+
+def _strip_closing_noise(text: str) -> str:
+    """마무리 판정용 정규화: 공백·문장부호·웃음 표기를 전부 지운다."""
+    return "".join(ch for ch in text if ch not in _CLOSING_NOISE)
+
+
+def is_soft_closing(text: str) -> bool:
+    """발화 '전체'가 수긍·감사로 된 마무리인지 판단한다 ("알겠어, 고마워").
 
     무엇을 하는가
-        발화에서 공백을 없앤 뒤, policy.CONVERSATION_FAREWELL_CUES 의 큐가 하나라도
-        들어 있으면 True. "대화는 여기까지만 하자" -> "여기까지" 포함 -> True.
+        정규화한 발화를 앞에서부터 깎는다. policy.CONVERSATION_SOFT_CLOSING_CUES
+        (마무리 표현)와 policy.CONVERSATION_CLOSING_FILLERS(군더더기)를 긴 것부터
+        떼어내며, 마지막에 아무것도 남지 않고 마무리 표현을 하나 이상 뗐으면 True.
+
+            "응 알겠어, 고마워"  -> 응/알겠어/고마워 전부 제거 -> True
+            "고마워 근데 약은?"  -> "근데약은" 이 남는다        -> False
+            "응 그래"            -> 남지는 않지만 군더더기뿐   -> False
+
+    왜 is_farewell 과 규칙을 나누는가
+        "그만하자"는 문장 어디에 있어도 종료지만 "고마워"는 그렇지 않다. 같은
+        부분일치 규칙에 넣으면 감사로 운을 떼고 본론으로 들어가는 발화를 끊는다.
+        policy.CONVERSATION_SOFT_CLOSING_CUES 주석 참고.
+
+    누가 호출하는가
+        is_farewell 하나뿐이다 — 호출부(bootstrap, pipeline)는 종료 판정을 계속
+        한 곳에서만 물어본다.
+    """
+    remainder = _strip_closing_noise(text)
+    if not remainder:
+        return False
+    # 긴 큐부터 떼야 "감사해요"가 "감사해" + "요" 로 잘못 쪼개지지 않는다.
+    cues = sorted(policy.CONVERSATION_SOFT_CLOSING_CUES, key=len, reverse=True)
+    fillers = sorted(policy.CONVERSATION_CLOSING_FILLERS, key=len, reverse=True)
+    matched_cue = False
+    while remainder:
+        for cue in cues:
+            if remainder.startswith(cue):
+                remainder = remainder[len(cue):]
+                matched_cue = True
+                break
+        else:
+            for filler in fillers:
+                if remainder.startswith(filler):
+                    remainder = remainder[len(filler):]
+                    break
+            else:
+                # 마무리 어휘로 설명되지 않는 말이 남았다 -> 대화는 계속된다.
+                return False
+    return matched_cue
+
+
+def is_farewell(text: str) -> bool:
+    """사용자 발화가 '대화를 그만하겠다'는 뜻인지 판단한다. 규칙 두 가지.
+
+    무엇을 하는가
+        1) 부분일치: 공백을 없앤 발화에 policy.CONVERSATION_FAREWELL_CUES 의 큐가
+           하나라도 들어 있으면 True. "대화는 여기까지만 하자" -> "여기까지" -> True.
+        2) 전체일치: 발화 전체가 수긍·감사 마무리이면 True (is_soft_closing).
+           "알겠어, 고마워" 처럼 실제 대화가 가장 흔하게 닫히는 형태다.
 
     왜 LLM 을 안 쓰나
         종료 판정에 생성 LLM 을 또 부르면 턴마다 왕복이 늘어 2초 예산이 무너진다
@@ -145,4 +202,6 @@ def is_farewell(text: str) -> bool:
         보고 policy 의 큐 목록을 늘려야 한다.
     """
     normalized = text.replace(" ", "")
-    return any(cue in normalized for cue in policy.CONVERSATION_FAREWELL_CUES)
+    if any(cue in normalized for cue in policy.CONVERSATION_FAREWELL_CUES):
+        return True
+    return is_soft_closing(text)

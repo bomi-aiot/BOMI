@@ -44,10 +44,9 @@ from bomi_ai_chat.backend_client.fact_contract import to_intake_payload
 from bomi_ai_chat.backend_client.session import build_backend_session
 from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.http import (
-    AUTH_FAILURE_STATUS_CODES,
-    RETRYABLE_STATUS_CODES,
     ExternalServiceError,
     is_auth_failure,
+    is_permanent_rejection,
     request_with_retry,
 )
 
@@ -71,34 +70,6 @@ class FactSubmissionError(RuntimeError):
     def __init__(self, message: str, *, permanent: bool = False) -> None:
         super().__init__(message)
         self.permanent = permanent
-
-
-def is_permanent_rejection(error: BaseException) -> bool:
-    """서버가 "이 요청 자체가 틀렸다"고 답했는가.
-
-    무엇이 영구 실패인가
-        4xx 중 401/403(인증)과 429(과부하)를 뺀 것. 남는 것은 400·404·409·422
-        처럼 요청의 내용이 틀렸다는 답이고, 같은 내용을 다시 보내면 같은 답이
-        온다. 실제로 밟은 경로: 리허설 사이에 서버 DB 를 초기화하면 로컬 큐에
-        남은 행의 conversationId 가 서버에 없어 영원히 400 을 받는다.
-
-    왜 401/403 은 빼는가
-        시크릿 설정 오류는 사람이 고치면 그날 안에 낫는다. 그 사이 쌓인 기억을
-        버리면 고쳐도 돌아오지 않는다. 재시도 쪽에 남긴다(http.is_auth_failure
-        가 이미 이 실패를 시끄럽게 로그로 남긴다).
-
-    왜 5xx·네트워크는 빼는가
-        서버가 돌아오면 그대로 성공할 요청이다. 포기할 이유가 없다.
-    """
-    if not isinstance(error, ExternalServiceError):
-        return False
-    status = error.status_code
-    if status is None or not (400 <= status < 500):
-        return False
-    return (
-        status not in AUTH_FAILURE_STATUS_CODES
-        and status not in RETRYABLE_STATUS_CODES
-    )
 
 
 class BackendFactClient:

@@ -7,6 +7,7 @@ from bomi_ai_chat.http import (
     ExternalServiceError,
     InvalidResponseError,
     decode_json_object,
+    is_permanent_rejection,
     request_with_retry,
 )
 from tests.http_fakes import StubResponse, StubSession
@@ -117,3 +118,45 @@ def test_invalid_json_is_normalized_without_body_details():
 
     assert error.value.category == "invalid_response"
     assert "secret response body" not in str(error.value)
+
+
+# ── 영구 거부는 재시도하지 않는다 (2026-08-10) ───────────────────────────────
+#
+# 왜 이 절이 생겼는가
+#   뷰어의 삭제 버튼이 서버의 conversation 을 지우자, 그 대화를 참조하는 큐 행이
+#   매번 400 "unknown conversationId" 를 받게 됐다. 재시도의 전제("다음엔 될 수도
+#   있다")가 깨진 경우인데 코드는 계속 재시도했고, 큐가 막힌 채 LLM 호출과
+#   네트워크만 계속 썼다.
+
+
+def _permanent_error(status: int) -> ExternalServiceError:
+    return ExternalServiceError(
+        "robot-fact-candidates", f"HTTP {status}",
+        category="http", status_code=status,
+    )
+
+
+def test_client_error_is_permanent():
+    """4xx 는 우리가 보낸 것이 틀렸다는 뜻이라 다시 보내도 같다."""
+    assert is_permanent_rejection(_permanent_error(400)) is True
+    assert is_permanent_rejection(_permanent_error(404)) is True
+    assert is_permanent_rejection(_permanent_error(422)) is True
+
+
+def test_server_error_stays_retryable():
+    """5xx 는 서버 사정이라 기다리면 될 수 있다."""
+    assert is_permanent_rejection(_permanent_error(500)) is False
+    assert is_permanent_rejection(_permanent_error(503)) is False
+
+
+def test_timeout_and_rate_limit_stay_retryable():
+    """408·429 는 4xx 지만 '지금은 안 되니 나중에'라는 뜻이다."""
+    assert is_permanent_rejection(_permanent_error(408)) is False
+    assert is_permanent_rejection(_permanent_error(429)) is False
+
+
+def test_network_failure_is_not_permanent():
+    """상태 코드가 없는 실패(연결 끊김)는 영구 거부로 볼 근거가 없다."""
+    assert is_permanent_rejection(OSError("connection reset")) is False
+    assert is_permanent_rejection(
+        ExternalServiceError("s", "d", category="network")) is False

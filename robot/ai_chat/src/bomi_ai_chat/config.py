@@ -13,6 +13,29 @@ DEFAULT_TYPECAST_VOICE_ID = "tc_666a9871abcf27a5169850d0"
 VALID_DB_CONNECTION_MODES = {"direct", "ssh"}
 VALID_AUDIO_MODES = {"laptop", "robot"}
 
+# STT 가 자주 틀리는, 이 서비스에서만 쓰는 말들. RTZR 의 키워드 부스팅에 그대로
+# 실린다(stt/client.py).
+#
+# 왜 이 목록이 필요한가 (2026-08-10 A/B 실측)
+#   같은 오디오를 설정만 바꿔 두 번 인식시켰다.
+#     부스팅 없음: "고미야 관절 영양 먹었어. 무릎이 시큰거려서 ..."
+#     부스팅 있음: "보미야 관절염 약 먹었어. 무릎이 시큰거려서 ..."
+#   웨이크워드 이름이 틀리면 그 뒤 대화 전체가 어긋난다 — 거의 모든 발화에
+#   들어가는 말이라 한 단어의 효과가 가장 크다.
+#
+# 무엇을 넣고 무엇을 빼는가
+#   일반 한국어는 넣지 않는다. 모델이 이미 잘하는 말에 가중치를 주면 엉뚱한
+#   곳에서 그 단어로 끌려간다. 고유명사·약 이름·신체 부위처럼 '이 도메인에만
+#   자주 나오는' 말만 넣는다. 어르신이 바뀌면 STT_KEYWORDS 로 덮어쓴다.
+DEFAULT_STT_KEYWORDS: tuple[str, ...] = (
+    "보미",
+    "순자",
+    "관절염약",
+    "혈압약",
+    "무릎",
+    "허리",
+)
+
 
 class ConfigurationError(RuntimeError):
     """필수 설정이 없거나 올바르지 않을 때 발생하는 오류."""
@@ -92,6 +115,21 @@ def _bool_env(name: str, default: bool) -> bool:
     )
 
 
+def _csv_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """쉼표로 나뉜 목록. 빈 문자열은 "목록을 비운다"는 뜻이다.
+
+    왜 빈 문자열과 미설정을 구분하는가
+        STT_KEYWORDS="" 는 "부스팅을 끄겠다"는 명시적 의사표시다. 미설정과 같게
+        다루면 기본 목록이 되살아나 끌 방법이 없어진다.
+    """
+    # ★ _optional_env 를 쓰지 않는다. 그 헬퍼는 빈 문자열을 '미설정'으로 접어
+    #   버리는데(strip 후 falsy 면 default), 여기서는 그 둘이 서로 다른 뜻이다.
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return tuple(item.strip() for item in raw_value.split(",") if item.strip())
+
+
 def _audio_device_env(
     name: str, default: int | str | None = None
 ) -> int | str | None:
@@ -144,6 +182,16 @@ class Settings:
     http_max_attempts: int
     http_backoff_seconds: float
     http_max_backoff_seconds: float
+    # STT 키워드 부스팅 목록 (S15P11E102 / 2026-08-10 실측).
+    #
+    #   같은 오디오로 A/B 했다. 부스팅이 없으면 "보미야 관절염약"이
+    #   "고미야 관절 영양"으로 인식됐고, 목록을 주자 둘 다 바로잡혔다.
+    #   웨이크워드 이름은 거의 모든 발화에 들어가므로 효과가 특히 크다.
+    stt_keywords: tuple[str, ...]
+    # 간투사("어…", "음…") 제거. 기본은 끔 — 실측에서 차이를 보지 못했고,
+    # 없애는 것이 항상 이득이라는 근거도 아직 없다(어르신의 머뭇거림 자체가
+    # 신호일 수 있다). 현장에서 켜 보고 판단할 수 있게 열어만 둔다.
+    stt_disfluency_filter: bool
     stt_poll_interval_seconds: float
     stt_poll_timeout_seconds: float
     stt_token_ttl_seconds: float
@@ -399,6 +447,8 @@ class Settings:
                 "HTTP_MAX_BACKOFF_SECONDS",
                 2.0,
             ),
+            stt_keywords=_csv_env("STT_KEYWORDS", DEFAULT_STT_KEYWORDS),
+            stt_disfluency_filter=_bool_env("STT_DISFLUENCY_FILTER", False),
             stt_poll_interval_seconds=_positive_float_env(
                 "STT_POLL_INTERVAL_SECONDS",
                 0.5,
