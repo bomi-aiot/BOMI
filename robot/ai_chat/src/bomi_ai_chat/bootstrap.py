@@ -34,7 +34,7 @@ import os
 import queue
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from bomi_ai_chat.config import Settings, get_settings
 
@@ -68,6 +68,10 @@ class Runtime:
     # 로봇 내부(ROS 2 wake_search 노드)로 UDP 발신한다. None 이면 이 기능이
     # 꺼져 있다는 뜻 — 대화는 그대로 동작하고 로봇만 돌지 않는다.
     search_signal: Any = None
+    # 현관 이동 환호(entrance_cheer.EntranceCheerWatcher). commands 토픽을
+    # 엿들어 NAVIGATE(ENTRANCE) 를 보면 "야호" 하고 외친다. None 이면 이
+    # 기능이 꺼져 있다는 뜻 — 로봇은 조용히 현관으로 간다.
+    entrance_cheer: Any = None
 
     def shutdown(self, *, wait_for_speech_sec: float = 0.0) -> None:
         """백그라운드 스레드를 정리한다. 실패해도 종료를 막지 않는다.
@@ -97,6 +101,7 @@ class Runtime:
             ("door subscriber", getattr(self.door_subscriber, "stop", None)),
             ("ai command subscriber", getattr(self.ai_command_subscriber, "stop", None)),
             ("navigation arrival watcher", getattr(self.navigation_watcher, "stop", None)),
+            ("entrance cheer watcher", getattr(self.entrance_cheer, "stop", None)),
             ("search signal sender", getattr(self.search_signal, "close", None)),
             ("scheduler", getattr(self.scheduler, "shutdown", None)),
         ):
@@ -175,6 +180,7 @@ def build_runtime(
         runtime.ai_command_subscriber = _start_ai_command_subscriber(
             settings, backend_conversation_queue)
         runtime.navigation_watcher = _start_navigation_watcher(settings)
+        runtime.entrance_cheer = _start_entrance_cheer(runtime, settings)
     return runtime
 
 
@@ -365,6 +371,59 @@ def _start_navigation_watcher(settings: Settings):
         return None
 
     logger.info("navigation arrival watcher started")
+    return watcher
+
+
+def _build_cheer_speaker(runtime) -> Callable[[str], None]:
+    """환호 문구를 소리로 내는 콜백을 만든다.
+
+    합성 결과를 캐시하는 이유: 문구가 매번 같은 한 마디라 이동할 때마다
+    Typecast 를 왕복할 이유가 없다. 첫 번째만 네트워크를 타고 그 뒤로는
+    바로 재생되므로, 출발과 소리 사이의 간격도 줄어든다.
+    """
+    cache: dict[str, bytes] = {}
+
+    def speak(text: str) -> None:
+        tts = runtime.tts
+        audio_out = runtime.audio_out
+        if tts is None or audio_out is None:
+            return
+        from bomi_ai_chat.display_status import publish as publish_display_status
+
+        audio = cache.get(text)
+        if audio is None:
+            audio = tts.synthesize(text)
+            cache[text] = audio
+        try:
+            publish_display_status("SPEAKING")
+            audio_out.play(audio)
+        finally:
+            publish_display_status("IDLE")
+
+    return speak
+
+
+def _start_entrance_cheer(runtime, settings: Settings):
+    """현관 이동 환호 감시자를 시작한다.
+
+    꺼져 있으면 조용히 None 이다 — 옵트아웃이 가능한 곁가지 기능이라
+    "고장"이 아니다. 브로커가 없다고 대화까지 막지 않는 것도
+    _start_navigation_watcher 와 같다.
+    """
+    from bomi_ai_chat.entrance_cheer import build_entrance_cheer_watcher
+
+    try:
+        watcher = build_entrance_cheer_watcher(
+            _build_cheer_speaker(runtime), settings)
+        if watcher is None:
+            return None
+        watcher.start()
+    except Exception:  # noqa: BLE001 - 환호가 안 되는 것은 대화 실패가 아니다
+        logger.exception("could not start the entrance cheer watcher; "
+                         "the robot will drive to the entrance silently")
+        return None
+
+    logger.info("entrance cheer watcher started")
     return watcher
 
 
