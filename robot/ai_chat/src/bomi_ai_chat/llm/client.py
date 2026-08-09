@@ -124,7 +124,7 @@ class LLMClient:
         self._sleep = sleep
         self.url = (
             "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com"
-            "/v1beta/models/gemini-3.5-flash:generateContent"
+            "/v1beta/models/gemini-2.5-flash-lite:generateContent"
         )
 
     def generate(self, text: str, weather_data: dict | None = None) -> str:
@@ -162,17 +162,7 @@ class LLMClient:
                 # 방지용 여유값으로만 둔다.
                 #   올리면 -> 잘림은 없지만 폭주 시 낭비가 커진다.
                 #   내리면 -> 다시 문장이 중간에 끊기기 시작한다.
-                # gemini-3.5-flash 는 thinking 모델이라 thinkingBudget 을
-                # 끄지 않으면 위 maxOutputTokens 256 을 사고 과정이 241~243
-                # 토큰이나 먹고 finishReason=MAX_TOKENS 로 잘린다(2026-08-10
-                # 실측). 그때 남은 10여 토큰에 영어 사고 과정("The user has a
-                # headache…")이나 시스템 프롬프트 조각이 그대로 실려 나와
-                # TTS 로 읽힌다. 0 으로 두면 응답 1.1초로 2.5-flash-lite 와
-                # 같고 한국어 두 문장이 온전히 나온다.
-                "generationConfig": {
-                    "maxOutputTokens": 256,
-                    "thinkingConfig": {"thinkingBudget": 0},
-                },
+                "generationConfig": {"maxOutputTokens": 256},
             },
         )
         result = decode_json_object(response, service="Gemini")
