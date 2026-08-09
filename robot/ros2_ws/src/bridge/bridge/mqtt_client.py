@@ -44,6 +44,7 @@ class MqttBridgeRunner:
         on_arrival: Callable[[str], None] | None = None,
         on_follow_start: Callable[[], None] | None = None,
         on_follow_stop: Callable[[], None] | None = None,
+        on_navigation_state: Callable[[str], None] | None = None,
     ) -> None:
         self._robot_id = robot_id
         self._host = host
@@ -87,6 +88,9 @@ class MqttBridgeRunner:
             # ROS 2 발행자가 없어 탐색을 시작할 방법이 없기 때문이다.
             on_follow_start=on_follow_start,
             on_follow_stop=on_follow_stop,
+            # LCD 주행 표시 훅. None 이면(순수 paho 경로) 화면이 /cmd_vel
+            # 움직임 감지에만 의존한다 — 그 경로에는 ROS 2 발행자가 없다.
+            on_navigation_state=on_navigation_state,
         )
         self._client.on_connect = self._on_connect
         self._client.on_message = self._on_message

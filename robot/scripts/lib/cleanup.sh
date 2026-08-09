@@ -13,6 +13,7 @@ NODE_PATTERN="slam_toolbox|ydlidar_ros2_driver_node|pico_driver|joy_linux\
 |planner_server|bt_navigator|map_server|behavior_server|velocity_smoother\
 |lifecycle_manager|waypoint_follower|smoother_server|mqtt_bridge\
 |nav2_robot_driver|nav2_waypoint_patrol|person_follower|wake_search|person_search_patrol\
+|bomi_display.*/face_display\
 |bomi_vision.udp_main|twist_mux"
 
 bomi_cleanup() {
