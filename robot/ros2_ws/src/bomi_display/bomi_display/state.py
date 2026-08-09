@@ -10,6 +10,7 @@ class FaceState(str, Enum):
 
     IDLE = "IDLE"
     DRIVING = "DRIVING"
+    FOLLOWING = "FOLLOWING"
     LISTENING = "LISTENING"
     THINKING = "THINKING"
     SPEAKING = "SPEAKING"
@@ -30,8 +31,13 @@ class DisplayStateModel:
 
     ACTIVE_NAV_STATES = frozenset({"NAVIGATING", "DRIVING", "MOVING", "ACTIVE"})
     FAILED_NAV_STATES = frozenset({"FAILED", "ABORTED", "ERROR"})
+    # 추종은 Nav2 주행과 다른 경로(person_follower)라 따로 본다. 사용자 눈에는
+    # "이동 중"과 "따라오는 중"이 전혀 다른 행동이다.
+    FOLLOWING_NAV_STATES = frozenset({"FOLLOWING", "FOLLOW", "TRACKING"})
     LISTENING_TTS_STATES = frozenset({"LISTENING", "RECOGNIZING"})
-    THINKING_TTS_STATES = frozenset({"THINKING", "PROCESSING"})
+    # 사용자 말이 끝나고 응답이 나오기 전 구간. 이게 없으면 그 몇 초 동안
+    # 화면이 "듣는 중"으로 남아 로봇이 멈춘 것처럼 보인다.
+    THINKING_TTS_STATES = frozenset({"THINKING", "PROCESSING", "GENERATING"})
     SPEAKING_TTS_STATES = frozenset({"SPEAKING", "PLAYING"})
     FAILED_TTS_STATES = frozenset({"FAILED", "ERROR"})
 
@@ -88,6 +94,10 @@ class DisplayStateModel:
             return DisplaySnapshot(FaceState.THINKING, "생각하는 중")
         if self.tts_state in self.LISTENING_TTS_STATES:
             return DisplaySnapshot(FaceState.LISTENING, "듣고 있어요")
+        # 추종을 주행보다 먼저 본다. 추종 중에도 바퀴가 도니 두 조건이 함께
+        # 참일 수 있는데, 그때 보여줄 것은 "따라가는 중"이다.
+        if self.nav_state in self.FOLLOWING_NAV_STATES:
+            return DisplaySnapshot(FaceState.FOLLOWING, "따라가는 중")
         if self.nav_state in self.ACTIVE_NAV_STATES or current < self.motion_active_until:
             return DisplaySnapshot(FaceState.DRIVING, "이동 중")
         return DisplaySnapshot(FaceState.IDLE, "기다리고 있어요")
