@@ -105,6 +105,7 @@ const COORDINATION_LABELS: Record<CoordinationStatus, string> = {
 }
 
 const VALUE_KEY_LABELS: Record<string, string> = {
+  content: '내용',
   memoryType: '정보 종류',
   title: '제목',
   keywords: '키워드',

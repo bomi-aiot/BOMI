@@ -141,10 +141,11 @@ function normalizeCoordinationStatus(value: string): CoordinationStatus {
 }
 
 const SAFE_VALUE_KEYS: Record<ConfirmationKind, readonly string[]> = {
-  INTEREST: ['memoryType', 'title', 'keywords'],
-  SCHEDULE: ['recordType', 'title', 'startsAt'],
-  HEALTH: ['recordType', 'title', 'statusLevel'],
+  INTEREST: ['content', 'memoryType', 'title', 'keywords'],
+  SCHEDULE: ['content', 'recordType', 'title', 'startsAt'],
+  HEALTH: ['content', 'recordType', 'title', 'statusLevel'],
   MEDICATION_CONFLICT: [
+    'content',
     'medicationName',
     'localTime',
     'localTimes',
@@ -167,7 +168,7 @@ function sanitizeValue(
   return safeEntries.length > 0 ? Object.fromEntries(safeEntries) : undefined
 }
 
-function safeCopy(kind: ConfirmationKind): Pick<
+function fallbackCopy(kind: ConfirmationKind): Pick<
   ConfirmationRequest,
   'title' | 'summary' | 'question' | 'evidence'
 > {
@@ -205,9 +206,23 @@ function safeCopy(kind: ConfirmationKind): Pick<
 
 // --- 전체 매핑 -------------------------------------------------------------
 
+const preferServerText = (
+  value: string | null | undefined,
+  fallback: string,
+): string => {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  return trimmed.length > 0 ? trimmed : fallback
+}
+
 export function mapFactCandidate(dto: FactCandidateDto): ConfirmationRequest {
   const kind = deriveConfirmationKind(dto.targetDomain, dto.factType, dto.operation)
-  const copy = safeCopy(kind)
+  const fallback = fallbackCopy(kind)
+  const copy = {
+    title: preferServerText(dto.title, fallback.title),
+    summary: preferServerText(dto.summary, fallback.summary),
+    question: preferServerText(dto.question, fallback.question),
+    evidence: preferServerText(dto.evidence, fallback.evidence),
+  }
   const proposedValue = sanitizeValue(dto.proposedValue, kind) ?? {}
   const currentValue = sanitizeValue(dto.currentValue, kind)
   const canResolve = dto.status === 'NEEDS_CONFIRMATION'

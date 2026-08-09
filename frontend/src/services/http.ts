@@ -13,12 +13,28 @@ async function parseJson<T>(res: Response): Promise<T> {
   return (await res.json()) as T
 }
 
+const TRANSIENT_GET_STATUSES = new Set([502, 503, 504])
+const GET_RETRY_DELAYS_MS = [300, 900]
+
+const wait = (delayMs: number): Promise<void> =>
+  new Promise((resolve) => window.setTimeout(resolve, delayMs))
+
 export async function httpGet<T>(url: string): Promise<T> {
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
-  })
-  return parseJson<T>(res)
+  for (let attempt = 0; ; attempt += 1) {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    })
+
+    if (
+      !TRANSIENT_GET_STATUSES.has(res.status) ||
+      attempt >= GET_RETRY_DELAYS_MS.length
+    ) {
+      return parseJson<T>(res)
+    }
+
+    await wait(GET_RETRY_DELAYS_MS[attempt])
+  }
 }
 
 export async function httpPost<T>(url: string, body?: unknown): Promise<T> {
