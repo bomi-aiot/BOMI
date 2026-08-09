@@ -81,3 +81,13 @@ def test_rejects_invalid_intervals() -> None:
 
 def test_stop_is_safe_without_start() -> None:
     BeamDirectionSampler(lambda: 0.0).stop()
+
+
+def test_none_reading_is_skipped_quietly() -> None:
+    """★ 말소리가 없으면 장치가 NaN 을 준다 — 실패가 아니라 '모름'이다."""
+    clock = _FakeClock()
+    sampler = BeamDirectionSampler(lambda: None, clock=clock)
+
+    sampler.sample_once()
+
+    assert sampler.recent(10.0) == []
