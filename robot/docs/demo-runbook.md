@@ -9,6 +9,14 @@
 
 ## 1. 실행 전 (매번)
 
+EC2의 `production.env`에는 아래 값을 넣고 백엔드 컨테이너를 재시작한다. 센서
+관측은 계속 저장되지만 독립 온습도 시나리오가 먼저 로봇을 가져가지 않으며,
+최신 값은 귀가 추종 후 대화에서 사용한다.
+
+```bash
+WELLNESS_SCENARIO_ENABLED=false
+```
+
 ```bash
 cd ~/S15P11E102
 export MQTT_PASSWORD=$(grep -m1 '^MQTT_PASSWORD=' robot/ai_chat/.env | cut -d= -f2-)
