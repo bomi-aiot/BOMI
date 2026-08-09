@@ -175,6 +175,17 @@ export function LandingPage({ onNavigate }: LandingPageProps) {
             <small>care companion</small>
           </span>
         </button>
+        <a
+          className="landing-installer-entry"
+          href="/waypoint-editor/"
+          aria-label="설치 기사 전용 로봇 지도 및 웨이포인트 설정 열기"
+        >
+          <span className="landing-installer-entry__icon" aria-hidden="true">⌖</span>
+          <span>
+            <small>설치 기사 전용</small>
+            <strong>로봇 설치·지도 설정</strong>
+          </span>
+        </a>
       </header>
 
       <main id="landing-main" tabIndex={-1}>
