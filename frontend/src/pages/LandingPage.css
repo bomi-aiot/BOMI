@@ -170,6 +170,66 @@ html.landing-snap {
   text-transform: uppercase;
 }
 
+.landing-page .landing-installer-entry {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 11px;
+  padding: 7px 17px 7px 9px;
+  color: var(--landing-wine);
+  text-decoration: none;
+  background: rgb(255 255 255 / 72%);
+  border: 1px solid rgb(83 25 49 / 14%);
+  border-radius: 999px;
+  box-shadow: 0 10px 26px rgb(83 25 49 / 8%);
+  backdrop-filter: blur(12px);
+  transition:
+    background 200ms ease,
+    border-color 200ms ease,
+    box-shadow 200ms ease,
+    transform 200ms ease;
+}
+
+.landing-page .landing-installer-entry:hover {
+  background: #fff;
+  border-color: rgb(239 57 127 / 34%);
+  box-shadow: 0 14px 30px rgb(83 25 49 / 13%);
+  transform: translateY(-2px);
+}
+
+.landing-page .landing-installer-entry__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: #fff;
+  font-size: 1rem;
+  font-weight: 900;
+  background: var(--landing-wine);
+  border-radius: 50%;
+}
+
+.landing-page .landing-installer-entry > span:last-child {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.landing-page .landing-installer-entry small {
+  color: var(--landing-muted);
+  font-size: 0.62rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+}
+
+.landing-page .landing-installer-entry strong {
+  font-size: 0.82rem;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
 .landing-page .landing-hero {
   position: relative;
   display: grid;
@@ -1600,6 +1660,25 @@ html.landing-snap {
 
   .landing-page .landing-brand__wordmark small {
     display: none;
+  }
+
+  .landing-page .landing-installer-entry {
+    min-height: 44px;
+    padding: 5px 12px 5px 6px;
+  }
+
+  .landing-page .landing-installer-entry__icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .landing-page .landing-installer-entry small {
+    display: none;
+  }
+
+  .landing-page .landing-installer-entry strong {
+    max-width: 92px;
+    font-size: 0.72rem;
   }
 
   .landing-page .landing-hero {
