@@ -47,8 +47,16 @@ const scrollToSection = (sectionId: string): void => {
   if (!target) return
   // 부드러운 스크롤을 쓰지 않는다 — 1초 폴링이 그 사이에 다시 렌더하면 애니메이션이
   // 취소되고 화면이 제자리에 멈춘다. 실제로 그렇게 눌러도 아무 일이 없었다.
-  // 도착점 여백은 .one-page__section 의 scroll-margin-top 이 맡는다(헤더가 sticky).
-  target.scrollIntoView({ block: 'start' })
+  // scrollIntoView + scroll-margin 조합은 새로고침 시 브라우저의 자동
+  // 스크롤 복원에 다시 덮여쓰였다. 실제 sticky 헤더 높이를 측정해
+  // 절대 좌표로 이동하면 화면 크기가 달라져도 카드가 헤더 뒤로 숨지 않는다.
+  const header = document.querySelector<HTMLElement>('.app-header')
+  const headerHeight = header?.getBoundingClientRect().height ?? 0
+  const targetTop = target.getBoundingClientRect().top + window.scrollY
+  window.scrollTo({
+    top: Math.max(0, targetTop - headerHeight - 20),
+    behavior: 'auto',
+  })
 }
 
 interface GuardianExperienceProps {
@@ -199,6 +207,14 @@ function GuardianExperience({ pathname, navigate }: GuardianExperienceProps) {
 
 function App() {
   const { pathname, navigate } = useRoute()
+
+  useEffect(() => {
+    const previous = window.history.scrollRestoration
+    window.history.scrollRestoration = 'manual'
+    return () => {
+      window.history.scrollRestoration = previous
+    }
+  }, [])
 
   useEffect(() => {
     document.title =
