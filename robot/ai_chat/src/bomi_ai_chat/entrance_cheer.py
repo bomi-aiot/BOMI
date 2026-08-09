@@ -31,9 +31,21 @@
     * 실패를 위로 던지지 않는다. 환호는 곁가지고 귀가 대본이 본체다 —
       search_signal.py·robot_events.py 와 같은 원칙이다.
 
+왜 한 마디가 아니라 여러 마디인가
+    현관까지는 15~30초쯤 걸린다. "야호" 한 마디는 2초면 끝나고 나머지는 다시
+    침묵이라, 마중 나오는 중이라는 인상이 그 침묵에 묻힌다. 여러 마디를 차례로
+    이어 말하면 이동하는 내내 소리가 난다. 주행은 bridge(ROS 2)가 하고 이
+    모듈은 별도 스레드라, 말하는 동안에도 로봇은 계속 굴러간다.
+
+    한 스레드에서 **순서대로** 말한다 — 동시에 두 문장을 재생하면 같은 스피커를
+    두 번 여는 셈이다. 그리고 총 시간 상한을 둔다. 도착하면 곧바로 백엔드가
+    귀가 인사를 시작하는데, 그때까지 환호가 남아 있으면 두 소리가 겹친다.
+
 [.env 로 조절하는 값들]
     ENTRANCE_CHEER_ENABLED  "1"이면 환호한다(기본 "1"). 끄면 조용히 간다.
-    ENTRANCE_CHEER_TEXT     외칠 말(기본 "야호").
+    ENTRANCE_CHEER_TEXT     외칠 말. "|" 로 나누면 여러 마디를 차례로 말한다.
+    ENTRANCE_CHEER_MAX_SECONDS  환호 전체의 시간 상한(기본 20초).
+    ENTRANCE_CHEER_GAP_SEC  마디 사이의 숨(기본 0.4초).
 """
 
 from __future__ import annotations
@@ -42,6 +54,7 @@ import json
 import logging
 import os
 import threading
+import time
 from typing import Any, Callable
 
 from bomi_ai_chat.config import Settings, get_settings
@@ -49,8 +62,45 @@ from bomi_ai_chat.door.mqtt import _parse_broker_url
 
 logger = logging.getLogger(__name__)
 
-#: 기본 환호 문구.
-DEFAULT_CHEER_TEXT = "야호"
+#: 마디 구분자. 쉼표는 문장 안에 흔해서 쓰지 않는다.
+PHRASE_SEPARATOR = "|"
+
+#: 기본 환호 문구. 도착 인사("할머니 기다리고 있었어요!")와 겹치지 않게 고른다.
+DEFAULT_CHEER_TEXT = (
+    "야호!"
+    "|할머니 오셨구나!"
+    "|지금 마중 나가는 중이에요!"
+    "|조금만 기다려 주세요!"
+)
+
+#: 환호 전체의 시간 상한(초). 도착 후 귀가 인사와 겹치지 않게 하는 안전장치다.
+DEFAULT_MAX_SECONDS = 20.0
+
+#: 마디 사이의 숨(초). 0 이면 붙여 말해 다급하게 들린다.
+DEFAULT_GAP_SEC = 0.4
+
+
+def split_phrases(text: str) -> list[str]:
+    """환호 문구를 마디로 나눈다. 빈 마디는 버린다.
+
+    역할: "야호!|할머니 오셨구나!" 를 두 마디로 나눈다.
+    입력값: text - 구분자로 이어 붙인 문구.
+    반환값: 마디 목록. 구분자가 없으면 원문 한 마디짜리 목록이다.
+    """
+    return [part.strip() for part in text.split(PHRASE_SEPARATOR) if part.strip()]
+
+
+def _positive_env(name: str, default: float) -> float:
+    """0 보다 큰 실수 설정을 읽는다. 잘못 적혀 있으면 기본값으로 돌아간다."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("%s=%r 를 숫자로 읽지 못해 %s 를 씁니다", name, raw, default)
+        return default
+    return value if value > 0 else default
 
 #: 이 목적지로 갈 때만 운다. 거실(보미야 호출)과 복귀(DEFAULT)는 조용히 간다 —
 #: 복귀는 아무도 보고 있지 않고, 거실은 부른 사람이 이미 로봇을 보고 있다.
@@ -77,16 +127,22 @@ class EntranceCheerWatcher:
         client: Any = None,
         text: str | None = None,
         thread_factory: Callable[..., threading.Thread] = threading.Thread,
+        clock: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.settings = settings or get_settings()
         self._speak = speak
         self._client = client
         self._thread_factory = thread_factory
+        # 시계와 잠을 주입받는 이유: 테스트가 20초를 실제로 기다릴 수는 없다.
+        self._clock = clock
+        self._sleep = sleep
         self._text = (
             text
             if text is not None
             else os.getenv("ENTRANCE_CHEER_TEXT", DEFAULT_CHEER_TEXT)
         ) or DEFAULT_CHEER_TEXT
+        self._phrases = split_phrases(self._text)
         # 같은 명령을 두 번 보고 두 번 외치지 않기 위한 기억. 백엔드 재전송이나
         # QoS 1 재배달로 같은 commandId 가 또 올 수 있다.
         self._last_command_id: str | None = None
@@ -140,10 +196,32 @@ class EntranceCheerWatcher:
         thread.start()
 
     def _cheer(self) -> None:
-        try:
-            self._speak(self._text)
-        except Exception:  # noqa: BLE001 - 환호 실패가 귀가 대본을 막으면 안 된다
-            logger.exception("failed to cheer on the way to the entrance")
+        """마디를 차례로 말한다. 시간 상한을 넘기면 남은 마디는 버린다.
+
+        상한을 넘겨 남은 마디를 말하지 않는 것이 맞다 — 이미 도착해서 귀가
+        인사가 시작됐을 시점이고, 거기에 환호를 얹으면 두 소리가 겹친다.
+        """
+        max_seconds = _positive_env("ENTRANCE_CHEER_MAX_SECONDS", DEFAULT_MAX_SECONDS)
+        gap_sec = _positive_env("ENTRANCE_CHEER_GAP_SEC", DEFAULT_GAP_SEC)
+        deadline = self._clock() + max_seconds
+
+        for index, phrase in enumerate(self._phrases):
+            if index > 0:
+                # 숨을 먼저 쉬고 나서 재본다 — 상한을 넘긴 뒤에 새 마디를
+                # 시작하지 않는 것이 이 상한의 뜻이다.
+                self._sleep(gap_sec)
+                if self._clock() >= deadline:
+                    logger.info(
+                        "환호 시간 상한(%.1f초)에 걸려 남은 %d마디를 건너뜁니다",
+                        max_seconds, len(self._phrases) - index)
+                    return
+            try:
+                self._speak(phrase)
+            except Exception:  # noqa: BLE001 - 환호 실패가 귀가 대본을 막으면 안 된다
+                # 한 마디가 실패하면 스피커나 TTS 가 통째로 죽은 것이다.
+                # 남은 마디를 계속 시도해 봐야 같은 예외만 쌓인다.
+                logger.exception("failed to cheer on the way to the entrance")
+                return
 
     # ── 연결: 실기에서만 쓰는 부분 ───────────────────────────────────────
 

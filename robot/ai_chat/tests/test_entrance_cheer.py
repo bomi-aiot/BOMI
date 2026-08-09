@@ -16,6 +16,7 @@ from bomi_ai_chat.entrance_cheer import (
     DEFAULT_CHEER_TEXT,
     EntranceCheerWatcher,
     build_entrance_cheer_watcher,
+    split_phrases,
 )
 
 
@@ -42,12 +43,28 @@ class _Settings:
         pass
 
 
+class _Clock:
+    """테스트가 20초를 실제로 기다릴 수는 없다. sleep 이 시계를 밀어 준다."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
 def _make(**kwargs):
     spoken: list[str] = []
+    clock = kwargs.pop("clock", None) or _Clock()
     watcher = EntranceCheerWatcher(
         spoken.append,
         settings=_Settings(),
         thread_factory=_ImmediateThread,
+        clock=clock,
+        sleep=clock.sleep,
         **kwargs,
     )
     return watcher, spoken
@@ -69,7 +86,9 @@ def test_cheers_when_navigating_to_the_entrance() -> None:
     watcher, spoken = _make()
 
     assert watcher.handle_payload(_command()) is True
-    assert spoken == [DEFAULT_CHEER_TEXT]
+    # 기본 문구는 여러 마디다 — 현관까지 가는 15~30초를 소리로 채우기 위해서다.
+    assert spoken == split_phrases(DEFAULT_CHEER_TEXT)
+    assert len(spoken) > 1
 
 
 def test_stays_quiet_for_other_targets() -> None:
@@ -100,7 +119,7 @@ def test_does_not_cheer_twice_for_the_same_command() -> None:
 
     assert watcher.handle_payload(_command()) is True
     assert watcher.handle_payload(_command()) is False
-    assert spoken == [DEFAULT_CHEER_TEXT]
+    assert spoken == split_phrases(DEFAULT_CHEER_TEXT)
 
 
 def test_cheers_again_for_a_new_command() -> None:
@@ -109,7 +128,7 @@ def test_cheers_again_for_a_new_command() -> None:
 
     watcher.handle_payload(_command())
     assert watcher.handle_payload(_command(commandId="cmd-2")) is True
-    assert spoken == [DEFAULT_CHEER_TEXT, DEFAULT_CHEER_TEXT]
+    assert spoken == split_phrases(DEFAULT_CHEER_TEXT) * 2
 
 
 @pytest.mark.parametrize(
@@ -224,3 +243,65 @@ def test_cheer_speaker_stays_quiet_without_audio() -> None:
         bootstrap.Runtime(app=None, senior_id="senior"))
 
     speak("야호")  # 예외가 나지 않으면 통과다.
+
+
+# ── 여러 마디를 이어 말한다 ─────────────────────────────────────────────────
+
+def test_phrases_are_spoken_in_order() -> None:
+    watcher, spoken = _make(text="하나|둘|셋")
+
+    watcher.handle_payload(_command())
+
+    assert spoken == ["하나", "둘", "셋"]
+
+
+def test_blank_phrases_are_dropped() -> None:
+    """구분자를 잘못 넣어도 빈 문장을 합성하러 가지 않는다."""
+    assert split_phrases("야호!||  |할머니!") == ["야호!", "할머니!"]
+
+
+def test_a_single_phrase_still_works() -> None:
+    """구분자가 없으면 예전처럼 한 마디다."""
+    watcher, spoken = _make(text="다 왔어요")
+
+    watcher.handle_payload(_command())
+
+    assert spoken == ["다 왔어요"]
+
+
+def test_the_time_limit_drops_the_remaining_phrases(monkeypatch) -> None:
+    """도착해서 귀가 인사가 시작될 시점에 환호가 남아 있으면 소리가 겹친다."""
+    monkeypatch.setenv("ENTRANCE_CHEER_MAX_SECONDS", "1.0")
+    monkeypatch.setenv("ENTRANCE_CHEER_GAP_SEC", "0.6")
+    watcher, spoken = _make(text="하나|둘|셋|넷")
+
+    watcher.handle_payload(_command())
+
+    # 0.6초 숨 두 번이면 1.2초라 셋째 마디 앞에서 상한에 걸린다.
+    assert spoken == ["하나", "둘"]
+
+
+def test_a_broken_time_limit_falls_back_to_the_default(monkeypatch) -> None:
+    monkeypatch.setenv("ENTRANCE_CHEER_MAX_SECONDS", "곧")
+    watcher, spoken = _make(text="하나|둘")
+
+    watcher.handle_payload(_command())
+
+    assert spoken == ["하나", "둘"]
+
+
+def test_a_failing_speaker_stops_the_rest() -> None:
+    """스피커가 죽었으면 남은 마디를 시도해 봐야 같은 예외만 쌓인다."""
+    calls: list[str] = []
+
+    def boom(text: str) -> None:
+        calls.append(text)
+        raise RuntimeError("speaker is gone")
+
+    clock = _Clock()
+    watcher = EntranceCheerWatcher(
+        boom, settings=_Settings(), thread_factory=_ImmediateThread,
+        text="하나|둘|셋", clock=clock, sleep=clock.sleep)
+
+    assert watcher.handle_payload(_command()) is True
+    assert calls == ["하나"]
