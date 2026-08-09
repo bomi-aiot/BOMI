@@ -488,6 +488,9 @@ def run_conversation_loop(
                     _publish_conversation_ended(runtime, pending, end_reason)
                     continue
 
+                if not _wake_word_allowed(runtime):
+                    continue
+
                 # 감지 사실을 백엔드에 알린다 (S15P11E102-349). paho 의 publish 는
                 # 큐잉이라 블로킹하지 않고, 실패는 발행자가 삼킨다 — 여기서 한 번 더
                 # 감싸는 이유는 가짜 발행자(테스트)나 미래의 구현 변경이 던져도
@@ -758,6 +761,39 @@ def _queue_has_item(pending_queue: queue.Queue):
     아무도 "보미야"를 부르지 않아도 backend 대화가 시작될 수 있다.
     """
     return lambda: not pending_queue.empty()
+
+
+def _wake_word_allowed(runtime) -> bool:
+    """현관 이벤트를 받기 전의 "보미야"를 무시한다.
+
+    왜: 어르신이 아직 귀가하지 않았는데 감지된 "보미야"는 오검출일 가능성이
+    높다. 2026-08-09 실기에서 문을 열기 49초 전에 감지된 웨이크워드가 방향
+    없이 잡혀(azimuth_deg=None) 로봇이 40도씩 전방위 회전 탐색을 돌았고,
+    보는 사람에게는 오작동으로 보였다.
+
+    현관 센서가 없는 개발 환경을 막지 않도록 WAKE_REQUIRE_DOOR_EVENT=false 로
+    끌 수 있다. 막을 때는 반드시 경고를 남긴다 — "보미야가 왜 안 되지"를
+    로그로 추적할 수 있어야 한다.
+    """
+    if os.environ.get("WAKE_REQUIRE_DOOR_EVENT", "true").lower() not in (
+        "1", "true", "yes"
+    ):
+        return True
+
+    subscriber = runtime.door_subscriber
+    # 구독자가 없으면(문 감시 꺼짐/시작 실패) 게이트를 걸지 않는다. 그 경우
+    # 문 이벤트가 영영 오지 않아 웨이크워드가 통째로 죽는다.
+    if subscriber is None:
+        return True
+
+    seen = getattr(subscriber, "has_seen_door_opened", None)
+    if not callable(seen) or seen():
+        return True
+
+    logger.warning(
+        "현관 이벤트(DOOR_OPENED) 전이라 웨이크워드를 무시합니다 "
+        "(WAKE_REQUIRE_DOOR_EVENT=false 로 끌 수 있습니다)")
+    return False
 
 
 def _pop_pending_backend_conversation(runtime):
