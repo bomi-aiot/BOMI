@@ -95,5 +95,9 @@ curl --fail --silent --show-error --retry 5 --retry-delay 2 \
   "https://$BOMI_DOMAIN/" >/dev/null
 curl --fail --silent --show-error --retry 5 --retry-delay 2 \
   "https://$BOMI_DOMAIN/api/health" >/dev/null
+operator_console_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  "https://$BOMI_DOMAIN/operator-console/")"
+[[ "$operator_console_status" == 401 ]] \
+  || fail "Operator Console must reject unauthenticated requests (HTTP $operator_console_status)"
 
 log "Deployment completed successfully for Git commit $GIT_SHA"
