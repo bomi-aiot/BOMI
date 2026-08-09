@@ -253,6 +253,39 @@ services:
       # Docker to activate the loopback-only published port above.
       - proxy-net
 
+  waypoint-editor:
+    build:
+      context: ../robot
+      dockerfile: tools/waypoint_editor/Dockerfile
+    image: bomi-waypoint-editor:${WAYPOINT_EDITOR_IMAGE_TAG:-local}
+    container_name: bomi-waypoint-editor
+    restart: unless-stopped
+    environment:
+      WAYPOINT_EDITOR_ALLOW_SERVER_WRITE: "false"
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOME: /tmp
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8501/waypoint-editor/_stcore/health', timeout=2).read()
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    mem_limit: 512m
+    cpus: 0.5
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - proxy-net
+
   frontend:
     build:
       context: ../frontend
@@ -320,6 +353,8 @@ services:
         condition: service_healthy
       operator-console:
         condition: service_healthy
+      waypoint-editor:
+        condition: service_healthy
       frontend:
         condition: service_healthy
     ports:
@@ -330,6 +365,7 @@ services:
       - ${CERTBOT_CONF_DIR:?CERTBOT_CONF_DIR is required}:/etc/letsencrypt:ro
       - ${CERTBOT_WEBROOT_DIR:?CERTBOT_WEBROOT_DIR is required}:/var/www/certbot:ro
       - ${NGINX_OPERATOR_CONSOLE_HTPASSWD_FILE:?NGINX_OPERATOR_CONSOLE_HTPASSWD_FILE is required}:/etc/nginx/operator-console.htpasswd:ro
+      - ${NGINX_WAYPOINT_EDITOR_HTPASSWD_FILE:?NGINX_WAYPOINT_EDITOR_HTPASSWD_FILE is required}:/etc/nginx/waypoint-editor.htpasswd:ro
       # 가디언웹 채널 단기 접근 제어용 htpasswd 마운트 (S15P11E102-310) — 2026-08-05
       # 임시 보류. bomi.conf 의 auth_basic 이 주석 처리되어 지금은 이 파일을 읽지
       # 않는다. htpasswd 파일이 운영 호스트에 아직 없는 상태에서 릴리즈를 진행해야
