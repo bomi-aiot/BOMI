@@ -243,6 +243,23 @@ function mapKnownT1Alert(dto: DashboardActivityDto): SafetyAlert | null {
   }
 }
 
+// 무엇을 거르고 무엇을 거르지 않는가
+//
+//   거른다 — visibility 가 보호자 공개 범위가 아닌 것. 이 한 줄이 PRIVATE 유출을
+//   막는 실제 방어선이고, 그래서 백엔드가 건별 visibility 를 보내지 않으면
+//   mapDashboard 가 피드 전체를 null 로 처리한다.
+//
+//   거른다 — URGENT(T1). 같은 알림을 안전 알림 카드와 기록 피드에 두 번 그리면
+//   보호자가 두 건이 일어난 줄로 읽는다. T1 은 safetyAlerts 가 담당한다.
+//
+//   거르지 않는다 — source 와 statusLevel. 예전 조건(ROBOT + INFO)은 로봇이 올린
+//   하루 요약 하나만 통과시켰고, 정작 대부분을 차지하는 기억(source "AI",
+//   statusLevel "NORMAL")을 전부 떨어뜨렸다. 백엔드가 이미 가시성으로 걸러 보낸
+//   것을 프론트가 출처를 이유로 한 번 더 버릴 근거가 없다.
+//
+//   title / summary 도 백엔드 값을 그대로 쓴다. 고정 문구로 덮으면 "새로 기억한
+//   내용"과 "하루 요약"이 화면에서 한 글자도 다르지 않게 보인다 — 안전 알림에서
+//   이미 한 번 고친 실수다.
 function mapGuardianSafeActivity(
   dto: DashboardActivityDto,
   elderId: string,
@@ -252,23 +269,20 @@ function mapGuardianSafeActivity(
     dto.visibility === 'SHARED_WITH_GUARDIANS'
       ? dto.visibility
       : undefined
-  if (
-    !guardianVisibility ||
-    dto.statusLevel !== 'INFO' ||
-    normalizeSource(dto.source) !== 'ROBOT'
-  ) {
-    return null
-  }
+  if (!guardianVisibility || dto.statusLevel === 'URGENT') return null
   if (!isValidDateTime(dto.occurredAt)) return null
+
+  const title = dto.title?.trim()
+  const summary = dto.summary?.trim()
   return {
     id: dto.id,
     elderId,
-    title: '공유된 하루 요약',
-    summary: '보미가 보호자에게 공유하도록 정리한 하루 기록이 도착했어요.',
+    title: title && title.length > 0 ? title : '공유된 돌봄 기록',
+    summary: summary && summary.length > 0 ? summary : '',
     occurredAt: dto.occurredAt,
-    source: 'ROBOT',
+    source: normalizeSource(dto.source),
     statusLevel: 'NORMAL',
-    kind: 'DAILY_SUMMARY',
+    kind: dto.statusLevel === 'INFO' ? 'DAILY_SUMMARY' : 'SHARED_MEMORY',
     visibility: guardianVisibility,
   }
 }
