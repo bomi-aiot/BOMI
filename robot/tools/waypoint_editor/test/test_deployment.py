@@ -20,9 +20,14 @@ def test_compose_runs_read_only_authenticated_editor() -> None:
 
     compose = (REPOSITORY_ROOT / "infra/compose.prod.yml").read_text(encoding="utf-8")
     nginx = (REPOSITORY_ROOT / "infra/nginx/conf.d/bomi.conf").read_text(encoding="utf-8")
+    location_start = nginx.index("location ^~ /waypoint-editor/")
+    location_end = nginx.index("\n    }", location_start)
+    location = nginx[location_start:location_end]
 
     assert 'WAYPOINT_EDITOR_ALLOW_SERVER_WRITE: "false"' in compose
     assert "/waypoint-editor/_stcore/health" in compose
     assert "location ^~ /waypoint-editor/" in nginx
-    assert "auth_basic_user_file /etc/nginx/operator-console.htpasswd" in nginx
-    assert "proxy_pass http://waypoint-editor:8501" in nginx
+    assert "NGINX_WAYPOINT_EDITOR_HTPASSWD_FILE" in compose
+    assert "auth_basic_user_file /etc/nginx/waypoint-editor.htpasswd" in location
+    assert "operator-console.htpasswd" not in location
+    assert "proxy_pass http://waypoint-editor:8501" in location
