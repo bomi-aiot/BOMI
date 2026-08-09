@@ -48,13 +48,13 @@ person_follower:
     # 높이라 박스 크기로는 거리를 못 재므로 접근 정지는 전적으로 LiDAR 가
     # 정한다. 0.2 로 내렸다가 실기에서 몸에 닿을 만큼 붙어 0.4 로 되돌렸다
     # (2026-08-09). 다시 1.5배로 넓혔다 — LiDAR 기준 거리라 로봇 앞면과
-    # 사람 사이 실제 간격은 이보다 짧다. 여전히 가까워 한 번 더 1.5배
-    # 넓혔다: 0.6 -> 0.9 (2026-08-10).
-    person_stop_distance_m: 0.9
+    # 사람 사이 실제 간격은 이보다 짧다. 한 번 더 1.5배로 넓혀 0.9 로
+    # 두었다가 너무 멀어 같은 날 0.6 으로 되돌렸다(2026-08-10).
+    person_stop_distance_m: 0.6
     # person_stop_distance_m 보다 반드시 커야 한다 — 같거나 작으면
     # person_following_controller.py 의 검증에서 ValueError 로 노드가
-    # 뜨지 않는다. 정지 거리와 같은 비율로 0.9 -> 1.35 로 올렸다.
-    person_resume_distance_m: 1.35
+    # 뜨지 않는다. 정지 거리를 0.6 으로 되돌리면서 함께 내렸다.
+    person_resume_distance_m: 0.9
     # person_stop_distance_m 이하여야 한다(컨트롤러 검증).
     emergency_stop_distance_m: 0.3
 
