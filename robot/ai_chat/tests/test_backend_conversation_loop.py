@@ -303,7 +303,9 @@ def test_backend_conversation_queue_is_checked_before_the_real_wake_flow(
 
     app = RecordingApp()
     runtime, _pending = _make_runtime(app=app)
-    wake = InterruptibleWake(wakes=0)
+    # 이 테스트의 전제는 '진짜 보미야가 한 번 온다'이다. 0 이면 첫 wait_for_wake 가
+    # 곧장 KeyboardInterrupt 를 던져 루프가 웨이크워드 발행에 닿지도 못한다.
+    wake = InterruptibleWake(wakes=1)
     event_publisher = RecordingEventPublisher()
 
     bootstrap.run_conversation_loop(

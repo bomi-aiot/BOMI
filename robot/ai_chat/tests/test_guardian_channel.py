@@ -238,7 +238,11 @@ class FakeContextClient:
 
 class FakeLLM:
     def generate(self, prompt):
-        return "8월 2일이에요."
+        # 날짜 문장("8월 2일이에요.")을 쓰면 안 된다. output.strip_unasked_current_time
+        # 이 묻지도 않은 날짜를 통째로 걷어내서 final_utterance 가 빈 문자열이 되고,
+        # 이 파일의 테스트들은 '대답을 했는가'를 보는 것이지 날짜 필터를 보는 것이
+        # 아니다 — 필터의 검증은 output 쪽 테스트의 몫이다.
+        return "네, 그러셨군요."
 
 
 class FakeHandle:
