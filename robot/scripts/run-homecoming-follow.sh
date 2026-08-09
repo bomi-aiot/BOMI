@@ -84,6 +84,13 @@ export HOMECOMING_AMBIENT_MAX_AGE_SEC="${HOMECOMING_AMBIENT_MAX_AGE_SEC:-90}"
 export HOMECOMING_FOLLOW_AMBIENT_PHASE="${HOMECOMING_FOLLOW_AMBIENT_PHASE:-true}"
 export HOMECOMING_FOLLOW_SECONDS="${HOMECOMING_FOLLOW_SECONDS:-20}"
 
+# 문이 열린 순간부터 위 온습도 대화가 끝날 때까지 "보미야"를 막는다. 현관으로
+# 가는 동안은 메인 루프가 웨이크워드 대기 상태라, 여기서 잡히면 귀가 대본을
+# 버리고 거실 호출 시나리오가 새로 시작된다. 대본이 도중에 실패해도 이 시간이
+# 지나면 웨이크워드는 스스로 돌아온다.
+export WAKE_BLOCK_DURING_HOMECOMING="${WAKE_BLOCK_DURING_HOMECOMING:-true}"
+export HOMECOMING_GATE_TIMEOUT_SEC="${HOMECOMING_GATE_TIMEOUT_SEC:-300}"
+
 if [ -n "${HOMECOMING_AMBIENT_TEST_TEMPERATURE_C:-}" ]; then
     echo "[테스트] 센서 대신 ${HOMECOMING_AMBIENT_TEST_TEMPERATURE_C}도 값을 사용합니다."
 fi
