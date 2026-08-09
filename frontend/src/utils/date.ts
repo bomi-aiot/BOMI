@@ -190,6 +190,56 @@ export const formatRelativeTime = (
   return formatShortDate(date);
 };
 
+/**
+ * 사람이 말하듯 읽는 시각. "오늘 새벽 2시 58분" / "어제 저녁 7시 10분" / "8월 3일 오후 2시".
+ *
+ * 왜 formatDateTime 과 따로 두는가
+ *   기존 표기는 "2026년 8월 10일 (월) 02:58" 이다. 정확하지만, 보호자가 카드를 읽을 때
+ *   필요한 정보는 연도도 요일도 아니고 "얼마나 최근인가" 하나다. 연·월·일·요일을 다 적으면
+ *   그 하나를 사람이 직접 계산해야 한다 — 오늘인지 그저께인지를 날짜를 빼서 알아내야 한다.
+ *
+ *   formatRelativeTime("8시간 전")도 답이 아니다. 새벽에 있었던 일인지 저녁이었는지가
+ *   건강 관련 발화에서는 의미를 갖는데, 상대 시각은 그걸 지운다.
+ */
+export const formatSpokenDateTime = (
+  value: DateLike,
+  referenceDate: DateLike = new Date(),
+): string => {
+  const date = toValidDate(value);
+  if (!date) {
+    return "시각 미확인";
+  }
+
+  const hour = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: BOMI_TIME_ZONE,
+      hour: "2-digit",
+      hour12: false,
+    }).format(date),
+  );
+  const minute = Number(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: BOMI_TIME_ZONE,
+      minute: "2-digit",
+    }).format(date),
+  );
+
+  // 경계는 어림값이다. 정확히 몇 시부터 '아침'인지에 정답은 없고, 여기서 필요한 것은
+  // 분류가 아니라 "언제쯤이었는지"가 한 번에 읽히는 것뿐이다.
+  const partOfDay =
+    hour < 6 ? "새벽" : hour < 12 ? "아침" : hour < 18 ? "오후" : "저녁";
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+  const clock = minute === 0 ? `${hour12}시` : `${hour12}시 ${minute}분`;
+
+  const reference = toValidDate(referenceDate) ?? new Date();
+  const yesterday = new Date(reference.getTime() - 24 * 60 * 60 * 1000);
+
+  if (isSameLocalDate(date, reference)) return `오늘 ${partOfDay} ${clock}`;
+  if (isSameLocalDate(date, yesterday)) return `어제 ${partOfDay} ${clock}`;
+
+  return `${formatWith(date, { month: "long", day: "numeric" })} ${partOfDay} ${clock}`;
+};
+
 export const toDateInputValue = (value: DateLike): string => {
   const { year, month, day } = getDateParts(value);
   if (!year || !month || !day) {

@@ -168,3 +168,68 @@ def test_completed_response_requires_utterance_list(settings_factory):
 
     with pytest.raises(InvalidResponseError, match="utterances"):
         client.transcribe(b"wav")
+
+
+# ── 인식 설정 (S15P11E102 / 2026-08-10) ──────────────────────────────────────
+#
+# 왜 이 절이 생겼는가
+#   config 가 '{"model_name": "sommers", "language": "ko"}' 문자열로 박혀 있었다.
+#   같은 오디오로 A/B 한 결과 키워드 부스팅 하나로 "고미야 관절 영양"이
+#   "보미야 관절염 약"이 됐다 — 웨이크워드 이름이 틀리면 그 뒤 대화가 다 어긋난다.
+
+
+def _sent_config(session):
+    """업로드 요청에 실린 config 를 dict 로 꺼낸다."""
+    import json
+
+    upload = session.calls[1]
+    return json.loads(upload["data"]["config"])
+
+
+def _run_transcribe(settings_factory, **overrides):
+    session = StubSession(
+        StubResponse(json_data={"access_token": "token"}),
+        StubResponse(json_data={"id": "job-1"}),
+        StubResponse(json_data={
+            "status": "completed",
+            "results": {"utterances": [{"msg": "안녕하세요"}]},
+        }),
+    )
+    clock = FakeClock()
+    client = STTClient(
+        stt_settings(settings_factory, **overrides),
+        session=session,
+        sleep=clock.sleep,
+        monotonic=clock.monotonic,
+    )
+    client.transcribe(b"audio")
+    return _sent_config(session)
+
+
+def test_model_and_language_are_unchanged(settings_factory):
+    """기존 계약은 그대로다 — 이 두 값이 바뀌면 인식 품질이 통째로 달라진다."""
+    config = _run_transcribe(settings_factory)
+    assert config["model_name"] == "sommers"
+    assert config["language"] == "ko"
+
+
+def test_keywords_are_sent_for_boosting(settings_factory):
+    config = _run_transcribe(settings_factory, STT_KEYWORDS="보미,관절염약")
+    assert config["keywords"] == ["보미", "관절염약"]
+
+
+def test_empty_keywords_omit_the_field_entirely(settings_factory):
+    """빈 배열을 보내는 것이 무해하다는 근거가 없다. 안 보내면 예전과 같다."""
+    config = _run_transcribe(settings_factory, STT_KEYWORDS="")
+    assert "keywords" not in config
+
+
+def test_disfluency_filter_is_off_unless_asked(settings_factory):
+    """실측에서 이득을 확인하지 못했다. 기본값이 조용히 켜지면 안 된다."""
+    config = _run_transcribe(settings_factory)
+    assert "use_disfluency_filter" not in config
+
+
+def test_disfluency_filter_can_be_turned_on(settings_factory):
+    config = _run_transcribe(settings_factory, STT_DISFLUENCY_FILTER="true")
+    assert config["use_disfluency_filter"] is True

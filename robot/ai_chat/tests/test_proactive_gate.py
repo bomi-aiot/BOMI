@@ -302,6 +302,63 @@ def test_completed_slot_invalidates_its_pending_reminder(frozen_clock):
     assert gate.is_still_valid(pending, state) is False
 
 
+def test_todays_medication_reports_reach_the_prompt(frozen_clock):
+    """★ "아침에 약을 먹었는지 기억이 안 나"에 답할 재료를 만든다.
+
+    백엔드 todayState 의 복약 이행은 지금 비어 있다 — daily_activity_metric 은 일일
+    요약 배치가 돌 때만 채워지고 medicationScheduledCount 는 설계상 늘 null 이다.
+    로봇이 가진 유일한 단서가 "먹었어"라고 하신 시각이고, 이 경로가 그것을 문맥에
+    싣는다.
+    """
+    from bomi_ai_chat.graph import context as context_node
+    from bomi_ai_chat.localstore import proposals as store
+
+    _, epoch = state_at(12.0)      # 서울 기준 낮 12시
+    frozen_clock(start=epoch)
+    ctx = {"profile": {"timeZone": "Asia/Seoul"}}
+
+    assert context_node._medication_reported_times(SENIOR, ctx) == []
+
+    store.mark_slot_completed(SENIOR, "2026-08-01:med:0900")
+
+    assert context_node._medication_reported_times(SENIOR, ctx) == ["12:00"]
+
+    # 시간대를 모르면 말하지 않는다. "오늘"의 경계를 모른 채 어제 저녁 복약을
+    # 오늘 아침으로 보여주면, 이 기능이 고치려는 혼란을 그대로 다시 만든다.
+    assert context_node._medication_reported_times(SENIOR, {"profile": {}}) == []
+
+
+def test_a_told_story_is_remembered_so_the_next_one_differs(frozen_clock):
+    """★ 이야기 턴은 반응형이라 기존 표현 이력 가드에 걸린다.
+
+    그 가드를 그대로 두면 "심심해" 하실 때마다 같은 옛날이야기가 나온다 —
+    목록만 주면 모델은 거의 언제나 첫 번째 것을 고르기 때문이다. 이야기만은
+    반응형 턴에서도 남긴다.
+    """
+    from bomi_ai_chat.graph import build as graph_build
+    from bomi_ai_chat.graph import context as context_node
+
+    _, epoch = state_at(14.0)
+    frozen_clock(start=epoch)
+    told = "옛날에 형제가 살았는데, 아우가 신기한 맷돌을 얻었대요."
+
+    graph_build._record_phrasing({
+        "senior_id": SENIOR, "trigger_type": "user_utterance",
+        "wants_story": True, "final_utterance": told,
+    })
+
+    recent = context_node._recent_stories(SENIOR)
+    assert recent and told.startswith(recent[0])
+
+    # 이야기 턴이 아니었다면 남지 않는다. 잡담까지 이 이력에 쌓이면 다음 이야기
+    # 선택이 엉뚱한 문장에 막힌다.
+    graph_build._record_phrasing({
+        "senior_id": "senior-other", "trigger_type": "user_utterance",
+        "final_utterance": "네, 그러셨군요.",
+    })
+    assert context_node._recent_stories("senior-other") == []
+
+
 def test_proposal_without_slot_key_is_not_invalidated(frozen_clock):
     """슬롯 키가 없는 제안은 무효화 대상이 아니다.
 

@@ -217,6 +217,15 @@ class ConvState(TypedDict, total=False):
     # 마무리하며, 출력 정제기는 질문형 누출을 한 번 더 막는다.
     closing_turn: bool
 
+    # 어떤 마무리인가. closing_turn 이 True 일 때만 읽는다.
+    #   "homecoming"  백엔드가 연 짧은 시나리오(현관 인사·복약·안부)의 마지막 턴.
+    #                 로봇이 턴 수를 세다가 스스로 닫는다 -> "오늘도 고생 많으셨어요."
+    #   "farewell"    어르신이 마무리를 말해서 닫는다("알겠어, 고마워").
+    #                 이미 인사를 한 사람에게 하루를 치하하면 어긋난다 —
+    #                 다시 부르면 된다는 안내로 닫는다.
+    # 값이 없으면 "homecoming" 으로 본다(이 필드가 생기기 전의 동작).
+    closing_kind: str
+
     messages: Annotated[list, add_messages]
 
     # ── 게이트 (§7) ──
@@ -315,6 +324,40 @@ class ConvState(TypedDict, total=False):
     # 쓰고, 판정하지 않은 턴에는 None 을 써서 지난 턴의 값이 새는 것을 막는다
     # (state 는 어르신별로 checkpoint 되어 턴을 넘어 살아남기 때문이다).
     is_medical_query: bool | None
+    # 날씨 대화가 열린 시각(epoch 초). 없으면 열려 있지 않다.
+    #
+    # 무엇을 정하는가  (2026-08-10 실사용 피드백)
+    #   기상청 조회는 어르신이 '날씨'라고 말했을 때만 연다 — 그래야 "오늘 좀 춥네"
+    #   같은 잡담이 예보를 프롬프트에 밀어 넣지 않는다. 이 값은 그 규칙의 예외
+    #   창구다: 조회가 한 번 일어난 뒤 policy.WEATHER_FOLLOWUP_WINDOW_SEC 동안은
+    #   "비는?", "거긴 덥나?" 같은 넓은 표지도 조회로 통과한다.
+    #
+    #   context_read 가 매 턴 값을 쓴다(만료됐으면 None). 지난 턴 값이 조용히
+    #   살아남으면 "언제부터 열려 있었는지"가 흐려지기 때문이다.
+    weather_thread_at: float | None
+    # 이 턴은 '이야기를 들려주는' 턴인가.  (2026-08-10 실사용 피드백)
+    #
+    # 무엇을 바꾸는가
+    #   두 곳이다. prompts/builder 가 storytelling_stance.md 를 붙이고 문장 상한을
+    #   policy.MAX_SENTENCES_STORY 로 올리며, graph/output.response_shaper 가 같은
+    #   상한으로 자른다. 둘 중 하나만 고치면 아무 일도 일어나지 않는다 — 프롬프트만
+    #   고치면 shaper 가 두 문장에서 자르고, shaper 만 고치면 모델이 애초에 두 문장만
+    #   만든다. 실제로 "재미있는 이야기 해드릴까요?"에서 멈춰 있던 이유가 그것이다.
+    #
+    # classify_intent 가 매 턴 명시적으로 쓴다(요청이 없으면 False). 지난 턴의 True 가
+    # 남으면 다음 발화까지 여덟 문장을 허락하게 된다.
+    wants_story: bool
+    # 어르신이 옛날 이야기 쪽으로 말을 여셨는가.  (2026-08-10)
+    #
+    # 무엇을 바꾸는가
+    #   prompts/builder 가 reminiscence_stance.md 를 붙인다 — 그 세대의 마중물
+    #   목록과, 그것보다 "기억하고 있는 것"의 어르신 자신의 기억을 먼저 쓰라는
+    #   지시. 문장 수는 바꾸지 않는다(이야기와 다른 점): 회상은 짧게 받고 되묻는
+    #   것이 정석이다.
+    #
+    # wants_story 와 달리 intent 도 함께 본다. "예전에 먹던 약이 뭐였지"는 표지에
+    # 걸리지만 복약 턴이고, 거기에 회상 태도를 얹으면 답을 안 한다.
+    wants_reminiscence: bool
     # 같은 종류의 알림에서 최근에 쓴 표현. 프롬프트에 넘겨 반복을 막는다(§17.8).
     #
     # 누가 채우는가 (S15P11E102-256)

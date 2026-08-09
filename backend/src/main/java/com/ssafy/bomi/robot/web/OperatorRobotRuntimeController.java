@@ -17,7 +17,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/operator/robots/{deviceId}/runtime-state")
-@Tag(name = "Operator Robot Runtime")
+@Tag(name = "Operator Robot Runtime",
+    description = "로봇 모드·진행 중 시나리오 조회 — 운영자 도구가 호출합니다.")
 @SecurityRequirement(name = OperatorChannelAuthFilterConfig.SECURITY_SCHEME_NAME)
 public class OperatorRobotRuntimeController {
 
