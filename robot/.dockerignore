@@ -1,0 +1,4 @@
+**/__pycache__/
+**/*.py[cod]
+tools/waypoint_editor/test/
+tools/waypoint_editor/requirements-dev.txt
