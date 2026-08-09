@@ -155,6 +155,12 @@ def test_timeout_and_rate_limit_stay_retryable():
     assert is_permanent_rejection(_permanent_error(429)) is False
 
 
+def test_auth_failure_is_not_permanent():
+    """인증 설정은 사람이 복구할 수 있으므로 대기 중인 기억을 폐기하지 않는다."""
+    assert is_permanent_rejection(_permanent_error(401)) is False
+    assert is_permanent_rejection(_permanent_error(403)) is False
+
+
 def test_network_failure_is_not_permanent():
     """상태 코드가 없는 실패(연결 끊김)는 영구 거부로 볼 근거가 없다."""
     assert is_permanent_rejection(OSError("connection reset")) is False

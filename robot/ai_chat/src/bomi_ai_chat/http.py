@@ -95,17 +95,22 @@ def is_permanent_rejection(error: BaseException) -> bool:
         로컬 큐와 서버 DB 는 서로 다른 저장소이고 함께 지워지지 않는다. 그 어긋남을
         '못 고치는 것'으로 인정하고, 못 고칠 실패는 재시도 대상에서 빼는 것이 맞다.
 
-    왜 401/403 은 여기 포함해도 되는가
-        시크릿이 틀린 것은 배포를 고쳐야 풀리지 재시도로는 안 풀린다. 다만 호출부는
-        is_auth_failure 로 그 경우를 먼저 걸러 별도 경고를 남긴다 — 조용히 버려지지
-        않게 하려는 것이고, 이 함수와 목적이 다르다.
+    왜 401/403 은 빼는가
+        시크릿 설정 오류는 같은 요청을 즉시 반복해서 해결할 수는 없지만, 사람이
+        배포 설정을 고치면 낫는다. 그 사이의 기억을 영구 폐기하면 인증을 복구해도
+        되살릴 수 없으므로 큐에는 남긴다. 호출부는 is_auth_failure 로 별도 경고를
+        남겨 운영자가 설정 문제를 알아볼 수 있게 한다.
     """
     if not isinstance(error, ExternalServiceError):
         return False
     status = error.status_code
     if status is None:
         return False
-    return 400 <= status < 500 and status not in _RETRYABLE_CLIENT_ERROR_STATUS_CODES
+    return (
+        400 <= status < 500
+        and status not in _RETRYABLE_CLIENT_ERROR_STATUS_CODES
+        and status not in AUTH_FAILURE_STATUS_CODES
+    )
 
 
 def _retry_delay(
