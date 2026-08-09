@@ -22,6 +22,13 @@ public record DashboardResponse(
         long pendingConfirmationCount,
         List<FactCandidateDto> confirmationRequests,
         List<ActivityDto> recentActivities,
+        /**
+         * 활동 피드 공개범위 계약 버전. FE 는 이 값이 {@code GUARDIAN_VISIBLE_V1} 일 때만
+         * {@code recentActivities} 를 "확인된 목록"으로 읽고, 없으면 null(=확인 못 함)로
+         * 취급한다. 지금까지 이 필드가 없어서 백엔드가 활동을 정상으로 내려주는데도
+         * 화면은 항상 "아직 연결되지 않음"을 그렸다.
+         */
+        String activityVisibilityContract,
         String generatedAt) {
 
     public record ElderDto(
@@ -90,12 +97,19 @@ public record DashboardResponse(
             int missed) {
     }
 
+    /**
+     * 활동 1건. {@code visibility} 는 이 건을 보호자에게 보여도 되는지의 근거다 —
+     * memory 는 자기 visibility 를 그대로 싣고, 로봇 알림은 보호자 수신용으로
+     * 만들어진 것이라 SHARED_WITH_PRIMARY 로 표기한다. FE 는 이 값이 없는 건을
+     * 그리지 않는다(PRIVATE 유출 방지).
+     */
     public record ActivityDto(
             String id,
             String title,
             String summary,
             String occurredAt,
             String source,
-            String statusLevel) {
+            String statusLevel,
+            String visibility) {
     }
 }

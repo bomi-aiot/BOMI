@@ -37,6 +37,7 @@ import java.time.ZonedDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -57,6 +58,12 @@ public class DashboardService {
     private static final Set<String> SCHEDULE_TYPES = Set.of("APPOINTMENT", "PERSONAL_SCHEDULE");
     /** 로봇이 올린 보호자 알림의 기록 타입 (S15P11E102-211). */
     private static final String GUARDIAN_ALERT_TYPE = "GUARDIAN_ALERT";
+
+    /**
+     * 활동 피드 공개범위 계약 버전. buildActivities 가 건별 visibility 를 채워 보낼 때만
+     * 이 값을 실을 수 있다 — 값과 계약이 같이 움직여야 FE 가 "확인했다"고 읽어도 된다.
+     */
+    private static final String ACTIVITY_VISIBILITY_CONTRACT = "GUARDIAN_VISIBLE_V1";
 
     /**
      * 보호자 화면에 노출해도 되는 기억 가시성 (S15P11E102-262).
@@ -157,6 +164,7 @@ public class DashboardService {
                 confirmations.size(),
                 confirmations,
                 activities,
+                ACTIVITY_VISIBILITY_CONTRACT,
                 iso(now));
     }
 
@@ -309,7 +317,8 @@ public class DashboardService {
                             m.getContent(),
                             iso(m.getFirstObservedAt()),
                             "AI",
-                            "NORMAL"),
+                            "NORMAL",
+                            m.getVisibility() == null ? null : m.getVisibility().name()),
                     m.getFirstObservedAt()));
         }
 
@@ -344,24 +353,51 @@ public class DashboardService {
                 .map(user -> user.getGuardianSharingConsentStatus() == ConsentStatus.GRANTED)
                 .orElse(false);
 
+        // ★ 같은 사유의 T2 는 최신 1건만 싣는다.
+        //
+        //   현관 노드는 연결이 끊길 때마다 T2 를 한 건씩 올린다 — 실서버에 오늘 하루만
+        //   door_node_offline 이 여덟 건 쌓였다. 피드 상한이 5건이라 그대로 두면 똑같은
+        //   문장 다섯 줄이 기억과 하루 요약을 전부 밀어낸다. 보호자가 얻는 정보는 한 줄과
+        //   다르지 않으면서 나머지를 잃는 교환이다.
+        //
+        //   T1 은 묶지 않는다. 응급은 사유가 같아도 건마다 별개의 사건이다.
+        List<CareRecord> alertsToShow = new ArrayList<>();
+        Map<String, CareRecord> latestT2ByReason = new LinkedHashMap<>();
         for (CareRecord alert : careRecordRepository.findBySeniorIdAndRecordTypeAndStatus(
                 seniorId, GUARDIAN_ALERT_TYPE, CareRecordStatus.ACTIVE)) {
             NotificationTier tier = alert.getNotificationTier();
             if (tier == null) {
                 continue;
             }
-            if (tier != NotificationTier.T1 && !sharingGranted) {
+            if (tier == NotificationTier.T1) {
+                alertsToShow.add(alert);
                 continue;
             }
+            if (!sharingGranted) {
+                continue;
+            }
+            String reason = str(alert.getDetails(), "reason");
+            latestT2ByReason.merge(
+                    reason == null ? "" : reason,
+                    alert,
+                    (kept, incoming) -> isLater(alertTime(incoming), alertTime(kept)) ? incoming : kept);
+        }
+        alertsToShow.addAll(latestT2ByReason.values());
+
+        for (CareRecord alert : alertsToShow) {
+            NotificationTier tier = alert.getNotificationTier();
             OffsetDateTime at = alertTime(alert);
             merged.add(new Timed(
                     new ActivityDto(
                             alert.getId().toString(),
-                            tier == NotificationTier.T1 ? "확인이 필요해요" : "하루 요약",
+                            alertTitle(alert, tier),
                             alertSummary(alert, tier),
                             iso(at),
                             "로봇",
-                            tier == NotificationTier.T1 ? "URGENT" : "INFO"),
+                            tier == NotificationTier.T1 ? "URGENT" : "INFO",
+                            // 보호자에게 보내려고 만든 기록이다. memory 처럼 건별 공개범위
+                            // 컬럼이 없으므로 여기서 그 사실을 명시한다.
+                            "SHARED_WITH_PRIMARY"),
                     at));
         }
 
@@ -484,6 +520,28 @@ public class DashboardService {
         return alert.getOccurredAt();
     }
 
+    /** 둘 중 어느 쪽이 더 최근인가. null 은 "모르는 시각"이라 이기지 못한다. */
+    private static boolean isLater(OffsetDateTime candidate, OffsetDateTime current) {
+        if (candidate == null) {
+            return false;
+        }
+        return current == null || candidate.isAfter(current);
+    }
+
+    /**
+     * 활동 피드의 제목.
+     *
+     * <p>T2 를 전부 "하루 요약"으로 부르던 것을 사유로 가른다 — 현관 센서 오프라인 알림에
+     * "하루 요약"이라는 이름을 붙이면 보호자는 매일 오는 정기 보고로 읽고 넘긴다.
+     * 실제로 T2 를 만드는 곳은 일일 요약 스케줄러 하나가 아니라 로봇의 알림 API 도 있다.</p>
+     */
+    private static String alertTitle(CareRecord alert, NotificationTier tier) {
+        if (tier == NotificationTier.T1) {
+            return "확인이 필요해요";
+        }
+        return "daily_summary".equals(str(alert.getDetails(), "reason")) ? "하루 요약" : "알아두면 좋아요";
+    }
+
     /**
      * 보호자가 한 줄로 읽을 요약.
      *
@@ -503,7 +561,39 @@ public class DashboardService {
                 default -> "확인이 필요한 일이 있었어요.";
             };
         }
-        return "오늘 하루 요약이 도착했어요.";
+        // T2 도 사유별로 가른다. 고정 한 줄이던 시절에는 현관 센서 문제와 일일 요약이
+        // 화면에서 한 글자도 다르지 않았다 — T1 에서 이미 한 번 고친 실수다.
+        return switch (reason == null ? "" : reason) {
+            case "daily_summary" -> "오늘 하루 요약이 도착했어요.";
+            case "door_node_offline" -> "현관 센서와 연결이 끊겨 있었어요.";
+            case "door_left_open" -> "현관문이 한동안 열려 있었어요.";
+            default -> "보미가 확인해 둔 일이 있어요.";
+        };
+    }
+
+    /**
+     * reason = "emergency" 인 T1 의 문구.
+     *
+     * <p>이 사유가 여기 없었던 동안, 로봇이 증상을 듣고 확인까지 거쳐 올린 알림이
+     * 보호자 화면에 "확인이 필요한 일이 있었어요."로 떴다. 사유를 안다는 사실을
+     * 알면서 모른다고 말하는 문구였다.</p>
+     *
+     * <p>왜 {@code confirmed_by} 로 두 갈래를 나누는가 — 이 둘은 보호자가 해야 할
+     * 일이 다르다. 어르신이 "그렇다"고 답한 것은 상황을 아는 상태이고, 답이 없는
+     * 것은 아무도 지금 상태를 모르는 상태다. 후자가 더 급하다. 같은 문장으로
+     * 뭉개면 그 차이가 화면에서 사라진다.</p>
+     *
+     * <p>증상 자체는 쓰지 않는다("가슴이 아프다고 하셨어요"). 로봇이 원문도
+     * 부위도 보내지 않기 때문이다 — 없는 것을 지어내면 그 순간부터 이 화면은
+     * 근거가 아니라 추측이 된다 (CLAUDE.md §9).</p>
+     */
+    private static String emergencySummary(CareRecord alert) {
+        String confirmedBy = str(alert.getDetails(), "confirmed_by");
+        return switch (confirmedBy == null ? "" : confirmedBy) {
+            case "senior_reply" -> "몸이 불편하다고 하셨고, 확인 요청에 그렇다고 답하셨어요.";
+            case "no_reply_to_safety_check" -> "몸이 불편하다고 하신 뒤 확인 질문에 답이 없으셨어요.";
+            default -> "몸이 불편하다고 하셨어요.";
+        };
     }
 
     /**

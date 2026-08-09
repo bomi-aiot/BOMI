@@ -272,20 +272,12 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
                   </Badge>
                   <h2 className="medication-card__title">{medication.name}</h2>
                 </div>
-                <Badge
-                  tone={
-                    medication.verificationStatus === 'GUARDIAN_CONFIRMED' ||
-                    medication.verificationStatus === 'DOCUMENT_VERIFIED'
-                      ? 'success'
-                      : 'warning'
-                  }
-                >
-                  {medication.verificationStatus === 'DOCUMENT_VERIFIED'
-                    ? '문서 확인'
-                    : medication.verificationStatus === 'GUARDIAN_CONFIRMED'
-                      ? '보호자 확인'
-                      : '확인 필요'}
-                </Badge>
+                {/*
+                  확인 상태 배지를 뺐다. care_record 에 verification_status 컬럼이 없고
+                  MedicationDto 도 그 값을 싣지 않아, 매퍼가 'UNVERIFIED' 를 상수로 채우고
+                  있었다 — 무엇을 등록하든 모든 약이 노란 "확인 필요"로 보였다.
+                  DB 에 없는 상태를 화면이 단정하는 것이 배지가 없는 것보다 나쁘다.
+                */}
               </div>
               <p className="medication-card__description">
                 {medication.dosage}
