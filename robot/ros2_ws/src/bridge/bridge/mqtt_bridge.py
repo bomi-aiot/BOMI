@@ -118,6 +118,7 @@ class MqttBridge:
         on_arrival: Callable[[str], None] | None = None,
         on_follow_start: Callable[[], None] | None = None,
         on_follow_stop: Callable[[], None] | None = None,
+        on_navigation_state: Callable[[str], None] | None = None,
     ) -> None:
         self._robot_id = robot_id
         self._driver = driver
@@ -135,6 +136,16 @@ class MqttBridge:
         # (mqtt_client.main)처럼 ROS 2 발행자를 만들 수 없는 실행 경로가 그렇다.
         self._on_follow_start = on_follow_start
         self._on_follow_stop = on_follow_stop
+        # 주행 상태 훅(선택). NAVIGATE 를 시작할 때 "NAVIGATING", 끝나면
+        # "IDLE" 로 불린다 — LCD 가 "이동 중"을 띄우는 근거다(bomi_display 의
+        # DisplayStateModel.ACTIVE_NAV_STATES).
+        #
+        # 왜 /cmd_vel 움직임 감지로 충분하지 않은가: 그건 "바퀴가 돌았다"만
+        # 알 뿐 "목표를 향해 가는 중"인지 모른다. 그래서 LCD 는 추종의 미세
+        # 보정과 진짜 주행을 구분하지 못했고, 구분하려고 움직임 감지를 대화
+        # 표시보다 아래에 두다 보니 "보미야" 이동 내내 "생각하는 중"이 떴다.
+        # 이 훅이 그 구분을 만들어 준다.
+        self._on_navigation_state = on_navigation_state
 
         # 최근에 본 commandId. OrderedDict 를 LRU 처럼 쓴다(값은 무의미).
         self._seen: OrderedDict[str, None] = OrderedDict()
@@ -303,6 +314,7 @@ class MqttBridge:
         # 드라이버가 예외로 죽어도 회신 없이 끝나면 안 된다(무응답 금지).
         # 백엔드는 20분 워치독까지 기다렸다가 로봇을 SAFE_STOP 에 잠근다.
         # 예외 뒤에는 바퀴가 도는 채로 남을 수 있으므로 비상 정지도 시도한다.
+        self._publish_navigation_state(contract.NAV_STATE_NAVIGATING)
         try:
             status = self._driver.navigate(target)
         except Exception:  # noqa: BLE001 - 어떤 실패든 결과는 회신한다
@@ -316,6 +328,10 @@ class MqttBridge:
             except Exception:  # noqa: BLE001 - 비상 정지 실패는 로그만 남긴다
                 logger.exception("비상 정지 실패: commandId=%s", command.command_id)
             status = contract.STATUS_FAILED
+        finally:
+            # 어떤 경로로 끝나든 주행 표시를 반드시 내린다. 안 내리면 LCD 가
+            # 영원히 "이동 중"으로 남아, 멈춰 선 로봇이 가는 중처럼 보인다.
+            self._publish_navigation_state(contract.NAV_STATE_IDLE)
 
         outcome, code = _NAVIGATE_STATUS_MAP.get(
             status, (contract.OUTCOME_FAILED, contract.CODE_NOT_ARRIVED)
@@ -331,6 +347,18 @@ class MqttBridge:
                 self._on_arrival(target)
             except Exception:  # noqa: BLE001 - 접근 훅 실패가 명령 처리를 죽이면 안 된다
                 logger.exception("도착 훅 실행 중 오류 (target=%s)", target)
+
+    def _publish_navigation_state(self, state: str) -> None:
+        """주행 표시 훅을 부른다. 실패는 로그만 남긴다.
+
+        화면 표시가 명령 처리를 죽이면 안 된다 — on_arrival 과 같은 원칙이다.
+        """
+        if self._on_navigation_state is None:
+            return
+        try:
+            self._on_navigation_state(state)
+        except Exception:  # noqa: BLE001 - 표시 실패가 주행을 막으면 안 된다
+            logger.exception("주행 상태 훅 실행 중 오류 (state=%s)", state)
 
     def _handle_speak(self, command: contract.RobotCommand) -> None:
         status = self._driver.speak(command.text or "")

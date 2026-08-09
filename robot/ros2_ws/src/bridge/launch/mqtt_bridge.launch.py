@@ -51,6 +51,7 @@ def generate_launch_description() -> LaunchDescription:
     nav_through_poses_action_name = LaunchConfiguration(
         "nav_through_poses_action_name")
     nav_base_frame_id = LaunchConfiguration("nav_base_frame_id")
+    nav_status_topic = LaunchConfiguration("nav_status_topic")
 
     return LaunchDescription(
         [
@@ -186,6 +187,12 @@ def generate_launch_description() -> LaunchDescription:
                 "nav_base_frame_id", default_value="base_link",
                 description="Robot base frame used to read the current pose",
             ),
+            # LCD 주행 표시. bomi_display 가 이 토픽을 구독해 "이동 중"을
+            # 띄운다(DisplayStateModel.ACTIVE_NAV_STATES).
+            DeclareLaunchArgument(
+                "nav_status_topic", default_value="/bomi/nav_status",
+                description="Topic the LCD reads to show the driving state",
+            ),
             Node(
                 package="bridge",
                 executable="mqtt_bridge",
@@ -240,6 +247,7 @@ def generate_launch_description() -> LaunchDescription:
                         "nav_through_poses_action_name":
                             nav_through_poses_action_name,
                         "nav_base_frame_id": nav_base_frame_id,
+                        "nav_status_topic": nav_status_topic,
                     }
                 ],
             ),

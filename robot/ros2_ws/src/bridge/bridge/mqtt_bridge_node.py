@@ -32,7 +32,7 @@
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 
 from bridge.approach import DEFAULT_APPROACH_DURATION_SEC, ApproachController
 from bridge.forward_test_robot_driver import ForwardTestRobotDriver
@@ -131,6 +131,12 @@ class MqttBridgeNode(Node):
             "nav_through_poses_action_name", "navigate_through_poses")
         self.declare_parameter("nav_base_frame_id", "base_link")
 
+        # LCD 주행 표시. bomi_display 의 face_display 가 이 토픽을 구독해
+        # "이동 중"을 띄운다. 이 발행이 없던 동안 화면은 /cmd_vel 움직임
+        # 감지에만 의존했는데, 그건 "바퀴가 돌았다"만 알 뿐 "목표를 향해
+        # 가는 중"인지 몰라 대화 표시(생각하는 중)에 계속 덮였다.
+        self.declare_parameter("nav_status_topic", "/bomi/nav_status")
+
         robot_id = str(self.get_parameter("robot_id").value)
         host = str(self.get_parameter("broker_host").value)
         port = int(self.get_parameter("broker_port").value)
@@ -187,6 +193,8 @@ class MqttBridgeNode(Node):
             self.get_parameter("nav_through_poses_action_name").value)
         nav_base_frame_id = str(
             self.get_parameter("nav_base_frame_id").value)
+        nav_status_topic = str(
+            self.get_parameter("nav_status_topic").value)
 
         # timed 를 고른 경우에만 속도 발행자를 만든다. 다른 드라이버에서
         # /cmd_vel 발행자가 떠 있으면 혼동을 부른다.
@@ -244,6 +252,12 @@ class MqttBridgeNode(Node):
         self._search_publisher = self.create_publisher(
             Bool, search_start_topic, 10)
 
+        # 주행 상태 발행자. bridge 워커 스레드에서 불리는데 rclpy 발행은
+        # 스레드 안전하다(approach.py 의 "스레드 모델" 참고).
+        # face_display 가 기본 QoS 로 구독하므로 여기도 기본으로 맞춘다.
+        self._nav_status_publisher = self.create_publisher(
+            String, nav_status_topic, 10)
+
         self._runner = MqttBridgeRunner(
             robot_id,
             host,
@@ -259,6 +273,7 @@ class MqttBridgeNode(Node):
                 self._start_search if search_enabled else None),
             on_follow_stop=(
                 self._stop_search if search_enabled else None),
+            on_navigation_state=self._publish_nav_status,
         )
         self._runner.connect_and_loop_start()
         self.get_logger().info(
@@ -267,6 +282,10 @@ class MqttBridgeNode(Node):
             f"approach_enabled={approach_enabled}, "
             f"search_enabled={search_enabled}"
         )
+
+    def _publish_nav_status(self, state: str) -> None:
+        """LCD 가 읽는 주행 상태를 발행한다."""
+        self._nav_status_publisher.publish(String(data=state))
 
     def _publish_approach_enable(self, enable: bool) -> None:
         self._approach_enable_publisher.publish(Bool(data=enable))
