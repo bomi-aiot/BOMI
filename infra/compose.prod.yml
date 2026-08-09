@@ -253,6 +253,39 @@ services:
       # Docker to activate the loopback-only published port above.
       - proxy-net
 
+  waypoint-editor:
+    build:
+      context: ../robot
+      dockerfile: tools/waypoint_editor/Dockerfile
+    image: bomi-waypoint-editor:${WAYPOINT_EDITOR_IMAGE_TAG:-local}
+    container_name: bomi-waypoint-editor
+    restart: unless-stopped
+    environment:
+      WAYPOINT_EDITOR_ALLOW_SERVER_WRITE: "false"
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOME: /tmp
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8501/waypoint-editor/_stcore/health', timeout=2).read()
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    mem_limit: 512m
+    cpus: 0.5
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - proxy-net
+
   frontend:
     build:
       context: ../frontend
@@ -319,6 +352,8 @@ services:
       backend:
         condition: service_healthy
       operator-console:
+        condition: service_healthy
+      waypoint-editor:
         condition: service_healthy
       frontend:
         condition: service_healthy
