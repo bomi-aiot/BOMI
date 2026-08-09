@@ -33,6 +33,8 @@ ENTRANCE_X=${ENTRANCE_X:-0.49}
 ENTRANCE_Y=${ENTRANCE_Y:-0.047}
 RUN_LOG=${RUN_LOG:-/tmp/homecoming_run.log}
 WATCH_LOG=${WATCH_LOG:-/tmp/mqtt_watch.log}
+DISPLAY_LOG=${DISPLAY_LOG:-/tmp/bomi_display.log}
+LCD_DISPLAY=${LCD_DISPLAY:-:0}
 
 die() { echo "❌ $*" >&2; exit 1; }
 step() { echo; echo "── $* ──"; }
@@ -40,7 +42,7 @@ step() { echo; echo "── $* ──"; }
 psql_run() { ssh bomi "docker exec -i bomi-postgres psql -U bomi -d bomi -t"; }
 
 # ── 1. 시나리오·로봇 상태 ────────────────────────────────────────────────────
-step "1/7 시나리오·로봇 상태 확인"
+step "1/8 시나리오·로봇 상태 확인"
 
 active_count() {
     echo "SELECT count(*) FROM scenario WHERE final_status NOT IN \
@@ -66,10 +68,10 @@ fi
 [ "$mode" = "IDLE" ] || die "로봇이 IDLE 이 아니다(${mode}) — 이 상태로는 문을 열어도 차단된다"
 
 # ── 2~3. 정리와 기동 ─────────────────────────────────────────────────────────
-step "2/7 스택 정리"
+step "2/8 스택 정리"
 bash "$HERE/demo-stop.sh" > /dev/null 2>&1
 
-step "3/7 스택 기동"
+step "3/8 스택 기동"
 : "${MQTT_PASSWORD:=$(grep -m1 '^MQTT_PASSWORD=' \
     "$REPO_ROOT/robot/ai_chat/.env" | cut -d= -f2- | tr -d '\r')}"
 export MQTT_PASSWORD
@@ -87,7 +89,7 @@ nohup setsid bash "$HERE/run-homecoming-follow.sh" \
     > "$RUN_LOG" 2>&1 < /dev/null &
 echo "  기동 시작 (로그: $RUN_LOG)"
 
-step "4/7 준비 대기 (최대 4분)"
+step "4/8 준비 대기 (최대 4분)"
 for _ in $(seq 1 80); do
     grep -qE '추종\] ai_vision 시작' "$RUN_LOG" 2>/dev/null && break
     grep -qE '활성화되지|180초 안에|시작 직후 종료' "$RUN_LOG" 2>/dev/null \
@@ -103,7 +105,7 @@ source "$ROS_WS/install/setup.bash"
 set -u
 
 # ── 5. lifecycle 은 노드에 직접 묻는다 ───────────────────────────────────────
-step "5/7 Nav2 실제 상태 확인"
+step "5/8 Nav2 실제 상태 확인"
 for node in map_server amcl bt_navigator planner_server controller_server \
             behavior_server; do
     state=""
@@ -120,7 +122,7 @@ for node in map_server amcl bt_navigator planner_server controller_server \
 done
 
 # ── 6. 위치와 경로 ───────────────────────────────────────────────────────────
-step "6/7 초기 위치 설정 (로봇이 출발점에 있어야 한다)"
+step "6/8 초기 위치 설정 (로봇이 출발점에 있어야 한다)"
 timeout 60 python3 "$HERE/lib/set_initpose.py" \
     "$START_X" "$START_Y" "$START_YAW" | tail -1
 sleep 3
@@ -141,8 +143,34 @@ case "$plan" in
     *) die "현관까지 경로가 나오지 않는다 — 로봇이 출발점에 있는지 확인한다" ;;
 esac
 
-# ── 7. 감시 ──────────────────────────────────────────────────────────────────
-step "7/7 MQTT 감시 시작"
+# ── 7. LCD 상태 화면 ─────────────────────────────────────────────────────────
+step "7/8 LCD 상태 화면 시작"
+command -v python3 >/dev/null 2>&1 || die "python3를 찾을 수 없다"
+python3 -c 'import PySide6' >/dev/null 2>&1 \
+    || die "PySide6가 없다 — python3 -m pip install PySide6 실행 후 다시 시작한다"
+
+# 새로 추가된 bomi_display가 아직 install에 없다면 이 패키지만 빠르게 빌드한다.
+if ! ros2 pkg prefix bomi_display >/dev/null 2>&1; then
+    (cd "$ROS_WS" && colcon build --symlink-install --packages-select bomi_display) \
+        > "$DISPLAY_LOG.build" 2>&1 \
+        || die "LCD 패키지 빌드 실패 — $DISPLAY_LOG.build 확인"
+    set +u
+    source "$ROS_WS/install/setup.bash"
+    set -u
+fi
+
+rm -f "$DISPLAY_LOG"
+nohup setsid env DISPLAY="$LCD_DISPLAY" \
+    ros2 run bomi_display face_display \
+    > "$DISPLAY_LOG" 2>&1 < /dev/null &
+DISPLAY_PID=$!
+sleep 3
+kill -0 "$DISPLAY_PID" 2>/dev/null \
+    || die "LCD 상태 화면을 시작하지 못했다 — $DISPLAY_LOG 확인"
+echo "  LCD $LCD_DISPLAY 전체 화면 (PID: $DISPLAY_PID, 로그: $DISPLAY_LOG)"
+
+# ── 8. 감시 ──────────────────────────────────────────────────────────────────
+step "8/8 MQTT 감시 시작"
 rm -f "$WATCH_LOG"
 nohup setsid timeout "$WATCH_SECONDS" mosquitto_sub \
     -h "${MQTT_BROKER_HOST:-i15e102.p.ssafy.io}" \
