@@ -125,6 +125,8 @@ class WakeSearchNode(Node):
         self._hint_bind_port = int(self.get_parameter("hint_bind_port").value)
         self._use_sound_hint = bool(self.get_parameter("use_sound_hint").value)
 
+        self._start_debounce_sec = self._positive_param(
+            "start_debounce_sec")
         self._start_trigger = self._string_param("start_trigger").lower()
         if self._start_trigger not in ("topic", "udp", "both"):
             raise ValueError(
@@ -227,6 +229,7 @@ class WakeSearchNode(Node):
         self.declare_parameter("hint_bind_port", 5006)
         self.declare_parameter("use_sound_hint", True)
         self.declare_parameter("start_trigger", "both")
+        self.declare_parameter("start_debounce_sec", 3.0)
 
     def _build_config(self) -> SearchConfig:
         """파라미터에서 순수 로직용 설정을 만든다(값 검증은 SearchConfig 가 한다)."""
@@ -469,6 +472,20 @@ class WakeSearchNode(Node):
 
     def _begin_search(self, now: float) -> None:
         """시작 신호를 실제 탐색 시작으로 옮긴다."""
+        # 같은 호출에 대해 신호가 두 번 올 수 있다: ai_chat 의 UDP(방향 포함)와
+        # 백엔드 경유 FOLLOW_START(방향 없음). 뒤에 온 신호로 다시 시작하면
+        # 이미 써서 비운 힌트가 없으므로 방향을 잃고 전체 탐색이 된다
+        # (2026-08-09 실기: UDP 로 돌기 시작한 0.44초 뒤 FOLLOW_START 가
+        # 도착해 힌트가 날아갔다). 방금 시작했으면 중복으로 보고 무시한다.
+        if (
+            self._policy.is_active
+            and now - self._search_started_at_sec
+            < self._start_debounce_sec
+        ):
+            self.get_logger().info(
+                "이미 탐색 중입니다 — 중복 시작 신호를 무시합니다.")
+            return
+
         if not self._odom_is_fresh(now):
             self.get_logger().error(
                 "odom 이 없어 탐색을 시작하지 않습니다. Pico 드라이버를 확인하세요.")
