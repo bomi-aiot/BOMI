@@ -1,5 +1,6 @@
 """RTZR Sommers API를 이용한 STT(Speech-to-Text) 클라이언트."""
 
+import json
 import time
 from collections.abc import Callable
 from typing import Any
@@ -37,6 +38,8 @@ class STTClient:
         self.max_attempts = settings.http_max_attempts
         self.backoff_seconds = settings.http_backoff_seconds
         self.max_backoff_seconds = settings.http_max_backoff_seconds
+        self.keywords = tuple(settings.stt_keywords)
+        self.disfluency_filter = settings.stt_disfluency_filter
         self.poll_interval_seconds = settings.stt_poll_interval_seconds
         self.poll_timeout_seconds = settings.stt_poll_timeout_seconds
         self.token_ttl_seconds = settings.stt_token_ttl_seconds
@@ -126,6 +129,31 @@ class STTClient:
                 messages.append(message.strip())
         return " ".join(messages)
 
+    def _config(self) -> dict[str, Any]:
+        """이번 요청의 인식 설정.
+
+        왜 설정을 코드에 박지 않는가
+            원래는 '{"model_name": "sommers", "language": "ko"}' 문자열이 그대로
+            박혀 있었다. 그래서 현장에서 인식이 틀려도 코드를 고치고 다시 배포하지
+            않는 한 손댈 수 없었다. 어르신이 바뀌면 이름과 약 이름이 바뀌는데,
+            그것은 배포가 아니라 설정으로 다뤄야 하는 값이다.
+
+        키워드가 왜 여기 있는가 (2026-08-10 A/B 실측)
+            같은 오디오를 설정만 바꿔 두 번 인식시켰다.
+              부스팅 없음: "고미야 관절 영양 먹었어. ..."
+              부스팅 있음: "보미야 관절염 약 먹었어. ..."
+            웨이크워드 이름이 틀리면 그 뒤 대화 전체가 어긋난다.
+
+        빈 목록이면 keywords 키 자체를 넣지 않는다 — 빈 배열을 보내는 것이
+            무해하다는 근거가 없고, 안 보내면 확실히 예전과 같게 동작한다.
+        """
+        config: dict[str, Any] = {"model_name": "sommers", "language": "ko"}
+        if self.keywords:
+            config["keywords"] = list(self.keywords)
+        if self.disfluency_filter:
+            config["use_disfluency_filter"] = True
+        return config
+
     def transcribe(self, audio: bytes) -> str:
         """오디오 바이트를 받아서 인식된 텍스트를 반환한다."""
         if not isinstance(audio, bytes) or not audio:
@@ -139,7 +167,7 @@ class STTClient:
             TRANSCRIBE_URL,
             headers=headers,
             files={"file": ("audio.wav", audio)},
-            data={"config": '{"model_name": "sommers", "language": "ko"}'},
+            data={"config": json.dumps(self._config(), ensure_ascii=False)},
         )
         upload_data = decode_json_object(response, service="RTZR STT")
         transcribe_id = upload_data.get("id")

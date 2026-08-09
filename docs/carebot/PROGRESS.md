@@ -333,7 +333,54 @@ deploying to a real senior.
 
 미검증: 실기. "외로워"는 시연에서 누구든 가장 먼저 시도할 발화이므로 233 에서 우선 확인 대상입니다.
 
-### 2.4 의미 검색은 만들어졌으나 아직 꺼져 있습니다 (218)
+### 2.4 해소됨 — 의미 검색을 시연 서버에서 켰습니다 (2026-08-10)
+
+**아래 2.4 원문은 켜기 전 상태의 기록입니다.** 2026-08-10 에 시연 서버
+(`i15e102.p.ssafy.io`)에서 실제로 켰고, 다음을 확인했습니다.
+
+- `secrets/production.env` 에 `EMBEDDING_ENABLED=true`, `EMBEDDING_SYNC_ENABLED=true`
+  추가(원본은 `production.env.bak-20260810` 로 백업). `UPSTAGE_API_KEY` 는 이미
+  들어 있었고, 두 스위치가 **파일에 아예 없어서** compose 기본값 `false` 로
+  뜨고 있었습니다 — 원문이 예고한 실패 모양 그대로입니다.
+- 기동 로그: `embedding ON: model=embedding-passage dim=4096`.
+- 백로그 색인 1회로 종료: `embedding sync: 20 memories, 0 summaries indexed,
+  0 failed, 0 deferred (20 billed calls, cap 30)`. DB 20행 전부
+  `embedding_status=SYNCED`, Qdrant `memory` 컬렉션 `points_count=20` (status
+  green, `indexed_vectors_count=0` 은 정상 — 10,000건 미만은 전수 탐색).
+- **DB 종결 상태가 아니라 실제 조회로 확인**했습니다.
+  `POST /api/v1/seniors/{id}/conversation-context` 응답:
+  `availability.semanticSearch=true`, `retrieval.semanticUsed=true`,
+  `hitCount=18`, `latencyMs=201` (임베딩 110ms + 벡터 검색 68ms). 턴 예산
+  약 2초 안에 충분히 들어옵니다.
+
+#### 회상 씨앗과 가족 명부 (같은 날, `scripts/dev/seed-reminiscence.sql`)
+
+의미 검색을 켠 직후, 회상 대화의 재료를 넣었습니다. 기존 memory 20행은 전부 대화에서
+자동 추출된 부스러기라("아이스에 등록하고 동 연동을 확인했다") "이어짐"(§17.2)을
+만들 수 없었습니다.
+
+- **memory 10행** — `importance=5`, `keywords` 채움, **타임스탬프 전부 NULL**.
+  최근성 가중치가 반감기 30일 지수 감쇠라, 사건 연도를 넣으면 점수가 0 에 수렴합니다.
+  NULL 이면 감점 없이 1.0 고정 — 늙지 않는 씨앗이 됩니다.
+- **known_person 3행** — ★ `KnownPerson.isAvoidTarget()` 이
+  `!Boolean.FALSE.equals(isDeceased)` 라, `is_deceased` 를 NULL 로 두면 **살아 있는
+  손자도 회피 대상**이 됩니다. 살아 있는 가족은 `FALSE` 를 명시했습니다. 확립된
+  사별 사실이 없어 회피 대상은 일부러 비워 두었고, 추가 형식만 주석으로 남겼습니다.
+- **실제 조회로 확인**: `"옛날에 학교 다닐 때가 생각나네"` → 상위 6건이 전부 새
+  씨앗, 1~3위가 교사 관련(점수 0.28 vs 기존 행 0.04대). `"주말에 손자가 온다고
+  하네"` → 손자 씨앗 0.4389 로 1위, `avoidTopics=[]`(손자가 막히지 않음).
+- 색인: `embedding sync: 10 memories ... indexed (10 billed calls)`. memory 30행 전부 SYNCED.
+
+김순자는 시연 페르소나(`@example.invalid`)이므로 위 생애 사실은 지어낸 것입니다.
+**실제 어르신에게 쓸 때는 전부 그분의 실제 이야기로 교체합니다** — 스크립트 머리말에
+같은 경고를 두었습니다.
+
+**남은 한 걸음:** 시연 직전 `EMBEDDING_SYNC_ENABLED=false` 로 내리고 재기동합니다
+(질의 임베딩만 돌고 배경 배치가 겹치지 않게). 지금 켜 둔 이유는 회상 씨앗을 새로
+넣을 예정이고, 새 memory 행은 `PENDING` 으로 들어와 이 잡이 있어야 색인되기
+때문입니다. 한 실행 상한은 30행이므로 그보다 많이 넣으면 5분씩 더 걸립니다.
+
+### 2.4 (원문) 의미 검색은 만들어졌으나 아직 꺼져 있습니다 (218)
 
 218 에서 Qdrant 와 Upstage 임베딩을 붙였습니다. 실서버 Qdrant 로 4096차원 코사인 HNSW 컬렉션 생성과 저장→검색 왕복을, 실제 Upstage API 로 passage/query 가 같은 벡터 공간을 쓰는 것을 확인했습니다.
 

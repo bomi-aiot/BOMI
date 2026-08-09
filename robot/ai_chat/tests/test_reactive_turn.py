@@ -163,7 +163,7 @@ def test_documents_requested_only_for_info_intent(settings_factory):
     ],
 )
 def test_intent_is_classified_by_local_rules(text, expected):
-    assert context_node.classify_intent({"user_input": text}) == {"intent": expected}
+    assert context_node.classify_intent({"user_input": text})["intent"] == expected
 
 
 def test_emotional_wins_over_information():
@@ -172,14 +172,14 @@ def test_emotional_wins_over_information():
     정보로 처리하면 사람이 아니라 검색창처럼 반응하게 된다.
     """
     assert context_node.classify_intent(
-        {"user_input": "외로운데 오늘 며칠이야"}) == {"intent": "emotional"}
+        {"user_input": "외로운데 오늘 며칠이야"})["intent"] == "emotional"
 
 
 def test_existing_intent_is_not_reclassified():
     """게이트가 이긴 제안은 유지하되 지난 턴의 의료 판정은 지운다."""
     assert context_node.classify_intent(
         {"intent": "greeting", "user_input": "안녕", "is_medical_query": True}
-    ) == {"is_medical_query": None}
+    ) == {"is_medical_query": None, "wants_story": False, "wants_reminiscence": False}
 
 
 def test_default_intent_is_companion_not_info():
@@ -187,7 +187,7 @@ def test_default_intent_is_companion_not_info():
 
     외로움이 1번 문제이고 말벗이 본체다 (CLAUDE.md §1).
     """
-    assert context_node.classify_intent({"user_input": "음"}) == {"intent": "companion"}
+    assert context_node.classify_intent({"user_input": "음"})["intent"] == "companion"
 
 
 def test_facility_marker_does_not_override_schedule():
@@ -199,7 +199,68 @@ def test_facility_marker_does_not_override_schedule():
     뜻하는 표현은 여전히 _SCHEDULE_MARKERS 가 먼저 잡아야 한다.
     """
     assert context_node.classify_intent(
-        {"user_input": "다음 주에 병원 예약 있어"}) == {"intent": "schedule"}
+        {"user_input": "다음 주에 병원 예약 있어"})["intent"] == "schedule"
+
+
+@pytest.mark.parametrize("text", [
+    "아침에 약을 먹었는지 기억이 안나",
+    "저녁 약은 먹었나요",
+    "약 안 먹었어",
+    "오늘 약 아직이야",
+])
+def test_medication_questions_with_particles_still_reach_the_schedule_handler(text):
+    """★ 조사 하나 때문에 복약 질문이 잡담으로 빠지던 것을 막는다.
+
+    실측: "아침에 약을 먹었는지 기억이 안 나"가 companion 으로 갔다. 표지가
+    "약 먹었"뿐이라 "약을 먹었"의 글자 하나를 못 넘은 것이다. 어르신이 복약을
+    물었는데 로봇이 맞장구만 치는 것은 이 제품에서 대화 품질 문제가 아니다.
+
+    부정형도 포함한다. "약 안 먹었어"를 잡담으로 흘리면 약을 거른 사실을 듣고도
+    아무 일도 하지 않는다. 완료로 오인할 걱정은 없다 —
+    handlers._is_completion_report 가 부정을 먼저 본다.
+    """
+    assert context_node.classify_intent({"user_input": text})["intent"] == "schedule"
+
+
+@pytest.mark.parametrize(("text", "previous", "expected"), [
+    ("심심해", "", True),
+    ("할 일이 없어", "", True),
+    ("재미있는 이야기 해줘", "", True),
+    # "해줘" 세 글자에는 뜻이 없다. 직전에 로봇이 이야기를 제안했을 때만 읽는다.
+    ("해줘", "재미있는 이야기 하나 해드릴까요?", True),
+    ("해줘", "병원 예약이 두 시에 있어요.", False),
+    ("응", "옛날 얘기 하나 들려드릴까요?", True),
+    ("오늘 날씨 어때", "", False),
+])
+def test_a_story_is_wanted_only_when_the_senior_asked_for_one(text, previous, expected):
+    """★ "해줘"라고 답해도 이야기가 안 나오던 후속 턴을 살린다.
+
+    실측: "심심해" -> "재미있는 이야기 해드릴까요?" -> "해줘" -> 또 되묻기.
+    승낙 턴에 이야기 모드가 켜지지 않아서, 같은 두 문장 상한이 다시 걸렸다.
+    """
+    state = {"user_input": text}
+    if previous:
+        state["response"] = previous
+
+    assert context_node.classify_intent(state)["wants_story"] is expected
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("옛날에 학교 다닐 때가 생각나네", True),
+    ("젊었을 때는 나도 잘 걸었지", True),
+    ("고향 생각이 나", True),
+    ("그때는 다들 그렇게 살았어", True),
+    ("오늘 점심 뭐 먹지", False),
+    ("손자가 주말에 와", False),
+])
+def test_the_senior_opens_the_door_to_reminiscence(text, expected):
+    """★ 마중물 목록은 어르신이 문을 여신 턴에만 붙는다.
+
+    매 턴 실으면 평범한 잡담까지 옛날로 끌려간다 — 만성 통증 부위가 매 턴
+    프로필에 실려 대화를 무릎으로 끌고 갔던 것과 같은 실패다.
+    """
+    assert context_node.classify_intent(
+        {"user_input": text})["wants_reminiscence"] is expected
 
 
 # ── 핸들러: 턴당 생성 호출 1회 ─────────────────────────────────────────────
@@ -294,6 +355,23 @@ def test_terse_shaping_is_shorter():
     assert len(normal["sentences"]) >= len(terse["sentences"])
 
 
+def test_a_story_turn_is_not_cut_to_two_sentences():
+    """★ 프롬프트만 고쳐서는 이야기가 나오지 않는다.
+
+    모델이 여덟 문장짜리 옛날이야기를 만들어도 여기서 두 문장에 잘리면 도입부만
+    남는다 — 어르신 귀에는 여전히 "이야기를 안 해준다"이다. 상한이 프롬프트와
+    이 절단 두 곳에 있어서, 둘을 함께 바꿔야 비로소 동작한다.
+    """
+    story = " ".join(f"{i}번째 문장입니다." for i in range(1, 7))
+
+    result = output.response_shaper({"response": story, "wants_story": True})
+
+    assert len(result["sentences"]) == 6
+    # 이야기 턴이 아니면 예전 그대로 두 문장이다.
+    assert len(output.response_shaper({"response": story})["sentences"]) == \
+        policy.MAX_SENTENCES
+
+
 def test_response_shaper_strips_unasked_current_date():
     result = output.response_shaper({
         "user_input": "오늘 산책하고 왔어",
@@ -339,6 +417,38 @@ def test_closing_turn_does_not_leave_an_unanswered_question():
 
     assert result["final_utterance"] == "날씨가 참 좋았나 봐요. 오늘도 고생 많으셨어요."
     assert not result["final_utterance"].endswith("?")
+
+
+def test_a_user_led_farewell_does_not_get_the_homecoming_closing():
+    """어르신이 "알겠어, 고마워"로 닫은 대화의 마지막 문장은 귀가 인사가 아니다.
+
+    "오늘도 고생 많으셨어요"는 백엔드가 연 현관 인사 시나리오를 로봇이 스스로
+    닫을 때의 문구다. 방금 인사를 마친 사람에게 하루를 치하하면 대화가 어긋난다.
+    """
+    result = output.response_shaper({
+        "user_input": "알겠어 고마워",
+        "intent": "companion",
+        "closing_turn": True,
+        "closing_kind": "farewell",
+        "response": "네, 도움이 됐다니 좋아요. 더 궁금한 건 없으세요?",
+    })
+
+    assert result["final_utterance"] == \
+        "네, 도움이 됐다니 좋아요. 필요하면 언제든 다시 불러 주세요."
+    assert not result["final_utterance"].endswith("?")
+
+
+def test_an_unknown_closing_kind_falls_back_to_the_previous_behaviour():
+    """모르는 값이 들어와도 마지막 문장은 반드시 남는다(기존 동작)."""
+    result = output.response_shaper({
+        "user_input": "그래",
+        "intent": "companion",
+        "closing_turn": True,
+        "closing_kind": "무언가새로운값",
+        "response": "네 알겠습니다.",
+    })
+
+    assert result["final_utterance"].endswith("오늘도 고생 많으셨어요.")
 
 
 # ── emit: 비블로킹 ─────────────────────────────────────────────────────────

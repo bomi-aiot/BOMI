@@ -717,7 +717,8 @@ def _run_graph_conversation(
         2) 마무리 언급: is_farewell 이면 그 발화를 그래프로 처리한 뒤 끝낸다.
            종료 인사를 따로 만들지 않는다 — 마무리 발화에 대한 그래프의 응답
            ("네, 편히 쉬세요" 류)이 곧 종료 응답이고, 그 재생이 끝난 뒤에 세션을
-           닫으므로 잘리지 않는다(시나리오 L).
+           닫으므로 잘리지 않는다(시나리오 L). 그 턴은 closing_turn=True,
+           closing_kind="farewell" 로 태운다 — 되묻고 나서 귀를 닫지 않기 위해서다.
         3) Ctrl+C: 대화만 끝내고 바깥 루프가 다시 "보미야"를 기다린다(프로그램 종료 아님).
 
     각 발화는 run_user_turn 으로 그래프에 태운다 -> context_read(기억 조회) +
@@ -785,7 +786,15 @@ def _run_graph_conversation(
             runtime.search_signal.send_stop("user_requested_wait")
             logger.info("search stop requested by the user utterance")
 
-        closing_turn = (
+        # ★ 마무리 판정은 턴을 태우기 '전'에 한다.
+        #   판정이 뒤에 있던 동안, 마무리 발화는 평범한 턴으로 생성됐다 —
+        #   모델이 "더 필요한 거 있으세요?"라고 되묻고 그 직후 세션이 닫혔다.
+        #   질문을 던져놓고 귀를 닫는 셈이라 어르신 입장에서는 무시당한 것이다.
+        #   closing_turn 을 켜면 생성기가 새 질문을 만들지 않고(handlers), 그래도
+        #   샌 질문은 출력 정제기가 걷어낸다(output). 상태 전이('farewell' 이벤트)는
+        #   그대로 재생이 끝난 뒤에 한다 — 응답이 잘리면 안 되기 때문이다.
+        farewell = conversation_control.is_farewell(text)
+        closing_turn = farewell or (
             session_turn_limit is not None
             and session_turns + 1 >= session_turn_limit
         )
@@ -795,6 +804,7 @@ def _run_graph_conversation(
             text,
             duration_sec=duration,
             closing_turn=closing_turn,
+            closing_kind="farewell" if farewell else "homecoming",
         )
         session = _advance(session, "turn_done")
         turns += 1
@@ -805,7 +815,7 @@ def _run_graph_conversation(
         _wait_for_playback(runtime.echo_guard)
         session = _advance(session, "playback_done")
 
-        if conversation_control.is_farewell(text):
+        if farewell:
             session = _advance(session, "farewell")
             end_reason = "farewell"
             logger.info("conversation ended: farewell detected")
