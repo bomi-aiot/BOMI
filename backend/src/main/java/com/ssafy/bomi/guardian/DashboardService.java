@@ -596,31 +596,6 @@ public class DashboardService {
         };
     }
 
-    /**
-     * reason = "emergency" 인 T1 의 문구.
-     *
-     * <p>이 사유가 여기 없었던 동안, 로봇이 증상을 듣고 확인까지 거쳐 올린 알림이
-     * 보호자 화면에 "확인이 필요한 일이 있었어요."로 떴다. 사유를 안다는 사실을
-     * 알면서 모른다고 말하는 문구였다.</p>
-     *
-     * <p>왜 {@code confirmed_by} 로 두 갈래를 나누는가 — 이 둘은 보호자가 해야 할
-     * 일이 다르다. 어르신이 "그렇다"고 답한 것은 상황을 아는 상태이고, 답이 없는
-     * 것은 아무도 지금 상태를 모르는 상태다. 후자가 더 급하다. 같은 문장으로
-     * 뭉개면 그 차이가 화면에서 사라진다.</p>
-     *
-     * <p>증상 자체는 쓰지 않는다("가슴이 아프다고 하셨어요"). 로봇이 원문도
-     * 부위도 보내지 않기 때문이다 — 없는 것을 지어내면 그 순간부터 이 화면은
-     * 근거가 아니라 추측이 된다 (CLAUDE.md §9).</p>
-     */
-    private static String emergencySummary(CareRecord alert) {
-        String confirmedBy = str(alert.getDetails(), "confirmed_by");
-        return switch (confirmedBy == null ? "" : confirmedBy) {
-            case "senior_reply" -> "몸이 불편하다고 하셨고, 확인 요청에 그렇다고 답하셨어요.";
-            case "no_reply_to_safety_check" -> "몸이 불편하다고 하신 뒤 확인 질문에 답이 없으셨어요.";
-            default -> "몸이 불편하다고 하셨어요.";
-        };
-    }
-
     private static String iso(OffsetDateTime value) {
         return value == null ? null : value.toString();
     }
