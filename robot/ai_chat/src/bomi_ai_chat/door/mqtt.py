@@ -22,6 +22,7 @@ paho-mqtt 는 선택 의존이다
 from __future__ import annotations
 
 import logging
+import threading
 from urllib.parse import urlparse
 
 from bomi_ai_chat.backend_client.door_client import BackendDoorClient
@@ -52,6 +53,10 @@ class DoorSubscriber:
         # 없으면 내구 저장소만 갱신되고, 그것만으로도 안전 감시는 살아 있다.
         self.app = app
         self._client = None
+        # DOOR_OPENED 를 한 번이라도 봤는지. 웨이크워드 게이트가 이 값을 읽는다
+        # (bootstrap._wake_word_allowed). paho 콜백 스레드가 세우고 메인 루프가
+        # 읽으므로 Event 를 쓴다.
+        self._door_opened = threading.Event()
 
     # ── 메시지 처리: 브로커 없이도 테스트할 수 있는 부분 ──────────────────────
 
@@ -81,8 +86,17 @@ class DoorSubscriber:
             logger.exception("door intake failed for %s", event.type)
             return False
 
+        # HEARTBEAT 나 MOTION 으로는 열지 않는다. 그것들은 어르신이 돌아왔다는
+        # 증거가 아니라 센서가 살아 있다는 증거일 뿐이다.
+        if event.type == "DOOR_OPENED":
+            self._door_opened.set()
+
         self._invoke_graph(event)
         return True
+
+    def has_seen_door_opened(self) -> bool:
+        """이 프로세스가 뜬 뒤 DOOR_OPENED 를 한 번이라도 받았는가."""
+        return self._door_opened.is_set()
 
     def _invoke_graph(self, event) -> None:
         """그래프에도 알린다. 대화 턴이 읽는 checkpoint 를 갱신하기 위한 것이다.

@@ -13,6 +13,7 @@
   <!-- Nav2 주행 드라이버가 직접 사용하는 의존성 -->
   <depend>geometry_msgs</depend>
   <depend>nav2_msgs</depend>
+  <depend>tf2_ros</depend>
   <depend>action_msgs</depend>
   <depend>ament_index_python</depend>
 

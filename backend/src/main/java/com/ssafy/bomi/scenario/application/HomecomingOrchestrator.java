@@ -38,7 +38,8 @@ public class HomecomingOrchestrator {
     public static final String REASON_HOMECOMING_FOLLOW_COMPLETED =
         "HOMECOMING_FOLLOW_COMPLETED";
 
-    static final String DEFAULT_GREETING = "다녀오셨어요? 오늘 외출은 어떠셨어요?";
+    static final String DEFAULT_GREETING =
+        "할머니 기다리고 있었어요! 오늘 밖에서 뭐하고 오셨어요?";
 
     private static final Logger log = LoggerFactory.getLogger(HomecomingOrchestrator.class);
     private static final Duration ROBOT_COMMAND_TTL = Duration.ofMinutes(2);

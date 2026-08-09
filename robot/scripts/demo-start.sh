@@ -26,21 +26,37 @@ REPO_ROOT=$(cd "$HERE/../.." && pwd)
 ROS_WS="$REPO_ROOT/robot/ros2_ws"
 
 WATCH_SECONDS=${WATCH_SECONDS:-900}
-START_X=${START_X:--0.062}
-START_Y=${START_Y:-0.103}
-START_YAW=${START_YAW:-3.2244}
-ENTRANCE_X=${ENTRANCE_X:-0.49}
-ENTRANCE_Y=${ENTRANCE_Y:-0.047}
+WAYPOINTS=${WAYPOINTS:-$ROS_WS/src/core/config/room_waypoints.yaml}
 RUN_LOG=${RUN_LOG:-/tmp/homecoming_run.log}
 WATCH_LOG=${WATCH_LOG:-/tmp/mqtt_watch.log}
+DISPLAY_LOG=${DISPLAY_LOG:-/tmp/bomi_display.log}
+LCD_DISPLAY=${LCD_DISPLAY:-:0}
+AI_STATUS_FILE=${AI_STATUS_FILE:-/tmp/bomi_ai_status}
+export BOMI_DISPLAY_STATUS_FILE="$AI_STATUS_FILE"
 
 die() { echo "❌ $*" >&2; exit 1; }
 step() { echo; echo "── $* ──"; }
 
 psql_run() { ssh bomi "docker exec -i bomi-postgres psql -U bomi -d bomi -t"; }
 
+# 좌표는 재매핑할 때마다 바뀐다. 여기에 적어두면 그때마다 이 파일도 고쳐야
+# 하고, 잊으면 옛 좌표로 초기 위치를 잡은 채 "준비 완료"가 뜬다(2026-08-09에
+# 실제로 그랬다 — 방향이 130도 틀어진 상태로 통과했다).
+# bomi_map.sh 가 갱신하는 room_waypoints.yaml 을 단일 출처로 읽는다.
+waypoint_of() {
+    local name=$1 line
+    line=$(timeout 20 python3 "$HERE/lib/read_waypoint.py" "$WAYPOINTS" "$name" 2>&1) \
+        || die "웨이포인트 '$name' 를 읽지 못했다: $line"
+    [ -n "$line" ] || die "웨이포인트 '$name' 가 $WAYPOINTS 에 없다"
+    printf '%s\n' "$line"
+}
+
+[ -f "$WAYPOINTS" ] || die "웨이포인트 파일이 없다: $WAYPOINTS"
+read -r START_X START_Y START_YAW <<<"$(waypoint_of charging)"
+read -r ENTRANCE_X ENTRANCE_Y ENTRANCE_YAW <<<"$(waypoint_of entrance)"
+
 # ── 1. 시나리오·로봇 상태 ────────────────────────────────────────────────────
-step "1/7 시나리오·로봇 상태 확인"
+step "1/9 시나리오·로봇 상태 확인"
 
 active_count() {
     echo "SELECT count(*) FROM scenario WHERE final_status NOT IN \
@@ -65,11 +81,28 @@ fi
 [ "$n" = "0" ] || die "활성 시나리오가 남아 있다(${n}건) — 진행 중인 시나리오가 있는지 확인한다"
 [ "$mode" = "IDLE" ] || die "로봇이 IDLE 이 아니다(${mode}) — 이 상태로는 문을 열어도 차단된다"
 
-# ── 2~3. 정리와 기동 ─────────────────────────────────────────────────────────
-step "2/7 스택 정리"
-bash "$HERE/demo-stop.sh" > /dev/null 2>&1
+# ── 2. 스피커와 TTS ──────────────────────────────────────────────────────────
+# 스택을 2분 올린 뒤에 "로봇이 말을 안 한다"를 발견하는 것보다, 여기서 먼저
+# 막는 편이 낫다. 2026-08-09 실기의 무음은 스피커가 아니라 Typecast 403 이었다.
+step "2/9 스피커·TTS 확인"
+if [ "${SKIP_SPEECH_CHECK:-0}" = "1" ]; then
+    echo "    SKIP_SPEECH_CHECK=1 — 건너뛴다 (로봇이 무음일 수 있다)"
+else
+    AI_PY="$REPO_ROOT/robot/ai_chat/.venv/bin/python"
+    [ -x "$AI_PY" ] || AI_PY="$REPO_ROOT/robot/ai_chat/venv/bin/python"
+    [ -x "$AI_PY" ] || die "ai_chat 가상환경을 찾지 못했다 (.venv 또는 venv)"
+    # ROS 의 PYTHONPATH 가 섞이면 ai_chat 의존성이 깨진다(CLAUDE.md 환경 함정).
+    ( cd "$REPO_ROOT/robot/ai_chat" \
+      && env -u PYTHONPATH "$AI_PY" "$HERE/lib/check_speech.py" ) \
+        || die "스피커·TTS 점검 실패 — 위 사유를 먼저 해결한다 (건너뛰려면 SKIP_SPEECH_CHECK=1)"
+fi
 
-step "3/7 스택 기동"
+# ── 3~4. 정리와 기동 ─────────────────────────────────────────────────────────
+step "3/9 스택 정리"
+bash "$HERE/demo-stop.sh" > /dev/null 2>&1
+rm -f "$AI_STATUS_FILE"
+
+step "4/9 스택 기동"
 : "${MQTT_PASSWORD:=$(grep -m1 '^MQTT_PASSWORD=' \
     "$REPO_ROOT/robot/ai_chat/.env" | cut -d= -f2- | tr -d '\r')}"
 export MQTT_PASSWORD
@@ -79,15 +112,17 @@ export MQTT_PASSWORD
 if [ -x "$REPO_ROOT/robot/ai_chat/.venv/bin/python" ]; then
     export AI_CHAT_PYTHON="$REPO_ROOT/robot/ai_chat/.venv/bin/python"
 fi
-# 추종이 길수록 AMCL 이 어긋날 여지가 커진다. 시연에는 10초면 충분하다.
-export HOMECOMING_FOLLOW_SECONDS="${HOMECOMING_FOLLOW_SECONDS:-10}"
+# 추종이 길수록 AMCL 이 어긋날 여지가 커진다. 다만 10초는 어르신이 따라올
+# 새도 없이 끝나 온습도 대화로 넘어가 버려서 20초로 늘렸다(2026-08-10).
+# run-homecoming-follow.sh 기본값 및 bootstrap.py 기본값과도 이제 같다.
+export HOMECOMING_FOLLOW_SECONDS="${HOMECOMING_FOLLOW_SECONDS:-20}"
 
 rm -f "$RUN_LOG"
 nohup setsid bash "$HERE/run-homecoming-follow.sh" \
     > "$RUN_LOG" 2>&1 < /dev/null &
 echo "  기동 시작 (로그: $RUN_LOG)"
 
-step "4/7 준비 대기 (최대 4분)"
+step "5/9 준비 대기 (최대 4분)"
 for _ in $(seq 1 80); do
     grep -qE '추종\] ai_vision 시작' "$RUN_LOG" 2>/dev/null && break
     grep -qE '활성화되지|180초 안에|시작 직후 종료' "$RUN_LOG" 2>/dev/null \
@@ -103,7 +138,7 @@ source "$ROS_WS/install/setup.bash"
 set -u
 
 # ── 5. lifecycle 은 노드에 직접 묻는다 ───────────────────────────────────────
-step "5/7 Nav2 실제 상태 확인"
+step "6/9 Nav2 실제 상태 확인"
 for node in map_server amcl bt_navigator planner_server controller_server \
             behavior_server; do
     state=""
@@ -120,7 +155,7 @@ for node in map_server amcl bt_navigator planner_server controller_server \
 done
 
 # ── 6. 위치와 경로 ───────────────────────────────────────────────────────────
-step "6/7 초기 위치 설정 (로봇이 출발점에 있어야 한다)"
+step "7/9 초기 위치 설정 (로봇이 출발점에 있어야 한다)"
 timeout 60 python3 "$HERE/lib/set_initpose.py" \
     "$START_X" "$START_Y" "$START_YAW" | tail -1
 sleep 3
@@ -129,20 +164,50 @@ pose=$(timeout 20 ros2 run tf2_ros tf2_echo map base_link 2>&1 \
 [ -n "$pose" ] || die "map -> base_link TF 가 없다"
 echo "  $pose"
 
-echo "  현관까지 경로 계획 시험:"
+echo "  현관까지 경로 계획 시험: ($ENTRANCE_X, $ENTRANCE_Y, yaw $ENTRANCE_YAW)"
+# yaw -> 쿼터니언(z, w). 방향까지 맞춰야 목표 자세가 실제 현관 방향이 된다.
+read -r EQ_Z EQ_W <<<"$(python3 -c \
+    "import math,sys; y=float(sys.argv[1]); print(math.sin(y/2), math.cos(y/2))" \
+    "$ENTRANCE_YAW")"
 plan=$(timeout 40 ros2 action send_goal /compute_path_to_pose \
     nav2_msgs/action/ComputePathToPose \
     "{goal: {header: {frame_id: map}, pose: {position: {x: $ENTRANCE_X, \
-      y: $ENTRANCE_Y, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: -0.5624, \
-      w: 0.8268}}}, use_start: false}" 2>&1 | grep -E "Goal finished")
+      y: $ENTRANCE_Y, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: $EQ_Z, \
+      w: $EQ_W}}}, use_start: false}" 2>&1 | grep -E "Goal finished")
 echo "    $plan"
 case "$plan" in
     *SUCCEEDED*) ;;
     *) die "현관까지 경로가 나오지 않는다 — 로봇이 출발점에 있는지 확인한다" ;;
 esac
 
-# ── 7. 감시 ──────────────────────────────────────────────────────────────────
-step "7/7 MQTT 감시 시작"
+# ── 7. LCD 상태 화면 ─────────────────────────────────────────────────────────
+step "8/9 LCD 상태 화면 시작"
+command -v python3 >/dev/null 2>&1 || die "python3를 찾을 수 없다"
+python3 -c 'import PySide6' >/dev/null 2>&1 \
+    || die "PySide6가 없다 — python3 -m pip install PySide6 실행 후 다시 시작한다"
+
+# 새로 추가된 bomi_display가 아직 install에 없다면 이 패키지만 빠르게 빌드한다.
+if ! ros2 pkg prefix bomi_display >/dev/null 2>&1; then
+    (cd "$ROS_WS" && colcon build --symlink-install --packages-select bomi_display) \
+        > "$DISPLAY_LOG.build" 2>&1 \
+        || die "LCD 패키지 빌드 실패 — $DISPLAY_LOG.build 확인"
+    set +u
+    source "$ROS_WS/install/setup.bash"
+    set -u
+fi
+
+rm -f "$DISPLAY_LOG"
+nohup setsid env DISPLAY="$LCD_DISPLAY" \
+    ros2 run bomi_display face_display --ai-status-file "$AI_STATUS_FILE" \
+    > "$DISPLAY_LOG" 2>&1 < /dev/null &
+DISPLAY_PID=$!
+sleep 3
+kill -0 "$DISPLAY_PID" 2>/dev/null \
+    || die "LCD 상태 화면을 시작하지 못했다 — $DISPLAY_LOG 확인"
+echo "  LCD $LCD_DISPLAY 전체 화면 (PID: $DISPLAY_PID, 로그: $DISPLAY_LOG)"
+
+# ── 8. 감시 ──────────────────────────────────────────────────────────────────
+step "9/9 MQTT 감시 시작"
 rm -f "$WATCH_LOG"
 nohup setsid timeout "$WATCH_SECONDS" mosquitto_sub \
     -h "${MQTT_BROKER_HOST:-i15e102.p.ssafy.io}" \
