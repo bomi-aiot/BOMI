@@ -16,6 +16,7 @@ class FaceWidget(QWidget):
         FaceState.IDLE: QColor("#63E6BE"),
         FaceState.DRIVING: QColor("#74C0FC"),
         FaceState.LISTENING: QColor("#B197FC"),
+        FaceState.THINKING: QColor("#F783AC"),
         FaceState.SPEAKING: QColor("#FFD43B"),
         FaceState.ERROR: QColor("#FF6B6B"),
     }
@@ -80,6 +81,13 @@ class FaceWidget(QWidget):
         elif self.snapshot.state == FaceState.LISTENING:
             radius = 24 + int((math.sin(self.phase) + 1) * 8)
             painter.drawEllipse(int(x - radius), int(y - radius), radius * 2, radius * 2)
+        elif self.snapshot.state == FaceState.THINKING:
+            for index, radius in enumerate((8, 12, 16)):
+                px = x - 38 + index * 38
+                offset = math.sin(self.phase + index * 0.8) * 8
+                painter.drawEllipse(
+                    int(px - radius), int(y + offset - radius), radius * 2, radius * 2
+                )
         elif self.snapshot.state == FaceState.ERROR:
             painter.drawArc(int(x - 55), int(y), 110, 55, 0, 180 * 16)
         else:

@@ -18,6 +18,7 @@ pkill -f 'bomi_ai_chat' 2>/dev/null
 pkill -f 'bomi_vision.udp_main' 2>/dev/null
 pkill -f 'mosquitto_sub' 2>/dev/null
 pkill -INT -f 'bomi_display.*/face_display|ros2 run bomi_display face_display' 2>/dev/null
+rm -f "${AI_STATUS_FILE:-${BOMI_DISPLAY_STATUS_FILE:-/tmp/bomi_ai_status}}"
 sleep 3
 
 # shellcheck source=lib/cleanup.sh

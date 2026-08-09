@@ -35,6 +35,8 @@ RUN_LOG=${RUN_LOG:-/tmp/homecoming_run.log}
 WATCH_LOG=${WATCH_LOG:-/tmp/mqtt_watch.log}
 DISPLAY_LOG=${DISPLAY_LOG:-/tmp/bomi_display.log}
 LCD_DISPLAY=${LCD_DISPLAY:-:0}
+AI_STATUS_FILE=${AI_STATUS_FILE:-/tmp/bomi_ai_status}
+export BOMI_DISPLAY_STATUS_FILE="$AI_STATUS_FILE"
 
 die() { echo "❌ $*" >&2; exit 1; }
 step() { echo; echo "── $* ──"; }
@@ -70,6 +72,7 @@ fi
 # ── 2~3. 정리와 기동 ─────────────────────────────────────────────────────────
 step "2/8 스택 정리"
 bash "$HERE/demo-stop.sh" > /dev/null 2>&1
+rm -f "$AI_STATUS_FILE"
 
 step "3/8 스택 기동"
 : "${MQTT_PASSWORD:=$(grep -m1 '^MQTT_PASSWORD=' \
@@ -161,7 +164,7 @@ fi
 
 rm -f "$DISPLAY_LOG"
 nohup setsid env DISPLAY="$LCD_DISPLAY" \
-    ros2 run bomi_display face_display \
+    ros2 run bomi_display face_display --ai-status-file "$AI_STATUS_FILE" \
     > "$DISPLAY_LOG" 2>&1 < /dev/null &
 DISPLAY_PID=$!
 sleep 3

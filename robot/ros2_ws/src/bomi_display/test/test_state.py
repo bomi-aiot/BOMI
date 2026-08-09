@@ -15,6 +15,7 @@ def test_default_state_is_idle():
     [
         ("nav", "navigating", FaceState.DRIVING),
         ("tts", "listening", FaceState.LISTENING),
+        ("tts", "thinking", FaceState.THINKING),
         ("tts", "speaking", FaceState.SPEAKING),
     ],
 )
@@ -31,6 +32,14 @@ def test_speaking_has_priority_over_driving():
     model.update_nav("NAVIGATING")
     model.update_tts("SPEAKING")
     assert model.snapshot(now=0.0).state == FaceState.SPEAKING
+
+
+def test_recent_nonzero_velocity_is_driving_then_expires():
+    """실제 속도 명령이 들어오면 이동 상태가 되고 잠시 뒤 대기로 돌아간다."""
+    model = DisplayStateModel()
+    model.update_motion(True, now=10.0, hold_seconds=0.7)
+    assert model.snapshot(now=10.6).state == FaceState.DRIVING
+    assert model.snapshot(now=10.8).state == FaceState.IDLE
 
 
 def test_disconnected_mqtt_has_error_priority():

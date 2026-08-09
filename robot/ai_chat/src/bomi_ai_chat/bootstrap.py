@@ -598,12 +598,16 @@ def _speak_ack(tts, audio_out, *, message: str | None = None) -> None:
     if tts is None or audio_out is None:
         return
     from bomi_ai_chat import conversation_control
+    from bomi_ai_chat.display_status import publish as publish_display_status
 
     text = message or conversation_control.WAKE_ACK_MESSAGE
     try:
+        publish_display_status("SPEAKING")
         audio_out.play(tts.synthesize(text))
     except Exception:  # noqa: BLE001 - 호출 응답 실패가 대화를 막으면 안 된다
         logger.exception("failed to speak wake ack")
+    finally:
+        publish_display_status("IDLE")
 
 
 def _advance(session, event: str):
@@ -742,6 +746,8 @@ def _run_graph_conversation(
         session = _advance(session, "session_closed")
     logger.info("SESSION_ENDED senior=%s reason=%s turns=%d",
                 runtime.senior_id, end_reason, turns)
+    from bomi_ai_chat.display_status import publish as publish_display_status
+    publish_display_status("IDLE")
     return turns, end_reason
 
 
@@ -1038,13 +1044,16 @@ def _listen(
         - text="" & no_speech=False : 발화는 있었으나 STT 가 못 알아들었다.
     """
     from bomi_ai_chat.clock import clock
+    from bomi_ai_chat.display_status import publish as publish_display_status
 
+    publish_display_status("LISTENING")
     started = clock.now()
     audio = audio_in.capture(onset_timeout_seconds=onset_timeout_seconds)
     if not isinstance(audio, bytes) or not audio:
         # capture 가 빈 바이트 -> onset 모드면 '무응답', 일반 모드면 그냥 빈 수음.
         return "", 0.0, onset_timeout_seconds is not None
 
+    publish_display_status("THINKING")
     text = (stt.transcribe(audio) or "").strip()
 
     # STT 가 실제로 뭐라고 알아들었는지 콘솔에 남긴다. pipeline.py(구 경로)는

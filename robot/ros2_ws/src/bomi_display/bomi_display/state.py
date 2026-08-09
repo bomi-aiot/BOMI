@@ -11,6 +11,7 @@ class FaceState(str, Enum):
     IDLE = "IDLE"
     DRIVING = "DRIVING"
     LISTENING = "LISTENING"
+    THINKING = "THINKING"
     SPEAKING = "SPEAKING"
     ERROR = "ERROR"
 
@@ -30,6 +31,7 @@ class DisplayStateModel:
     ACTIVE_NAV_STATES = frozenset({"NAVIGATING", "DRIVING", "MOVING", "ACTIVE"})
     FAILED_NAV_STATES = frozenset({"FAILED", "ABORTED", "ERROR"})
     LISTENING_TTS_STATES = frozenset({"LISTENING", "RECOGNIZING"})
+    THINKING_TTS_STATES = frozenset({"THINKING", "PROCESSING"})
     SPEAKING_TTS_STATES = frozenset({"SPEAKING", "PLAYING"})
     FAILED_TTS_STATES = frozenset({"FAILED", "ERROR"})
 
@@ -43,6 +45,7 @@ class DisplayStateModel:
         self.mqtt_connected = True
         self.last_sensor_update: float | None = None
         self.sensor_monitoring_enabled = False
+        self.motion_active_until = 0.0
 
     def update_nav(self, value: str) -> None:
         """Nav2 상태 문자열을 정규화하여 저장한다."""
@@ -51,6 +54,13 @@ class DisplayStateModel:
     def update_tts(self, value: str) -> None:
         """음성 인식 또는 TTS 상태 문자열을 정규화하여 저장한다."""
         self.tts_state = value.strip().upper()
+
+    def update_motion(
+        self, moving: bool, now: float | None = None, hold_seconds: float = 0.7
+    ) -> None:
+        """실제 속도 명령을 짧게 유지해 이동 여부로 반영한다."""
+        current = time.monotonic() if now is None else now
+        self.motion_active_until = current + hold_seconds if moving else current
 
     def update_mqtt(self, connected: bool) -> None:
         """MQTT 연결 여부를 저장한다."""
@@ -74,9 +84,11 @@ class DisplayStateModel:
             return DisplaySnapshot(FaceState.ERROR, "음성 오류", self.tts_state)
         if self.tts_state in self.SPEAKING_TTS_STATES:
             return DisplaySnapshot(FaceState.SPEAKING, "말하는 중")
+        if self.tts_state in self.THINKING_TTS_STATES:
+            return DisplaySnapshot(FaceState.THINKING, "생각하는 중")
         if self.tts_state in self.LISTENING_TTS_STATES:
             return DisplaySnapshot(FaceState.LISTENING, "듣고 있어요")
-        if self.nav_state in self.ACTIVE_NAV_STATES:
+        if self.nav_state in self.ACTIVE_NAV_STATES or current < self.motion_active_until:
             return DisplaySnapshot(FaceState.DRIVING, "이동 중")
         return DisplaySnapshot(FaceState.IDLE, "기다리고 있어요")
 
