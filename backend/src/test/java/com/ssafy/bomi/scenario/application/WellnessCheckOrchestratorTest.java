@@ -116,6 +116,16 @@ class WellnessCheckOrchestratorTest {
     }
 
     @Test
+    void disabledStandaloneScenarioDoesNotInspectOrStartWellnessFlow() {
+        wellnessProperties.setScenarioEnabled(false);
+
+        orchestrator.onAmbientObserved(sensorId, ambient(31.0, 50.0));
+
+        verifyNoInteractions(appUserRepository, scenarioRepository, robotRepository,
+            commandPublisher);
+    }
+
+    @Test
     void highHumidityAloneAlsoTriggers() {
         orchestrator.onAmbientObserved(sensorId, ambient(24.0, 85.0));
 
