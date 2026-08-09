@@ -18,7 +18,7 @@ from bomi_ai_chat.http import (
     request_with_retry,
 )
 
-GEMINI_URL = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+GEMINI_URL = "https://gms.ssafy.io/gmsapi/generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent"
 LOGGER = logging.getLogger(__name__)
 
 TOOLS = [{
@@ -352,6 +352,11 @@ def _call_gemini(
             "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
             "contents": contents,
             "tools": TOOLS,
+            # 여기엔 maxOutputTokens 가 없어 잘릴 위험은 없지만, thinking 을
+            # 켜두면 도구 호출 한 번이 1.6~2.0초로 늘고 사고 토큰 157~228 개가
+            # 매번 과금된다. 끄면 1.0초이고 functionCall 결과는 동일하다
+            # (2026-08-10 실측).
+            "generationConfig": {"thinkingConfig": {"thinkingBudget": 0}},
         },
     )
     return decode_json_object(response, service="Gemini 의료")
