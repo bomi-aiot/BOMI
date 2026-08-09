@@ -118,10 +118,38 @@ start_aux twist_mux ros2 run twist_mux twist_mux --ros-args \
     --params-file "$ROS_WS/src/core/config/twist_mux.yaml" \
     -r cmd_vel_out:=/cmd_vel
 
+# ai_vision 은 프레임 처리에 상한이 없어 놔두면 전 코어를 90%까지 채운다.
+# 그러면 Nav2 의 20Hz 제어 루프와 lifecycle/costmap 서비스 호출이 데드라인을
+# 놓쳐 주행이 실패한다(2026-08-09 실기: amcl 활성화 실패, 경로 계획 실패).
+# 마지막 두 코어에 가두고 Nav2 에 나머지를 남긴다.
+VISION_CPUS=${AI_VISION_CPUS:-}
+if [ -z "$VISION_CPUS" ] && command -v nproc >/dev/null 2>&1; then
+    _cores=$(nproc)
+    if [ "$_cores" -ge 4 ]; then
+        VISION_CPUS="$((_cores - 2)),$((_cores - 1))"
+    fi
+fi
+VISION_LAUNCHER=()
+if [ -n "$VISION_CPUS" ] && command -v taskset >/dev/null 2>&1; then
+    VISION_LAUNCHER=(taskset -c "$VISION_CPUS")
+    echo "[추종] ai_vision CPU 고정: $VISION_CPUS"
+fi
+
+# torch 2.11 휠이 nvidia/cu12/lib 아래 libcudss.so.0 을 깔면서 RPATH 를 안 남긴다.
+# 이게 없으면 import torch 가 실패해 추종 단계가 통째로 빠진다.
+_torch_libs="$VISION_DIR/venv/lib/python3.10/site-packages/nvidia/cu12/lib"
+
 echo "[추종] ai_vision 시작 — 로그: $FOLLOW_LOG_DIR/ai_vision.log"
 (
     cd "$VISION_DIR"
-    exec "$VISION_PYTHON" -u -m bomi_vision.udp_main \
+    if [ -d "$_torch_libs" ]; then
+        export LD_LIBRARY_PATH="$_torch_libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+    fi
+    # 위에서 코어를 2개로 줄였으므로 torch 의 CPU 스레드도 함께 맞춘다.
+    export OMP_NUM_THREADS=${OMP_NUM_THREADS:-2}
+    # set -u 아래에서 빈 배열 전개가 안전하도록 +형태를 쓴다.
+    exec ${VISION_LAUNCHER[@]+"${VISION_LAUNCHER[@]}"} \
+        "$VISION_PYTHON" -u -m bomi_vision.udp_main \
         --host 127.0.0.1 \
         --port 5005 \
         --no-window \

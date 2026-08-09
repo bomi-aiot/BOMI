@@ -88,13 +88,19 @@ class BeamDirectionSampler:
             self._stop.wait(self._interval_sec)
 
     def sample_once(self) -> None:
-        """한 번 읽어 이력에 넣는다. 실패는 조용히 넘긴다."""
+        """한 번 읽어 이력에 넣는다.
+
+        콜백이 None 을 주면 "지금은 방향을 모른다"는 뜻이므로 조용히 건너뛴다
+        (말소리가 없을 때의 정상 상태다). 진짜 실패만 로그로 남긴다.
+        """
         try:
-            degrees = float(self._read_direction_deg())
+            degrees = self._read_direction_deg()
         except Exception:  # noqa: BLE001 - 방향을 못 읽어도 대화는 계속된다
             logger.debug("소리 방향 표본 읽기 실패", exc_info=True)
             return
-        self._append(self._clock(), degrees)
+        if degrees is None:
+            return
+        self._append(self._clock(), float(degrees))
 
     def _append(self, stamp: float, degrees: float) -> None:
         with self._lock:

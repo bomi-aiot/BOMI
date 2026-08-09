@@ -321,20 +321,25 @@ class BeamController:
         마이크(xvf_host)를 못 찾으면 방향을 읽을 수 없으므로 에러를 낸다.
         (호출하는 쪽에서 이 에러를 잡아 '방향 모름'으로 처리하면 된다.)
         """
+        direction = self.read_speaker_direction_deg(samples=samples)
+        if direction is None:
+            raise RuntimeError("화자 방향을 얻지 못했습니다(장치가 NaN 을 반환).")
+        return direction
+
+    def read_speaker_direction_deg(self, samples: int = 1) -> float | None:
+        """화자 방향을 읽되, 장치가 방향을 못 정하면 None 을 돌려준다.
+
+        말소리가 없으면 장치는 NaN 을 준다 — 흔한 정상 상태다. 이걸 예외로
+        던지면 방향을 계속 샘플링하는 쪽에서 초당 몇 번씩 트레이스백이 쌓여
+        정작 봐야 할 로그가 묻힌다(2026-08-09 실기에서 실제로 그랬다).
+        """
         if not self._available():
-            raise RuntimeError(f"xvf_host를 찾을 수 없어 방향을 읽을 수 없음: {self.host_path!r}")
+            return None
 
         readings: list[float] = []
-        last_out = ""
         for _ in range(max(1, samples)):
-            last_out = self._run(SPEAKER_DIRECTION_COMMAND)
-            degrees = parse_speaker_direction_deg(last_out)
+            degrees = parse_speaker_direction_deg(
+                self._run(SPEAKER_DIRECTION_COMMAND))
             if degrees is not None:
-                # 4번째 값이 최종 선택된 빔이다.
                 readings.append(degrees)
-
-        direction = robust_azimuth_deg(readings)
-        if direction is None:
-            raise RuntimeError(
-                f"AEC_AZIMUTH_VALUES 결과 해석 실패: {last_out!r}")
-        return direction
+        return robust_azimuth_deg(readings)

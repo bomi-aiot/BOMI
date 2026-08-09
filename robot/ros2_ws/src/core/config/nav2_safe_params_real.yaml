@@ -114,7 +114,9 @@ controller_server:
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.5
     min_theta_velocity_threshold: 0.001
-    failure_tolerance: 0.3
+    # 0.3 은 사람이 앞을 스쳐 지나가는 것만으로도 주행을 실패시킨다.
+    # 대화 직후 어르신이 로봇 앞에 있는 것은 정상 상황이므로 그 정도는 흡수한다.
+    failure_tolerance: 2.0
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]
