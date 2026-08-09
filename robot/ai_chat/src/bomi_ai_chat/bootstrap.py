@@ -76,6 +76,9 @@ class Runtime:
     # 재생기. 그래프 응답은 output.set_player 를 타지만 그쪽은 턴이 있어야 돌아간다.
     tts: Any = None
     audio_out: Any = None
+    # 귀가 대본(문 열림 -> 현관 도착 -> 인사 -> 추종 -> 온습도)이 도는 동안
+    # 웨이크워드를 막는 게이트(homecoming_gate.HomecomingGate).
+    homecoming_gate: Any = None
 
     def shutdown(self, *, wait_for_speech_sec: float = 0.0) -> None:
         """백그라운드 스레드를 정리한다. 실패해도 종료를 막지 않는다.
@@ -174,14 +177,18 @@ def build_runtime(
     from bomi_ai_chat.ai_commands import QUEUE_MAX_SIZE
     backend_conversation_queue: queue.Queue = queue.Queue(maxsize=QUEUE_MAX_SIZE)
 
+    from bomi_ai_chat.homecoming_gate import HomecomingGate
+
     runtime = Runtime(
         app=app, senior_id=senior_id, echo_guard=echo_guard,
         backend_conversation_queue=backend_conversation_queue,
         tts=tts, audio_out=audio_out,
+        homecoming_gate=HomecomingGate(),
     )
     if start_background:
         runtime.scheduler = _start_scheduler(senior_id, app)
-        runtime.door_subscriber = _start_door_subscriber(senior_id, app, settings)
+        runtime.door_subscriber = _start_door_subscriber(
+            senior_id, app, settings, runtime.homecoming_gate)
         runtime.ai_command_subscriber = _start_ai_command_subscriber(
             settings, backend_conversation_queue)
         runtime.navigation_watcher = _start_navigation_watcher(settings)
@@ -313,12 +320,16 @@ def _start_scheduler(senior_id: str, app):
     return scheduler
 
 
-def _start_door_subscriber(senior_id: str, app, settings: Settings):
+def _start_door_subscriber(
+    senior_id: str, app, settings: Settings, homecoming_gate=None
+):
     """현관 이벤트 구독을 시작한다. 비활성이면 경고만 남기고 넘어간다."""
     from bomi_ai_chat.door.mqtt import build_door_subscriber
 
     try:
-        subscriber = build_door_subscriber(senior_id, settings=settings, app=app)
+        subscriber = build_door_subscriber(
+            senior_id, settings=settings, app=app,
+            homecoming_gate=homecoming_gate)
         if subscriber is None:
             return None
         subscriber.start()
@@ -551,9 +562,15 @@ def run_conversation_loop(
                 # 발생해도 다시 부르면 그만이다.
                 pending = _pop_pending_backend_conversation(runtime)
                 if pending is not None:
-                    turns, end_reason = _run_backend_conversation(
-                        runtime, audio_in, stt, turns, max_turns, pending)
-                    _publish_conversation_ended(runtime, pending, end_reason)
+                    try:
+                        turns, end_reason = _run_backend_conversation(
+                            runtime, audio_in, stt, turns, max_turns, pending)
+                        _publish_conversation_ended(runtime, pending, end_reason)
+                    finally:
+                        # 귀가 인사가 끝나는 시점이 곧 대본의 끝이다 — 그
+                        # 안에서 추종·온습도 마무리까지 다 돌고 나온다.
+                        # 실패로 빠져나와도 웨이크워드는 돌려줘야 한다.
+                        _release_homecoming_gate(runtime, pending)
                     continue
 
                 if not _wake_word_allowed(runtime):
@@ -838,17 +855,31 @@ def _queue_has_item(pending_queue: queue.Queue):
 
 
 def _wake_word_allowed(runtime) -> bool:
-    """현관 이벤트를 받기 전의 "보미야"를 무시한다.
+    """대본을 벗어나게 하는 "보미야"를 무시한다. 두 구간을 막는다.
 
-    왜: 어르신이 아직 귀가하지 않았는데 감지된 "보미야"는 오검출일 가능성이
-    높다. 2026-08-09 실기에서 문을 열기 49초 전에 감지된 웨이크워드가 방향
-    없이 잡혀(azimuth_deg=None) 로봇이 40도씩 전방위 회전 탐색을 돌았고,
-    보는 사람에게는 오작동으로 보였다.
+    1. 현관 이벤트를 받기 전
+        어르신이 아직 귀가하지 않았는데 감지된 "보미야"는 오검출일 가능성이
+        높다. 2026-08-09 실기에서 문을 열기 49초 전에 감지된 웨이크워드가 방향
+        없이 잡혀(azimuth_deg=None) 로봇이 40도씩 전방위 회전 탐색을 돌았고,
+        보는 사람에게는 오작동으로 보였다. WAKE_REQUIRE_DOOR_EVENT 로 끈다.
 
-    현관 센서가 없는 개발 환경을 막지 않도록 WAKE_REQUIRE_DOOR_EVENT=false 로
-    끌 수 있다. 막을 때는 반드시 경고를 남긴다 — "보미야가 왜 안 되지"를
-    로그로 추적할 수 있어야 한다.
+    2. 귀가 대본이 도는 동안 (문 열림 ~ 온습도 대화 마무리)
+        현관으로 이동하는 동안 메인 루프는 웨이크워드 대기 상태다. 여기서
+        "보미야"가 잡히면 귀가 대본을 버리고 거실 호출 시나리오를 새로
+        시작한다. WAKE_BLOCK_DURING_HOMECOMING 으로 끈다 (homecoming_gate).
+
+    막을 때는 반드시 경고를 남긴다 — "보미야가 왜 안 되지"를 로그로 추적할 수
+    있어야 한다.
     """
+    # getattr 인 이유: 게이트가 없는 Runtime(테스트 대역, 예전 호출부)에서도
+    # 웨이크워드가 죽으면 안 된다.
+    gate = getattr(runtime, "homecoming_gate", None)
+    if gate is not None and gate.blocks_wake_word():
+        logger.warning(
+            "귀가 대본이 진행 중이라 웨이크워드를 무시합니다 "
+            "(WAKE_BLOCK_DURING_HOMECOMING=false 로 끌 수 있습니다)")
+        return False
+
     if os.environ.get("WAKE_REQUIRE_DOOR_EVENT", "true").lower() not in (
         "1", "true", "yes"
     ):
@@ -868,6 +899,22 @@ def _wake_word_allowed(runtime) -> bool:
         "현관 이벤트(DOOR_OPENED) 전이라 웨이크워드를 무시합니다 "
         "(WAKE_REQUIRE_DOOR_EVENT=false 로 끌 수 있습니다)")
     return False
+
+
+def _release_homecoming_gate(runtime, command) -> None:
+    """귀가 인사가 끝났으면 웨이크워드를 다시 연다.
+
+    다른 intent(복약·온습도)는 귀가 대본이 아니므로 게이트를 건드리지 않는다 —
+    그 대화들은 대본 밖에서 언제든 들어올 수 있고, 끝났다고 해서 문이 열린
+    적이 있다는 뜻은 아니다.
+    """
+    gate = getattr(runtime, "homecoming_gate", None)
+    if gate is None or getattr(command, "intent", None) != "HOMECOMING_GREETING":
+        return
+    try:
+        gate.finish()
+    except Exception:  # noqa: BLE001 - 게이트는 부가, 대화가 본체다
+        logger.warning("could not finish the homecoming gate", exc_info=True)
 
 
 def _pop_pending_backend_conversation(runtime):

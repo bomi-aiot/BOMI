@@ -45,10 +45,14 @@ class DoorSubscriber:
         settings: Settings | None = None,
         door_client=None,
         app=None,
+        homecoming_gate=None,
     ):
         self.senior_id = senior_id
         self.settings = settings or get_settings()
         self.door_client = door_client
+        # 귀가 대본이 시작됐음을 알릴 곳(homecoming_gate.HomecomingGate).
+        # None 이면 아무에게도 알리지 않는다 — 문 감시는 그대로 동작한다.
+        self.homecoming_gate = homecoming_gate
         # 그래프. 있으면 문 이벤트로 능동 턴을 돌려 checkpoint 에도 반영한다.
         # 없으면 내구 저장소만 갱신되고, 그것만으로도 안전 감시는 살아 있다.
         self.app = app
@@ -90,6 +94,9 @@ class DoorSubscriber:
         # 증거가 아니라 센서가 살아 있다는 증거일 뿐이다.
         if event.type == "DOOR_OPENED":
             self._door_opened.set()
+            # 여기서부터 온습도 마무리까지가 귀가 대본이다. 그 사이의 "보미야"는
+            # 대본을 벗어나게 하므로 막는다(bootstrap._wake_word_allowed).
+            self._notify_homecoming_started()
 
         self._invoke_graph(event)
         return True
@@ -97,6 +104,16 @@ class DoorSubscriber:
     def has_seen_door_opened(self) -> bool:
         """이 프로세스가 뜬 뒤 DOOR_OPENED 를 한 번이라도 받았는가."""
         return self._door_opened.is_set()
+
+    def _notify_homecoming_started(self) -> None:
+        """귀가 게이트를 닫는다. 실패해도 문 이벤트 처리를 막지 않는다."""
+        gate = self.homecoming_gate
+        if gate is None:
+            return
+        try:
+            gate.start()
+        except Exception:  # noqa: BLE001 - 게이트는 부가, 문 감시가 본체다
+            logger.warning("could not start the homecoming gate", exc_info=True)
 
     def _invoke_graph(self, event) -> None:
         """그래프에도 알린다. 대화 턴이 읽는 checkpoint 를 갱신하기 위한 것이다.
@@ -182,6 +199,7 @@ def build_door_subscriber(
     *,
     settings: Settings | None = None,
     app=None,
+    homecoming_gate=None,
 ) -> DoorSubscriber | None:
     """설정이 활성화되어 있으면 구독기를 만든다. 시작하지는 않는다.
 
@@ -204,6 +222,7 @@ def build_door_subscriber(
         settings=settings,
         door_client=BackendDoorClient(settings=settings),
         app=app,
+        homecoming_gate=homecoming_gate,
     )
 
 
