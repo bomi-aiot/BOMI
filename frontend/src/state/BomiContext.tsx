@@ -114,15 +114,31 @@ interface BomiProviderProps {
 /**
  * 보호자 화면 자동 갱신 주기(ms).
  *
- * 왜 대시보드만인가 — 로봇 모드·실내 온습도·복약 진행·확인 대기 건수가 모두
- * GET /v1/guardian/dashboard 응답 하나에 담긴다. 나머지(프로필·기억·명부·일정)는
- * 사람이 고쳐야 바뀌는 값이라 폴링 대상이 아니다.
- *
- * 왜 1초인가 — 시연 중 로봇 상태 변화를 즉시 보여야 한다. refresh() 전체는
- * API 를 9개 때리므로 1초로 돌리면 nginx limit_req(20r/s, IP 기준)에 탭 3개부터
- * 걸린다. getDashboard() 하나만 돌리면 탭당 1r/s 라 여유가 크다.
+ * 왜 1초인가 — 시연 중 로봇 상태 변화를 즉시 보여야 한다.
  */
 const DASHBOARD_POLL_INTERVAL_MS = 1000;
+
+/**
+ * 참조 데이터(프로필·기억·복약 명부)를 이 배수마다 한 번 다시 읽는다(1초 × 2 = 2초).
+ *
+ * ★ 왜 생겼나
+ *   원래 이 셋은 폴링 대상이 아니었다. "사람이 고쳐야 바뀌는 값"이라는 판단이었고,
+ *   한 사람이 한 탭에서만 고치는 동안에는 맞는 말이었다 — 고친 당사자에게는 액션
+ *   핸들러가 곧바로 다시 읽어 주니까. 틀리는 경우는 **화면 밖에서 바뀔 때**다.
+ *   DB 를 직접 손보거나, 로봇이 기억을 새로 쓰거나, 다른 기기에서 고치면 그 변화가
+ *   이 탭에는 영원히 도달하지 않는다. 새로고침(F5) 전까지 화면은 지워진 데이터를
+ *   계속 보여준다 — 지워졌다는 사실이 제일 중요한 순간에.
+ *
+ * ★ 왜 1초가 아니라 2초인가
+ *   nginx 가 `limit_req zone=api_limit rate=20r/s burst=40`(IP 기준)이다
+ *   (infra/nginx/conf.d/bomi.conf). 이 셋까지 매 초 때리면 보이는 탭 하나가
+ *   5r/s 를 쓰고 탭 4개면 한계선이다 — 시연장에서 보호자 화면과 db-viewer 를
+ *   같이 열어두는 것은 흔한 일이다. 2초로 두면 탭당 3.5r/s 라 5개까지 여유가 있다.
+ *   사람 눈에 1초와 2초는 둘 다 '즉시'지만, 429 는 즉시 티가 난다.
+ *
+ * 대시보드(로봇 상태·위급 알림)는 여기 섞지 않는다. 그쪽은 매 초 그대로다.
+ */
+const REFERENCE_POLL_TICK_RATIO = 2;
 
 /**
  * 탭이 숨겨져 있을 때는 이 배수마다 한 번만 조회한다(1초 × 5 = 5초).
@@ -281,16 +297,44 @@ export function BomiProvider({ children }: BomiProviderProps) {
     }
   }, [showToast]);
 
+  // 참조 데이터(프로필·기억·복약 명부)를 다시 읽는다.
+  //
+  // 액션 핸들러가 부르고, 폴링 루프도 REFERENCE_POLL_TICK_RATIO 틱마다 부른다.
+  // 후자가 없으면 화면 밖에서 일어난 추가·수정·삭제가 이 탭에 영원히 도달하지 않는다
+  // (상수 주석 참고).
+  //
+  // 왜 allSettled 인가 (Promise.all 이 아니라)
+  //   셋은 서로 다른 엔드포인트다. 기억 조회가 흔들릴 때 복약 명부까지 옛 값으로
+  //   묶어 둘 이유가 없다 — 성공한 것만 각각 반영한다. refreshDashboard 가 안전
+  //   경로를 부가 정보에서 떼어낸 것과 같은 이유다.
+  //
+  // 왜 실패한 항목의 상태를 비우지 않는가
+  //   폴링이므로 실패는 대부분 일시적이다. 실패마다 화면을 비우면 네트워크가
+  //   한 번 끊길 때 복약 카드가 통째로 사라졌다가 다음 틱에 돌아온다. 마지막으로
+  //   성공한 값을 그대로 두고 다음 틱을 기다린다.
+  const referenceInFlight = useRef(false);
+
   const refreshPersonalizationState = useCallback(async () => {
+    if (referenceInFlight.current) return;
+    referenceInFlight.current = true;
     try {
-      const [nextProfile, nextPreferences] = await Promise.all([
-        bomiService.getElderProfile(),
-        bomiService.getConversationPreferences(),
-      ]);
-      setElderProfile(nextProfile);
-      setConversationPreferences(nextPreferences);
-    } catch {
-      // 다음 전체 새로고침에서 재동기화한다.
+      const [profileResult, preferencesResult, medicationsResult] =
+        await Promise.allSettled([
+          bomiService.getElderProfile(),
+          bomiService.getConversationPreferences(),
+          bomiService.getMedications(),
+        ]);
+      if (profileResult.status === "fulfilled") {
+        setElderProfile(profileResult.value);
+      }
+      if (preferencesResult.status === "fulfilled") {
+        setConversationPreferences(preferencesResult.value);
+      }
+      if (medicationsResult.status === "fulfilled") {
+        setMedications(medicationsResult.value);
+      }
+    } finally {
+      referenceInFlight.current = false;
     }
   }, []);
 
@@ -357,10 +401,19 @@ export function BomiProvider({ children }: BomiProviderProps) {
   //   분 단위다. 그건 우리가 제어할 수 없고, 그래도 0보다는 낫다.)
   useEffect(() => {
     let hiddenTicks = 0;
+    let referenceTicks = 0;
     const tick = () => {
       if (document.visibilityState === "visible") {
         hiddenTicks = 0;
         void refreshDashboard();
+        // 참조 데이터는 더 느린 박자로 같이 태운다. 숨은 탭에서는 태우지 않는다 —
+        // 위급 감시와 달리 이 셋은 보고 있는 사람에게만 의미가 있고, 숨은 탭이
+        // 쓰는 요청은 rate limit 예산에서 그대로 빠진다.
+        referenceTicks += 1;
+        if (referenceTicks >= REFERENCE_POLL_TICK_RATIO) {
+          referenceTicks = 0;
+          void refreshPersonalizationState();
+        }
         return;
       }
       hiddenTicks += 1;
@@ -371,7 +424,7 @@ export function BomiProvider({ children }: BomiProviderProps) {
     };
     const timer = window.setInterval(tick, DASHBOARD_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [refreshDashboard]);
+  }, [refreshDashboard, refreshPersonalizationState]);
 
   const runAction = useCallback(
     async <T,>(
