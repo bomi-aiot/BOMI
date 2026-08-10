@@ -17,8 +17,14 @@
     봉투   {"type": "WAKE_WORD_DETECTED",
             "eventId": "<uuid>",
             "occurredAt": "<ISO-8601, 오프셋 포함>",
+            "robotId": "<토픽의 {robotId} 와 동일한 deviceId>",
             "payload": {"keyword": "보미야", "confidence": <선택>}}
-    sourceId 는 ROBOT_EVENT 카테고리에서는 토픽에서 읽으므로 본문에 넣지 않는다.
+    ★ robotId 는 본문에도 반드시 넣는다. 파서(MqttInboundMessageParser.java:69-77)가
+      ROBOT_EVENT 카테고리에 최상위 robotId 를 요구하고 토픽 값과 대조한다 — 없으면
+      경고 로그 한 줄 남기고 조용히 폐기하므로, 로봇은 성공한 줄 알고 시나리오만 죽는다.
+    ★ QoS 1 로 발행한다. 백엔드 인바운드는 QoS 1 만 받는다(그 외 폐기, 역시 조용히).
+    ★ ROBOT_ID 는 deviceId 공간(robot.device_id, 예: bomi-AA001)이다. REST 온보딩이
+      쓰는 robot UUID 와 다른 값이다 — 혼용하면 UNKNOWN_ROBOT 으로 조용히 차단된다.
 
 주의사항
     - 발행 실패가 대화를 막으면 안 된다. 시나리오는 부가 기능이고 대화가 본체다.
@@ -106,7 +112,9 @@ class RobotEventPublisher:
             # start() 가 실패했거나 아예 안 불렸다. 시나리오만 조용히 빠진다 —
             # 그 사실은 start() 가 이미 경고로 남겼다.
             return
-        robot_id = self.settings.robot_id or ""
+        # ★ deviceId 다. robot_id(UUID)를 넣으면 백엔드가 UNKNOWN_ROBOT 으로
+        #   조용히 차단한다 — config.py 의 robot_device_id 주석 참고.
+        robot_id = self.settings.robot_device_id or ""
         topic = f"bomi/v1/robot/{robot_id}/events"
 
         # occurredAt 은 오프셋이 붙은 ISO-8601 이어야 한다(서버 파서가 요구).
@@ -117,14 +125,20 @@ class RobotEventPublisher:
         payload: dict = {"keyword": WAKE_KEYWORD}
         if confidence is not None:
             payload["confidence"] = confidence
+        # robotId 는 토픽과 본문 양쪽에 있어야 한다 — 파서가 대조 후 불일치·부재를
+        # 조용히 폐기한다. scenarioId/commandId 류는 최초 트리거라 넣지 않는다(넣으면 거부).
         envelope = {
             "type": WAKE_WORD_DETECTED,
             "eventId": str(uuid.uuid4()),
             "occurredAt": occurred_at,
+            "robotId": robot_id,
             "payload": payload,
         }
         try:
-            self._client.publish(topic, json.dumps(envelope, ensure_ascii=False))
+            # QoS 1: 백엔드가 QoS 0 을 계약 위반으로 폐기한다. 중복 전달은 서버의
+            # eventId 멱등 처리(WakeWordTriggerReceipt)가 흡수하므로 안전하다.
+            self._client.publish(
+                topic, json.dumps(envelope, ensure_ascii=False), qos=1)
             logger.info("WAKE_WORD_DETECTED published (robot=%s)", robot_id)
         except Exception:  # noqa: BLE001 - 발행 실패가 대화를 막으면 안 된다
             logger.warning("failed to publish WAKE_WORD_DETECTED", exc_info=True)
@@ -150,8 +164,10 @@ def build_robot_event_publisher(
     if not settings.mqtt_broker_url:
         logger.warning("MQTT_BROKER_URL is missing; wake-word events disabled")
         return None
-    if not settings.robot_id:
-        logger.warning("ROBOT_ID is missing; wake-word events disabled — "
-                       "the backend cannot attribute events without it")
+    if not settings.robot_device_id:
+        logger.warning("ROBOT_DEVICE_ID is missing; wake-word events disabled — "
+                       "the backend cannot attribute events without it "
+                       "(this is the MQTT deviceId, e.g. bomi-AA001, "
+                       "NOT the robot UUID)")
         return None
     return RobotEventPublisher(settings)

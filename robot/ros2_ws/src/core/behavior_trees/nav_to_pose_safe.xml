@@ -1,7 +1,10 @@
 <!--
   주행 중에는 1Hz로 경로를 다시 계산한다.
-  경로를 찾지 못하면 코스트맵 초기화와 대기만 수행한다.
-  위험할 수 있는 Spin, BackUp 복구 동작은 사용하지 않는다.
+  경로를 찾지 못하면 코스트맵 초기화 -> 후진 -> 대기 순으로 복구한다.
+
+  Spin은 쓰지 않는다. 코스트맵이 로봇을 반경 0.20m 원(robot_radius)으로 보므로
+  제자리 회전은 점유 공간을 바꾸지 못해 탈출에 아무 효과가 없다. 몸 반경 안에
+  장애물이 들어온 상태에서 유일한 탈출 수단은 병진이고, 앞은 막혀 있다.
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
@@ -47,6 +50,15 @@
               name="ClearGlobalCostmap"
               service_name="global_costmap/clear_entirely_global_costmap"/>
           </Sequence>
+
+          <!-- 저속·짧은 거리 후진. BackUp은 자체적으로 뒤쪽 충돌을 미리
+               검사하며(behavior_server.simulate_ahead_time), LiDAR가 360°라
+               후방도 코스트맵에 잡힌다. -->
+          <BackUp
+            name="BackUpToFreeSpace"
+            backup_dist="0.20"
+            backup_speed="0.05"
+            time_allowance="10"/>
 
           <Wait
             name="WaitBeforeReplanning"

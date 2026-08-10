@@ -2,17 +2,25 @@ package com.ssafy.bomi.guardian;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.ssafy.bomi.care.domain.CareRecord;
+import com.ssafy.bomi.care.domain.NotificationTier;
+import com.ssafy.bomi.care.repository.CareRecordRepository;
 import com.ssafy.bomi.guardian.dto.DashboardResponse;
 import com.ssafy.bomi.guardian.dto.DashboardResponse.ActivityDto;
 import com.ssafy.bomi.memory.domain.Memory;
 import com.ssafy.bomi.memory.domain.MemoryType;
 import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
+import com.ssafy.bomi.relationship.domain.CareRelationship;
+import com.ssafy.bomi.relationship.domain.RelationshipPriority;
+import com.ssafy.bomi.relationship.repository.CareRelationshipRepository;
 import com.ssafy.bomi.user.domain.AppUser;
 import com.ssafy.bomi.user.repository.AppUserRepository;
 import io.zonky.test.db.postgres.embedded.EmbeddedPostgres;
 import java.io.IOException;
+import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -53,6 +61,8 @@ class DashboardServiceTest {
     @Autowired private DashboardService dashboardService;
     @Autowired private AppUserRepository appUserRepository;
     @Autowired private MemoryRepository memoryRepository;
+    @Autowired private CareRecordRepository careRecordRepository;
+    @Autowired private CareRelationshipRepository careRelationshipRepository;
 
     private AppUser senior;
 
@@ -111,5 +121,35 @@ class DashboardServiceTest {
         assertThat(dashboard.recentActivities())
             .extracting(ActivityDto::summary)
             .contains("주 보호자에게만 공유");
+    }
+
+    /** 운영 화면의 두 회귀를 함께 고정한다: PRIMARY 이름과 T1은 같은 응답에서 살아야 한다. */
+    @Test
+    void primaryGuardianAndEmergencyAlertAppearOnTheDashboard() {
+        AppUser guardian = appUserRepository.save(
+            AppUser.create("GUARDIAN", "우동균", null, null));
+        careRelationshipRepository.save(CareRelationship.create(
+            senior.getId(), guardian.getId(), RelationshipPriority.PRIMARY));
+
+        CareRecord alert = CareRecord.create(
+            senior.getId(),
+            "GUARDIAN_ALERT",
+            Map.of(
+                "reason", "emergency",
+                "confirmed_by", "no_reply_to_safety_check"));
+        alert.markAsNotification(NotificationTier.T1, guardian.getId());
+        alert.occurredAt(OffsetDateTime.now().minusMinutes(1));
+        careRecordRepository.save(alert);
+
+        DashboardResponse dashboard = dashboardService.getDashboard();
+
+        assertThat(dashboard.guardian()).isNotNull();
+        assertThat(dashboard.guardian().name()).isEqualTo("우동균");
+        assertThat(dashboard.guardian().priority()).isEqualTo("PRIMARY");
+        assertThat(dashboard.recentActivities())
+            .filteredOn(activity -> "URGENT".equals(activity.statusLevel()))
+            .extracting(ActivityDto::summary)
+            .contains("몸이 불편하다고 하신 뒤 확인 질문에 답이 없으셨어요.");
+        assertThat(dashboard.todayIncidentCount()).isEqualTo(1);
     }
 }

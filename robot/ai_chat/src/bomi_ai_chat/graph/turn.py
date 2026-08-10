@@ -37,6 +37,8 @@ def run_user_turn(
     *,
     conversation_id: str | None = None,
     duration_sec: float = 0.0,
+    closing_turn: bool = False,
+    closing_kind: str = "homecoming",
     timer: TurnTimer | None = None,
 ) -> ConvState:
     """어르신 발화 한 번을 그래프에 태운다.
@@ -57,6 +59,10 @@ def run_user_turn(
             (S15P11E102-306). 테스트가 특정 대화를 강제로 지정하고 싶을 때만 쓴다.
         duration_sec: VAD 가 잰 발화 길이. 맞장구 판별에 쓰인다 — 텍스트만으로는
             "응"이 맞장구인지 짧은 대답인지 구분되지 않는다.
+        closing_turn: 이 턴이 대화의 마지막 턴인가. 생성기가 새 질문을 만들지
+            않고 마무리 인사로 닫는다.
+        closing_kind: 어떤 마무리인가 ("homecoming" | "farewell"). state.py 의
+            같은 이름 필드 참고. closing_turn 이 False 면 아무 효과가 없다.
         timer: 지연 측정기. 없으면 새로 만든다. 호출부가 STT 단계까지 함께 재고
             싶으면 자기 것을 넘긴다.
 
@@ -79,6 +85,11 @@ def run_user_turn(
         "senior_id": senior_id,
         "user_input": text,
         "user_input_duration_sec": duration_sec,
+        "closing_turn": closing_turn,
+        # closing_turn 이 꺼져 있어도 매 턴 덮어쓴다 — 체크포인트에 남은 이전
+        # 대화의 종류가 다음 마무리에 새는 것을 막는다(ingress 의 closing_turn
+        # 초기화와 같은 이유).
+        "closing_kind": closing_kind,
     }
 
     # conversation_id 는 '조건부로만' 넣는다 (S15P11E102-306).

@@ -16,8 +16,11 @@ dependencies = [
     # langgraph-checkpoint-sqlite 는 checkpointer 를 '로봇 로컬' SQLite 에 두기 위한
     # 별도 배포 패키지다. 서버 DB 에 두면 매 턴 네트워크 왕복이 붙어 지연 예산이
     # 무너지고 오프라인에서 죽는다(CLAUDE.md §5).
-    "langgraph>=0.2",
-    "langgraph-checkpoint-sqlite>=2.0",
+    # 상한을 두는 이유: 하한만 있으면 새 환경(젯슨 재설치 등)에서 다른 메이저가
+    # 잡혀도 아무도 모른다. 현재 검증된 설치본은 langgraph 1.2.x /
+    # checkpoint-sqlite 3.1.x — 이 메이저 안에서만 움직인다(2026-08-06 분석).
+    "langgraph>=1.2,<2",
+    "langgraph-checkpoint-sqlite>=3.1,<4",
     # 침묵 틱·현관 감시·일일 요약의 주기 실행. 실제 시간으로만 발동하므로
     # SimClock 검증에는 jobs/ticks.py 의 틱 함수를 직접 호출한다(README "압축 시계").
     "APScheduler>=3.10",
@@ -41,11 +44,14 @@ router-eval = [
     # 운영에서는 제거했다. 과거 SentenceTransformer 라우터와 비교할 때만 설치한다.
     "sentence-transformers>=2.2.0",
 ]
-# 현관 이벤트 MQTT 구독(door/mqtt.py). 선택 의존인 이유는 브로커가 없는 개발
-# 노트북에서도 대화 런타임 전체가 돌아야 하기 때문이다. door/mqtt.py 가 함수
-# 안에서 import 하므로, 설치하지 않으면 그 어댑터만 못 쓰고 나머지는 정상이다.
+# 현관 이벤트 MQTT 구독(door/mqtt.py)과 로봇 이벤트 발행(robot_events.py).
+# 선택 의존인 이유는 브로커가 없는 개발 노트북에서도 대화 런타임 전체가 돌아야
+# 하기 때문이다. 함수 안에서 import 하므로, 설치하지 않으면 그 어댑터만 못 쓴다.
+# 상한 <2 인 이유: 이 저장소의 MQTT 코드(door/mqtt.py, robot_events.py, 그리고
+# ros2_ws 의 bridge)는 전부 paho 1.x 콜백 규약이다. 2.x 는 생성자부터
+# CallbackAPIVersion 을 요구해 그대로 죽는다. 올리려면 세 곳을 함께 고쳐야 한다.
 mqtt = [
-    "paho-mqtt>=1.6",
+    "paho-mqtt>=1.6,<2",
 ]
 
 [build-system]

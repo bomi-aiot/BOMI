@@ -61,7 +61,13 @@ public class FactCandidate {
     @Column(name = "conversation_id")
     private UUID conversationId;
 
-    /** Logical reference to {@code conversation_message}; deletion is handled by policy. */
+    /**
+     * Logical reference to {@code conversation_message}; deletion is handled by policy.
+     *
+     * <p>그 "policy" 는 {@code ConversationRawPurgeService} 다 — 물리 FK 도
+     * {@code ON DELETE SET NULL} 도 없으므로(V1 주석) 발화가 지워질 때 이 값을 비우는
+     * 것은 오로지 그 배치의 책임이다.</p>
+     */
     @Column(name = "source_message_id")
     private UUID sourceMessageId;
 
@@ -234,6 +240,30 @@ public class FactCandidate {
         if (sourceMessageId != null) {
             this.sourceMessageId = sourceMessageId;
         }
+    }
+
+    /**
+     * 보존기간이 지난 근거 발화의 링크를 끊는다 (ERD §4, 검증 시나리오 31).
+     *
+     * <p><b>유일한 호출자는 {@code ConversationRawPurgeService} 다.</b></p>
+     *
+     * <p>{@link #recordEvidence} 로 대신할 수 없어서 따로 만든다: 그 메서드는 null 을
+     * "건너뛴다"로 해석하도록 <b>일부러</b> 그렇게 설계돼 있다(앱 채널에는 대화가 없어
+     * 기록을 거부하면 앱 경로가 통째로 막힌다). 그래서 저장소 어디에도 이 필드를
+     * 비울 수 있는 수단이 없었고, 발화를 지우면 존재하지 않는 행을 가리키는 UUID 가
+     * 남을 수밖에 없었다.</p>
+     *
+     * <p>{@code conversationId} 는 남긴다 — 대화 행은 지워지지 않으며, 이 후보가 어느
+     * 대화에서 나왔는지는 요약으로 되짚을 수 있다.</p>
+     *
+     * <p>V13 의 부분 유니크 인덱스 {@code uq_fact_candidate_senior_message_fact_type}
+     * 은 {@code WHERE source_message_id IS NOT NULL} 이라 이 행은 비워지는 순간 인덱스
+     * 대상에서 빠진다. 그 인덱스는 로봇 재시도가 같은 발화를 두 번 제출하는 것을 막는
+     * 장치인데, 발화가 이미 삭제됐다면 다시 제출될 원본 자체가 없으므로 의도된
+     * 동작이다. {@code updated_at} 은 {@code @UpdateTimestamp} 가 남긴다.</p>
+     */
+    public void clearSourceMessage() {
+        this.sourceMessageId = null;
     }
 
     /**

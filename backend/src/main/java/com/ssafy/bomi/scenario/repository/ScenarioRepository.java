@@ -31,6 +31,22 @@ public interface ScenarioRepository extends JpaRepository<Scenario, UUID> {
     /** Detects an active scenario attached to the same physical Robot, even if data is inconsistent. */
     boolean existsByRobotIdAndFinalStatusIn(UUID robotId, Collection<ScenarioStatus> statuses);
 
+    /** Locks every active scenario owned by a Robot in deterministic order. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+        select s from Scenario s
+        where s.robotId = :robotId
+          and s.finalStatus in :statuses
+        order by s.id
+        """)
+    List<Scenario> findActiveByRobotIdForUpdate(
+        @Param("robotId") UUID robotId,
+        @Param("statuses") Collection<ScenarioStatus> statuses);
+
+    /** Read-only operator view of active scenarios for one Robot. */
+    List<Scenario> findByRobotIdAndFinalStatusInOrderByUpdatedAtDesc(
+        UUID robotId, Collection<ScenarioStatus> statuses);
+
     /**
      * 이 어르신에게 같은 타입의 시나리오가 주어진 상태로 {@code after} 이후에
      * 갱신된 적이 있는가.

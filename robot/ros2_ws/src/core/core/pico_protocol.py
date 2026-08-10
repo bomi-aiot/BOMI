@@ -156,7 +156,7 @@ class WheelTargets:
     """
     cmd_vel에서 변환한 좌우 바퀴 목표 속도.
 
-    clamped는 변환 결과가 max_target_rev_s를 넘어 잘려 나갔는지를
+    clamped는 변환 결과가 max_target_rev_s를 넘어 줄여 맞췄는지를
     나타낸다. 노드는 이 값으로 경고 로그를 남긴다.
     """
 
@@ -191,17 +191,18 @@ def twist_to_wheel_targets(
     left_rev_s = left_m_s / distance_per_rev_m
     right_rev_s = right_m_s / distance_per_rev_m
 
-    clamped = (
-        abs(left_rev_s) > max_target_rev_s
-        or abs(right_rev_s) > max_target_rev_s
-    )
+    # 한계를 넘으면 좌우를 같은 비율로 줄인다. 각각 따로 잘라내면 좌우 비율이
+    # 바뀌어 곡률이 명령과 달라지고, 로봇은 계획된 경로 바깥으로 빗겨 나간다
+    # (2026-08-10 실기: 바깥 바퀴만 0.8에 붙은 채 안쪽만 살아 남는 명령이
+    # 주행 내내 259회). 같은 비율로 줄이면 v/w 가 보존되어 경로는 그대로,
+    # 속도만 느려진다.
+    peak_rev_s = max(abs(left_rev_s), abs(right_rev_s))
+    clamped = peak_rev_s > max_target_rev_s
 
-    left_rev_s = max(
-        -max_target_rev_s, min(max_target_rev_s, left_rev_s)
-    )
-    right_rev_s = max(
-        -max_target_rev_s, min(max_target_rev_s, right_rev_s)
-    )
+    if clamped:
+        scale = max_target_rev_s / peak_rev_s
+        left_rev_s *= scale
+        right_rev_s *= scale
 
     return WheelTargets(
         left_rev_s=left_rev_s,

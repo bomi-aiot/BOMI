@@ -80,6 +80,15 @@ public class WellnessCheckOrchestrator {
      */
     @Transactional
     public void onAmbientObserved(String sensorId, JsonNode body) {
+        // 시연에서는 귀가 인사를 먼저 보여주고, 같은 관측값을 추종 후 대화에
+        // 사용한다. 관측 기록은 AmbientObservedHandler가 이 호출 전에 끝냈으므로
+        // 여기서 막아도 센서 데이터 자체는 유실되지 않는다.
+        if (!wellnessProperties.isScenarioEnabled()) {
+            log.debug("Standalone wellness scenario disabled; observation retained: sensorId={}",
+                sensorId);
+            return;
+        }
+
         JsonNode payload = ObservationContract.payload(body);
         BigDecimal temperature =
             ObservationContract.optionalDecimal(payload, ObservationContract.TEMPERATURE_KEY);

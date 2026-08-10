@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import {
   Badge,
   Button,
@@ -12,7 +12,7 @@ import {
 } from '../components'
 import { useBomi } from '../state/BomiContext'
 import type { Medication, MedicationResponseStatus } from '../types/domain'
-import { formatDate, formatTime } from '../utils/date'
+import { formatTime } from '../utils/date'
 
 interface HealthPageProps {
   onNavigate: (path: string) => void
@@ -47,6 +47,20 @@ const responseLabel: Record<MedicationResponseStatus, string> = {
   UNKNOWN: '응답 상태를 확인 중이에요',
 }
 
+/**
+ * 알림이 꺼진 복약 슬롯에 쓰는 문구.
+ *
+ * 왜 필요한가 — 백엔드는 복약 스케줄의 오늘 시각을 전부 펼쳐 응답 목록으로 내려보내되,
+ * 부모 기록의 reminderEnabled 는 보지 않는다. 반면 실제로 알림을 보내는 스케줄러는
+ * 그 값이 꺼져 있으면 슬롯을 건너뛴다(MedicationReminderScheduler.remindIfDue).
+ * 그래서 이 화면은 같은 약을 두고 위에서는 "알림 꺼짐", 아래 표에서는 "복용 예정이에요"
+ * 라고 말하고 있었다 — 보호자는 보미가 물어볼 거라고 믿고 기다리게 된다.
+ *
+ * 응답 목록에 medicationId 가 실려 오고 이 화면은 복약 목록을 이미 들고 있으므로,
+ * 계약을 바꾸지 않고 화면에서 두 사실을 맞출 수 있다.
+ */
+const REMINDER_OFF_LABEL = '알림이 꺼져 있어 보미가 묻지 않아요'
+
 const responseTone: Record<
   MedicationResponseStatus,
   'success' | 'warning' | 'info' | 'danger' | 'neutral'
@@ -57,14 +71,6 @@ const responseTone: Record<
   MISSED: 'warning',
   DECLINED: 'neutral',
   UNKNOWN: 'neutral',
-}
-
-const medicationSourceLabel: Record<Medication['sourceType'], string> = {
-  USER: '어르신 입력',
-  GUARDIAN: '보호자 입력',
-  ROBOT: '로봇 기록',
-  AI: 'AI 제안',
-  SYSTEM: '출처 확인 중',
 }
 
 export function HealthPage({ onNavigate }: HealthPageProps) {
@@ -95,20 +101,36 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
     : 'medication-new'
   const isMedicationSubmitting = pendingActionId === medicationActionId
 
-  const activeMedicationCount = useMemo(
-    () => medications.filter((medication) => medication.status === 'ACTIVE').length,
-    [medications],
-  )
-  const activeReminderCount = useMemo(
-    () =>
-      medications.filter(
-        (medication) =>
-          medication.status === 'ACTIVE' &&
-          medication.reminderEnabled &&
-          medication.schedules.some((schedule) => schedule.isActive),
-      ).length,
-    [medications],
-  )
+  // 이 슬롯에 대해 보미가 실제로 물어보는가. 복약 목록을 못 불러온 경우(undefined)에는
+  // 아무 말도 하지 않는다 — 모르는 것을 "알림이 꺼졌다"고 단정하면 안 된다.
+  const reminderSilentFor = (medicationId: string): boolean => {
+    const medication = medications.find((item) => item.id === medicationId)
+    if (!medication) return false
+    return (
+      medication.status !== 'ACTIVE' ||
+      !medication.reminderEnabled ||
+      !medication.schedules.some((schedule) => schedule.isActive)
+    )
+  }
+
+  const todayTotal = medicationResponses.length
+  const todayConfirmed = medicationResponses.filter(
+    (item) => item.status === 'CONFIRMED',
+  ).length
+  const todaySilent = medicationResponses.filter(
+    (item) =>
+      item.status !== 'CONFIRMED' &&
+      item.status !== 'DECLINED' &&
+      reminderSilentFor(item.medicationId),
+  ).length
+  // MISSED 와 NO_RESPONSE 를 함께 센다 — 백엔드는 MISSED 만 보내고 FE 목 데이터는
+  // NO_RESPONSE 를 쓴다. 한쪽만 세면 어느 한 환경에서 이 줄이 조용히 사라진다.
+  // 알림이 꺼진 슬롯은 빼야 한다. 묻지 않았으니 응답이 없는 게 당연하다.
+  const todayUnanswered = medicationResponses.filter(
+    (item) =>
+      (item.status === 'MISSED' || item.status === 'NO_RESPONSE') &&
+      !reminderSilentFor(item.medicationId),
+  ).length
 
   const openCreateModal = () => {
     setEditingMedication(null)
@@ -200,9 +222,8 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
   return (
     <div className="page-stack">
       <PageHeader
-        eyebrow="안전한 일상 지원"
         title="복약 관리"
-        description="복약 정보와 복약 알림 상태를 관리합니다."
+        description="보미가 시간에 맞춰 여쭤보고, 어르신 대답을 여기에 모아드려요."
         actions={<Button onClick={openCreateModal}>복약 정보 추가</Button>}
       />
 
@@ -214,33 +235,47 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
         </p>
       </div>
 
-      <section className="summary-grid" aria-label="복약 현황 요약">
-        <article className="summary-card summary-card--green">
-          <p className="summary-card__label">활성 복약 정보</p>
-          <strong className="summary-card__value">{medicationDataError ? '—' : `${activeMedicationCount}개`}</strong>
-          <span className="summary-card__detail">{medicationDataError ? '복약 정보를 불러오지 못했어요' : '현재 관리 중으로 등록된 정보'}</span>
-        </article>
-        <article className="summary-card summary-card--blue">
-          <p className="summary-card__label">오늘 응답 확인</p>
-          <strong className="summary-card__value">
-            {responseDataError ? '—' : `${medicationResponses.filter((item) => item.status === 'CONFIRMED').length}회`}
-          </strong>
-          <span className="summary-card__detail">{responseDataError ? '복약 응답을 불러오지 못했어요' : '로봇이 받은 응답 기록'}</span>
-        </article>
-        <article className="summary-card summary-card--orange">
-          <p className="summary-card__label">응답 없음</p>
-          <strong className="summary-card__value">
-            {responseDataError ? '—' : `${medicationResponses.filter((item) => item.status === 'NO_RESPONSE').length}회`}
-          </strong>
-          <span className="summary-card__detail">{responseDataError ? '복약 응답을 불러오지 못했어요' : '응답이 아직 확인되지 않은 기록'}</span>
-        </article>
-        <article className="summary-card summary-card--lavender">
-          <p className="summary-card__label">알림 켜짐</p>
-          <strong className="summary-card__value">
-            {medicationDataError ? '—' : `${activeReminderCount}개`}
-          </strong>
-          <span className="summary-card__detail">활성 복약 중 알림이 설정된 항목</span>
-        </article>
+      {/*
+        요약 숫자 네 개를 한 문장으로 줄였다.
+          예전에는 활성 복약 정보 · 오늘 응답 확인 · 응답 없음 · 알림 켜짐 네 개가
+          같은 크기로 나란히 있었다. 그중 둘(활성 복약 정보, 알림 켜짐)은 보호자가
+          방금 자기 손으로 등록한 설정값이라 아침에 확인할 이유가 없고, 나머지 둘은
+          서로의 여집합이라 한쪽만 알면 된다. 넷을 같은 크기로 두면 무엇이 오늘의
+          소식인지 사라진다.
+
+          보호자가 이 화면을 여는 이유는 하나다 — "오늘 약은 챙기셨나?"
+          그 답을 한 줄로 먼저 말하고, 조치가 필요한 것(응답 없음)만 그 아래에
+          예외적으로 덧붙인다. 0이면 아무 말도 하지 않는다 — 0을 굳이 보여 주면
+          매일 읽어야 할 숫자가 다시 늘어난다.
+      */}
+      <section className="today-medication-summary" aria-label="오늘 복약 현황">
+        {responseDataError ? (
+          <p className="today-medication-summary__headline">
+            오늘 복약 상황을 불러오지 못했어요.
+          </p>
+        ) : todayTotal === 0 ? (
+          <p className="today-medication-summary__headline">
+            오늘 예정된 복약이 없어요.
+          </p>
+        ) : (
+          <>
+            <p className="today-medication-summary__headline">
+              오늘 복약 {todayTotal}번 중{' '}
+              <strong>{todayConfirmed}번</strong> 확인됐어요.
+            </p>
+            {todayUnanswered > 0 ? (
+              <p className="today-medication-summary__detail today-medication-summary__detail--warn">
+                {todayUnanswered}번은 알림 시간이 지나도록 응답이 확인되지
+                않았어요. 응답이 없다고 안 드신 것은 아니에요.
+              </p>
+            ) : null}
+            {todaySilent > 0 ? (
+              <p className="today-medication-summary__detail">
+                {todaySilent}번은 알림이 꺼져 있어 보미가 여쭤보지 않아요.
+              </p>
+            ) : null}
+          </>
+        )}
       </section>
 
       {medicationDataError ? (
@@ -280,20 +315,12 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
                   </Badge>
                   <h2 className="medication-card__title">{medication.name}</h2>
                 </div>
-                <Badge
-                  tone={
-                    medication.verificationStatus === 'GUARDIAN_CONFIRMED' ||
-                    medication.verificationStatus === 'DOCUMENT_VERIFIED'
-                      ? 'success'
-                      : 'warning'
-                  }
-                >
-                  {medication.verificationStatus === 'DOCUMENT_VERIFIED'
-                    ? '문서 확인'
-                    : medication.verificationStatus === 'GUARDIAN_CONFIRMED'
-                      ? '보호자 확인'
-                      : '확인 필요'}
-                </Badge>
+                {/*
+                  확인 상태 배지를 뺐다. care_record 에 verification_status 컬럼이 없고
+                  MedicationDto 도 그 값을 싣지 않아, 매퍼가 'UNVERIFIED' 를 상수로 채우고
+                  있었다 — 무엇을 등록하든 모든 약이 노란 "확인 필요"로 보였다.
+                  DB 에 없는 상태를 화면이 단정하는 것이 배지가 없는 것보다 나쁘다.
+                */}
               </div>
               <p className="medication-card__description">
                 {medication.dosage}
@@ -313,10 +340,6 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
                       ? '알림 설정됨'
                       : '알림 꺼짐'}
                 </span>
-              </div>
-              <div className="medication-card__meta">
-                <span>출처: {medicationSourceLabel[medication.sourceType]}</span>
-                <span>수정: {formatDate(medication.updatedAt)}</span>
               </div>
               <div className="medication-card__actions">
                 <Button
@@ -378,18 +401,28 @@ export function HealthPage({ onNavigate }: HealthPageProps) {
                 </tr>
               </thead>
               <tbody>
-                {medicationResponses.map((response) => (
-                  <tr key={response.id}>
-                    <td>{medications.find((item) => item.id === response.medicationId)?.name ?? '복약 정보 미확인'}</td>
-                    <td>{formatTime(response.scheduledAt)}</td>
-                    <td>
-                      <Badge tone={responseTone[response.status]}>
-                        {responseLabel[response.status]}
-                      </Badge>
-                    </td>
-                    <td>{response.respondedAt ? formatTime(response.respondedAt) : '—'}</td>
-                  </tr>
-                ))}
+                {medicationResponses.map((response) => {
+                  // 응답이 이미 있으면 알림 설정과 무관하게 그 응답이 사실이다.
+                  // (보호자가 뒤늦게 알림을 껐어도 오늘 받은 응답은 남아야 한다.)
+                  const answered =
+                    response.status === 'CONFIRMED' ||
+                    response.status === 'DECLINED'
+                  const silent =
+                    !answered && reminderSilentFor(response.medicationId)
+
+                  return (
+                    <tr key={response.id}>
+                      <td>{medications.find((item) => item.id === response.medicationId)?.name ?? '복약 정보 미확인'}</td>
+                      <td>{formatTime(response.scheduledAt)}</td>
+                      <td>
+                        <Badge tone={silent ? 'neutral' : responseTone[response.status]}>
+                          {silent ? REMINDER_OFF_LABEL : responseLabel[response.status]}
+                        </Badge>
+                      </td>
+                      <td>{response.respondedAt ? formatTime(response.respondedAt) : '—'}</td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

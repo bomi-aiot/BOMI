@@ -31,12 +31,14 @@
 
   <!-- 로봇 수동 조작에 필요한 실행 의존성 -->
   <exec_depend>twist_mux</exec_depend>
+  <exec_depend>robot_localization</exec_depend>
   <exec_depend>joy_linux</exec_depend>
   <exec_depend>teleop_twist_joy</exec_depend>
 
   <!-- ROS 2 launch 실행에 필요한 의존성 -->
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>bomi_lidar</exec_depend>
 
   <!-- 자율주행 및 설정 파일 처리에 필요한 실행 의존성 -->
   <exec_depend>python3-yaml</exec_depend>
