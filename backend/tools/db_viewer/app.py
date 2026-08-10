@@ -188,7 +188,15 @@ def _render_reset_panel() -> None:
         total = sum(r.affected for r in preview)
         st.warning(f"아래 {total:,}행을 지운다.")
         st.code("\n".join(f"{r.affected:>7,}  {r.label}" for r in preview), language=None)
-        st.caption("어르신 기억(memory·fact_candidate)과 복약 시드는 남는다.")
+        st.caption(
+            "**시드는 남는다** — 고정 UUID(`…-0000-4000-8000-…`)인 행은 건드리지 않는다. "
+            "테스트 중 생긴 행(랜덤 UUID)만 지운다. "
+            "신원(app_user·care_relationship·robot)과 온보딩, 의료 마스터는 대상 밖이다."
+        )
+        st.caption(
+            "삭제와 함께 로봇 관측값(온습도)도 비운다. "
+            "파이(dht11)가 켜져 있으면 몇 초 뒤 새 값이 다시 들어온다 — 고장이 아니다."
+        )
 
         left, right = st.columns(2)
         if left.button("정말 삭제", type="primary", width="stretch"):

@@ -62,20 +62,97 @@ def test_protected_tables_are_never_delete_targets(table: str) -> None:
     assert table not in targets
 
 
-def test_memory_and_facts_are_protected() -> None:
-    """2026-08-10 사용자 승인 조건 — 어르신 기억은 B 로도 지우지 않는다."""
-    assert "memory" in reset_actions.PROTECTED_TABLES
-    assert "fact_candidate" in reset_actions.PROTECTED_TABLES
+# 보호자 화면이 읽는 테이블. 여기 있는 것은 "전량 삭제"여서는 안 되고, 반드시 시드
+# 보존 조건을 달아야 한다 (2026-08-10 사용자 조건: "시드는 건들면 안 된다").
+SCREEN_VISIBLE_TABLES = ("care_record", "fact_candidate", "memory", "known_person")
 
 
-def test_medication_seed_rows_survive_residue_delete() -> None:
-    """care_record 는 전량 삭제가 아니라 온습도 관찰만 지운다.
+@pytest.mark.parametrize("table", SCREEN_VISIBLE_TABLES)
+def test_screen_visible_tables_keep_their_seed_rows(table: str) -> None:
+    """시드 행(고정 UUID)은 B 로도 지워지지 않는다.
 
-    MEDICATION / MEDICATION_SCHEDULE 이 사라지면 복약 알림이 아예 울리지 않는다.
+    이 테스트가 없으면 다음 사람이 WHERE 절을 지우고 "전량 삭제"로 바꾸기 쉽다.
+    그 순간 복약 시드가 사라져 복약 알림이 아예 울리지 않고, 회상 재료가 사라져
+    보미가 어르신에 대해 아무것도 모르는 상태로 시연에 들어간다.
     """
-    where = dict(reset_actions.RESIDUE_DELETE_TARGETS)["care_record"]
-    assert where is not None, "care_record 전량 삭제는 복약 시드를 죽인다"
-    assert "ENVIRONMENT_OBSERVATION" in where
+    where = dict(reset_actions.RESIDUE_DELETE_TARGETS)[table]
+    assert where is not None, f"{table} 전량 삭제는 시드를 죽인다"
+    assert reset_actions.SEED_ID_LIKE in where, (
+        f"{table} 의 WHERE 절이 시드 UUID 패턴을 보존하지 않는다: {where}"
+    )
+    assert "NOT LIKE" in where.upper(), f"{table} 이 시드'만' 지우고 있다 — 조건이 뒤집혔다"
+
+
+def test_screen_visible_tables_are_actually_delete_targets() -> None:
+    """★ 회귀 방지 — 삭제 버튼이 화면을 못 지우던 상태로 돌아가지 않게 한다.
+
+    2026-08-10 이전에는 memory·fact_candidate 가 PROTECTED_TABLES 에 있었고
+    care_record 는 온습도 관찰만 지웠다. 그래서 "② 삭제"를 눌러도 확인할 일 3건·
+    기억 31건·복약 2건·일정 2건이 그대로 남았다 — 버튼이 하는 일이 화면에 보이지
+    않았다. 지키려던 것은 테이블이 아니라 시드였고, 그 구분은 이제 행 단위다.
+    """
+    targets = {t for t, _ in reset_actions.RESIDUE_DELETE_TARGETS}
+    for table in SCREEN_VISIBLE_TABLES:
+        assert table in targets, f"{table} 이 삭제 대상에서 빠지면 화면이 안 지워진다"
+        assert table not in reset_actions.PROTECTED_TABLES
+
+
+def test_seed_pattern_matches_the_seed_scripts() -> None:
+    """SEED_ID_LIKE 가 실제 시드 스크립트의 UUID 를 잡는지 본다.
+
+    표지가 시드 스크립트와 어긋나면 조용히 시드를 지운다 — 다음 리허설에서야
+    "복약이 안 울린다"로 드러나고, 그때는 원인이 여기라는 걸 아무도 모른다.
+    """
+    seed_dir = REPO_ROOT / "scripts" / "dev"
+    fixed_uuid = re.compile(r"'[0-9a-f]{8}-0000-4000-8000-[0-9a-f]{12}'")
+    found = 0
+    for path in seed_dir.glob("seed-*.sql"):
+        found += len(fixed_uuid.findall(path.read_text(encoding="utf-8")))
+    assert found > 0, "시드 스크립트에서 고정 UUID 를 하나도 못 찾았다 — 표지가 낡았다"
+
+    core = reset_actions.SEED_ID_LIKE.strip("%")
+    assert core == "-0000-4000-8000-", f"표지가 바뀌었다: {reset_actions.SEED_ID_LIKE}"
+
+
+def test_residue_reset_clears_the_ambient_reading() -> None:
+    """온습도는 지울 '행'이 없다 — robot 컬럼이라 UPDATE 로만 비워진다.
+
+    이것이 빠져 있으면 삭제 후에도 "집 안 온도와 습도" 카드가 그대로 남는다.
+    """
+    labels = " ".join(label for label, _ in reset_actions.RESIDUE_RESET_STEPS)
+    statements = " ".join(sql.lower() for _, sql in reset_actions.RESIDUE_RESET_STEPS)
+    assert "온습도" in labels
+    assert "ambient_temperature_c" in statements
+    assert "delete" not in statements, "이 단계는 상태만 되돌린다"
+
+
+def test_residue_delete_matches_the_canonical_data_script() -> None:
+    """B 버튼이 scripts/dev/reset-demo-data.sql 과 같은 테이블을 같은 조건으로 지우는지.
+
+    reset-demo.sql ↔ STATE_RESET_STEPS 와 같은 이유다 — 같은 SQL 이 두 곳에 있으면
+    반드시 갈라진다. 갈라짐을 사람의 규율이 아니라 실패로 만든다.
+    """
+    script = REPO_ROOT / "scripts" / "dev" / "reset-demo-data.sql"
+    assert script.exists(), f"정본 SQL 이 없다: {script}"
+
+    body = script.read_text(encoding="utf-8").split("BEGIN;", 1)[1].split("COMMIT;", 1)[0]
+    deletes = re.findall(r"delete\s+from\s+(\w+)([^;]*)", _normalize(body))
+
+    ours = [(t, w or None) for t, w in reset_actions.RESIDUE_DELETE_TARGETS]
+    theirs = [(t, _normalize(w) or None) for t, w in deletes]
+
+    assert [t for t, _ in ours] == [t for t, _ in theirs], (
+        "삭제 대상 테이블·순서가 어긋났다.\n"
+        f"reset_actions: {[t for t, _ in ours]}\n스크립트: {[t for t, _ in theirs]}"
+    )
+    for (table, mine), (_, script_where) in zip(ours, theirs):
+        if mine is None:
+            assert script_where is None, f"{table}: 여기는 전량 삭제인데 스크립트엔 조건이 있다"
+        else:
+            assert script_where is not None, f"{table}: 스크립트가 전량 삭제 중이다 — 시드가 죽는다"
+            assert _normalize(mine).lstrip("where ") in script_where, (
+                f"{table} 의 조건이 다르다.\n여기: {mine}\n스크립트: {script_where}"
+            )
 
 
 def test_conversation_children_are_deleted_with_their_parent() -> None:
