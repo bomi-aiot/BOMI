@@ -6,8 +6,10 @@ import com.ssafy.bomi.fact.application.FactMaterializer.MaterializedTarget;
 import com.ssafy.bomi.fact.domain.ClarificationReason;
 import com.ssafy.bomi.fact.domain.FactCandidate;
 import com.ssafy.bomi.fact.domain.FactCandidateStatus;
+import com.ssafy.bomi.fact.domain.FactTargetDomain;
 import com.ssafy.bomi.fact.repository.FactCandidateRepository;
 import com.ssafy.bomi.fact.web.ConfirmationUndoStore.Snapshot;
+import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
 import com.ssafy.bomi.user.repository.AppUserRepository;
 import java.util.List;
@@ -133,6 +135,22 @@ public class ConfirmationRequestService {
         // 실제 memory/care_record 쓰기는 공용 컴포넌트가 한다(S15P11E102-258). 온보딩·
         // 재질의 경로도 같은 컴포넌트를 호출하므로 세 경로의 실체화 규칙이 갈라지지 않는다.
         Optional<MaterializedTarget> materialized = materializer.materialize(candidate, value);
+
+        // 보호자가 승인한 기억은 보호자에게 보인다.
+        //
+        //   FactMaterializer 는 visibility 인자 없는 Memory.create 를 부르고, 그 기본값은
+        //   PRIVATE 다(Memory.java:87 — CLAUDE.md §9 T4 "이건 나만 알고 있을래요"를 만드는
+        //   값이라 기본값 자체는 옳다). 문제는 이 경로다: 보호자가 웹에서 직접 "저장할까요"에
+        //   예라고 누른 값까지 PRIVATE 로 떨어져, 승인한 본인의 화면에서 영원히 사라졌다.
+        //
+        //   자동 승인(ConversationFactIntakeService)·재질의(RobotClarificationService) 경로는
+        //   일부러 건드리지 않는다 — 그쪽은 사람이 공개에 동의한 적이 없다. 그래서
+        //   FactMaterializer 를 고치지 않고 이 호출부에서만 승격한다.
+        materialized
+                .filter(target -> target.domain() == FactTargetDomain.MEMORY)
+                .ifPresent(target -> memoryRepository.findById(target.id())
+                        .ifPresent(memory -> memory.changeVisibility(MemoryVisibility.SHARED_WITH_PRIMARY)));
+
         return materialized
                 .map(target -> new Snapshot(previousStatus, target.domain().name(), target.id()))
                 // PROFILE / CARE_RELATIONSHIP: 이 티켓 범위에서는 materialize 대상 없음 →

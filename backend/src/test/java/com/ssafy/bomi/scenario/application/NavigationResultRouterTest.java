@@ -72,6 +72,19 @@ class NavigationResultRouterTest {
         verifyNoInteractions(wakeWordOrchestrator);
     }
 
+    @Test
+    void lateResultAfterOperatorCancellationIsIgnored() {
+        Scenario scenario = scenario(ScenarioType.HOMECOMING);
+        scenario.cancel("CANCELLED", "OPERATOR_CANCELLED");
+        when(scenarioRepository.findById(scenario.getId())).thenReturn(Optional.of(scenario));
+
+        router.route(
+            scenario.getId(), "robot-01", "navigate-01", false,
+            "CANCELLED", "NOT_ARRIVED", "OPERATOR_CANCELLED");
+
+        verifyNoInteractions(conversationOrchestrator, wakeWordOrchestrator);
+    }
+
     private static Scenario scenario(ScenarioType type) {
         Scenario scenario = Scenario.create(UUID.randomUUID(), UUID.randomUUID(), type);
         ReflectionTestUtils.setField(scenario, "id", UUID.randomUUID());

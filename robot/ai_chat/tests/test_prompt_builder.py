@@ -15,7 +15,7 @@
 import pytest
 
 from bomi_ai_chat import policy
-from bomi_ai_chat.prompts import build_prompt
+from bomi_ai_chat.prompts import build_prompt, builder
 
 
 @pytest.fixture
@@ -295,3 +295,216 @@ def test_repetition_count_never_reaches_the_prompt(ctx):
     assert "9" not in prompt or "9번" not in prompt
     assert "repeat" not in prompt.lower()
     assert "반복" not in prompt
+
+
+# ── 이야기 턴 (2026-08-10 실사용 피드백) ────────────────────────────────────
+
+
+def test_a_story_turn_raises_the_sentence_limit_and_adds_the_stance(ctx):
+    """★ "심심해"에 이야기를 실제로 들려주려면 두 문장 상한을 벗어나야 한다.
+
+    실측: 어르신이 "재미있는 이야기 해줘"라고 해도 로봇은 "해드릴까요?"라고만
+    되물었다. 원인은 모델이 아니라 프롬프트의 두 문장 상한과 "한 가지만" 지시였다.
+    """
+    prompt = build_prompt(ctx, "companion", "심심해", wants_story=True)
+
+    assert f"{policy.MAX_SENTENCES_STORY}문장 이내" in prompt
+    assert "묻지 말고 시작합니다" in prompt
+
+
+def test_a_story_turn_carries_the_actual_repertoire(ctx):
+    """★ 태도만 주면 매번 같은 이야기가 나오고, 없는 이야기를 지어낼 여지도 생긴다.
+
+    목록을 함께 실어서 "무엇을 말할지"를 프롬프트가 정하게 한다.
+    """
+    prompt = build_prompt(ctx, "companion", "심심해", wants_story=True)
+
+    assert "들려드릴 이야기 목록" in prompt
+    assert "소금 나오는 맷돌" in prompt      # 옛이야기
+    assert "동지 팥죽" in prompt             # 절기
+    assert "가을 운동회" in prompt           # 회상 유도
+
+
+def test_stories_told_recently_are_shown_so_they_are_not_repeated(ctx):
+    """같은 옛날이야기를 세 번 들으면 로봇이 하나밖에 모른다는 걸 바로 아신다."""
+    told = {**ctx, "recentStories": ["옛날에 형제가 살았는데, 아우가 맷돌을"]}
+
+    prompt = build_prompt(told, "companion", "심심해", wants_story=True)
+
+    assert "## 최근에 들려드린 이야기" in prompt
+    assert "아우가 맷돌을" in prompt
+
+
+def test_no_empty_recent_story_section_when_nothing_was_told(ctx):
+    """빈 절을 넣지 않는다 — 모델이 "처음 들려드리네요"를 화제로 삼는다.
+
+    제목만 본다. 목록(stories.md)이 본문에서 이 절을 가리키므로 같은 낱말은
+    프롬프트 어딘가에 늘 있다.
+    """
+    prompt = build_prompt(ctx, "companion", "심심해", wants_story=True)
+
+    assert "## 최근에 들려드린 이야기" not in prompt
+
+
+def test_an_ordinary_turn_keeps_the_two_sentence_limit_and_no_story_stance(ctx):
+    """이야기 지시는 청한 턴에만 붙는다. 늘 켜면 알림·안내까지 길어진다."""
+    prompt = build_prompt(ctx, "companion", "점심 먹었어")
+
+    assert f"{policy.MAX_SENTENCES}문장 이내" in prompt
+    assert "묻지 말고 시작합니다" not in prompt
+
+
+def test_quiet_hours_beat_a_story_request(ctx):
+    """새벽 두 시에는 여덟 문장짜리 옛날이야기를 시작하지 않는다."""
+    prompt = build_prompt(ctx, "companion", "심심해", terse=True, wants_story=True)
+
+    assert f"{policy.MAX_SENTENCES_TERSE}문장 이내" in prompt
+    assert "묻지 말고 시작합니다" not in prompt
+
+
+# ── 오늘의 복약 (2026-08-10 실사용 피드백) ──────────────────────────────────
+
+
+def test_medication_is_rendered_even_though_the_backend_never_sends_a_denominator(ctx):
+    """★ 예정 횟수는 백엔드가 설계상 늘 null 이다.
+
+    그래서 예전 조건("예정 횟수가 있으면")은 영원히 거짓이었고, 복약 이행이
+    프롬프트에 한 번도 실리지 않았다 — 분자만 있어도 말할 수 있는데도.
+    """
+    today = {**ctx["todayState"], "medicationTakenCount": 2,
+             "medicationScheduledCount": None}
+
+    prompt = build_prompt({**ctx, "todayState": today}, "schedule", "약 먹었나")
+
+    assert "오늘 2회" in prompt
+
+
+def test_what_the_senior_said_about_medication_is_marked_as_hearsay(ctx):
+    """★ 로컬 기록은 '복약 기록'이 아니라 '어르신이 하신 말'이다.
+
+    로봇이 확인한 사실처럼 말하면, 기억이 흐린 분에게 잘못된 확신을 준다.
+    프롬프트 문구가 출처를 남겨야 모델도 "드셨다고 하셨어요"로 말한다.
+    """
+    prompt = build_prompt(
+        {**ctx, "medicationReportedTimes": ["08:31", "12:35"]},
+        "schedule", "아침에 약을 먹었는지 기억이 안나")
+
+    assert "말씀하신 시각: 08:31, 12:35" in prompt
+
+
+# ── 복약·일정 렌더 (2026-08-10 실측) ───────────────────────────────────────
+
+
+CARE_CTX = {"careRecords": [
+    {"recordType": "MEDICATION", "details": {
+        "activeIngredient": "모름", "dose": "1정", "medicationName": "혈압약",
+        "instruction": "아침 식사 후 물과 함께 복용", "purpose": "혈압조절",
+        "reminderEnabled": False}},
+    {"recordType": "MEDICATION_SCHEDULE", "details": {
+        "localTimes": ["09:00"], "medicationName": "혈압약",
+        "reminderLeadMinutes": 10, "timeZone": "Asia/Seoul"}},
+    {"recordType": "MEDICATION", "details": {
+        "dose": 1, "doseUnit": "정", "medicationName": "관절염약",
+        "instruction": "매 끼니 식후 30분", "sourceType": "ONBOARDING_ANSWER",
+        "verificationStatus": "USER_CONFIRMED"}},
+    {"recordType": "MEDICATION_SCHEDULE", "details": {
+        "localTimes": ["08:30", "12:30", "18:30"], "mealTimes": ["08:00"],
+        "medicationName": "관절염약", "timeZone": "Asia/Seoul",
+        "sourceType": "CONVERSATION_MESSAGE"}},
+]}
+
+
+def test_internal_plumbing_never_reaches_the_prompt():
+    """★ system.md 가 금지한 것을 우리가 직접 먹이고 있었다.
+
+    details 를 통째로 펼치던 렌더가 `verificationStatus USER_CONFIRMED`,
+    `sourceType ONBOARDING_ANSWER`, `timeZone Asia/Seoul` 을 프롬프트에 실었다.
+    233 실기에서 로봇이 "[현재 정보] ..."를 소리 내어 읽은 것과 같은 누출이다.
+    """
+    prompt = build_prompt(CARE_CTX, "companion", "안녕")
+
+    for leaked in ("verificationStatus", "sourceType", "timeZone",
+                   "reminderEnabled", "reminderLeadMinutes", "localTimes"):
+        assert leaked not in prompt, leaked
+
+
+def test_the_same_medicine_is_one_line_not_two():
+    """MEDICATION 과 MEDICATION_SCHEDULE 은 같은 약의 두 기록이다.
+
+    따로 실으면 프롬프트에 "혈압약"이 두 번 나오고, 모델이 약이 두 개라고 읽는다.
+    """
+    rendered = builder._format_care_records(CARE_CTX)
+
+    assert rendered.count("혈압약") == 1
+    assert rendered.count("관절염약") == 1
+    assert "- 복약 혈압약: 1정, 아침 식사 후 물과 함께 복용, 혈압조절 (09:00)" in rendered
+    assert "(08:30, 12:30, 18:30)" in rendered
+
+
+def test_unknown_values_are_dropped_not_spoken():
+    """`activeIngredient 모름` 을 실으면 모델이 '모름'을 사실로 읽고 말한다."""
+    assert "모름" not in builder._format_care_records(CARE_CTX)
+
+
+def test_care_records_stay_in_every_turn_even_when_off_topic():
+    """★ intent 로 이 섹션을 끄지 않는다 — 분류 실패가 곧 안전 실패가 된다.
+
+    "아침에 약을 먹었는지 기억이 안 나"가 companion 으로 빠지던 버그가 그 증거다.
+    그 턴에 복약이 프롬프트에 없었다면 로봇은 되묻지도 못했다.
+    """
+    prompt = build_prompt(CARE_CTX, "companion", "옛날 생각나네", wants_reminiscence=True)
+
+    assert "관절염약" in prompt
+
+
+def test_a_schedule_is_one_human_sentence_not_three_repeats():
+    """content·title·startsAt 을 다 실으면 같은 약속이 세 번 나온다."""
+    rendered = builder._format_care_records({"careRecords": [
+        {"recordType": "APPOINTMENT", "details": {
+            "title": "병원 예약", "content": "8월 10일 오후 2시에 병원에 간다.",
+            "startsAt": "2026-08-10T14:00:00+09:00"}},
+    ]})
+
+    assert rendered == "- 일정: 8월 10일 오후 2시에 병원에 간다."
+    assert "2026-08-10T" not in rendered
+
+
+# ── 회상 턴 (2026-08-10) ────────────────────────────────────────────────────
+
+
+def test_a_reminiscence_turn_gets_the_stance_and_the_era_prompts(ctx):
+    """회상은 시간 메꾸기가 아니라 이 대화가 하려는 일이다 (CLAUDE.md §1)."""
+    prompt = build_prompt(
+        ctx, "companion", "옛날에 학교 다닐 때가 생각나네", wants_reminiscence=True)
+
+    assert "마중물" in prompt
+    assert "검정 고무신" in prompt
+
+
+def test_the_seniors_own_memories_come_before_the_era_prompts(ctx):
+    """★ 1번(개인 씨앗) 없이 3번(마중물)만 하면 "누구에게나 하는 말"이 된다.
+
+    지시문이 그 순서를 명시해야 모델이 목록부터 꺼내지 않는다.
+    """
+    prompt = build_prompt(ctx, "companion", "예전 생각이 나", wants_reminiscence=True)
+
+    assert "\"기억하고 있는 것\"에 있는 어르신의 이야기를 먼저 씁니다" in prompt
+
+
+def test_reminiscence_does_not_change_the_sentence_limit(ctx):
+    """이야기와 다르다. 회상은 짧게 받고 되묻는 것이 정석이다."""
+    prompt = build_prompt(ctx, "companion", "옛날 생각나네", wants_reminiscence=True)
+
+    assert f"{policy.MAX_SENTENCES}문장 이내" in prompt
+
+
+@pytest.mark.parametrize("intent", ["schedule", "info"])
+def test_reminiscence_stance_stays_off_outside_companion_turns(ctx, intent):
+    """★ "예전에 먹던 약이 뭐였지"는 회상 표지에 걸리지만 복약 턴이다.
+
+    거기에 회상 태도를 얹으면 답해야 할 것을 안 답하고 옛날 이야기를 여쭙는다.
+    """
+    prompt = build_prompt(
+        ctx, intent, "예전에 먹던 약이 뭐였지", wants_reminiscence=True)
+
+    assert "마중물" not in prompt

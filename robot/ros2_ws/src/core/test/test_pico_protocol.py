@@ -169,7 +169,7 @@ def test_twist_to_wheel_targets_zero_is_zero() -> None:
 
 
 def test_twist_to_wheel_targets_clamps_and_reports_it() -> None:
-    """최대 목표를 넘으면 잘라내고 clamped를 True로 보고한다."""
+    """최대 목표를 넘으면 줄여 맞추고 clamped를 True로 보고한다."""
     targets = twist_to_wheel_targets(
         linear_x=10.0,
         angular_z=0.0,
@@ -181,6 +181,54 @@ def test_twist_to_wheel_targets_clamps_and_reports_it() -> None:
     assert targets.left_rev_s == pytest.approx(0.8)
     assert targets.right_rev_s == pytest.approx(0.8)
     assert targets.clamped is True
+
+
+def test_twist_to_wheel_targets_keeps_curvature_when_clamped() -> None:
+    """한계를 넘어도 좌우 비율을 지켜 곡률(v/w)이 변하지 않는다.
+
+    좌우를 각각 잘라내면 바깥 바퀴만 한계에 붙고 안쪽은 살아남아 회전이
+    명령보다 얕아진다. 그만큼 로봇이 계획 경로 바깥으로 빗겨 나갔다.
+    """
+    track_width_m = 0.278
+    distance_per_rev_m = 0.1929
+    linear_x = 0.15
+    angular_z = 0.5
+
+    targets = twist_to_wheel_targets(
+        linear_x=linear_x,
+        angular_z=angular_z,
+        track_width_m=track_width_m,
+        distance_per_rev_m=distance_per_rev_m,
+        max_target_rev_s=0.8,
+    )
+
+    left_m_s = targets.left_rev_s * distance_per_rev_m
+    right_m_s = targets.right_rev_s * distance_per_rev_m
+    actual_linear = (left_m_s + right_m_s) / 2.0
+    actual_angular = (right_m_s - left_m_s) / track_width_m
+
+    assert targets.clamped is True
+    assert max(abs(targets.left_rev_s), abs(targets.right_rev_s)) == (
+        pytest.approx(0.8)
+    )
+    assert actual_linear / actual_angular == pytest.approx(
+        linear_x / angular_z
+    )
+
+
+def test_twist_to_wheel_targets_scales_in_place_rotation_symmetrically() -> None:
+    """제자리 회전이 한계를 넘어도 좌우 대칭이 깨지지 않는다."""
+    targets = twist_to_wheel_targets(
+        linear_x=0.0,
+        angular_z=5.0,
+        track_width_m=0.278,
+        distance_per_rev_m=0.1929,
+        max_target_rev_s=0.8,
+    )
+
+    assert targets.clamped is True
+    assert targets.right_rev_s == pytest.approx(0.8)
+    assert targets.left_rev_s == pytest.approx(-0.8)
 
 
 def test_twist_to_wheel_targets_rejects_non_finite_input() -> None:

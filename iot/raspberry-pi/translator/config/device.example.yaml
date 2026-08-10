@@ -36,9 +36,11 @@ sensors:
     #   payload.detectionMethod=SENSOR_SEQUENCE
     #   ※ PRESENCE_DETECTED는 방향 판정 결과용 예약어라 직접 발행하지 않는다.
 
-  # 온습도 센서를 붙일 때 예시 (선택)
-  # - friendly_name: living-room-ambient
-  #   source_id: living-room-ambient
+  # 온습도 센서를 붙일 때 예시 (선택). 실제로는 이 Zigbee2MQTT 경로가 아니라
+  # dht11_main.py(GPIO 직결)를 쓰고 있다 — 그쪽 기본 SENSOR_ID 도 아래와
+  # 같은 이유로 ambient-sensor-01 이다(config/dht11.env.example 참고).
+  # - friendly_name: ambient-sensor-01
+  #   source_id: ambient-sensor-01      # 백엔드 ambient-sensor-to-senior 등록값과 일치해야 함
   #   kind: ambient
   #   location: LIVING_ROOM
-  #   # temperature/humidity -> type=AMBIENT_ENVIRONMENT_OBSERVED
+  #   # payload: {temperatureC, humidityPercent} -> type=AMBIENT_ENVIRONMENT_OBSERVED

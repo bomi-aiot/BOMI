@@ -55,9 +55,15 @@ setup(
             'keyboard_teleop = core.keyboard_teleop:main',
             'joy_cmd_filter = core.joy_cmd_filter:main',
             'nav2_waypoint_patrol = core.nav2_waypoint_patrol:main',
+            'person_search_patrol = core.person_search_patrol:main',
+            'goto_waypoint = core.goto_waypoint:main',
             'person_follower = core.person_follower:main',
             'vision_udp_bridge = core.vision_udp_bridge:main',
             'pico_driver = core.pico_driver:main',
+            'scan_sanitizer = core.scan_sanitizer:main',
+            # 보미야 호출 회전 탐색. 등록하지 않으면 ros2 run / launch 가
+            # "executable not found" 로 실패한다.
+            'wake_search = core.wake_search:main',
         ],
     },
 )

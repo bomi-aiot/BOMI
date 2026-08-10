@@ -46,7 +46,8 @@ def mqtt_settings(settings_factory, **extra):
         settings_factory,
         MQTT_ENABLED="true",
         MQTT_BROKER_URL="mqtt://broker.example:1883",
-        ROBOT_ID="robot-7",
+        # MQTT 는 deviceId 공간이다 — ROBOT_ID(UUID)가 아니라 ROBOT_DEVICE_ID.
+        ROBOT_DEVICE_ID="robot-7",
         **extra,
     )
 
@@ -54,12 +55,13 @@ def mqtt_settings(settings_factory, **extra):
 class FakeMqttClient:
     def __init__(self, *, fail=False):
         self.fail = fail
-        self.published: list[tuple[str, str]] = []
+        # (topic, payload, qos) — qos 도 계약의 일부라 함께 기록한다
+        self.published: list[tuple[str, str, int]] = []
 
-    def publish(self, topic, payload):
+    def publish(self, topic, payload, qos=0):
         if self.fail:
             raise RuntimeError("broker gone")
-        self.published.append((topic, payload))
+        self.published.append((topic, payload, qos))
 
     def loop_stop(self):
         pass
@@ -72,10 +74,13 @@ class FakeMqttClient:
 
 
 def test_the_envelope_matches_the_backend_contract(settings_factory, frozen_clock):
-    """★ 토픽 bomi/v1/robot/{robotId}/events + type/eventId/occurredAt/payload.
+    """★ 토픽 bomi/v1/robot/{robotId}/events + 최상위 robotId + QoS 1.
 
-    백엔드 파서는 type 허용 목록·occurredAt 형식·payload 객체를 검사하고
-    어긋나면 조용히 버린다. 이 테스트가 그 계약의 로봇 쪽 고정이다.
+    백엔드 파서는 type 허용 목록·occurredAt 형식·payload 객체에 더해
+    **최상위 robotId(토픽 값과 일치)** 와 **QoS 1** 을 요구하고, 어긋나면
+    경고 로그만 남기고 조용히 버린다 — 로봇은 성공한 줄 알고 시나리오만 죽는다.
+    이 테스트가 그 계약의 로봇 쪽 고정이다. (MqttInboundMessageParser.java:69-82,
+    MqttInboundEndpoint.java:42-47)
     """
     frozen_clock(start=NOW)
     client = FakeMqttClient()
@@ -85,14 +90,20 @@ def test_the_envelope_matches_the_backend_contract(settings_factory, frozen_cloc
     publisher.publish_wake_word(confidence=0.87)
 
     assert len(client.published) == 1
-    topic, raw = client.published[0]
+    topic, raw, qos = client.published[0]
     assert topic == "bomi/v1/robot/robot-7/events"
+    assert qos == 1, "백엔드 인바운드는 QoS 1 만 받는다 — 0 이면 조용히 폐기된다"
     envelope = json.loads(raw)
     assert envelope["type"] == "WAKE_WORD_DETECTED"
     assert envelope["eventId"], "eventId 가 비어 있으면 서버 중복 제거가 못 돈다"
     # occurredAt 은 오프셋이 붙은 ISO-8601 이어야 한다 (서버 OffsetDateTime).
     assert envelope["occurredAt"].endswith("+00:00")
+    # 최상위 robotId 는 토픽의 {robotId} 와 같아야 한다. 없거나 다르면 폐기.
+    assert envelope["robotId"] == "robot-7"
     assert envelope["payload"] == {"keyword": "보미야", "confidence": 0.87}
+    # 최초 트리거에는 상관관계 ID 를 넣지 않는다 — 넣으면 파서가 거부한다.
+    assert "scenarioId" not in envelope
+    assert "commandId" not in envelope
 
 
 def test_confidence_is_optional(settings_factory, frozen_clock):
@@ -124,7 +135,7 @@ def test_disabled_mqtt_builds_no_publisher(settings_factory, caplog):
     assert "MQTT is disabled" in caplog.text
 
 
-def test_missing_robot_id_builds_no_publisher(settings_factory, caplog):
+def test_missing_robot_device_id_builds_no_publisher(settings_factory, caplog):
     with caplog.at_level("WARNING"):
         publisher = robot_events.build_robot_event_publisher(
             settings_with(settings_factory,
@@ -132,7 +143,7 @@ def test_missing_robot_id_builds_no_publisher(settings_factory, caplog):
                           MQTT_BROKER_URL="mqtt://broker.example:1883"))
 
     assert publisher is None
-    assert "ROBOT_ID" in caplog.text
+    assert "ROBOT_DEVICE_ID" in caplog.text
 
 
 # ── 3. 실패가 대화를 막지 않는다 ────────────────────────────────────────────

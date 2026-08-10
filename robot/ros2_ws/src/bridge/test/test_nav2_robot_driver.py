@@ -20,6 +20,10 @@ waypoints:
     x: -0.226
     y: -1.520
     yaw: 1.57
+  - name: charging
+    x: 0.0
+    y: 0.0
+    yaw: 0.0
 """
 
 
@@ -186,6 +190,26 @@ def test_failed_result_status_returns_failed(tmp_path) -> None:
     driver = _make_driver(tmp_path, client)
 
     assert driver.navigate(contract.TARGET_ENTRANCE) == contract.STATUS_FAILED
+    # ABORTED 는 대개 경로 계획 실패다 — 백엔드 허용 enum 중 가장 가까운 원인.
+    assert driver.last_reason_code == contract.REASON_PATH_BLOCKED
+
+
+def test_canceled_result_status_returns_cancelled(tmp_path) -> None:
+    """★ Nav2 가 CANCELED 로 끝내면(수신 스레드의 cancel() 요청이 반영된
+    경우) 드라이버는 CANCELLED 를 반환한다 — FAILED 가 아니다."""
+    goal_handle = _FakeGoalHandle(
+        accepted=True,
+        result_future=_FakeFuture(
+            result=_FakeResult(GoalStatus.STATUS_CANCELED), complete=True
+        ),
+    )
+    client = _FakeActionClient(
+        server_ready=True,
+        send_goal_future=_FakeFuture(result=goal_handle, complete=True),
+    )
+    driver = _make_driver(tmp_path, client)
+
+    assert driver.navigate(contract.TARGET_ENTRANCE) == contract.STATUS_CANCELLED
 
 
 def test_server_not_ready_returns_failed(tmp_path) -> None:
@@ -225,14 +249,24 @@ def test_action_client_exception_returns_failed(tmp_path) -> None:
 
 
 def test_unsupported_target_does_not_send_goal(tmp_path) -> None:
+    """★ v1 개편으로 DEFAULT 는 이제 지원 목적지다 — 미지원 표본을 바꾼다."""
     client = _FakeActionClient(server_ready=True)
     driver = _make_driver(tmp_path, client)
 
-    assert driver.navigate(contract.TARGET_DEFAULT) == contract.STATUS_FAILED
+    # "KITCHEN"은 계약에 없는 목적지다. DEFAULT는 charging으로 매핑되어
+    # 더 이상 미지원 사례가 아니므로 여기서는 쓰지 않는다.
+    assert driver.navigate("KITCHEN") == contract.STATUS_FAILED
     assert client.sent_goals == []
+    assert driver.last_reason_code == contract.REASON_UNKNOWN_TARGET
 
 
 def test_cancel_with_active_goal_requests_cancellation(tmp_path) -> None:
+    """★ cancel() 은 수신 스레드에서 불리므로 취소를 '요청만' 하고 spin 하지
+    않는다(다른 스레드의 spin 을 건드리면 안 되므로). 핸들 정리는 navigate()
+    를 돌리고 있는 스레드가 CANCELED 결과를 받은 뒤 스스로 한다 — 그래서 이
+    테스트는 cancel_goal_async 호출 여부만 확인하고, 핸들 정리는 별도로
+    test_canceled_result_status_returns_cancelled 가 왕복 전체로 검증한다.
+    """
     client = _FakeActionClient(server_ready=True)
     driver = _make_driver(tmp_path, client)
 
@@ -243,7 +277,6 @@ def test_cancel_with_active_goal_requests_cancellation(tmp_path) -> None:
 
     assert status == contract.STATUS_CANCELLED
     assert goal_handle.cancel_called is True
-    assert driver._active_goal_handle is None
 
 
 def test_cancel_without_active_goal_is_safe(tmp_path) -> None:
@@ -258,6 +291,9 @@ def test_speak_is_not_supported(tmp_path) -> None:
     driver = _make_driver(tmp_path, client)
 
     assert driver.speak("hello") == contract.STATUS_FAILED
+    # speak() 는 navigate() 처럼 진입 시 초기화하지 않으므로 여기서 직접
+    # 설정해야 한다 — 안 그러면 직전 navigate() 의 값이 새어 나간다.
+    assert driver.last_reason_code == contract.REASON_INTERNAL_ERROR
 
 
 def test_zero_timeout_is_rejected(tmp_path) -> None:

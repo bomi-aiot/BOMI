@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -56,6 +57,12 @@ from bomi_ai_chat.notify import GuardianNotifier, LoggingGuardianNotifier
 from bomi_ai_chat.state import ConvState
 
 logger = logging.getLogger(__name__)
+
+# 추출 flush 는 두 곳에서 불린다 — 스케줄러 틱과, 대화가 끝난 직후의 배경 스레드
+# (S15P11E102-393). 둘이 겹치면 같은 대기 행에 같은 LLM 호출을 두 번 쓴다. 락은
+# 모듈 수준이다: 이 프로세스에 추출 큐(runtime DB)가 하나뿐이라 어르신별로 나눌
+# 이유가 없고, 나누면 오히려 같은 DB 를 두 스레드가 동시에 쓰게 된다.
+_EXTRACTION_FLUSH_LOCK = threading.Lock()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 침묵 사다리
@@ -1077,11 +1084,17 @@ def extraction_flush(
         jobs.scheduler(policy.EXTRACTION_FLUSH_INTERVAL_SEC 마다), 그리고
         압축 시계 경로의 run_all_ticks_once, 그리고 테스트.
 
+    누가 호출하는가 (추가)
+        대화가 끝난 직후의 flush_extraction_soon (S15P11E102-393). 그래서 이
+        함수는 스케줄러 스레드와 그 배경 스레드에서 동시에 불릴 수 있고,
+        아래 논블로킹 락이 그 겹침을 한쪽으로 접는다.
+
     반환값
-        {"processed": n, "submitted": n, "failed": n} — processed 는 이번
-        flush 에서 extracted=1 로 표시한 행 수(뽑을 것이 없었던 행 포함),
-        submitted 는 실제로 백엔드에 올라간 사실 개수, failed 는 이번에
-        처리하지 못해 다음 flush 로 넘긴 행 수.
+        {"processed": n, "submitted": n, "failed": n, "given_up": n} —
+        processed 는 이번 flush 에서 extracted=1 로 표시한 행 수(뽑을 것이
+        없었던 행 포함), submitted 는 실제로 백엔드에 올라간 사실 개수,
+        failed 는 이번에 처리하지 못해 다음 flush 로 넘긴 행 수, given_up 은
+        서버가 되돌릴 수 없는 실패로 답해 영구히 닫은 행 수다.
 
     주의사항
         - 킬스위치(policy.EXTRACTION_ENABLED / config 의 환경변수) 중 하나라도
@@ -1090,10 +1103,37 @@ def extraction_flush(
           다음 flush 로 넘긴다 — 다시 시도하는 것이 조용히 잃는 것보다 낫다.
         - fact_client 제출이 실패하면(FactSubmissionError) 마찬가지로 표시하지
           않는다. 여기서 표시해버리면 그 사실은 다시는 제출 시도되지 않는다
-          (backend_client/fact_client.py 의 모듈 docstring 참고).
+          (backend_client/fact_client.py 의 모듈 docstring 참고). 예외는 서버가
+          "이 요청 자체가 틀렸다"고 답한 경우뿐이다 — 그 행은 포기로 닫는다.
+        - 넘긴 행은 반드시 extraction.record_failure 로 실패를 적는다. 안 적으면
+          그 행이 큐 맨 앞에 남아 뒤의 새 발화를 영원히 막는다 (S15P11E102-393,
+          localstore/extraction.pending 참고).
         - 예외를 밖으로 던지지 않는다. 이 틱이 죽으면 큐가 영원히 쌓이기만
           하고, 그 사실을 아무도 모르게 된다(다른 틱들과 같은 원칙).
     """
+    # 겹침 방지 (S15P11E102-393). 스케줄러 틱과 '대화 종료 직후 flush' 가 같은
+    # 순간에 들어오면 둘 다 같은 대기 행을 읽어 같은 LLM 호출을 두 번 하고 같은
+    # 사실을 두 번 제출한다(서버가 중복을 걸러 주므로 사고는 아니지만 순전한
+    # 낭비다). 기다리지 않고 그냥 건너뛰는 이유: 뒤늦게 한 번 더 도는 flush 는
+    # 어차피 60초 뒤 틱과 같은 일을 한다 — 스레드를 붙잡고 있을 값어치가 없다.
+    if not _EXTRACTION_FLUSH_LOCK.acquire(blocking=False):
+        logger.info("extraction flush already running; skipping this trigger")
+        return {"processed": 0, "submitted": 0, "failed": 0, "given_up": 0}
+    try:
+        return _extraction_flush_locked(
+            senior_id, llm=llm, fact_client=fact_client
+        )
+    finally:
+        _EXTRACTION_FLUSH_LOCK.release()
+
+
+def _extraction_flush_locked(
+    senior_id: str,
+    *,
+    llm=None,
+    fact_client=None,
+) -> dict[str, int]:
+    """extraction_flush 의 본체. 락을 이미 쥔 상태에서만 부른다."""
     # "기억하지 마"의 서버 취소부터 보낸다 (S15P11E102-348).
     #
     # ★ 추출 킬스위치보다 먼저다 — 추출이 꺼져 있어도 "지웠어요" 약속은 지켜져야
@@ -1102,7 +1142,7 @@ def extraction_flush(
     _flush_cancel_requests(senior_id, fact_client)
 
     if not policy.EXTRACTION_ENABLED:
-        return {"processed": 0, "submitted": 0, "failed": 0}
+        return {"processed": 0, "submitted": 0, "failed": 0, "given_up": 0}
 
     from bomi_ai_chat.config import get_settings
 
@@ -1111,7 +1151,7 @@ def extraction_flush(
             logger.info(
                 "fact extraction is disabled by the EXTRACTION_ENABLED env kill switch"
             )
-            return {"processed": 0, "submitted": 0, "failed": 0}
+            return {"processed": 0, "submitted": 0, "failed": 0, "given_up": 0}
     except Exception:  # noqa: BLE001 - 설정 문제로 틱이 죽으면 안 된다
         logger.warning(
             "could not read the extraction kill switch; assuming enabled",
@@ -1122,24 +1162,41 @@ def extraction_flush(
         rows = extraction.pending(limit=policy.EXTRACTION_FLUSH_BATCH_SIZE)
     except Exception:  # noqa: BLE001 - 틱이 죽으면 큐가 영원히 멈춘다
         logger.exception("extraction flush tick failed to read the queue")
-        return {"processed": 0, "submitted": 0, "failed": 0}
+        return {"processed": 0, "submitted": 0, "failed": 0, "given_up": 0}
 
     if not rows:
-        return {"processed": 0, "submitted": 0, "failed": 0}
+        return {"processed": 0, "submitted": 0, "failed": 0, "given_up": 0}
 
     resolved_llm = llm if llm is not None else _default_extraction_llm()
     resolved_fact_client = fact_client if fact_client is not None else _default_fact_client()
 
-    result = {"processed": 0, "submitted": 0, "failed": 0}
+    # 어르신별 시간대를 flush 당 한 번만 읽는다 (G4).
+    #
+    # 왜 senior_id 별 dict 인가
+    #   extraction.pending(limit) 은 senior 로 필터하지 않는다. 지금은 1인 기기라
+    #   실질적으로 값이 하나뿐이지만, 이 인자(senior_id)의 시간대를 모든 행에
+    #   적용해버리면 다른 어르신의 행이 섞이는 순간 남의 시간대로 약속이 계산된다.
+    #   행마다 캐시를 다시 읽지 않으면서도 그 사고를 막는 최소 구조다.
+    #
+    # 시간대만 캐시하고 '시각'은 행마다 따로 계산한다 — 기준점은 발화가 말해진
+    # 시각(created_at)이지 이 틱이 도는 시각이 아니다(_utterance_local_time 참고).
+    zone_by_senior: dict[str, object] = {}
+
+    result = {"processed": 0, "submitted": 0, "failed": 0, "given_up": 0}
     for row in rows:
+        row_senior = row["senior_id"]
+        if row_senior not in zone_by_senior:
+            zone_by_senior[row_senior] = _extraction_zone(row_senior)
+        spoken_at = _utterance_local_time(zone_by_senior[row_senior], row)
+
         try:
-            facts = _extract_facts(resolved_llm, row)
+            facts = _extract_facts(resolved_llm, row, now_local=spoken_at)
         except Exception:  # noqa: BLE001 - 한 행의 LLM 실패가 틱 전체를 죽이면 안 된다
             logger.warning(
                 "extraction failed for job %s; will retry next flush",
                 row["id"], exc_info=True,
             )
-            result["failed"] += 1
+            _defer_row(row["id"], result)
             continue
 
         if facts:
@@ -1149,29 +1206,74 @@ def extraction_flush(
                     conversation_id=row["conversation_id"],
                     source_message_id=row["source_message_id"],
                     facts=facts,
+                    # 프롬프트에 실은 것과 **같은** 기준 시각을 검증에도 쓴다. 둘이
+                    # 갈리면 "모델은 발화 시각 기준으로 계산했는데 검증은 지금 기준으로
+                    # 과거라고 판정"하는 모순이 생긴다.
+                    now_local=spoken_at,
+                    # 요일 검산의 채점 기준. 프롬프트에 실은 것과 같은 발화 원문이다
+                    # — 모델이 만든 content 로 대조하면 같은 모델의 답을 같은 모델의
+                    # 답으로 채점하게 된다.
+                    utterance=row["content"],
                 )
-            except Exception:  # noqa: BLE001 - fact_client 는 FactSubmissionError 를
-                # 올리지만, 예상 못 한 예외까지도 이 행을 조용히 잃는 방향(잘못
-                # extracted=1 표시)으로 새면 안 된다. 좁게 못 잡을 이유가 없어도
-                # 넓게 잡아 안전한 쪽(재시도)으로 떨어뜨린다.
+            except Exception as error:  # noqa: BLE001 - fact_client 는
+                # FactSubmissionError 를 올리지만, 예상 못 한 예외까지도 이 행을
+                # 조용히 잃는 방향(잘못 extracted=1 표시)으로 새면 안 된다. 좁게
+                # 못 잡을 이유가 없어도 넓게 잡아 안전한 쪽(재시도)으로 떨어뜨린다.
+                if getattr(error, "permanent", False):
+                    # 서버가 "이 요청 자체가 틀렸다"고 답했다 (S15P11E102-393).
+                    # 다시 보내도 같은 답이 오고, 그때마다 이 행의 LLM 호출을
+                    # 한 번씩 더 태운다. 여기서 닫는다 — 잃는 것은 기억 하나이고,
+                    # 안 닫으면 매 분 같은 값을 서버에 미는 행이 하나 남는다.
+                    logger.warning(
+                        "backend permanently rejected job %s (%s); giving the row up",
+                        row["id"], error,
+                    )
+                    extraction.mark_given_up(row["id"])
+                    result["given_up"] += 1
+                    continue
                 logger.warning(
                     "fact candidate submission failed for job %s; will retry next flush",
                     row["id"], exc_info=True,
                 )
-                result["failed"] += 1
+                _defer_row(row["id"], result)
                 continue
             result["submitted"] += len(facts)
 
         extraction.mark_extracted(row["id"])
         result["processed"] += 1
 
-    if result["submitted"] or result["failed"]:
+    if result["submitted"] or result["failed"] or result["given_up"]:
         logger.info(
-            "extraction flush: processed=%d submitted=%d failed=%d pending=%d",
+            "extraction flush: processed=%d submitted=%d failed=%d given_up=%d "
+            "pending=%d",
             result["processed"], result["submitted"], result["failed"],
-            extraction.pending_count(senior_id),
+            result["given_up"], extraction.pending_count(senior_id),
         )
     return result
+
+
+def _defer_row(row_id: int, result: dict[str, int]) -> None:
+    """이 행을 다음 flush 로 넘긴다 — 실패를 기록하고 카운터를 올린다.
+
+    왜 기록이 함께여야 하는가  (S15P11E102-393)
+        넘기기만 하고 attempts 를 올리지 않으면 그 행이 다음 flush 에서도
+        큐 맨 앞이다. 영원히 성공하지 못하는 행이 배치 크기만큼 모이면 뒤에
+        쌓인 새 발화는 차례가 오지 않는다 — 지연이 아니라 정지다. 넘기는
+        자리가 두 곳(LLM 실패·제출 실패)이라, 한쪽에서 빠뜨리지 않도록
+        두 동작을 한 함수로 묶는다.
+
+    주의사항
+        DB 쓰기가 실패해도 틱을 죽이지 않는다. 기록에 실패하면 예전과 같은
+        앞막힘 가능성이 남을 뿐이고, 그것 때문에 남은 행 처리를 포기하는
+        편이 더 나쁘다.
+    """
+    try:
+        extraction.record_failure(row_id)
+    except Exception:  # noqa: BLE001 - 기록 실패가 틱을 죽이면 안 된다
+        logger.warning(
+            "could not record the failed attempt for job %s", row_id, exc_info=True
+        )
+    result["failed"] += 1
 
 
 def _default_extraction_llm():
@@ -1233,12 +1335,94 @@ def _flush_cancel_requests(senior_id: str, fact_client=None) -> int:
     return sent
 
 
-def _extract_facts(llm, row: dict) -> list[dict]:
+def _extraction_zone(senior_id: str):
+    """어르신의 시간대. 모르면 None (G4).
+
+    왜 필요한가
+        "다음 주 화요일 세 시에 병원 가"를 절대 시각으로 옮기려면 모델이 기준점을
+        알아야 한다. 기준점 없이 상대 날짜를 계산하라고 하면 모델은 아무 날짜나
+        만들어 낸다.
+
+    ★ 왜 _local_now_from 을 재사용하지 않는가
+        그쪽은 시간대를 모르면 조용히 UTC 로 떨어진다. 야간 외출 판정에서는 그것이
+        "덜 정확한 판정"으로 끝나지만, 여기서는 어르신이 말한 "다음 주 화요일 오후
+        두 시"가 아홉 시간 어긋난 절대 시각으로 보호자 화면의 일정에 그대로 박힌다.
+        모르는 것을 0(UTC)으로 채우는 전형이다.
+
+        그래서 모르면 날짜를 아예 주지 않는다. 프롬프트의 '오늘' 블록이 그 사실을
+        말하고("오늘이 며칠인지 알 수 없습니다"), 약속을 뽑지 말라고 지시한다.
+        기능이 무음이 되는 대신 틀린 일정이 생기지 않는다.
+
+    젯슨에서 주의할 것
+        tzdata 가 없으면 ZoneInfo("Asia/Seoul") 자체가 실패한다. 그 경우도 None 으로
+        떨어지므로 약속 등록만 통째로 조용해진다 — 아래 warning 로그가 실기에서
+        이 기능이 살아 있는지 확인하는 유일한 단서다.
+    """
+    ctx = context_cache.load(senior_id)
+    zone_name = ((ctx or {}).get("profile") or {}).get("timeZone")
+    if not zone_name:
+        logger.warning(
+            "senior %s has no profile.timeZone; extraction prompts will carry no date "
+            "and appointments will not be extracted", senior_id,
+        )
+        return None
+    try:
+        zone = ZoneInfo(zone_name)
+    except Exception:  # noqa: BLE001 - 알 수 없는 시간대가 틱을 죽이면 안 된다
+        logger.warning(
+            "unknown time zone %r for senior %s; extraction prompts will carry no date",
+            zone_name, senior_id,
+        )
+        return None
+    return zone
+
+
+def _utterance_local_time(zone, row: dict) -> datetime | None:
+    """이 발화가 **말해진** 시각을 어르신의 로컬 시각으로 (G4).
+
+    ★ 왜 clock.now() 가 아닌가 (리뷰 지적)
+        원래 이 값은 "틱이 도는 지금"이었다. 그런데 extraction_job 은 **밀린다** —
+        네트워크가 끊기면 _extract_facts 가 실패하고 그 행은 pending 으로 남아
+        다음 flush 로 넘어간다. 배치 크기도 작아서 백로그는 천천히 빠진다.
+
+        그 상태에서 기준점을 '지금'으로 잡으면 이렇게 된다. 월요일 저녁에 어르신이
+        "내일 세 시에 병원 가"라고 말한다 → 큐잉 → 밤새 단절 → 화요일 아침 flush.
+        프롬프트에 "지금은 화요일"이 실리고, 모델은 지시대로 '내일'을 수요일로
+        계산한다. APPOINTMENT 는 자동 반영이라 아무도 안 보고, 하루 밀린 일정이
+        그대로 박힌다. **어르신은 화요일 진료를 놓친다.**
+
+        "내일"의 기준은 말한 날이지 처리한 날이 아니다. created_at 은 enqueue 가
+        이미 적어 두었고 pending() 의 SELECT * 로 행에 들어 있다 — 쓰지 않고 있었을 뿐이다.
+
+    반환값
+        tz-aware datetime. 시간대를 모르거나 created_at 을 읽을 수 없으면 None —
+        그 경우 프롬프트의 '오늘' 블록이 "알 수 없다"고 말하고 약속을 뽑지 않는다.
+    """
+    if zone is None:
+        return None
+    raw = row.get("created_at")
+    try:
+        # enqueue 가 clock.now()(POSIX 초, float)를 넣는다.
+        return datetime.fromtimestamp(float(raw), tz=zone)
+    except (TypeError, ValueError):
+        # 큐 행이 오래돼 형식이 다르거나 비어 있는 경우. 지어내지 않는다.
+        logger.warning(
+            "extraction job %s has an unreadable created_at; its prompt will carry no date",
+            row.get("id"),
+        )
+        return None
+
+
+def _extract_facts(llm, row: dict, *, now_local: datetime | None = None) -> list[dict]:
     """대기 행 하나에서 사실을 뽑는다. 못 뽑았거나 없으면 빈 리스트.
 
     무엇을 호출하는가
         prompts.build_memory_extraction_prompt 로 프롬프트를 조립하고, 이 턴의
         유일한 생성 호출을 한다(row 하나당 최대 1회).
+
+    인자
+        now_local: 어르신 시간대로 본 '지금'. 상대 날짜를 절대 시각으로 옮기는
+            기준점이며, 모르면 None 이다(_extraction_now_local 참고).
 
     반환값
         [{"factType": ..., "content": ...}, ...]. 최대
@@ -1249,6 +1433,7 @@ def _extract_facts(llm, row: dict) -> list[dict]:
 
     prompt = build_memory_extraction_prompt(
         row.get("preceding_robot_utterance") or "", row["content"],
+        now_local=now_local,
     )
     raw = llm.generate(prompt)
     facts = _parse_json_fact_array(raw)
@@ -1276,11 +1461,26 @@ def _parse_json_fact_array(raw: str | None) -> list[dict]:
         return []
     # factType 과 content 가 둘 다 있는, 비어 있지 않은 항목만 남긴다. 모델이
     # 형태를 어겨도(예: 문자열만 나열) 백엔드로 그대로 새어나가지 않게 한다.
-    return [
-        {"factType": str(item["factType"]), "content": str(item["content"])}
-        for item in parsed
-        if isinstance(item, dict) and item.get("factType") and item.get("content")
-    ]
+    facts = []
+    for item in parsed:
+        if not isinstance(item, dict) or not item.get("factType") or not item.get("content"):
+            continue
+        kept = {"factType": str(item["factType"]), "content": str(item["content"])}
+        # 약속(APPOINTMENT)이 쓰는 선택 키 (G4).
+        #
+        # ★ 왜 전부 통과시키지 않고 화이트리스트인가
+        #   여기서 살아남은 키는 fact_contract 를 지나 서버 proposedValue 로 가고,
+        #   서버는 그 dict 를 통째로 care_record.details 에 넣는다(임의 키를 받는다).
+        #   즉 모델이 지어 붙인 아무 키나 보호자 화면까지 그대로 샌다. 반대로 이
+        #   목록을 넓히지 '않으면' 지금처럼 startsAt 이 여기서 조용히 버려져,
+        #   약속이 언제나 시각 없는 상태로 강등된다 — 양쪽 다 조용한 실패라서
+        #   이 화이트리스트가 그 경계다.
+        for optional in ("title", "startsAt"):
+            value = item.get(optional)
+            if isinstance(value, str) and value.strip():
+                kept[optional] = value.strip()
+        facts.append(kept)
+    return facts
 
 
 def daily_summary_job(senior_id: str) -> None:

@@ -276,3 +276,36 @@ def test_shutdown_survives_a_broken_closer():
     runtime.shutdown()
 
     assert stopped == ["scheduler"]
+
+
+# ── 8. 대화가 끝나면 추출 flush 를 당긴다 (S15P11E102-393) ───────────────────
+
+
+class _FakeScheduler:
+    def __init__(self):
+        self.modified = []
+
+    def modify_job(self, job_id, **kwargs):
+        self.modified.append((job_id, kwargs))
+
+
+def test_the_end_of_a_conversation_brings_the_extraction_flush_forward():
+    """방금 말한 약속이 큐에 들어 있는 순간이 여기다 — 60초를 기다릴 이유가 없다."""
+    runtime = bootstrap.Runtime(app=object(), senior_id=SENIOR)
+    runtime.scheduler = _FakeScheduler()
+
+    bootstrap._flush_extraction_after_conversation(runtime)
+
+    assert runtime.scheduler.modified[0][0] == "extraction_flush"
+
+
+def test_the_end_of_a_conversation_is_safe_without_a_scheduler():
+    """스케줄러 시작에 실패한 로봇에서도 대화 루프가 죽지 않는다.
+
+    이 경로에서 잃는 것은 '조금 늦어진다'가 아니라 아예 없다 — 스케줄러가 없으면
+    애초에 주기 틱도 없다. 그래도 여기서 예외가 나가면 대화 자체가 끊긴다.
+    """
+    runtime = bootstrap.Runtime(app=object(), senior_id=SENIOR)
+    runtime.scheduler = None
+
+    bootstrap._flush_extraction_after_conversation(runtime)

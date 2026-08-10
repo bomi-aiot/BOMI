@@ -13,6 +13,29 @@ DEFAULT_TYPECAST_VOICE_ID = "tc_666a9871abcf27a5169850d0"
 VALID_DB_CONNECTION_MODES = {"direct", "ssh"}
 VALID_AUDIO_MODES = {"laptop", "robot"}
 
+# STT 가 자주 틀리는, 이 서비스에서만 쓰는 말들. RTZR 의 키워드 부스팅에 그대로
+# 실린다(stt/client.py).
+#
+# 왜 이 목록이 필요한가 (2026-08-10 A/B 실측)
+#   같은 오디오를 설정만 바꿔 두 번 인식시켰다.
+#     부스팅 없음: "고미야 관절 영양 먹었어. 무릎이 시큰거려서 ..."
+#     부스팅 있음: "보미야 관절염 약 먹었어. 무릎이 시큰거려서 ..."
+#   웨이크워드 이름이 틀리면 그 뒤 대화 전체가 어긋난다 — 거의 모든 발화에
+#   들어가는 말이라 한 단어의 효과가 가장 크다.
+#
+# 무엇을 넣고 무엇을 빼는가
+#   일반 한국어는 넣지 않는다. 모델이 이미 잘하는 말에 가중치를 주면 엉뚱한
+#   곳에서 그 단어로 끌려간다. 고유명사·약 이름·신체 부위처럼 '이 도메인에만
+#   자주 나오는' 말만 넣는다. 어르신이 바뀌면 STT_KEYWORDS 로 덮어쓴다.
+DEFAULT_STT_KEYWORDS: tuple[str, ...] = (
+    "보미",
+    "순자",
+    "관절염약",
+    "혈압약",
+    "무릎",
+    "허리",
+)
+
 
 class ConfigurationError(RuntimeError):
     """필수 설정이 없거나 올바르지 않을 때 발생하는 오류."""
@@ -92,6 +115,21 @@ def _bool_env(name: str, default: bool) -> bool:
     )
 
 
+def _csv_env(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    """쉼표로 나뉜 목록. 빈 문자열은 "목록을 비운다"는 뜻이다.
+
+    왜 빈 문자열과 미설정을 구분하는가
+        STT_KEYWORDS="" 는 "부스팅을 끄겠다"는 명시적 의사표시다. 미설정과 같게
+        다루면 기본 목록이 되살아나 끌 방법이 없어진다.
+    """
+    # ★ _optional_env 를 쓰지 않는다. 그 헬퍼는 빈 문자열을 '미설정'으로 접어
+    #   버리는데(strip 후 falsy 면 default), 여기서는 그 둘이 서로 다른 뜻이다.
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    return tuple(item.strip() for item in raw_value.split(",") if item.strip())
+
+
 def _audio_device_env(
     name: str, default: int | str | None = None
 ) -> int | str | None:
@@ -144,6 +182,16 @@ class Settings:
     http_max_attempts: int
     http_backoff_seconds: float
     http_max_backoff_seconds: float
+    # STT 키워드 부스팅 목록 (S15P11E102 / 2026-08-10 실측).
+    #
+    #   같은 오디오로 A/B 했다. 부스팅이 없으면 "보미야 관절염약"이
+    #   "고미야 관절 영양"으로 인식됐고, 목록을 주자 둘 다 바로잡혔다.
+    #   웨이크워드 이름은 거의 모든 발화에 들어가므로 효과가 특히 크다.
+    stt_keywords: tuple[str, ...]
+    # 간투사("어…", "음…") 제거. 기본은 끔 — 실측에서 차이를 보지 못했고,
+    # 없애는 것이 항상 이득이라는 근거도 아직 없다(어르신의 머뭇거림 자체가
+    # 신호일 수 있다). 현장에서 켜 보고 판단할 수 있게 열어만 둔다.
+    stt_disfluency_filter: bool
     stt_poll_interval_seconds: float
     stt_poll_timeout_seconds: float
     stt_token_ttl_seconds: float
@@ -189,13 +237,26 @@ class Settings:
     #   경고 로그로 남는다.
     backend_shared_secret: str | None
 
-    # 이 로봇의 id. 배포된 기기마다 다르므로 policy 가 아니라 여기다.
+    # 이 로봇의 id (robot 테이블의 UUID). 배포된 기기마다 다르므로 policy 가 아니라 여기다.
     #
     # 왜 필요한가
     #   로봇에서 온보딩 세션을 '새로' 시작할 때 서버가 요구한다. 앱에서 시작한 세션을
     #   이어받을 때는 필요 없다. 미설정이면 로봇이 온보딩을 시작하지 못하고, 그 사실을
     #   로그로 남긴다(조용히 안 하지 않는다).
+    #
+    # ★ MQTT 토픽에는 이 값을 쓰지 않는다 — 그쪽은 robot_device_id 다. 두 값은 서로
+    #   다른 id 공간이고, 혼용은 실제로 있었던 사고다: MQTT 봉투에 UUID 를 넣으면
+    #   백엔드가 UNKNOWN_ROBOT 으로 '조용히' 차단해 시나리오가 한 번도 돌지 않는다.
     robot_id: str | None
+
+    # 이 로봇의 MQTT deviceId (robot 테이블의 device_id, 예: bomi-AA001).
+    #
+    # 왜 robot_id 와 분리하는가
+    #   백엔드 MQTT 계약의 {robotId} 는 UUID 가 아니라 deviceId 다
+    #   (ScenarioRobotStartPolicy 가 findLockCandidateByDeviceId 로 조회). 하나의
+    #   환경변수를 REST(UUID)와 MQTT(deviceId) 양쪽에 쓰던 것이 식별자 충돌의
+    #   원인이었다. 토픽·봉투를 만드는 모든 코드는 이 값을 쓴다.
+    robot_device_id: str | None
 
     # 이 로봇이 돌보는 어르신.
     #
@@ -266,6 +327,19 @@ class Settings:
     mqtt_client_id: str
     mqtt_username: str | None
     mqtt_password: str | None
+
+    # 보미야 호출 뒤 "이동 중 침묵"을 켤 것인가 (CLAUDE.md §3a, policy.
+    # WAKE_MOVEMENT_WAIT_TIMEOUT_SEC).
+    #
+    # 왜 별도 스위치가 필요한가
+    #   이 동작은 백엔드가 NAVIGATE(LIVING_ROOM) 을 실제로 발행하고 bridge 가
+    #   그 결과를 v1 로 회신할 때만 의미가 있다. 로봇/브릿지 없이 노트북에서
+    #   대화만 개발·테스트하는 흔한 경우, 이 값이 켜져 있으면 매 "보미야"마다
+    #   ARRIVED 를 절대 못 받고 policy.WAKE_MOVEMENT_WAIT_TIMEOUT_SEC(45초)를
+    #   그냥 날린 뒤에야 대화가 시작된다 — 개발 루프를 조용히 45배 느리게
+    #   만드는 사고다. 그래서 기본값은 꺼짐이고, 실제 시연/실기 환경에서만
+    #   명시적으로 켠다.
+    wake_movement_wait_enabled: bool
 
     @classmethod
     def from_env(
@@ -373,6 +447,8 @@ class Settings:
                 "HTTP_MAX_BACKOFF_SECONDS",
                 2.0,
             ),
+            stt_keywords=_csv_env("STT_KEYWORDS", DEFAULT_STT_KEYWORDS),
+            stt_disfluency_filter=_bool_env("STT_DISFLUENCY_FILTER", False),
             stt_poll_interval_seconds=_positive_float_env(
                 "STT_POLL_INTERVAL_SECONDS",
                 0.5,
@@ -411,6 +487,7 @@ class Settings:
             backend_timeout_seconds=_positive_float_env("BACKEND_TIMEOUT_SECONDS", 1.5),
             backend_shared_secret=_optional_env("BACKEND_SHARED_SECRET"),
             robot_id=_optional_env("ROBOT_ID"),
+            robot_device_id=_optional_env("ROBOT_DEVICE_ID"),
             senior_id=_optional_env("SENIOR_ID"),
             use_graph_runtime=_bool_env("USE_GRAPH_RUNTIME", True),
             t3_consent_enabled=_bool_env("T3_CONSENT_ENABLED", True),
@@ -427,6 +504,8 @@ class Settings:
             ),
             mqtt_username=_optional_env("MQTT_USERNAME"),
             mqtt_password=_optional_env("MQTT_PASSWORD"),
+            wake_movement_wait_enabled=_bool_env(
+                "WAKE_MOVEMENT_WAIT_ENABLED", False),
         )
 
     def validate_mqtt(self) -> None:

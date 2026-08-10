@@ -263,7 +263,7 @@ class HomecomingOrchestratorTest {
     }
 
     @Test
-    void endedEventStoresOutcomeAndPublishesDefaultOnlyOnce() {
+    void endedHomecomingStoresOutcomeAndPublishesFollowStartOnlyOnce() {
         Scenario scenario = scenarioAt(ScenarioStatus.CONVERSING);
         Conversation conversation = requestedConversation(scenario, true);
         when(scenarioRepository.findByIdForUpdate(scenario.getId()))
@@ -280,9 +280,12 @@ class HomecomingOrchestratorTest {
             scenario.getId(), conversation.getId(), deviceId,
             ConversationOutcome.COMPLETED, null, endedAt);
 
-        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.RETURNING_TO_DEFAULT);
+        assertThat(scenario.getFinalStatus()).isEqualTo(ScenarioStatus.STARTING_FOLLOW);
         assertThat(conversation.getEndOutcome()).isEqualTo(ConversationOutcome.COMPLETED);
-        verify(commandPublisher, times(1)).publish(any());
+        ArgumentCaptor<RobotCommand> commandCaptor = ArgumentCaptor.forClass(RobotCommand.class);
+        verify(commandPublisher, times(1)).publish(commandCaptor.capture());
+        assertThat(commandCaptor.getValue().type()).isEqualTo(RobotCommandType.FOLLOW_START);
+        assertThat(commandCaptor.getValue().payload()).isEmpty();
     }
 
     @Test

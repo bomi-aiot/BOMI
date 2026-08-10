@@ -15,6 +15,9 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "bomi.wellness")
 public class WellnessProperties {
 
+    /** 온습도 임계값 초과 시 독립 WELLNESS_CHECK 시나리오를 시작할지 여부. */
+    private boolean scenarioEnabled = true;
+
     /** 이 온도(°C) 이상이면 이상으로 판정. */
     private BigDecimal temperatureThresholdC = new BigDecimal("30.0");
 
@@ -23,6 +26,14 @@ public class WellnessProperties {
 
     /** 같은 어르신에게 WELLNESS_CHECK 완료 후 재시작 금지 시간(분). */
     private long cooldownMinutes = 30;
+
+    public boolean isScenarioEnabled() {
+        return scenarioEnabled;
+    }
+
+    public void setScenarioEnabled(boolean scenarioEnabled) {
+        this.scenarioEnabled = scenarioEnabled;
+    }
 
     public BigDecimal getTemperatureThresholdC() {
         return temperatureThresholdC;

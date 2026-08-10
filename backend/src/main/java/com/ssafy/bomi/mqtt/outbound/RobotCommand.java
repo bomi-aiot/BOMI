@@ -33,6 +33,9 @@ public record RobotCommand(
         if (type == RobotCommandType.NAVIGATE) {
             validateNavigatePayload(payload);
         }
+        if (type == RobotCommandType.CANCEL) {
+            validateCancelPayload(payload);
+        }
         if ((type == RobotCommandType.FOLLOW_START || type == RobotCommandType.FOLLOW_STOP)
             && !payload.isEmpty()) {
             throw new IllegalArgumentException(type + " payload must be an empty object");
@@ -53,6 +56,25 @@ public record RobotCommand(
             throw new IllegalArgumentException(
                 "NAVIGATE target must be one of LIVING_ROOM, ENTRANCE or DEFAULT");
         }
+    }
+
+    private static void validateCancelPayload(Map<String, Object> payload) {
+        if (payload.size() != 2
+            || !payload.containsKey("targetCommandId")
+            || !payload.containsKey("reasonCode")) {
+            throw new IllegalArgumentException(
+                "CANCEL payload must contain exactly targetCommandId and reasonCode");
+        }
+        requireOpaqueId(asString(payload.get("targetCommandId"), "targetCommandId"),
+            "targetCommandId");
+        requireOpaqueId(asString(payload.get("reasonCode"), "reasonCode"), "reasonCode");
+    }
+
+    private static String asString(Object value, String field) {
+        if (!(value instanceof String text)) {
+            throw new IllegalArgumentException(field + " must be a string");
+        }
+        return text;
     }
 
     private static String requireOpaqueId(String value, String field) {

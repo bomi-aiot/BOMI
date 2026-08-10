@@ -1,4 +1,24 @@
-# 키보드와 조이스틱의 속도 명령 중 하나를 선택하는 설정
+# 속도 명령 중재 설정 — 여러 명령원이 /cmd_vel 하나를 두고 다투지 않게 한다.
+#
+# 우선순위가 높은 입력이 이긴다. timeout 안에 새 메시지가 오지 않으면 그 입력은
+# 없는 것으로 보고 다음 순위에게 넘긴다. 그래서 명령원은 "안 보내는 것"만으로
+# 양보할 수 있다 — 0을 계속 보내면 오히려 아래 순위를 계속 막는다.
+#
+# 우선순위 설계 근거
+#   joystick(100)    사람의 수동 개입은 언제나 최우선이다. 실기 테스트 중
+#                    로봇을 멈출 수 있는 마지막 수단이므로 절대 내리지 않는다.
+#   wake_search(90)  회전 탐색. 2026-08-09 실기에서 추종(85)보다 아래라 "보미야"
+#                    호출이 동작하지 않았다 — 백엔드 FOLLOW_START 가 추종기를
+#                    먼저 켜는데, 아직 사람을 못 찾은 추종기가 0을 계속 내보내
+#                    탐색 회전을 덮었다. 사람을 찾으러 도는 동작을, 아직 사람을
+#                    못 찾은 쪽이 막는 구조였다.
+#                    맞바꾼 것: 탐색 중에는 추종기의 LiDAR 긴급 정지가 이기지
+#                    않는다. 탐색은 제자리 회전이라 병진보다 위험이 낮다고 보고
+#                    받아들였다. 탐색이 끝나면 발행을 멈추므로 추종에 간섭하지
+#                    않는다.
+#   person_follow(85) 추종에는 LiDAR 긴급 정지가 들어 있다.
+#   backend_test(75) 백엔드 배선 확인용 저속 전진.
+#   keyboard(50)     개발용 수동 주행.
 twist_mux:
   ros__parameters:
     topics:
@@ -6,6 +26,27 @@ twist_mux:
         topic: /cmd_vel_keyboard
         timeout: 0.5
         priority: 50
+
+      backend_test:
+        topic: /cmd_vel_backend_test
+        timeout: 0.5
+        priority: 75
+
+      # 보미야 호출 회전 탐색 (core/core/wake_search.py).
+      # 탐색 중이 아닐 때는 아무것도 발행하지 않으므로 timeout 이 지나면
+      # 자동으로 자리를 비운다.
+      wake_search:
+        topic: /cmd_vel_search
+        timeout: 0.5
+        priority: 90
+
+      # 사람 추종 (core/core/person_follower.py).
+      # 이 노드는 /person_following/enable 이 꺼져 있으면 발행 자체를 하지
+      # 않으므로, 꺼진 동안에는 이 입력도 자리를 비운다.
+      person_follow:
+        topic: /cmd_vel_follow
+        timeout: 0.5
+        priority: 85
 
       joystick:
         topic: /cmd_vel_joy

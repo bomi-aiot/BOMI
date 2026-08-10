@@ -4,6 +4,7 @@ import pytest
 
 from core.person_following_controller import (
     PersonFollowingController,
+    ramp_toward,
 )
 
 
@@ -57,6 +58,27 @@ def test_turn_right_command() -> None:
     assert result.linear_x == pytest.approx(0.0)
     assert result.angular_z == pytest.approx(-0.5)
     assert result.reason == "turning_right"
+
+
+def test_turn_command_curves_forward_when_person_is_far() -> None:
+    controller = PersonFollowingController(
+        linear_speed=0.15,
+        angular_speed=0.15,
+        turn_linear_ratio=0.55,
+        person_stop_distance_m=0.4,
+        person_resume_distance_m=0.6,
+    )
+
+    result = controller.calculate_velocity(
+        "turn_left",
+        movement_allowed=True,
+        person_distance_m=1.0,
+        emergency_obstacle_distance_m=1.0,
+    )
+
+    assert result.linear_x == pytest.approx(0.0825)
+    assert result.angular_z == pytest.approx(0.15)
+    assert result.reason == "curving_left"
 
 
 def test_stop_command() -> None:
@@ -317,3 +339,34 @@ def test_invalid_distance_configuration_is_rejected() -> None:
             person_stop_distance_m=0.5,
             person_resume_distance_m=0.4,
         )
+
+
+# ── 가속 제한 (2026-08-09 실기: "다가올 때 좀 무서워") ──────────────────────
+
+
+def test_ramp_limits_acceleration_from_standstill() -> None:
+    # 0.3 m/s^2 로 0.1초면 0.03 까지만 오른다.
+    assert ramp_toward(0.15, 0.0, 0.3, 0.1) == pytest.approx(0.03)
+
+
+def test_ramp_reaches_target_once_within_reach() -> None:
+    assert ramp_toward(0.15, 0.14, 0.3, 0.1) == pytest.approx(0.15)
+
+
+def test_ramp_never_delays_deceleration() -> None:
+    """★ 감속과 정지는 제한하지 않는다 — 늦게 멈추면 안전 문제다."""
+    assert ramp_toward(0.0, 0.15, 0.3, 0.01) == 0.0
+    assert ramp_toward(0.05, 0.15, 0.3, 0.01) == pytest.approx(0.05)
+
+
+def test_ramp_allows_immediate_direction_reversal() -> None:
+    # 좌회전 중 우회전 요청은 0 을 지나가므로 즉시 통과시킨다.
+    assert ramp_toward(-0.15, 0.15, 0.6, 0.01) == pytest.approx(-0.15)
+
+
+def test_ramp_disabled_when_limit_is_zero() -> None:
+    assert ramp_toward(0.15, 0.0, 0.0, 0.1) == pytest.approx(0.15)
+
+
+def test_ramp_handles_first_publish_without_elapsed_time() -> None:
+    assert ramp_toward(0.15, 0.0, 0.3, 0.0) == pytest.approx(0.15)

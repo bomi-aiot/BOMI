@@ -12,11 +12,13 @@ import org.springframework.stereotype.Component;
  * the prototype demo. A default of "on" means every test run, every local boot, and every CI
  * job that happens to have a key in its environment spends money.</p>
  *
- * <p><b>Reused for whatever generation consumer comes next.</b> Today the only caller is
- * {@code ConversationSummaryService}. Nothing here is summary-specific — {@link #maxCallsPerRun}
- * and {@link #sweepIntervalMillis} describe "a scheduled job that calls {@code generate()}
- * repeatedly", not "the summary job" by name — so a later generation consumer can share this
- * class instead of inventing its own on/off switch and spending cap.</p>
+ * <p><b>Reused for whatever generation consumer comes next.</b> The callers today are
+ * {@code ConversationSummaryService} and {@code DailyConversationSummaryService}. Nothing here
+ * is summary-specific — {@link #maxCallsPerRun} and {@link #sweepIntervalMillis} describe
+ * "a scheduled job that calls {@code generate()} repeatedly", not "the summary job" by name —
+ * so a later generation consumer can share this class instead of inventing its own on/off
+ * switch and spending cap. {@link #maxCallsPerRun} is deliberately shared by both sweeps:
+ * it is one budget, not one budget per job.</p>
  */
 @Component
 @ConfigurationProperties(prefix = "bomi.llm")
@@ -77,6 +79,51 @@ public class LlmProperties {
 
     /** Milliseconds between summary sweep runs. Not urgent, so this can be generous. */
     private long sweepIntervalMillis = 300_000;
+
+    /**
+     * 하루치 요약 프롬프트에 실을 발화 수 상한 (S15P11E102 G1).
+     *
+     * <p>{@link #maxSummaryMessages}(60) 를 재사용하지 않는 이유는 단위가 다르기
+     * 때문이다 — 저건 대화 <em>하나</em>의 꼬리이고, 이건 하루에 있었던 <em>모든</em>
+     * 대화의 꼬리다. 60 을 그대로 쓰면 말이 많았던 날의 앞부분이 통째로 잘려 나가는데,
+     * 잘려 나갔다는 사실은 요약문 어디에도 드러나지 않는다.</p>
+     *
+     * <p>그래도 상한은 둔다. 하루 200발화면 대화 요약 프롬프트의 3배가 넘는 토큰이고,
+     * 상한이 없으면 프롬프트 크기와 청구액이 둘 다 예측 불가능해진다.</p>
+     */
+    private int maxDailySummaryMessages = 200;
+
+    /**
+     * 일간 요약을 시작하는 <b>어르신 현지</b> 시각(시). ERD §4 의 "새벽 2~3시 배치".
+     *
+     * <p>컨테이너 시계(UTC)가 아니라 어르신의 시간대로 판정한다. UTC 고정 cron 은
+     * 정확히 한 시간대의 어르신만 새벽에 맞고 나머지는 한낮에 요약되는데, 그 오차는
+     * 예외 없이 "요약 기간이 하루 밀린 채 그럴듯하게" 나타난다.</p>
+     */
+    private int dailySummaryHour = 2;
+
+    /**
+     * 일간 요약 창의 길이(시간). 로컬 {@code [hour, hour + this)} 안의 매시간 틱이
+     * 그날의 재시도가 된다.
+     *
+     * <p><b>1 이 아니라 4 가 기본인 이유.</b> 스프링 기본 스케줄러 풀은 스레드 1개다
+     * ({@code SchedulingConfig}). 02:00 틱이 대화 요약 스윕(최대 20호출 × 8초)이나
+     * 재배포에 밀리면 스프링 cron 은 놓친 실행을 큐에 쌓지 않고 <b>건너뛴다</b> —
+     * 창이 한 시간이면 그날 요약은 다음 날이 아니라 <em>영영</em> 생기지 않는다(어제는
+     * 이미 지나갔다). 재시도 비용은 "값싼 exists 쿼리 한 번"뿐이다.</p>
+     *
+     * <p>창은 자정을 넘지 않는다({@code hour + this} 는 24 로 잘린다). 자정을 넘기면
+     * 창의 앞뒤에서 "어제"가 서로 다른 날짜를 가리켜 하루가 두 번 요약된다.</p>
+     */
+    private int dailySummaryWindowHours = 4;
+
+    /**
+     * 일간 요약 틱의 cron. 기본값은 매시 :20 분.
+     *
+     * <p>정시가 아닌 이유 — 같은 단일 스레드를 쓰는 다른 틱(대화 요약 스윕·복약·워치독)이
+     * 정시에 몰린다. 거기에 겹치면 이 틱이 통째로 밀리고, 밀린 틱은 재실행되지 않는다.</p>
+     */
+    private String dailySummaryCron = "0 20 * * * *";
 
     public boolean isEnabled() {
         return enabled;
@@ -148,6 +195,38 @@ public class LlmProperties {
 
     public void setSweepIntervalMillis(long sweepIntervalMillis) {
         this.sweepIntervalMillis = sweepIntervalMillis;
+    }
+
+    public int getMaxDailySummaryMessages() {
+        return maxDailySummaryMessages;
+    }
+
+    public void setMaxDailySummaryMessages(int maxDailySummaryMessages) {
+        this.maxDailySummaryMessages = maxDailySummaryMessages;
+    }
+
+    public int getDailySummaryHour() {
+        return dailySummaryHour;
+    }
+
+    public void setDailySummaryHour(int dailySummaryHour) {
+        this.dailySummaryHour = dailySummaryHour;
+    }
+
+    public int getDailySummaryWindowHours() {
+        return dailySummaryWindowHours;
+    }
+
+    public void setDailySummaryWindowHours(int dailySummaryWindowHours) {
+        this.dailySummaryWindowHours = dailySummaryWindowHours;
+    }
+
+    public String getDailySummaryCron() {
+        return dailySummaryCron;
+    }
+
+    public void setDailySummaryCron(String dailySummaryCron) {
+        this.dailySummaryCron = dailySummaryCron;
     }
 
     /** Whether calls may actually be made. */

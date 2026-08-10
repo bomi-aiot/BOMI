@@ -7,6 +7,10 @@ from bomi_vision.adapters.opencv import OpenCVCamera, OpenCVDebugView
 from bomi_vision.adapters.tracking import UltralyticsByteTracker
 from bomi_vision.application import run_person_tracking
 from bomi_vision.follow import FollowCommandGenerator
+from bomi_vision.primary_person import (
+    PrimaryPersonConfig,
+    PrimaryPersonSelector,
+)
 from bomi_vision.tracking import UserTrackingService
 
 # YOLO11의 가장 작은 사전 학습 모델로 노트북 MVP에서 빠른 확인을 우선한다.
@@ -29,6 +33,11 @@ DEFAULT_SINGLE_RECOVERY_FRAMES = 10
 DEFAULT_HORIZONTAL_DEAD_ZONE = 0.15
 # 실제 장비에서 조정할 초기 전진 정지용 화면 높이 비율이다.
 DEFAULT_FORWARD_THRESHOLD = 0.45
+# 대표 인물 선택에서 후보로 인정할 최소 신뢰도다. 선택 기준이 아니라 오탐을
+# 후보에서 빼는 용도이며, 실제 선택은 화면 중앙 기준으로 한다.
+DEFAULT_PRIMARY_MIN_CONFIDENCE = 0.5
+# 0.0 이면 거리 제한 없음. 올리면 멀리 있는 행인이 후보에서 빠진다.
+DEFAULT_PRIMARY_MIN_HEIGHT_RATIO = 0.0
 
 
 def parse_camera_index(value: str) -> int:
@@ -134,6 +143,32 @@ def parse_forward_threshold(value: str) -> float:
         raise argparse.ArgumentTypeError(str(error)) from error
 
 
+def parse_unit_ratio(value: str) -> float:
+    """0.0 이상 1.0 이하의 비율을 파싱한다."""
+    try:
+        ratio = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("Ratio must be a number.") from error
+    if not 0.0 <= ratio <= 1.0:
+        raise argparse.ArgumentTypeError("Ratio must be between 0.0 and 1.0.")
+    return ratio
+
+
+def build_primary_person_selector(args) -> PrimaryPersonSelector:
+    """명령행 인자로 대표 인물 선택기를 만든다.
+
+    기본값은 꺼짐이다 — 켜지 않으면 "여러 명이면 정지"라는 기존 안전 동작이
+    그대로 유지된다(primary_person.py 모듈 docstring 참고).
+    """
+    return PrimaryPersonSelector(
+        PrimaryPersonConfig(
+            enabled=bool(args.select_primary_person),
+            min_confidence=args.primary_min_confidence,
+            min_height_ratio=args.primary_min_height_ratio,
+        )
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """사람 탐지 실행에 필요한 명령행 파서를 생성한다."""
     parser = argparse.ArgumentParser(description="Detect people from a laptop camera.")
@@ -185,6 +220,33 @@ def build_parser() -> argparse.ArgumentParser:
         type=parse_forward_threshold,
         help="Centered forward stop height ratio (default: 0.45).",
     )
+    parser.add_argument(
+        "--select-primary-person",
+        action="store_true",
+        help=(
+            "When several people are visible, follow the one closest to the "
+            "frame center instead of stopping. Off by default: stopping is "
+            "the safe behaviour when the target is ambiguous."
+        ),
+    )
+    parser.add_argument(
+        "--primary-min-confidence",
+        default=DEFAULT_PRIMARY_MIN_CONFIDENCE,
+        type=parse_unit_ratio,
+        help=(
+            "Minimum detection confidence to be considered a candidate "
+            "(default: 0.5). This filters candidates; it does not pick one."
+        ),
+    )
+    parser.add_argument(
+        "--primary-min-height-ratio",
+        default=DEFAULT_PRIMARY_MIN_HEIGHT_RATIO,
+        type=parse_unit_ratio,
+        help=(
+            "Minimum box height over frame height for a candidate "
+            "(default: 0.0 = no distance limit)."
+        ),
+    )
     return parser
 
 
@@ -214,6 +276,7 @@ def main() -> int:
             follow_command_generator,
             camera,
             OpenCVDebugView(),
+            build_primary_person_selector(args),
         )
     except (RuntimeError, ValueError) as error:
         # CLI 경계에서 간결한 메시지로 바꾸되 원인은 adapter 예외 연결에 보존한다.

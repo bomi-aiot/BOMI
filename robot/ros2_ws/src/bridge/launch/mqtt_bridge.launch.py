@@ -15,6 +15,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -22,23 +23,175 @@ def generate_launch_description() -> LaunchDescription:
     robot_id = LaunchConfiguration("robot_id")
     broker_host = LaunchConfiguration("broker_host")
     broker_port = LaunchConfiguration("broker_port")
+    username = LaunchConfiguration("username")
+    password = LaunchConfiguration("password")
+    use_tls = LaunchConfiguration("use_tls")
+    ca_certs = LaunchConfiguration("ca_certs")
+    tls_insecure = LaunchConfiguration("tls_insecure")
     driver_type = LaunchConfiguration("driver_type")
     goal_timeout_seconds = LaunchConfiguration("goal_timeout_seconds")
+    waypoint_file = LaunchConfiguration("waypoint_file")
+    nav_action_name = LaunchConfiguration("nav_action_name")
+    nav_frame_id = LaunchConfiguration("nav_frame_id")
+    approach_enable_topic = LaunchConfiguration("approach_enable_topic")
+    test_forward_speed_m_s = LaunchConfiguration("test_forward_speed_m_s")
+    test_forward_duration_sec = LaunchConfiguration("test_forward_duration_sec")
+    test_publish_rate_hz = LaunchConfiguration("test_publish_rate_hz")
+    test_cmd_vel_topic = LaunchConfiguration("test_cmd_vel_topic")
+    approach_enabled = LaunchConfiguration("approach_enabled")
+    approach_duration_seconds = LaunchConfiguration("approach_duration_seconds")
+    timed_drive_duration_seconds = LaunchConfiguration(
+        "timed_drive_duration_seconds")
+    timed_drive_linear_speed = LaunchConfiguration("timed_drive_linear_speed")
+    cmd_vel_topic = LaunchConfiguration("cmd_vel_topic")
+    zigzag_enabled = LaunchConfiguration("zigzag_enabled")
+    zigzag_angle_deg = LaunchConfiguration("zigzag_angle_deg")
+    zigzag_leg_length_m = LaunchConfiguration("zigzag_leg_length_m")
+    zigzag_min_distance_m = LaunchConfiguration("zigzag_min_distance_m")
+    nav_through_poses_action_name = LaunchConfiguration(
+        "nav_through_poses_action_name")
+    nav_base_frame_id = LaunchConfiguration("nav_base_frame_id")
+    nav_status_topic = LaunchConfiguration("nav_status_topic")
 
     return LaunchDescription(
         [
             DeclareLaunchArgument("robot_id", default_value="robot-01"),
             DeclareLaunchArgument("broker_host", default_value="localhost"),
             DeclareLaunchArgument("broker_port", default_value="1883"),
+            DeclareLaunchArgument("username", default_value=""),
+            DeclareLaunchArgument("password", default_value=""),
+            # 실브로커(i15e102.p.ssafy.io:8883)에 붙으려면 이 셋이 필요하다.
+            # 과거엔 노드가 TLS 파라미터를 선언하지 않아 launch 경로로는 실브로커
+            # 접속이 원천 불가능했다 — mqtt_bridge_node.py 참고.
+            DeclareLaunchArgument(
+                "use_tls", default_value="false",
+                description="Enable TLS (required for the real EC2 broker on 8883)",
+            ),
+            DeclareLaunchArgument("ca_certs", default_value=""),
+            DeclareLaunchArgument("tls_insecure", default_value="false"),
             DeclareLaunchArgument(
                 "driver_type",
                 default_value="mock",
-                description="Robot driver to use: mock or nav2",
+                description="Robot driver to use: mock, nav2, timed, or forward_test",
+            ),
+            # driver_type:=timed — 지도·좌표 없이 "정해진 시간 직진"으로
+            # 이동을 대체한다. Nav2(지도 작성) 병목을 우회해 계약 왕복·대화·
+            # DB 종결까지 검증하기 위한 임시 수단이며, 목적지 구분이 없다.
+            DeclareLaunchArgument(
+                "timed_drive_duration_seconds", default_value="2.0",
+                description="How long one NAVIGATE drives forward (timed driver)",
+            ),
+            DeclareLaunchArgument(
+                "timed_drive_linear_speed", default_value="0.08",
+                description="Forward speed in m/s (timed driver). Start low.",
+            ),
+            DeclareLaunchArgument(
+                "cmd_vel_topic", default_value="/cmd_vel",
+                description="Velocity topic the timed driver publishes to",
             ),
             DeclareLaunchArgument(
                 "goal_timeout_seconds",
                 default_value="120.0",
                 description="Max seconds to wait for a Nav2 goal to finish",
+            ),
+            # 노드는 waypoint_file 을 예전부터 받았지만 launch 가 노출하지
+            # 않아서, launch 경로로는 설치본(share/core/config)의 좌표만 쓸 수
+            # 있었다. 그래서 좌표를 고친 뒤 colcon build 를 빼먹으면 옛 좌표로
+            # 주행하고, 실패해도 원인이 드러나지 않았다. 소스 트리의 YAML 을
+            # 직접 가리킬 수 있게 노출한다(빈 값이면 종전대로 설치본 사용).
+            DeclareLaunchArgument(
+                "waypoint_file",
+                default_value="",
+                description=(
+                    "room_waypoints.yaml path for the nav2 driver. "
+                    "Empty uses the installed core config."
+                ),
+            ),
+            DeclareLaunchArgument(
+                "nav_action_name",
+                default_value="navigate_to_pose",
+                description="Nav2 NavigateToPose action name",
+            ),
+            DeclareLaunchArgument(
+                "nav_frame_id",
+                default_value="map",
+                description="Frame the goal pose is expressed in",
+            ),
+            DeclareLaunchArgument(
+                "approach_enable_topic",
+                default_value="/person_following/enable",
+                description="Topic that switches person-following on or off",
+            ),
+            # driver_type:=forward_test — 백엔드 → MQTT → 모터 배선만 확인하는
+            # 통신 테스트. 전용 토픽으로 발행해 twist_mux 아래에 두므로 조이스틱이
+            # 항상 우선한다(launch/backend_drive_test.launch.py 가 이걸 감싼다).
+            DeclareLaunchArgument(
+                "test_forward_speed_m_s",
+                default_value="0.08",
+                description="Forward-test linear speed in m/s",
+            ),
+            DeclareLaunchArgument(
+                "test_forward_duration_sec",
+                default_value="2.0",
+                description="Forward-test movement duration in seconds",
+            ),
+            DeclareLaunchArgument(
+                "test_publish_rate_hz",
+                default_value="10.0",
+                description="Forward-test Twist publish rate in Hz",
+            ),
+            DeclareLaunchArgument(
+                "test_cmd_vel_topic",
+                default_value="/cmd_vel_backend_test",
+                description="Forward-test twist_mux input topic",
+            ),
+            # 도착 후 사람 접근(CLAUDE.md §3a). 킬 스위치 — 기본 꺼짐. V4
+            # 실기에서 불안정하면 approach_enabled:=false 로 재실행해 검증된
+            # "거실 좌표 도착까지"로 되돌린다(person_follower 재시작 불필요 —
+            # 그쪽 노드는 start_enabled 와 무관하게 항상 이 스위치를 따른다).
+            DeclareLaunchArgument(
+                "approach_enabled", default_value="false",
+                description="Enable follow-the-person after LIVING_ROOM arrival",
+            ),
+            DeclareLaunchArgument(
+                "approach_duration_seconds", default_value="15.0",
+                description="Max seconds to keep person-following on after arrival",
+            ),
+            # 현관 지그재그 접근(bridge/zigzag.py). 킬 스위치 — 기본 꺼짐.
+            # 실기에서 경유점이 벽 팽창 영역에 걸려 경로가 안 나오면
+            # zigzag_enabled:=false 로 검증된 직선 주행으로 되돌린다.
+            # 각도를 올리기보다 zigzag_leg_length_m 을 줄이는 쪽이 안전하다
+            # — 측면 이탈은 다리 길이 x tan(각도) 라 다리가 짧을수록 좁다.
+            DeclareLaunchArgument(
+                "zigzag_enabled", default_value="false",
+                description="Approach ENTRANCE in a zigzag instead of straight",
+            ),
+            DeclareLaunchArgument(
+                "zigzag_angle_deg", default_value="15.0",
+                description="Degrees to swing left/right off the straight axis",
+            ),
+            DeclareLaunchArgument(
+                "zigzag_leg_length_m", default_value="0.5",
+                description="Axial length of one zigzag leg in metres",
+            ),
+            DeclareLaunchArgument(
+                "zigzag_min_distance_m", default_value="1.0",
+                description="Shorter approaches stay straight",
+            ),
+            DeclareLaunchArgument(
+                "nav_through_poses_action_name",
+                default_value="navigate_through_poses",
+                description="Nav2 NavigateThroughPoses action name",
+            ),
+            DeclareLaunchArgument(
+                "nav_base_frame_id", default_value="base_link",
+                description="Robot base frame used to read the current pose",
+            ),
+            # LCD 주행 표시. bomi_display 가 이 토픽을 구독해 "이동 중"을
+            # 띄운다(DisplayStateModel.ACTIVE_NAV_STATES).
+            DeclareLaunchArgument(
+                "nav_status_topic", default_value="/bomi/nav_status",
+                description="Topic the LCD reads to show the driving state",
             ),
             Node(
                 package="bridge",
@@ -50,8 +203,51 @@ def generate_launch_description() -> LaunchDescription:
                         "robot_id": robot_id,
                         "broker_host": broker_host,
                         "broker_port": broker_port,
+                        "username": username,
+                        "password": password,
                         "driver_type": driver_type,
-                        "goal_timeout_seconds": goal_timeout_seconds,
+                        # 문자열 substitution 을 bool/float 으로 명시 변환한다 —
+                        # 안 하면 rclpy 가 declare_parameter(..., False) 의 기본
+                        # 타입과 문자열 "false" 를 맞춰 보다
+                        # ParameterTypeException 을 던진다(core 의 다른 launch
+                        # 파일과 같은 패턴).
+                        "use_tls": ParameterValue(use_tls, value_type=bool),
+                        "ca_certs": ca_certs,
+                        "tls_insecure": ParameterValue(tls_insecure, value_type=bool),
+                        "goal_timeout_seconds": ParameterValue(
+                            goal_timeout_seconds, value_type=float),
+                        "waypoint_file": waypoint_file,
+                        "nav_action_name": nav_action_name,
+                        "nav_frame_id": nav_frame_id,
+                        "approach_enable_topic": approach_enable_topic,
+                        "test_forward_speed_m_s": ParameterValue(
+                            test_forward_speed_m_s, value_type=float),
+                        "test_forward_duration_sec": ParameterValue(
+                            test_forward_duration_sec, value_type=float),
+                        "test_publish_rate_hz": ParameterValue(
+                            test_publish_rate_hz, value_type=float),
+                        "test_cmd_vel_topic": test_cmd_vel_topic,
+                        "approach_enabled": ParameterValue(
+                            approach_enabled, value_type=bool),
+                        "approach_duration_seconds": ParameterValue(
+                            approach_duration_seconds, value_type=float),
+                        "timed_drive_duration_seconds": ParameterValue(
+                            timed_drive_duration_seconds, value_type=float),
+                        "timed_drive_linear_speed": ParameterValue(
+                            timed_drive_linear_speed, value_type=float),
+                        "cmd_vel_topic": cmd_vel_topic,
+                        "zigzag_enabled": ParameterValue(
+                            zigzag_enabled, value_type=bool),
+                        "zigzag_angle_deg": ParameterValue(
+                            zigzag_angle_deg, value_type=float),
+                        "zigzag_leg_length_m": ParameterValue(
+                            zigzag_leg_length_m, value_type=float),
+                        "zigzag_min_distance_m": ParameterValue(
+                            zigzag_min_distance_m, value_type=float),
+                        "nav_through_poses_action_name":
+                            nav_through_poses_action_name,
+                        "nav_base_frame_id": nav_base_frame_id,
+                        "nav_status_topic": nav_status_topic,
                     }
                 ],
             ),

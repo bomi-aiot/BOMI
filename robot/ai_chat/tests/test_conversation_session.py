@@ -148,14 +148,26 @@ class ScriptedStt:
         return self.texts.pop(0) if self.texts else ""
 
 
-def run_loop(monkeypatch, settings_factory, *, wakes, chunks, stt_texts):
-    """세션 루프를 가짜 오디오/STT/그래프로 돌리고 (이벤트 순서, 처리된 발화, 턴 수)를 준다."""
+def run_loop(monkeypatch, settings_factory, *, wakes, chunks, stt_texts,
+             kwargs_sink=None):
+    """세션 루프를 가짜 오디오/STT/그래프로 돌리고 (이벤트 순서, 처리된 발화, 턴 수)를 준다.
+
+    kwargs_sink 를 주면 run_user_turn 이 받은 키워드 인자(closing_turn 등)를
+    턴 순서대로 그 리스트에 쌓는다. 반환값 모양은 바뀌지 않는다 — 기존 호출부가
+    네 개로 언팩하고 있어서다.
+    """
     events: list = []
     turns: list = []
+
+    def fake_turn(app, senior, text, **kw):
+        turns.append(text)
+        if kwargs_sink is not None:
+            kwargs_sink.append(kw)
+        return {}
+
     monkeypatch.setattr("bomi_ai_chat.stt.client.STTClient",
                         lambda settings: ScriptedStt(*stt_texts))
-    monkeypatch.setattr("bomi_ai_chat.graph.turn.run_user_turn",
-                        lambda app, senior, text, **kw: turns.append(text) or {})
+    monkeypatch.setattr("bomi_ai_chat.graph.turn.run_user_turn", fake_turn)
 
     wake = GateKeeperWake(events, wakes=wakes)
     runtime = bootstrap.Runtime(app=object(), senior_id=SENIOR)
@@ -209,7 +221,9 @@ def test_scenario_l_farewell_closes_and_rearms_the_wakeword(
     _events, turns, count, wake = run_loop(
         monkeypatch, settings_factory,
         wakes=1, chunks=[b"1", b"2", b"3"],
-        stt_texts=["오늘 날씨 어때", "고마워", "이제 됐어"])
+        # 가운데 발화는 마무리 어휘가 없어야 한다 — "고마워"였다면 거기서
+        # 세션이 닫힌다(is_soft_closing). 시나리오 L 이 보려는 건 세 번째 발화다.
+        stt_texts=["오늘 날씨 어때", "비가 온다니 우산 챙겨야겠네", "이제 됐어"])
 
     assert turns[-1] == "이제 됐어", "마무리 발화도 응답을 받아야 한다(시나리오 L)"
     assert count == 3
@@ -240,6 +254,79 @@ def test_farewell_cue_matches_the_scenario_phrase():
     assert conversation_control.is_farewell("이제 됐어") is True
     assert conversation_control.is_farewell("약 다 먹었어, 됐어") is False, \
         "'됐어' 단독은 완료 보고일 수 있다 — 종료로 오인하면 안 된다"
+
+
+@pytest.mark.parametrize("text", [
+    "알겠어",
+    "알겠어, 고마워",
+    "응 알겠어 고마워",
+    "고마워요",
+    "네 감사합니다.",
+    "어 그래 알았어 보미야",
+    "수고했어~",
+])
+def test_soft_closing_ends_the_conversation(text):
+    """수긍·감사만으로 된 발화는 마무리다 — 실제 대화가 가장 흔히 닫히는 형태."""
+    assert conversation_control.is_farewell(text) is True
+
+
+def test_the_farewell_turn_is_generated_as_a_closing_turn(
+    monkeypatch, settings_factory, frozen_clock):
+    """★ 마무리 발화는 closing_turn 으로 태운다 — 되묻고 귀를 닫지 않기 위해서.
+
+    판정이 run_user_turn '뒤'에 있던 동안, "알겠어 고마워"는 평범한 턴으로
+    생성돼 "더 필요한 거 있으세요?"로 끝날 수 있었고 그 직후 세션이 닫혔다.
+    """
+    frozen_clock(start=1_700_000_000.0)
+    seen: list = []
+    _events, turns, _count, _wake = run_loop(
+        monkeypatch, settings_factory,
+        wakes=1, chunks=[b"1", b"2"],
+        stt_texts=["오늘 날씨 어때", "알겠어 고마워"],
+        kwargs_sink=seen)
+
+    assert turns == ["오늘 날씨 어때", "알겠어 고마워"]
+    assert seen[0].get("closing_turn") is False, "평범한 턴까지 마무리로 만들면 안 된다"
+    assert seen[1].get("closing_turn") is True
+    assert seen[1].get("closing_kind") == "farewell", \
+        "어르신이 닫은 대화에 귀가 인사('오늘도 고생 많으셨어요')로 답하면 어긋난다"
+
+
+@pytest.mark.parametrize("text", [
+    # 짧은 큐가 다른 단어 속에 박혀 대화를 끊던 것들 (2026-08-10).
+    "약값이 이만 원이야",
+    "이만큼 아파",
+    "무를 잘게 썰어서 먹어",
+    "손녀가 자러 왔었어",
+])
+def test_short_cues_do_not_fire_inside_other_words(text):
+    """'이만'·'잘게'·'자러'는 종결어미가 붙은 형태에서만 마무리다."""
+    assert conversation_control.is_farewell(text) is False
+
+
+@pytest.mark.parametrize("text", [
+    "나 이만 가볼게",
+    "이제 자러 갈게",
+    "그만 자야겠다",
+    "이만",        # 단독 발화는 전체일치 목록이 받는다
+    "이제 잘게",
+])
+def test_narrowed_cues_still_end_the_conversation(text):
+    """좁힌 뒤에도 실제 마무리 발화는 그대로 잡아야 한다."""
+    assert conversation_control.is_farewell(text) is True
+
+
+@pytest.mark.parametrize("text", [
+    "고마워, 근데 약은 언제 먹어?",   # 감사로 운을 떼고 본론으로 들어간다
+    "알겠어 그럼 내일 병원 몇 시야",
+    "응",                              # 군더더기뿐 — 맞장구지 마무리가 아니다
+    "그래 그래",
+    "안녕하세요",                      # '안녕'이 들어가지만 인사말이다
+    "고마운 사람이 많아",              # 부분일치였다면 잘렸을 발화
+])
+def test_soft_closing_does_not_swallow_ongoing_talk(text):
+    """마무리 어휘가 섞였을 뿐 대화가 이어지는 발화는 끊지 않는다."""
+    assert conversation_control.is_farewell(text) is False
 
 
 # ── 3. 감사 결함 B1: 정상 종료된 재생은 barge-in 이 아니다 ───────────────────

@@ -13,6 +13,7 @@ import java.util.List;
  */
 public record DashboardResponse(
         ElderDto elder,
+        GuardianDto guardian,
         RobotDto robot,
         HomeEnvironmentDto homeEnvironment,
         int todayIncidentCount,
@@ -22,6 +23,13 @@ public record DashboardResponse(
         long pendingConfirmationCount,
         List<FactCandidateDto> confirmationRequests,
         List<ActivityDto> recentActivities,
+        /**
+         * 활동 피드 공개범위 계약 버전. FE 는 이 값이 {@code GUARDIAN_VISIBLE_V1} 일 때만
+         * {@code recentActivities} 를 "확인된 목록"으로 읽고, 없으면 null(=확인 못 함)로
+         * 취급한다. 지금까지 이 필드가 없어서 백엔드가 활동을 정상으로 내려주는데도
+         * 화면은 항상 "아직 연결되지 않음"을 그렸다.
+         */
+        String activityVisibilityContract,
         String generatedAt) {
 
     public record ElderDto(
@@ -32,6 +40,14 @@ public record DashboardResponse(
             String lastCheckedAt) {
     }
 
+    /**
+     * 로봇 현황.
+     *
+     * <p>{@code currentMode} 는 RobotMode(IDLE/SCENARIO_ACTIVE/REST_GUARD/SAFE_STOP)
+     * 4값뿐이라 현관 인사·"보미야" 호출·복약 알림·산책이 모두 SCENARIO_ACTIVE 하나로
+     * 뭉개진다. {@code activeScenarioType} 은 그 넷을 화면에서 구분하기 위한 값이며
+     * scenario 테이블에서 온다. 진행 중인 시나리오가 없으면 두 값 모두 null 이다.</p>
+     */
     public record RobotDto(
             String id,
             String elderId,
@@ -40,7 +56,9 @@ public record DashboardResponse(
             boolean isActive,
             BigDecimal ambientTemperatureC,
             BigDecimal ambientHumidityPercent,
-            String ambientObservedAt) {
+            String ambientObservedAt,
+            String activeScenarioType,
+            String activeScenarioStartedAt) {
     }
 
     public record HomeEnvironmentDto(
@@ -80,12 +98,32 @@ public record DashboardResponse(
             int missed) {
     }
 
+    /**
+     * 활동 1건. {@code visibility} 는 이 건을 보호자에게 보여도 되는지의 근거다 —
+     * memory 는 자기 visibility 를 그대로 싣고, 로봇 알림은 보호자 수신용으로
+     * 만들어진 것이라 SHARED_WITH_PRIMARY 로 표기한다. FE 는 이 값이 없는 건을
+     * 그리지 않는다(PRIVATE 유출 방지).
+     */
+    /**
+     * 지금 이 화면을 보는 보호자.
+     *
+     * <p>헤더가 "보호자"라는 일반명사만 띄우고 있어서, 화면이 누구의 시점인지 말한 적이
+     * 없었다. 여러 보호자가 연결되는 순간 그 모호함은 오해가 된다. 이름과 순위를 함께
+     * 싣고, 연결된 보호자가 없으면 통째로 null 로 둔다 — 없는 사람을 지어내지 않는다.</p>
+     */
+    public record GuardianDto(
+            String id,
+            String name,
+            String priority) {
+    }
+
     public record ActivityDto(
             String id,
             String title,
             String summary,
             String occurredAt,
             String source,
-            String statusLevel) {
+            String statusLevel,
+            String visibility) {
     }
 }
