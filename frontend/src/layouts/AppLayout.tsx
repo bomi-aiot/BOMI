@@ -1,108 +1,40 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { StatusBadge, type StatusLevel } from '../components/Badge';
-import type { AppRoutePath } from '../hooks/useRoute';
+import { type ReactNode } from 'react';
 
-export interface NavigationItem {
-  label: string;
-  shortLabel: string;
-  marker: string;
-  path?: AppRoutePath;
-  disabled?: boolean;
-  notificationCount?: number;
+/**
+ * 문의 메일 주소.
+ *
+ * 사이드바 아래에 "도움이 필요하신가요? 돌봄 서비스 문의는 운영팀에 알려주세요" 라는
+ * 안내가 있었지만 누를 수 없었다 — 문의하라고 적어 두고 문의할 방법은 주지 않은 셈이다.
+ * 링크 하나면 되는 일이라 mailto 로 연결한다.
+ */
+const SUPPORT_EMAIL = 'wdg0434@gmail.com';
+
+/** 종 아이콘. 아이콘 폰트를 새로 들이지 않으려고 인라인 SVG 로 둔다. */
+function BellIcon() {
+  return (
+    <svg
+      className="notification-button__icon"
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M18 8a6 6 0 1 0-12 0c0 6-2 7-2 7h16s-2-1-2-7" />
+      <path d="M13.7 20a2 2 0 0 1-3.4 0" />
+    </svg>
+  );
 }
-
-export interface NavigationGroup {
-  label: string;
-  items: readonly NavigationItem[];
-}
-
-export const NAVIGATION_GROUPS = [
-  {
-    label: '돌봄 보기',
-    items: [
-      {
-        label: '오늘',
-        shortLabel: '오늘',
-        marker: '오늘',
-        path: '/dashboard',
-      },
-      {
-        label: '생활 기록',
-        shortLabel: '기록',
-        marker: '기록',
-        path: '/records',
-      },
-      {
-        label: '돌봄 계획',
-        shortLabel: '계획',
-        marker: '계획',
-        path: '/care-plan',
-      },
-      {
-        label: '확인할 일',
-        shortLabel: '확인',
-        marker: '확',
-        path: '/confirmation-requests',
-      },
-      {
-        label: '보미와 집',
-        shortLabel: '보미',
-        marker: '보미',
-        path: '/bomi-home',
-      },
-      {
-        label: '어르신 설정',
-        shortLabel: '설정',
-        marker: '설정',
-        path: '/elder/profile',
-      },
-    ],
-  },
-  {
-    label: '세부 관리',
-    items: [
-      { label: '복약 관리', shortLabel: '복약', marker: '약', path: '/medications' },
-      { label: '일정 관리', shortLabel: '일정', marker: '일', path: '/schedules' },
-      { label: '공유된 생활 정보', shortLabel: '정보', marker: '공유', path: '/conversation-preferences' },
-    ],
-  },
-] as const satisfies readonly NavigationGroup[];
-
-const MOBILE_NAV_ITEMS: readonly NavigationItem[] = [
-  {
-    label: '오늘',
-    shortLabel: '오늘',
-    marker: '오늘',
-    path: '/dashboard',
-  },
-  {
-    label: '생활 기록',
-    shortLabel: '기록',
-    marker: '기록',
-    path: '/records',
-  },
-  {
-    label: '확인할 일',
-    shortLabel: '확인',
-    marker: '확',
-    path: '/confirmation-requests',
-  },
-  {
-    label: '보미와 집',
-    shortLabel: '보미',
-    marker: '보미',
-    path: '/bomi-home',
-  },
-];
 
 export interface AppLayoutProps {
   children: ReactNode;
-  pathname: string;
-  onNavigate: (path: string) => void;
   selectedElderName?: string;
   lastObservationLabel?: string;
-  alertStatus?: StatusLevel;
-  alertStatusLabel?: string;
   notificationCount?: number;
   guardianName?: string;
   guardianRole?: string;
@@ -111,160 +43,44 @@ export interface AppLayoutProps {
   mockNotice?: ReactNode;
 }
 
-interface NavigationProps {
-  pathname: string;
-  onNavigate: (path: string) => void;
-  onItemSelected?: () => void;
-  notificationCount?: number;
-}
-
-function Brand() {
-  return (
-    <div className="app-brand" aria-label="BOMI 보호자 센터">
-      <span className="app-brand__mark" aria-hidden="true">
-        B
-      </span>
-      <span className="app-brand__copy">
-        <strong className="app-brand__name">BOMI</strong>
-        <span className="app-brand__subtitle">보호자 센터</span>
-      </span>
-    </div>
-  );
-}
-
-function Navigation({
-  pathname,
-  onNavigate,
-  onItemSelected,
-  notificationCount = 0,
-}: NavigationProps) {
-  const handleNavigate = (path: AppRoutePath): void => {
-    onNavigate(path);
-    onItemSelected?.();
-  };
-
-  return (
-    <nav className="sidebar-nav" aria-label="주요 메뉴">
-      {NAVIGATION_GROUPS.map((group) => {
-        const items: readonly NavigationItem[] = group.items;
-
-        return (
-          <section className="sidebar-nav__group" key={group.label}>
-            <h2 className="sidebar-nav__group-label">{group.label}</h2>
-            <ul className="sidebar-nav__list">
-              {items.map((item) => {
-              const isActive = item.path === pathname;
-              return (
-                <li key={item.label}>
-                  {item.disabled || !item.path ? (
-                    <button
-                      className="sidebar-nav__item sidebar-nav__item--disabled"
-                      type="button"
-                      disabled
-                      aria-disabled="true"
-                      title={`${item.label} — 추후 제공`}
-                    >
-                      <span
-                        className="sidebar-nav__marker"
-                        aria-hidden="true"
-                      >
-                        {item.marker}
-                      </span>
-                      <span className="sidebar-nav__label">{item.label}</span>
-                      <span className="sidebar-nav__coming-soon">
-                        추후 제공
-                      </span>
-                    </button>
-                  ) : (
-                    <button
-                      className={`sidebar-nav__item${
-                        isActive ? ' sidebar-nav__item--active' : ''
-                      }`}
-                      type="button"
-                      onClick={() => handleNavigate(item.path as AppRoutePath)}
-                      aria-current={isActive ? 'page' : undefined}
-                    >
-                      <span
-                        className="sidebar-nav__marker"
-                        aria-hidden="true"
-                      >
-                        {item.marker}
-                      </span>
-                      <span className="sidebar-nav__label">{item.label}</span>
-                      {(item.path === '/confirmation-requests'
-                        ? notificationCount
-                        : item.notificationCount) ? (
-                        <span
-                          className="sidebar-nav__count"
-                          aria-label={`${
-                            item.path === '/confirmation-requests'
-                              ? notificationCount
-                              : item.notificationCount
-                          }건`}
-                        >
-                          {item.path === '/confirmation-requests'
-                            ? notificationCount
-                            : item.notificationCount}
-                        </span>
-                      ) : null}
-                    </button>
-                  )}
-                </li>
-              );
-              })}
-            </ul>
-          </section>
-        );
-      })}
-    </nav>
-  );
-}
-
-interface AppHeaderProps
-  extends Pick<
-    AppLayoutProps,
-    | 'selectedElderName'
-    | 'lastObservationLabel'
-    | 'alertStatus'
-    | 'alertStatusLabel'
-    | 'notificationCount'
-    | 'guardianName'
-    | 'guardianRole'
-    | 'onRefresh'
-    | 'onNotificationsOpen'
-  > {
-  drawerOpen: boolean;
-  onDrawerToggle: () => void;
-}
+type AppHeaderProps = Pick<
+  AppLayoutProps,
+  | 'selectedElderName'
+  | 'lastObservationLabel'
+  | 'notificationCount'
+  | 'guardianName'
+  | 'guardianRole'
+  | 'onRefresh'
+  | 'onNotificationsOpen'
+>;
 
 export function AppHeader({
   selectedElderName = '봄순 어르신',
   lastObservationLabel = '관찰 시각 없음',
-  alertStatus = 'pending',
-  alertStatusLabel,
   notificationCount = 0,
-  guardianName = '보호자',
-  guardianRole = '보호자 화면',
+  guardianName,
+  guardianRole,
   onRefresh,
   onNotificationsOpen,
-  drawerOpen,
-  onDrawerToggle,
 }: AppHeaderProps) {
-  const guardianInitial = guardianName.trim().slice(0, 1) || '보';
+  // 보호자 이름을 못 받았을 때 "보호자"라는 일반명사로 채우지 않는다. 그 자리에
+  // 그럴듯한 글자를 넣으면, 실제로는 아무도 연결돼 있지 않다는 사실이 가려진다.
+  const hasGuardian = Boolean(guardianName?.trim());
+  const displayName = guardianName?.trim() ?? '보호자 미연결';
+  const guardianInitial = hasGuardian ? displayName.slice(0, 1) : '?';
 
   return (
     <header className="app-header">
       <div className="app-header__leading">
-        <button
-          className="app-header__menu-button"
-          type="button"
-          onClick={onDrawerToggle}
-          aria-label={drawerOpen ? '메뉴 닫기' : '메뉴 열기'}
-          aria-expanded={drawerOpen}
-          aria-controls="mobile-navigation-drawer"
-        >
-          <span aria-hidden="true">{drawerOpen ? '×' : '☰'}</span>
-        </button>
+        <div className="app-brand" aria-label="BOMI 보호자 센터">
+          <span className="app-brand__mark" aria-hidden="true">
+            B
+          </span>
+          <span className="app-brand__copy">
+            <strong className="app-brand__name">BOMI</strong>
+            <span className="app-brand__subtitle">보호자 센터</span>
+          </span>
+        </div>
         <div className="elder-selector" aria-label={`돌봄 대상: ${selectedElderName}`}>
           <span className="elder-selector__label">돌봄 대상</span>
           <strong className="elder-selector__name">{selectedElderName}</strong>
@@ -286,21 +102,28 @@ export function AppHeader({
             </button>
           ) : null}
         </div>
-        <StatusBadge
-          status={alertStatus}
-          label={alertStatusLabel ?? '알림 확인 중'}
-        />
       </div>
 
       <div className="app-header__account">
+        {/*
+          "확인" 이라는 글자를 종 아이콘으로 바꾸고, 실제로 눌리게 했다.
+            예전에는 화면 넷이 따로 있어서 이 버튼이 /confirmation-requests 로
+            이동시켰는데, 이미 그 화면이면 아무 일도 일어나지 않았다 — 숫자만 떠 있고
+            눌러도 반응이 없는 버튼이었다. 이제 같은 페이지의 '확인할 일' 구역으로
+            스크롤한다. 어디에 있든 항상 반응한다.
+        */}
         <button
           className="notification-button"
           type="button"
           onClick={onNotificationsOpen}
           disabled={!onNotificationsOpen}
-          aria-label={`확인할 일 ${notificationCount}건`}
+          aria-label={
+            notificationCount > 0
+              ? `확인할 일 ${notificationCount}건 보기`
+              : '확인할 일 보기'
+          }
         >
-          <span aria-hidden="true">확인</span>
+          <BellIcon />
           {notificationCount > 0 ? (
             <span className="notification-button__count">
               {notificationCount > 99 ? '99+' : notificationCount}
@@ -312,8 +135,10 @@ export function AppHeader({
             {guardianInitial}
           </span>
           <span className="guardian-profile__copy">
-            <strong className="guardian-profile__name">{guardianName}</strong>
-            <span className="guardian-profile__role">{guardianRole}</span>
+            <strong className="guardian-profile__name">{displayName}</strong>
+            {hasGuardian && guardianRole ? (
+              <span className="guardian-profile__role">{guardianRole}</span>
+            ) : null}
           </span>
         </div>
       </div>
@@ -321,14 +146,17 @@ export function AppHeader({
   );
 }
 
+/**
+ * 한 장짜리 보호자 화면의 뼈대.
+ *
+ * 사이드바를 없앴다 — 그 안의 버튼 넷이 가리키던 화면을 모두 본문 한 장에 쌓았기
+ * 때문이다(GuardianOnePage). 메뉴가 사라지면서 모바일 서랍과 하단 탭도 함께 사라진다.
+ * 셋 다 "어느 화면으로 갈까"만 물어보던 장치였고, 이제 갈 곳이 하나다.
+ */
 export function AppLayout({
   children,
-  pathname,
-  onNavigate,
   selectedElderName,
   lastObservationLabel,
-  alertStatus,
-  alertStatusLabel,
   notificationCount = 0,
   guardianName,
   guardianRole,
@@ -336,119 +164,21 @@ export function AppLayout({
   onNotificationsOpen,
   mockNotice,
 }: AppLayoutProps) {
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const drawerCloseButtonRef = useRef<HTMLButtonElement>(null);
-  const drawerRef = useRef<HTMLElement>(null);
-
-  useEffect(() => {
-    setDrawerOpen(false);
-  }, [pathname]);
-
-  useEffect(() => {
-    if (!drawerOpen) {
-      return undefined;
-    }
-
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null;
-    const originalOverflow = document.body.style.overflow;
-    const backgroundRegions = [
-      document.querySelector<HTMLElement>('.app-shell__body'),
-      document.querySelector<HTMLElement>('.app-sidebar'),
-      document.querySelector<HTMLElement>('.mobile-bottom-nav'),
-    ].filter((region): region is HTMLElement => region !== null);
-    document.body.style.overflow = 'hidden';
-    backgroundRegions.forEach((region) => {
-      region.setAttribute('inert', '');
-      region.setAttribute('aria-hidden', 'true');
-    });
-
-    const handleEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        setDrawerOpen(false);
-      }
-    };
-
-    const handleTab = (event: KeyboardEvent): void => {
-      if (event.key !== 'Tab' || !drawerRef.current) {
-        return;
-      }
-
-      const focusableElements = Array.from(
-        drawerRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])',
-        ),
-      );
-      const firstElement = focusableElements[0];
-      const lastElement = focusableElements[focusableElements.length - 1];
-
-      if (!firstElement || !lastElement) {
-        event.preventDefault();
-        drawerRef.current.focus();
-        return;
-      }
-
-      if (event.shiftKey && document.activeElement === firstElement) {
-        event.preventDefault();
-        lastElement.focus();
-      } else if (!event.shiftKey && document.activeElement === lastElement) {
-        event.preventDefault();
-        firstElement.focus();
-      }
-    };
-
-    document.addEventListener('keydown', handleEscape);
-    document.addEventListener('keydown', handleTab);
-    drawerCloseButtonRef.current?.focus();
-
-    return () => {
-      document.removeEventListener('keydown', handleEscape);
-      document.removeEventListener('keydown', handleTab);
-      document.body.style.overflow = originalOverflow;
-      backgroundRegions.forEach((region) => {
-        region.removeAttribute('inert');
-        region.removeAttribute('aria-hidden');
-      });
-      previouslyFocused?.focus();
-    };
-  }, [drawerOpen]);
-
-  const handleNavigate = (path: string): void => {
-    onNavigate(path);
-    setDrawerOpen(false);
-  };
-
   return (
-    <div className="app-shell">
+    <div className="app-shell app-shell--flat">
       <a className="skip-link" href="#main-content">
         본문으로 바로가기
       </a>
-
-      <aside className="app-sidebar">
-        <Brand />
-        <Navigation pathname={pathname} onNavigate={handleNavigate} notificationCount={notificationCount} />
-        <div className="app-sidebar__support">
-          <p>도움이 필요하신가요?</p>
-          <span>돌봄 서비스 문의는 운영팀에 알려주세요.</span>
-        </div>
-      </aside>
 
       <div className="app-shell__body">
         <AppHeader
           selectedElderName={selectedElderName}
           lastObservationLabel={lastObservationLabel}
-          alertStatus={alertStatus}
-          alertStatusLabel={alertStatusLabel}
           notificationCount={notificationCount}
           guardianName={guardianName}
           guardianRole={guardianRole}
           onRefresh={onRefresh}
           onNotificationsOpen={onNotificationsOpen}
-          drawerOpen={drawerOpen}
-          onDrawerToggle={() => setDrawerOpen((current) => !current)}
         />
 
         {mockNotice ? (
@@ -457,84 +187,24 @@ export function AppLayout({
 
         <main className="app-main" id="main-content" tabIndex={-1}>
           {children}
+
+          <footer className="app-support">
+            <p className="app-support__title">도움이 필요하신가요?</p>
+            <p className="app-support__body">
+              돌봄 서비스 문의는{' '}
+              <a
+                className="app-support__link"
+                href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(
+                  'BOMI 보호자 센터 문의',
+                )}`}
+              >
+                운영팀에 메일로 알려주세요
+              </a>
+              .
+            </p>
+          </footer>
         </main>
       </div>
-
-      {drawerOpen ? (
-        <div
-          className="mobile-drawer-backdrop"
-          onMouseDown={(event) => {
-            if (event.currentTarget === event.target) {
-              setDrawerOpen(false);
-            }
-          }}
-        >
-          <aside
-            ref={drawerRef}
-            className="mobile-drawer"
-            id="mobile-navigation-drawer"
-            aria-label="모바일 메뉴"
-            role="dialog"
-            aria-modal="true"
-            tabIndex={-1}
-          >
-            <div className="mobile-drawer__header">
-              <Brand />
-              <button
-                ref={drawerCloseButtonRef}
-                className="mobile-drawer__close"
-                type="button"
-                onClick={() => setDrawerOpen(false)}
-                aria-label="메뉴 닫기"
-              >
-                <span aria-hidden="true">×</span>
-              </button>
-            </div>
-            <Navigation
-              pathname={pathname}
-              onNavigate={handleNavigate}
-              onItemSelected={() => setDrawerOpen(false)}
-              notificationCount={notificationCount}
-            />
-          </aside>
-        </div>
-      ) : null}
-
-      <nav className="mobile-bottom-nav" aria-label="빠른 메뉴">
-        {MOBILE_NAV_ITEMS.map((item) => {
-          if (!item.path) {
-            return null;
-          }
-
-          const isActive = item.path === pathname;
-          return (
-            <button
-              className={`mobile-bottom-nav__item${
-                isActive ? ' mobile-bottom-nav__item--active' : ''
-              }`}
-              type="button"
-              key={item.path}
-              onClick={() => handleNavigate(item.path as AppRoutePath)}
-              aria-current={isActive ? 'page' : undefined}
-              aria-label={
-                item.path === '/confirmation-requests'
-                  ? `확인할 일 ${notificationCount}건`
-                  : item.label
-              }
-            >
-              <span className="mobile-bottom-nav__marker" aria-hidden="true">
-                {item.marker}
-              </span>
-              {item.path === '/confirmation-requests' && notificationCount > 0 ? (
-                <span className="mobile-bottom-nav__count" aria-hidden="true">
-                  {notificationCount > 99 ? '99+' : notificationCount}
-                </span>
-              ) : null}
-              <span>{item.shortLabel}</span>
-            </button>
-          );
-        })}
-      </nav>
     </div>
   );
 }

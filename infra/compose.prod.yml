@@ -21,15 +21,84 @@ services:
     networks:
       - backend-net
 
+  # 의미 검색 전용 벡터 스토어 (S15P11E102-218).
+  #
+  # 왜 pgvector 가 아닌가 (실측)
+  #   Upstage solar-embedding-1-large 의 출력은 4096차원이다. pgvector 0.8.5 가
+  #   인덱싱할 수 있는 상한은 vector 2,000 / halfvec 4,000 차원이므로 4096 은 인덱스를
+  #   만들 수 없고, 남는 것은 인덱스 없는 순차 스캔뿐이다. 한국어 품질 때문에 Upstage 를
+  #   포기할 수 없다는 판단이라 저장소를 바꿨다.
+  #
+  # 왜 호스트 포트를 열지 않는가
+  #   Qdrant 는 기본 인증이 없다. 포트를 열면 어르신의 기억 벡터와 payload 가 인터넷에
+  #   그대로 노출된다. backend-net 은 internal: true 라 외부에서 닿지 않고, 붙는 것은
+  #   backend 하나뿐이다. mosquitto 만 8883 을 여는 것과 같은 기준이다.
+  #
+  # ★ Postgres 가 여전히 권위다. 이 컨테이너는 파생 인덱스이므로, 볼륨을 잃어도
+  #   embedding_status 부기 컬럼으로 전량 재색인이 된다(V5). 그래서 백업 대상이 아니다.
+  qdrant:
+    image: qdrant/qdrant:v1.18.3
+    container_name: bomi-qdrant
+    restart: unless-stopped
+    environment:
+      # 컨테이너 안에서만 닿지만, 키가 설정돼 있으면 요구한다. 네트워크 격리 하나에만
+      # 기대지 않는다 — 나중에 누가 컨테이너를 다른 네트워크에 붙이면 격리가 사라진다.
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-}
+      # 로그를 조용하게. 기본 INFO 는 검색 한 건마다 한 줄을 남겨 다른 로그를 덮는다.
+      QDRANT__LOG_LEVEL: WARN
+    volumes:
+      # ★ named volume 이다. 호스트 경로를 받지 않는다.
+      #
+      #   원래는 ${QDRANT_DATA_DIR} bind mount 였다. 그 값에 Qdrant Cloud URL 이
+      #   들어간 채로 배포가 돌았고, 볼륨 짧은 문법이 콜론으로 쪼개면서 'https' 를
+      #   볼륨 이름으로 읽어 "undefined volume https" 로 실패했다.
+      #
+      #   값을 검증하는 대신 물어보지 않기로 했다. 근거는 바로 위 주석이다 —
+      #   이 볼륨은 파생 인덱스이고 백업 대상이 아니며 부기 컬럼으로 전량 재색인된다.
+      #   즉 '사람이 그 위치를 알아야 할 운영상의 이유가 없다'. 그것이 named volume 이
+      #   맞는 조건이고, 동시에 잘못된 값이 들어올 자리를 없애는 방법이다.
+      #
+      #   POSTGRES_DATA_DIR 은 반대다. Postgres 는 권위이고 일일 백업에 알려진 호스트
+      #   경로가 필요하므로 bind mount 로 남고, 배포 스크립트가 절대 경로인지 검증한다.
+      - qdrant-storage:/qdrant/storage
+    healthcheck:
+      # /readyz 는 컬렉션 적재까지 끝났는지 본다. /healthz 는 프로세스만 확인한다.
+      #
+      # ★ CMD-SHELL 이 아니라 bash 를 직접 부른다. 이 이미지의 /bin/sh 는 dash 이고
+      #   dash 에는 /dev/tcp 가 없다. curl·wget·nc 도 전부 없어서(이미지에서 확인함)
+      #   남은 수단이 bash 의 /dev/tcp 뿐이다. CMD-SHELL 로 쓰면 항상 실패하고,
+      #   backend 의 depends_on: service_healthy 때문에 배포가 그대로 멈춘다.
+      #
+      # ★ 역슬래시가 두 개인 이유: YAML 이 겹따옴표 안에서 한 겹을 벗긴다. 한 개만
+      #   쓰면 YAML 이 그것을 '실제 개행'으로 바꿔버려서 HTTP 요청줄이 깨진다
+      #   (CRLF 가 아니라 LF 가 되고, printf 가 해석할 것이 남지 않는다).
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    mem_limit: 1g
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 20s
+    networks:
+      - backend-net
+
   backend:
     build:
-      context: ../backend
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: backend/Dockerfile
     image: bomi-backend:${BACKEND_IMAGE_TAG:-local}
     container_name: bomi-backend
     restart: unless-stopped
     depends_on:
       postgres:
+        condition: service_healthy
+      # ★ service_started 가 아니라 service_healthy 다. Qdrant 는 기동 직후 잠깐
+      #   컬렉션을 적재하는데, 그 사이 요청은 실패한다. 백엔드가 그때 컬렉션을 만들려
+      #   하면 첫 기동에서만 조용히 실패하고 그 뒤로 의미 검색이 영원히 꺼진다.
+      qdrant:
         condition: service_healthy
     environment:
       BACKEND_PORT: 8080
@@ -42,6 +111,89 @@ services:
         -XX:MaxRAMPercentage=75.0
         -XX:+ExitOnOutOfMemoryError
         -Duser.timezone=UTC
+      MQTT_ENABLED: "true"
+      MQTT_BROKER_URL: tcp://mosquitto:1883
+      MQTT_CLIENT_ID_PREFIX: bomi-backend-prod
+      MQTT_USERNAME: ${MQTT_USERNAME:?MQTT_USERNAME is required}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD is required}
+      # 온습도 안부 확인(WELLNESS_CHECK) 실행 여부·임계값·쿨다운. 귀가 연속 시연에서는
+      # 독립 이동을 막기 위해 SCENARIO_ENABLED=false로 두고, AI가 최신 관측값을
+      # 추종 후 대화에 사용한다 (env 변경 후 컨테이너 재시작).
+      WELLNESS_SCENARIO_ENABLED: ${WELLNESS_SCENARIO_ENABLED:-true}
+      WELLNESS_TEMP_THRESHOLD: ${WELLNESS_TEMP_THRESHOLD:-30.0}
+      WELLNESS_HUMIDITY_THRESHOLD: ${WELLNESS_HUMIDITY_THRESHOLD:-80.0}
+      WELLNESS_COOLDOWN_MINUTES: ${WELLNESS_COOLDOWN_MINUTES:-30}
+      # 현관 방향 판정(문↔PIR 순서로 IN/OUT 결정)과 그 상관 윈도우 (S15P11E102-365).
+      # PIR 을 어디에 다느냐에 따라 귀가가 외출로 뒤집힐 수 있고, 그것은 리허설에서만
+      # 드러난다. 재배포 없이 켜고 끄고 창을 조정할 수 있어야 한다 — 컨테이너 재시작만
+      # 으로 반영된다.
+      ENTRANCE_DIRECTION_RESOLUTION_ENABLED: ${ENTRANCE_DIRECTION_RESOLUTION_ENABLED:-false}
+      ENTRANCE_CORRELATION_WINDOW: ${ENTRANCE_CORRELATION_WINDOW:-15s}
+      ENTRANCE_GREETING_TTL: ${ENTRANCE_GREETING_TTL:-45s}
+      ENTRANCE_REVERSAL_WINDOW: ${ENTRANCE_REVERSAL_WINDOW:-30s}
+      # 복약 알림 유예(분). 시연 리허설에서 재배포 없이 조정 가능해야 한다.
+      MEDICATION_GRACE_MINUTES: ${MEDICATION_GRACE_MINUTES:-15}
+      # 활성 시나리오 강제 타임아웃(ScenarioTimeoutWatchdog). 대화 핸드오프가 로깅
+      # 스텁이거나 이벤트가 유실됐을 때의 마지막 안전망 — 너무 짧으면 정상적으로
+      # 길어진 대화를 끊으므로, 재배포 없이 현장에서 조정 가능해야 한다.
+      SCENARIO_ACTIVE_TIMEOUT: ${SCENARIO_ACTIVE_TIMEOUT:-10m}
+      # AI 시작 확인 10초, 전체 대화 5분. 시연 환경에서는 env로만 조정한다.
+      AI_CONVERSATION_START_TIMEOUT: ${AI_CONVERSATION_START_TIMEOUT:-10s}
+      AI_CONVERSATION_MAX_DURATION: ${AI_CONVERSATION_MAX_DURATION:-5m}
+      AI_CONVERSATION_TIMEOUT_CHECK_INTERVAL_MILLIS: ${AI_CONVERSATION_TIMEOUT_CHECK_INTERVAL_MILLIS:-1000}
+      # 산책 FOLLOW 시작/종료 확인과 최대 지속 시간. 현장 안전 정책에 맞춰
+      # 재배포 없이 조정할 수 있어야 한다.
+      WALK_FOLLOW_START_ACK_TIMEOUT: ${WALK_FOLLOW_START_ACK_TIMEOUT:-10s}
+      WALK_FOLLOW_STOP_ACK_TIMEOUT: ${WALK_FOLLOW_STOP_ACK_TIMEOUT:-10s}
+      WALK_MAX_DURATION: ${WALK_MAX_DURATION:-2h}
+      WALK_TIMEOUT_CHECK_INTERVAL_MILLIS: ${WALK_TIMEOUT_CHECK_INTERVAL_MILLIS:-1000}
+      # 의미 검색 (S15P11E102-218). gRPC 포트다 — 공식 Java 클라이언트가 gRPC 를 쓴다.
+      QDRANT_HOST: qdrant
+      QDRANT_GRPC_PORT: 6334
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+      # 컨테이너 안에서 TLS 를 쓸지. backend-net 은 internal 이라 지금은 false 가 맞다.
+      # Qdrant 를 그 네트워크 밖으로 옮기는 날에는 코드가 아니라 이 값을 바꾼다.
+      QDRANT_USE_TLS: ${QDRANT_USE_TLS:-false}
+      # ★ 이 키가 없으면 임베딩을 만들 수 없고, 의미 검색은 꺼진 채로 뜬다(키워드·중요도·
+      #   최근성 랭킹으로 계속 동작한다). 조용히 꺼지지 않고 기동 로그에 남는다.
+      UPSTAGE_API_KEY: ${UPSTAGE_API_KEY:-}
+      # ★★ 이 두 줄이 없으면 production.env 에 EMBEDDING_ENABLED=true 를 적어도
+      #    아무 일도 일어나지 않는다. Docker 는 호스트 환경변수를 컨테이너로 흘려보내지
+      #    않으므로, environment 에 명시하지 않은 변수는 컨테이너에 존재하지 않는다.
+      #    application.yml 의 ${EMBEDDING_ENABLED:false} 가 기본값을 그대로 읽고
+      #    의미 검색이 영원히 꺼진 채로 뜬다 — 그리고 그 사실을 알려주는 것은
+      #    기동 로그의 "embedding OFF" 한 줄뿐이다.
+      #
+      #    218 에서 실제로 빠뜨렸다. UPSTAGE_API_KEY 만 넘기면 켜진다고 착각했다.
+      EMBEDDING_ENABLED: ${EMBEDDING_ENABLED:-false}
+      # 배경 동기화 잡. 켜는 것과 임베딩 자체를 켜는 것은 별개다 — 시연 중에는 질의
+      # 임베딩만 돌고 백로그를 훑지 않아야 한다.
+      EMBEDDING_SYNC_ENABLED: ${EMBEDDING_SYNC_ENABLED:-false}
+      # 한 실행에 과금되는 호출 수의 상한. 잔액이 작으므로 재배포 없이 줄일 수 있어야 한다.
+      EMBEDDING_SYNC_BATCH_SIZE: ${EMBEDDING_SYNC_BATCH_SIZE:-30}
+      # 번들 문서 코퍼스는 네트워크 없이 로드한다. 장애 시 기억 검색과 대화는 계속되지만
+      # 정보 질문에는 document_corpus_unavailable 근거가 반환된다.
+      DOCUMENT_CORPUS_ENABLED: ${DOCUMENT_CORPUS_ENABLED:-true}
+      DOCUMENT_CORPUS_RESOURCE: ${DOCUMENT_CORPUS_RESOURCE:-classpath:rag/welfare-corpus.json}
+      # 대화 요약 생성형 LLM — Gemini, GMS 경유 (S15P11E102-254). 백엔드의 두 번째(현재
+      # 마지막) 과금 외부 API. UPSTAGE_API_KEY 가 겪은 것과 똑같은 실패 모양이다 —
+      # 키만 넘기고 LLM_ENABLED 를 빠뜨리면 application.yml 기본값(false)이 조용히 이겨
+      # 대화 요약이 영원히 생성되지 않는다. 두 줄을 항상 같이 넘긴다.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LLM_ENABLED: ${LLM_ENABLED:-false}
+      # 한 번의 요약 스윕이 부를 수 있는 호출 수 상한. 지출 상한이지 튜닝 값이 아니다.
+      LLM_MAX_CALLS_PER_RUN: ${LLM_MAX_CALLS_PER_RUN:-20}
+      # 대화 경계 유휴시간(S15P11E102-254). SCENARIO_ACTIVE_TIMEOUT 과 같은 이유로
+      # 넘긴다 — 현장에서 재배포 없이 조정 가능해야 한다.
+      CONVERSATION_IDLE_TIMEOUT: ${CONVERSATION_IDLE_TIMEOUT:-30m}
+      # 로봇 채널 인증 공유 비밀키 (S15P11E102-307). 비어 있으면 필터가 전부
+      # 통과시킨다 — 실제 값을 정하는 것은 별도 배포 결정이고 이 티켓의 범위 밖이다.
+      # 여기 넘기지 않으면 production.env 에 값을 적어도 컨테이너에 도달하지
+      # 않는다(EMBEDDING_ENABLED 가 겪은 것과 같은 실패 모양, S15P11E102-218).
+      ROBOT_SHARED_SECRET: ${ROBOT_SHARED_SECRET:-}
+      # Separate fail-closed credential and server-owned audit identity for operator recovery.
+      OPERATOR_SHARED_SECRET: ${OPERATOR_SHARED_SECRET:-}
+      OPERATOR_ID: ${OPERATOR_ID:-}
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "--show-error", "http://localhost:8080/actuator/health"]
       interval: 10s
@@ -58,6 +210,125 @@ services:
     stop_grace_period: 30s
     networks:
       - backend-net
+      - proxy-net
+      - bomi-mqtt-net
+
+  operator-console:
+    build:
+      context: ../backend/tools/operator_console
+      dockerfile: Dockerfile
+    image: bomi-operator-console:${OPERATOR_CONSOLE_IMAGE_TAG:-local}
+    container_name: bomi-operator-console
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      BOMI_BACKEND_URL: http://backend:8080
+      OPERATOR_SHARED_SECRET: ${OPERATOR_SHARED_SECRET:?OPERATOR_SHARED_SECRET is required}
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOME: /tmp
+    ports:
+      - "127.0.0.1:8501:8501"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8501/operator-console/_stcore/health', timeout=2).read()
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    mem_limit: 256m
+    cpus: 0.5
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend-net
+      # backend-net is internal-only. A non-internal network is also required for
+      # Docker to activate the loopback-only published port above.
+      - proxy-net
+
+  # DB 실시간 뷰어. 읽기 전용이고 backend 를 거치지 않고 Postgres 에 직접 붙는다 —
+  # 백엔드 API 로는 "모든 테이블의 모든 컬럼"을 볼 수 없기 때문이다.
+  db-viewer:
+    build:
+      context: ../backend/tools/db_viewer
+      dockerfile: Dockerfile
+    image: bomi-db-viewer:${DB_VIEWER_IMAGE_TAG:-local}
+    container_name: bomi-db-viewer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOME: /tmp
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8501/db-viewer/_stcore/health', timeout=2).read()
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    mem_limit: 512m
+    cpus: 0.5
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend-net
+      - proxy-net
+
+  waypoint-editor:
+    build:
+      context: ../robot
+      dockerfile: tools/waypoint_editor/Dockerfile
+    image: bomi-waypoint-editor:${WAYPOINT_EDITOR_IMAGE_TAG:-local}
+    container_name: bomi-waypoint-editor
+    restart: unless-stopped
+    environment:
+      WAYPOINT_EDITOR_ALLOW_SERVER_WRITE: "false"
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOME: /tmp
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8501/waypoint-editor/_stcore/health', timeout=2).read()
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    mem_limit: 512m
+    cpus: 0.5
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    networks:
       - proxy-net
 
   frontend:
@@ -125,6 +396,12 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      operator-console:
+        condition: service_healthy
+      waypoint-editor:
+        condition: service_healthy
+      db-viewer:
+        condition: service_healthy
       frontend:
         condition: service_healthy
     ports:
@@ -134,6 +411,16 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ${CERTBOT_CONF_DIR:?CERTBOT_CONF_DIR is required}:/etc/letsencrypt:ro
       - ${CERTBOT_WEBROOT_DIR:?CERTBOT_WEBROOT_DIR is required}:/var/www/certbot:ro
+      - ${NGINX_OPERATOR_CONSOLE_HTPASSWD_FILE:?NGINX_OPERATOR_CONSOLE_HTPASSWD_FILE is required}:/etc/nginx/operator-console.htpasswd:ro
+      - ${NGINX_WAYPOINT_EDITOR_HTPASSWD_FILE:?NGINX_WAYPOINT_EDITOR_HTPASSWD_FILE is required}:/etc/nginx/waypoint-editor.htpasswd:ro
+      - ${NGINX_DB_VIEWER_HTPASSWD_FILE:?NGINX_DB_VIEWER_HTPASSWD_FILE is required}:/etc/nginx/db-viewer.htpasswd:ro
+      # 가디언웹 채널 단기 접근 제어용 htpasswd 마운트 (S15P11E102-310) — 2026-08-05
+      # 임시 보류. bomi.conf 의 auth_basic 이 주석 처리되어 지금은 이 파일을 읽지
+      # 않는다. htpasswd 파일이 운영 호스트에 아직 없는 상태에서 릴리즈를 진행해야
+      # 했고, `:?` 필수 선언을 살려 두면 파일이 생기기 전까지 배포 자체가 막혀
+      # 개발 단계의 병목이 된다. 되살리려면 이 줄의 주석을 걷고 bomi.conf 의
+      # auth_basic 두 줄도 함께 되살린다 — 절차는 infra/README.md 참고.
+      # - ${NGINX_GUARDIAN_HTPASSWD_FILE:?NGINX_GUARDIAN_HTPASSWD_FILE is required}:/etc/nginx/guardian.htpasswd:ro
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--spider", "http://localhost/nginx-health"]
       interval: 10s
@@ -174,9 +461,17 @@ services:
       - ${CERTBOT_CONF_DIR:?CERTBOT_CONF_DIR is required}:/etc/letsencrypt
       - ${CERTBOT_WEBROOT_DIR:?CERTBOT_WEBROOT_DIR is required}:/var/www/certbot
 
+volumes:
+  # Qdrant 저장소. 위 qdrant 서비스의 주석 참고 — 파생 인덱스라 위치를 물어보지 않는다.
+  qdrant-storage:
+    name: bomi-qdrant-storage
+
 networks:
   backend-net:
     name: bomi-backend-net
     internal: true
   proxy-net:
     name: bomi-proxy-net
+  bomi-mqtt-net:
+    external: true
+    name: bomi-mqtt-net

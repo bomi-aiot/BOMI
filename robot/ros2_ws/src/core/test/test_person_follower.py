@@ -1,10 +1,14 @@
 """사람 추종 ROS2 노드의 입력 파싱과 LiDAR 계산을 검증한다."""
 
+import json
 import math
 
 import pytest
+from rclpy.time import Time
 from sensor_msgs.msg import LaserScan
+from std_msgs.msg import Bool
 
+from core.follow_state_machine import FollowStateMachine
 from core.person_follower import PersonFollower
 
 
@@ -222,3 +226,227 @@ def test_scan_callback_ignores_scan_when_lidar_disabled(
     follower._scan_callback(
         make_scan([0.2])
     )
+
+
+# ── 추종 스위치 (S15P11E102 통합 스프린트 2-5, "도착 후 사람 접근") ──────────
+#
+# object.__new__(PersonFollower) 로 Node.__init__ (rclpy 컨텍스트 필요)을
+# 건너뛰고, 이 스위치가 실제로 쓰는 속성만 직접 채운다. 위
+# test_scan_callback_ignores_scan_when_lidar_disabled 과 같은 패턴이다.
+
+
+class _FakeClock:
+    """get_clock().now() 를 고정 시각으로 흉내 낸다."""
+
+    def __init__(self, sec: float) -> None:
+        self._time = Time(nanoseconds=int(sec * 1_000_000_000))
+
+    def now(self) -> Time:
+        return self._time
+
+
+class _RecordingPublisher:
+    def __init__(self) -> None:
+        self.published: list[tuple[float, float]] = []
+
+    def publish(self, twist) -> None:
+        self.published.append((twist.linear.x, twist.angular.z))
+
+
+class _RecordingStatusPublisher:
+    """wake_search 가 구독하는 상태 토픽을 흉내 낸다."""
+
+    def __init__(self) -> None:
+        self.published: list[dict] = []
+
+    def publish(self, message) -> None:
+        self.published.append(json.loads(message.data))
+
+
+class _FakeLogger:
+    """get_logger().info/warning/debug 를 조용히 삼킨다."""
+
+    def info(self, _message: str) -> None:
+        pass
+
+    def warning(self, _message: str) -> None:
+        pass
+
+    def debug(self, _message: str) -> None:
+        pass
+
+
+def _make_follower(*, enabled: bool, clock_sec: float = 100.0) -> PersonFollower:
+    follower = object.__new__(PersonFollower)
+    follower._enabled = enabled
+    follower._state_machine = FollowStateMachine()
+    if not enabled:
+        follower._state_machine.disable(clock_sec)
+    follower._velocity_publisher = _RecordingPublisher()
+    follower._status_publisher = _RecordingStatusPublisher()
+    follower._last_velocity = None
+    follower._last_logged_state = None
+    follower._last_logged_velocity_reason = None
+    follower._approach_uses_lidar_only = False
+    follower._hold_motion_on_brief_loss = False
+    follower._linear_accel_limit = 0.0
+    follower._angular_accel_limit = 0.0
+    follower._last_publish_sec = None
+    follower._vision_timeout_handled = True
+    follower._lidar_timeout_stop_sent = True
+    follower.get_clock = lambda: _FakeClock(clock_sec)  # type: ignore[method-assign]
+    follower.get_logger = lambda: _FakeLogger()  # type: ignore[method-assign]
+    return follower
+
+
+def test_publish_velocity_is_a_noop_when_disabled() -> None:
+    """★ 끄면 속도 발행 자체가 나가지 않는다.
+
+    /cmd_vel 로 직결된 접근 대본에서, 꺼진 채로도 매 프레임 정지가 나가면
+    그게 곧 '항상 0'인 Nav2 방해 신호다. 발행 자체를 막아야 한다.
+    """
+    from core.person_following_controller import VelocityCommand
+
+    follower = _make_follower(enabled=False)
+
+    follower._publish_velocity(
+        VelocityCommand(linear_x=0.2, angular_z=0.0, reason="test")
+    )
+
+    assert follower._velocity_publisher.published == []
+
+
+def test_publish_velocity_publishes_when_enabled() -> None:
+    from core.person_following_controller import VelocityCommand
+
+    follower = _make_follower(enabled=True)
+
+    follower._publish_velocity(
+        VelocityCommand(linear_x=0.2, angular_z=0.1, reason="test")
+    )
+
+    assert follower._velocity_publisher.published == [(0.2, 0.1)]
+
+
+# ── LiDAR 전용 접근 (카메라가 종아리 높이라 비전 거리 판단 불가) ────────────
+
+
+def _command_follower(*, lidar_only: bool) -> PersonFollower:
+    follower = object.__new__(PersonFollower)
+    follower._approach_uses_lidar_only = lidar_only
+    return follower
+
+
+def test_lidar_only_turns_vision_stop_into_forward() -> None:
+    """★ 비전의 "다 왔다"를 무시해야 로봇이 출발한다.
+
+    카메라가 낮아 height_ratio 가 항상 1.0 이라 비전은 몇 m 밖에서도 stop 만
+    낸다. 이걸 그대로 따르면 전진을 영원히 시작하지 못한다.
+    """
+    follower = _command_follower(lidar_only=True)
+
+    assert follower._effective_command("stop", True) == "move_forward"
+
+
+def test_lidar_only_keeps_turn_commands_untouched() -> None:
+    # 좌우 정렬은 화면 좌우 위치 기준이라 카메라 높이와 무관하다.
+    follower = _command_follower(lidar_only=True)
+
+    assert follower._effective_command("turn_left", True) == "turn_left"
+    assert follower._effective_command("turn_right", True) == "turn_right"
+    assert (
+        follower._effective_command("move_forward", True) == "move_forward"
+    )
+
+
+def test_lidar_only_does_not_move_when_target_is_not_confirmed() -> None:
+    # 다중 인물·추적 상실 등으로 이동이 금지된 상태를 전진으로 뒤집지 않는다.
+    follower = _command_follower(lidar_only=True)
+
+    assert follower._effective_command("stop", False) == "stop"
+
+
+def test_vision_stop_is_respected_when_lidar_only_is_off() -> None:
+    # 기본값(꺼짐)에서는 기존 동작 그대로다.
+    follower = _command_follower(lidar_only=False)
+
+    assert follower._effective_command("stop", True) == "stop"
+
+
+def test_enable_callback_turns_on_and_state_machine_leaves_disabled() -> None:
+    follower = _make_follower(enabled=False)
+    assert follower._state_machine.state.value == "disabled"
+
+    follower._enable_callback(Bool(data=True))
+
+    assert follower._enabled is True
+    assert follower._state_machine.state.value == "waiting_target"
+
+
+def test_enable_callback_turns_off_and_publishes_a_final_stop_first() -> None:
+    """★ 순서가 핵심: 정지 발행이 스위치를 내리기 '전'에 나가야 한다.
+
+    _publish_velocity 의 초크포인트는 self._enabled 를 본다. 스위치를
+    먼저 내리면 이 마지막 정지 자체가 삼켜져 로봇이 마지막 속도로
+    멈추지 않고 계속 움직일 수 있다.
+    """
+    follower = _make_follower(enabled=True)
+
+    follower._enable_callback(Bool(data=False))
+
+    assert follower._enabled is False
+    assert follower._velocity_publisher.published == [(0.0, 0.0)]
+    assert follower._state_machine.state.value == "disabled"
+
+
+def test_enable_callback_turns_on_publishes_the_new_state_to_wake_search() -> None:
+    """wake_search 가 구독하는 상태 토픽에도 같은 전이가 나가야 한다.
+
+    person_follower 가 대상을 놓쳐도 wake_search 는 이 토픽으로만 그 사실을
+    안다(2026-08-08 실기, target_lost_timeout 재개 버그 수정). 발행 자체가
+    안 나가면 그 수정은 무의미해진다.
+    """
+    follower = _make_follower(enabled=False)
+
+    follower._enable_callback(Bool(data=True))
+
+    assert follower._status_publisher.published == [
+        {
+            "state": "waiting_target",
+            "target_track_id": None,
+            "reason": "waiting_for_target",
+        }
+    ]
+
+
+def test_enable_callback_is_idempotent_for_the_same_value() -> None:
+    """같은 값이 다시 오면 아무 일도 하지 않는다 — 재발행에 로그가 쌓이지 않는다."""
+    follower = _make_follower(enabled=True)
+
+    follower._enable_callback(Bool(data=True))
+
+    assert follower._velocity_publisher.published == []
+
+
+def test_vision_callback_does_not_move_while_disabled() -> None:
+    """꺼진 상태에서 TRACKING 비전 신호가 와도 움직이지 않는다."""
+    from core.person_following_controller import PersonFollowingController
+
+    follower = _make_follower(enabled=False)
+    follower._controller = PersonFollowingController()
+    follower._use_lidar = False
+
+    follower._vision_callback(
+        _StringMessage(
+            '{"status":"tracking","command":"move_forward","track_id":1}'
+        )
+    )
+
+    assert follower._velocity_publisher.published == []
+
+
+class _StringMessage:
+    """std_msgs/String 의 .data 속성만 흉내 낸다."""
+
+    def __init__(self, data: str) -> None:
+        self.data = data

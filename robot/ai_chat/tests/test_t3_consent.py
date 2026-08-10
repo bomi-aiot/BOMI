@@ -258,7 +258,7 @@ def test_classify_intent_routes_the_answer_turn_to_emotional_even_if_intent_leak
         "intent": "schedule",
     }
 
-    assert context_node.classify_intent(state) == {"intent": "emotional"}
+    assert context_node.classify_intent(state)["intent"] == "emotional"
 
 
 def test_classify_intent_defers_when_the_senior_asks_something_instead():

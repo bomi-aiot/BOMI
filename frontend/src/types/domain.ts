@@ -120,14 +120,57 @@ export const ROBOT_REGISTRATION_STATUSES = [
 export type RobotRegistrationStatus =
   (typeof ROBOT_REGISTRATION_STATUSES)[number];
 
+/**
+ * 로봇의 운영 모드. 백엔드 RobotMode enum 과 1:1이며 이 넷이 전부다.
+ *
+ * <p>"HOMECOMING" 은 여기 있었지만 백엔드 enum 에 없는 값이라 한 번도 렌더된 적이
+ * 없다 — 시나리오 종류를 모드로 착각한 흔적이다. 그 구분은 아래 ScenarioType 이 맡는다.</p>
+ */
 export const ROBOT_MODES = [
   "IDLE",
   "SCENARIO_ACTIVE",
   "REST_GUARD",
   "SAFE_STOP",
-  "HOMECOMING",
 ] as const;
 export type RobotMode = (typeof ROBOT_MODES)[number];
+
+/**
+ * 지금 로봇이 수행 중인 시나리오의 종류. 백엔드 ScenarioType enum 과 1:1.
+ *
+ * <p>모드만으로는 현관 인사·"보미야" 호출·복약 알림·산책이 전부 SCENARIO_ACTIVE
+ * 하나로 뭉개진다. 화면에서 그 넷을 구분하려고 백엔드가 따로 내려주는 값이다.
+ * FALL_RESPONSE·MANUAL_INTERACTION 은 백엔드에 값만 예약돼 있고 흐름은 아직 없다.</p>
+ */
+/** 보호자가 요청할 수 있는 산책 동작. 백엔드 WalkAction enum 과 1:1. */
+export type WalkAction = "START" | "STOP";
+
+/**
+ * 산책 요청 결과.
+ *
+ * <p>주의 — HTTP 가 성공(200)이어도 {@code accepted} 가 false 일 수 있다.
+ * "종료할 활성 산책이 없음"이 그 경우다. 화면은 상태 코드가 아니라 이 값을 봐야 한다.</p>
+ */
+export interface WalkRequestResult {
+  requestId: string;
+  action: WalkAction;
+  accepted: boolean;
+  scenarioId?: string;
+  status?: string;
+  /** 거절 사유. NO_ACTIVE_WALK · SAFE_STOP · ACTIVE_SCENARIO · BUSY_MODE 등. */
+  reasonCode?: string;
+  duplicate: boolean;
+}
+
+export const SCENARIO_TYPES = [
+  "HOMECOMING",
+  "WELLNESS_CHECK",
+  "MEDICATION_REMINDER",
+  "WAKE_WORD_CALL",
+  "WALK",
+  "FALL_RESPONSE",
+  "MANUAL_INTERACTION",
+] as const;
+export type ScenarioType = (typeof SCENARIO_TYPES)[number];
 
 export type RobotConnectionStatus = "ONLINE" | "OFFLINE";
 export type SensorConnectionStatus = "CONNECTED" | "DISCONNECTED";
@@ -483,6 +526,12 @@ export interface ConfirmationRequest {
   riskLevel: RiskLevel;
   coordinationStatus: CoordinationStatus;
   source: InformationSource;
+  /**
+   * 이 말이 어디서 나왔는가. 카드가 "언제 어디서 들은 말인지"를 한 줄로 말하는 데 쓴다.
+   * 서버 sourceType(CONVERSATION_MESSAGE / ONBOARDING_ANSWER)을 그대로 옮긴 값이라,
+   * 모르면 undefined 로 두고 화면은 출처를 아예 말하지 않는다 — 지어내지 않는다.
+   */
+  origin?: "CONVERSATION" | "ONBOARDING";
   sourceConversationId?: string;
   sourceMessageId?: string;
   createdAt: string;
@@ -525,6 +574,10 @@ export interface RobotStatus {
   elderId: string;
   deviceId?: string;
   currentMode?: RobotMode;
+  /** 진행 중인 시나리오 종류. 아무것도 안 하고 있으면 undefined. */
+  activeScenarioType?: ScenarioType;
+  /** 그 시나리오가 시작된 시각(ISO 8601). */
+  activeScenarioStartedAt?: string;
   registrationActive: boolean;
   ambientTemperatureC?: number;
   ambientHumidityPercent?: number;
@@ -545,7 +598,15 @@ export interface MedicationProgress {
   missed: number;
 }
 
+/** 지금 이 화면을 보는 보호자. 연결된 보호자가 없으면 undefined. */
+export interface GuardianSummary {
+  id: string;
+  name: string;
+  priority: "PRIMARY" | "SECONDARY";
+}
+
 export interface HomeDashboardSummary {
+  guardian?: GuardianSummary;
   elder: {
     id: string;
     displayName: string;

@@ -1,10 +1,5 @@
+import { useMemo, useState } from 'react'
 import {
-  useMemo,
-  useState,
-  type ChangeEvent,
-} from 'react'
-import {
-  Badge,
   Button,
   Card,
   ConfirmModal,
@@ -21,13 +16,11 @@ import type {
   ConfirmationRequestStatus,
   ConfirmationResolution,
   CoordinationStatus,
-  RiskLevel,
   StructuredValue,
 } from '../types/domain'
-import { formatDateTime } from '../utils/date'
+import { formatDateTime, formatSpokenDateTime } from '../utils/date'
 
 type KindFilter = 'ALL' | ConfirmationKind
-type StatusFilter = 'PENDING' | 'RESOLVED' | 'ALL'
 type DirectResolution = Exclude<ConfirmationResolution, 'EDIT'>
 
 interface ResolutionDialogState {
@@ -49,15 +42,6 @@ const KIND_LABELS: Record<ConfirmationKind, string> = {
   MEDICATION_CONFLICT: '복약 충돌',
 }
 
-const KIND_TONES: Record<
-  ConfirmationKind,
-  'info' | 'success' | 'warning' | 'danger'
-> = {
-  INTEREST: 'info',
-  SCHEDULE: 'success',
-  HEALTH: 'warning',
-  MEDICATION_CONFLICT: 'danger',
-}
 
 const STATUS_LABELS: Record<ConfirmationRequestStatus, string> = {
   PENDING: '확인 대기',
@@ -68,29 +52,8 @@ const STATUS_LABELS: Record<ConfirmationRequestStatus, string> = {
   EXPIRED: '확인 기한 종료',
 }
 
-const STATUS_TONES: Record<
-  ConfirmationRequestStatus,
-  'info' | 'success' | 'warning' | 'neutral'
-> = {
-  PENDING: 'warning',
-  CONFIRMED: 'success',
-  EDITED: 'success',
-  REJECTED: 'neutral',
-  REASK_REQUESTED: 'info',
-  EXPIRED: 'neutral',
-}
 
-const RISK_LABELS: Record<RiskLevel, string> = {
-  NORMAL: '일반',
-  SENSITIVE: '민감',
-  HIGH: '높음',
-}
 
-const RISK_TONES: Record<RiskLevel, 'neutral' | 'warning' | 'danger'> = {
-  NORMAL: 'neutral',
-  SENSITIVE: 'warning',
-  HIGH: 'danger',
-}
 
 const COORDINATION_LABELS: Record<CoordinationStatus, string> = {
   NOT_REQUIRED: '',
@@ -105,6 +68,12 @@ const COORDINATION_LABELS: Record<CoordinationStatus, string> = {
 }
 
 const VALUE_KEY_LABELS: Record<string, string> = {
+  // content 는 어르신이 실제로 한 말이고, 로봇이 보내는 유일한 키다. 이 줄이 없어서
+  // 아래 VISIBLE_VALUE_KEYS 가 그 값을 걸러냈고 — 매퍼의 허용 목록과 합쳐 두 겹으로
+  // 걸렀다 — 카드의 값 패널이 항상 빈 상자였다. 라벨을 "내용"으로 두는 이유는
+  // 이것이 요약도 해석도 아닌 원문이기 때문이다.
+  content: '내용',
+  note: '말씀하신 내용',
   memoryType: '정보 종류',
   title: '제목',
   keywords: '키워드',
@@ -201,37 +170,87 @@ const formatScalarValue = (key: string, value: StructuredValue): string => {
   return text
 }
 
+// 큰 인용문으로 이미 보여 준 키. 값 패널에서는 빼서 같은 문장을 두 번 읽히지 않는다.
+const QUOTE_KEYS = new Set(['content', 'note'])
+
+/** 어르신이 실제로 한 말. 없으면 undefined — 지어내지 않는다. */
+function spokenText(request: ConfirmationRequest): string | undefined {
+  const value = request.proposedValue
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+  for (const key of ['note', 'content']) {
+    const candidate = (value as Record<string, StructuredValue>)[key]
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return candidate.trim()
+    }
+  }
+  return undefined
+}
+
+function visibleRows(
+  value: StructuredValue,
+  omitKeys?: ReadonlySet<string>,
+): [string, StructuredValue][] {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return []
+  }
+  return Object.entries(value).filter(
+    ([key]) => VISIBLE_VALUE_KEYS.has(key) && !omitKeys?.has(key),
+  )
+}
+
+/**
+ * 인용문 말고 <b>더</b> 있는 값만 보여 준다. 더할 것이 없으면 아무것도 그리지 않는다.
+ *
+ * 예전에는 값이 한 줄도 없어도 제목만 붙은 빈 상자를 그렸다. 그래서 허용 목록에서 키
+ * 하나가 빠진 것을 아무도 눈치채지 못했다 — 빈 상자는 "못 읽었다"가 아니라 "볼 것이
+ * 없다"로 읽힌다. 지금은 정말 볼 것이 없으면 상자 자체가 사라지고, 화면에 보여 줄 것이
+ * 하나도 없는 경우에만 카드가 그 사실을 문장으로 말한다(아래 confirmation-card 참고).
+ */
 function StructuredValuePanel({
   label,
   value,
-  tone = 'neutral',
+  omitKeys,
 }: {
   label: string
   value: StructuredValue
-  tone?: 'neutral' | 'proposed'
+  omitKeys?: ReadonlySet<string>
 }) {
-  const isRecord =
-    value !== null && typeof value === 'object' && !Array.isArray(value)
+  const rows = visibleRows(value, omitKeys)
+  if (rows.length === 0) return null
 
   return (
-    <section className={`value-panel value-panel--${tone}`}>
+    <section className="value-panel">
       <h3 className="value-panel__title">{label}</h3>
-      {isRecord ? (
-        <dl className="value-panel__list">
-          {Object.entries(value)
-            .filter(([key]) => VISIBLE_VALUE_KEYS.has(key))
-            .map(([key, item]) => (
-            <div key={key}>
-              <dt>{VALUE_KEY_LABELS[key] ?? key}</dt>
-              <dd>{formatScalarValue(key, item)}</dd>
-            </div>
-            ))}
-        </dl>
-      ) : (
-        <p>{formatScalarValue('value', value)}</p>
-      )}
+      <dl className="value-panel__list">
+        {rows.map(([key, item]) => (
+          <div key={key}>
+            <dt>{VALUE_KEY_LABELS[key] ?? key}</dt>
+            <dd>{formatScalarValue(key, item)}</dd>
+          </div>
+        ))}
+      </dl>
     </section>
   )
+}
+
+/**
+ * 버튼에 "무엇이 일어나는가"를 적는다.
+ *
+ * 예전 문구는 "확인하고 반영하기 / 반영하지 않기" 였다. 무엇이 어디에 반영되는지가
+ * 문장에 없어서, 보호자는 누르기 전에 알 수 없고 누른 뒤에도 알 수 없었다.
+ * 복약 충돌만 다르게 쓰는 이유 — 그쪽의 확정은 복약 시간을 바꾸지 않고 "보호자가
+ * 봤다"는 사실만 남긴다. 거기에 "남기기"라고 적으면 하지 않는 일을 약속하게 된다.
+ */
+const ACTION_LABELS: Record<
+  ConfirmationKind,
+  { confirm: string; reject: string }
+> = {
+  HEALTH: { confirm: '남기기', reject: '남기지 않기' },
+  SCHEDULE: { confirm: '일정에 넣기', reject: '넣지 않기' },
+  INTEREST: { confirm: '기억해 두기', reject: '기억하지 않기' },
+  MEDICATION_CONFLICT: { confirm: '확인했어요', reject: '넘어가기' },
 }
 
 function MedicationSafetyNotice({ compact = false }: { compact?: boolean }) {
@@ -266,8 +285,6 @@ export function ConfirmationRequestsPage() {
   const pageError = dataErrors.confirmationRequests ?? error
 
   const [kindFilter, setKindFilter] = useState<KindFilter>('ALL')
-  const [statusFilter, setStatusFilter] =
-    useState<StatusFilter>('PENDING')
   const [resolutionDialog, setResolutionDialog] =
     useState<ResolutionDialogState | null>(null)
   const [resolutionNote, setResolutionNote] = useState('')
@@ -292,28 +309,25 @@ export function ConfirmationRequestsPage() {
     }
 
     confirmationRequests.forEach((request) => {
-      if (statusFilter === 'PENDING' && request.status !== 'PENDING') return
-      if (statusFilter === 'RESOLVED' && request.status === 'PENDING') return
       counts.ALL += 1
       counts[request.kind] += 1
     })
 
     return counts
-  }, [confirmationRequests, statusFilter])
+  }, [confirmationRequests])
+
+  // 고른 종류가 목록에서 사라지면(마지막 한 건을 처리했을 때) 전체로 되돌린다.
+  // 그러지 않으면 탭 줄이 사라진 뒤에도 필터만 남아, 되돌릴 방법 없는 빈 화면이 된다.
+  const activeKindFilter: KindFilter =
+    kindFilter !== 'ALL' && kindCounts[kindFilter] === 0 ? 'ALL' : kindFilter
 
   const filteredRequests = useMemo(
     () =>
-      confirmationRequests.filter((request) => {
-        const matchesKind =
-          kindFilter === 'ALL' || request.kind === kindFilter
-        const matchesStatus =
-          statusFilter === 'ALL' ||
-          (statusFilter === 'PENDING' && request.status === 'PENDING') ||
-          (statusFilter === 'RESOLVED' && request.status !== 'PENDING')
-
-        return matchesKind && matchesStatus
-      }),
-    [confirmationRequests, kindFilter, statusFilter],
+      confirmationRequests.filter(
+        (request) =>
+          activeKindFilter === 'ALL' || request.kind === activeKindFilter,
+      ),
+    [confirmationRequests, activeKindFilter],
   )
 
   const openResolutionDialog = (
@@ -335,6 +349,45 @@ export function ConfirmationRequestsPage() {
     setResolutionDialog(null)
     setResolutionNote('')
     setDialogError(null)
+  }
+
+  /**
+   * 카드에서 바로 처리한다.
+   *
+   * 왜 확인 모달을 없앴는가
+   *   버튼 하나를 누르는 데 모달 → 메모 입력 → 확인까지 세 단계였다. 그런데 처리 결과에는
+   *   이미 되돌리기 토스트가 붙어 있다 — 잘못 눌러도 한 번 더 누르면 원래대로다. 되돌릴 수
+   *   있는 일에 확인 창을 세우면, 정작 되돌릴 수 없는 일에 뜨는 확인 창도 같이 무시된다.
+   *   메모 칸도 함께 걷어냈다. 처리한 항목은 목록에서 곧 사라지므로 아무도 그 메모를 다시
+   *   읽지 않는다 — 쓰기만 하고 읽히지 않는 입력란이었다.
+   *
+   *   복약 충돌만 예외다. 그쪽은 의료 정보라 되돌리기로 충분하지 않고, 확정이 무엇을
+   *   하지 <b>않는지</b>(복약 시간을 바꾸지 않는다)를 반드시 읽혀야 한다.
+   */
+  const resolve = async (
+    request: ConfirmationRequest,
+    resolution: DirectResolution,
+  ): Promise<void> => {
+    if (request.kind === 'MEDICATION_CONFLICT') {
+      openResolutionDialog(request, resolution)
+      return
+    }
+
+    try {
+      await resolveConfirmationRequest(request.id, resolution)
+      setUndoToast({
+        open: true,
+        message: RESOLUTION_COPY[resolution].completedMessage,
+        tone: 'success',
+        requestId: request.id,
+      })
+    } catch (requestError: unknown) {
+      setUndoToast({
+        open: true,
+        message: messageFromError(requestError),
+        tone: 'danger',
+      })
+    }
   }
 
   const handleResolution = async (): Promise<void> => {
@@ -392,19 +445,39 @@ export function ConfirmationRequestsPage() {
     )
   }
 
+  /*
+    탭은 "지금 목록에 들어 있는 종류"로만 만든다.
+
+    왜 — 고정 5개였을 때 그중 셋(관심사·일정·복약 충돌)은 데이터가 없어서가 아니라
+    <b>도달할 수 없어서</b> 언제나 0이었다. 관심사·일정 계열은 서버가 사람 확인 없이
+    자동 반영하고(FactRiskPolicy.isSafeForAutoMaterialization), 복약 충돌은 로봇의
+    분류표에 MEDICATION 자체가 없어 생성 경로가 없다. 그래서 이 화면에 실제로 올 수
+    있는 것은 건강 한 종류뿐인데, 화면은 언제나 0을 세 개 띄우고 있었다 — 모바일에서는
+    그 빈 탭들이 첫 화면의 절반을 먹었다.
+
+    목록에서 파생시키면 백엔드 정책이 바뀌어 다른 종류가 올라오기 시작하는 날
+    탭도 저절로 생긴다. 종류를 상수로 지우는 것보다 이쪽이 안전하다.
+
+    종류가 하나뿐이면 탭 줄 자체를 그리지 않는다. 고를 것이 없는 필터는 정보가
+    아니라 잡음이다.
+  */
+  const presentKinds = (
+    ['INTEREST', 'SCHEDULE', 'HEALTH', 'MEDICATION_CONFLICT'] as const
+  ).filter((kind) => kindCounts[kind] > 0)
+
   const kindTabs: readonly {
     value: KindFilter
     label: string
-  }[] = [
-    { value: 'ALL', label: '전체' },
-    { value: 'INTEREST', label: KIND_LABELS.INTEREST },
-    { value: 'SCHEDULE', label: KIND_LABELS.SCHEDULE },
-    { value: 'HEALTH', label: KIND_LABELS.HEALTH },
-    {
-      value: 'MEDICATION_CONFLICT',
-      label: KIND_LABELS.MEDICATION_CONFLICT,
-    },
-  ]
+  }[] =
+    presentKinds.length > 1
+      ? [
+          { value: 'ALL', label: '전체' },
+          ...presentKinds.map((kind) => ({
+            value: kind as KindFilter,
+            label: KIND_LABELS[kind],
+          })),
+        ]
+      : []
 
   const resolutionCopy = resolutionDialog
     ? RESOLUTION_COPY[resolutionDialog.resolution]
@@ -413,56 +486,64 @@ export function ConfirmationRequestsPage() {
 
   return (
     <div className="page-stack confirmation-requests-page">
+      {/*
+        설명문을 목록이 비었을 때로 옮겼다(EmptyState). "대화에서 새롭게 파악한 정보는
+        보호자가 확인한 뒤에만 확정 정보로 사용합니다"는 이 화면의 정책이지 오늘의
+        할 일이 아니다. 매일 들어오는 사람에게 같은 정책 문장을 카드 위에 다시 읽히면,
+        정작 그 아래 어르신의 말을 읽을 자리를 밀어낸다.
+      */}
       <PageHeader
-        eyebrow="AI 제안 검토"
-        title="확인 요청"
-        description="대화에서 새롭게 파악한 정보는 보호자가 확인한 뒤에만 확정 정보로 사용합니다."
-        metadata={<span>확인 대기 {pendingCount}건</span>}
+        title="확인할 일"
+        metadata={
+          <span>
+            {pendingCount > 0
+              ? `보미가 들은 이야기 ${pendingCount}건이 확인을 기다려요`
+              : '지금은 확인할 일이 없어요'}
+          </span>
+        }
       />
 
-      <Card compact>
-        <div className="confirmation-toolbar">
-          <div
-            className="confirmation-tabs"
-            aria-label="확인 요청 종류"
-          >
-            {kindTabs.map((tab) => (
-              <button
-                key={tab.value}
-                className={`confirmation-tabs__item${
-                  kindFilter === tab.value
-                    ? ' confirmation-tabs__item--active'
-                    : ''
-                }`}
-                type="button"
-                aria-pressed={kindFilter === tab.value}
-                onClick={() => setKindFilter(tab.value)}
-              >
-                <span>{tab.label}</span>
-                <span
-                  className="confirmation-tabs__count"
-                  aria-label={`${kindCounts[tab.value]}건`}
-                >
-                  {kindCounts[tab.value]}
-                </span>
-              </button>
-            ))}
-          </div>
-          <label className="form-field confirmation-toolbar__status">
-            <span className="form-field__label">처리 상태</span>
-            <select
-              value={statusFilter}
-              onChange={(event: ChangeEvent<HTMLSelectElement>) =>
-                setStatusFilter(event.target.value as StatusFilter)
-              }
+      {/*
+        "처리 상태" 드롭다운을 뺐다.
+          세 선택지 중 둘("처리 완료"·"전체")은 언제나 빈 화면이었다. 이 화면이 받는
+          목록은 서버가 대기 계열 3상태만 담아 보내기 때문이다
+          (ConfirmationRequestService.PENDING_STATUSES). 처리한 건은 1초 폴링이
+          곧바로 목록에서 지운다 — 조회할 방법 자체가 없다. 고를 수 없는 선택지를
+          띄워 두면 보호자는 자기가 뭘 잘못 눌렀다고 생각한다.
+          처리 직후의 되돌리기는 그대로 토스트가 맡는다.
+      */}
+      {kindTabs.length > 0 ? (
+        <Card compact>
+          <div className="confirmation-toolbar">
+            <div
+              className="confirmation-tabs"
+              aria-label="확인 요청 종류"
             >
-              <option value="PENDING">확인 대기</option>
-              <option value="RESOLVED">처리 완료</option>
-              <option value="ALL">전체</option>
-            </select>
-          </label>
-        </div>
-      </Card>
+              {kindTabs.map((tab) => (
+                <button
+                  key={tab.value}
+                  className={`confirmation-tabs__item${
+                    activeKindFilter === tab.value
+                      ? ' confirmation-tabs__item--active'
+                      : ''
+                  }`}
+                  type="button"
+                  aria-pressed={activeKindFilter === tab.value}
+                  onClick={() => setKindFilter(tab.value)}
+                >
+                  <span>{tab.label}</span>
+                  <span
+                    className="confirmation-tabs__count"
+                    aria-label={`${kindCounts[tab.value]}건`}
+                  >
+                    {kindCounts[tab.value]}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </Card>
+      ) : null}
 
       {pageError ? (
         <div className="page-inline-alert" role="alert">
@@ -475,26 +556,16 @@ export function ConfirmationRequestsPage() {
 
       {filteredRequests.length === 0 ? (
         <EmptyState
-          title={
-            statusFilter === 'PENDING'
-              ? '확인할 요청이 없습니다'
-              : '조건에 맞는 처리 내역이 없습니다'
-          }
+          title="확인할 요청이 없습니다"
           description={
-            statusFilter === 'PENDING'
-              ? '새로운 제안이 생기면 이곳에 표시됩니다.'
-              : '종류나 처리 상태 필터를 바꾸어 확인해 주세요.'
+            activeKindFilter === 'ALL'
+              ? '보미가 대화에서 새로 들은 이야기는 보호자가 확인한 뒤에만 기록으로 남아요. 새로 들은 이야기가 생기면 여기에 올라옵니다.'
+              : '이 종류의 확인할 일이 없어요.'
           }
           action={
-            statusFilter !== 'PENDING' || kindFilter !== 'ALL' ? (
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setKindFilter('ALL')
-                  setStatusFilter('PENDING')
-                }}
-              >
-                확인 대기 전체 보기
+            activeKindFilter !== 'ALL' ? (
+              <Button variant="secondary" onClick={() => setKindFilter('ALL')}>
+                전체 보기
               </Button>
             ) : undefined
           }
@@ -512,142 +583,140 @@ export function ConfirmationRequestsPage() {
               pendingActionId === `confirmation-${request.id}`
             const showCoordination =
               request.coordinationStatus !== 'NOT_REQUIRED'
+            const quote = spokenText(request)
+            // 인용문도 없고 덧붙일 값도 없다 = 화면이 이 건의 내용을 하나도 못 읽었다.
+            // 그 사실을 조용히 넘기지 않는다.
+            const hasNothingToShow =
+              quote === undefined &&
+              visibleRows(request.proposedValue, QUOTE_KEYS).length === 0
 
             return (
               <li key={request.id}>
                 <Card
+                  compact
                   as="article"
                   className={`confirmation-card confirmation-card--${request.kind
                     .toLocaleLowerCase()
                     .replace('_', '-')}`}
-                  heading={request.title}
-                  actions={
-                    <div className="confirmation-card__status">
-                      <Badge tone={KIND_TONES[request.kind]}>
-                        {KIND_LABELS[request.kind]}
-                      </Badge>
-                      <Badge tone={STATUS_TONES[request.status]} dot>
-                        {STATUS_LABELS[request.status]}
-                      </Badge>
-                      <Badge tone={RISK_TONES[request.riskLevel]}>
-                        {RISK_LABELS[request.riskLevel]}
-                      </Badge>
-                      {showCoordination ? (
-                        <Badge tone="info">
-                          {COORDINATION_LABELS[request.coordinationStatus]}
-                        </Badge>
-                      ) : null}
-                    </div>
-                  }
                 >
-                  <p className="confirmation-card__summary">
-                    {request.summary}
+                  {/*
+                    배지 세 개(종류·상태·민감도)를 뺐다.
+                      셋 다 보호자가 무엇을 할지 바꾸지 않는다. 종류는 바로 아래 질문
+                      문장이 이미 말하고("건강 관찰로 남길까요?"), 상태는 이 목록에
+                      들어 있다는 사실이 곧 '확인 대기'이며, 민감도는 — 이게 핵심인데 —
+                      정말 위험한 값(HIGH·조율 필요)일 때는 확정 버튼 자체가 사라지고
+                      그 이유가 문장으로 뜬다. 즉 위험은 이미 배지가 아니라 버튼의
+                      유무로 전해지고 있었고, 배지는 장식이었다.
+                      조율 상태만은 행동을 바꾸므로 아래 guardrail 문장에 남긴다.
+                  */}
+                  <p className="confirmation-card__when">
+                    {formatSpokenDateTime(request.createdAt)}
+                    {request.origin === 'CONVERSATION'
+                      ? ' · 보미와 이야기하다가'
+                      : request.origin === 'ONBOARDING'
+                        ? ' · 처음 등록할 때'
+                        : ''}
                   </p>
-                  <aside className="confirmation-evidence" role="note">
-                    <span className="confirmation-evidence__label">
-                      확인 배경
-                    </span>
-                    <p>{request.evidence}</p>
-                  </aside>
 
-                  <div
-                    className={`confirmation-comparison${
-                      request.currentValue === undefined
-                        ? ' confirmation-comparison--single'
-                        : ''
-                    }`}
-                  >
-                    {request.currentValue !== undefined ? (
-                      <StructuredValuePanel
-                        label="현재 저장된 내용"
-                        value={request.currentValue}
-                      />
-                    ) : null}
+                  {/*
+                    어르신이 한 말을 카드의 주인공으로 올린다.
+                      예전에는 같은 문장이 두 번 나왔다 — 서버 요약("'…'라고 말씀하셨습니다")과
+                      값 패널("내용: …")이 같은 원문을 담고 있었기 때문이다. 원문이 있으면
+                      그것만 큰 글씨로 인용하고, 요약은 접는다. 원문을 못 읽었을 때만
+                      요약이 대신 나선다.
+                  */}
+                  {quote ? (
+                    <blockquote className="confirmation-card__quote">
+                      {quote}
+                    </blockquote>
+                  ) : (
+                    <p className="confirmation-card__summary">
+                      {request.summary}
+                    </p>
+                  )}
+
+                  {hasNothingToShow ? (
+                    <p className="value-panel__unreadable">
+                      내용을 화면에 표시하지 못했어요. 남기기 전에 어르신께 직접
+                      확인해 주세요.
+                    </p>
+                  ) : null}
+
+                  {/* 원문 말고 더 있는 값(제목·일시·약 이름 등)만 덧붙인다. */}
+                  <StructuredValuePanel
+                    label="함께 확인할 내용"
+                    value={request.proposedValue}
+                    omitKeys={QUOTE_KEYS}
+                  />
+                  {request.currentValue !== undefined ? (
                     <StructuredValuePanel
-                      label="AI가 제안한 내용"
-                      value={request.proposedValue}
-                      tone="proposed"
+                      label="지금 기록된 내용"
+                      value={request.currentValue}
+                      omitKeys={QUOTE_KEYS}
                     />
-                  </div>
+                  ) : null}
 
                   {request.kind === 'MEDICATION_CONFLICT' ? (
                     <MedicationSafetyNotice compact />
                   ) : null}
 
-                  <div className="confirmation-card__question">
-                    <span>확인 질문</span>
-                    <strong>{request.question}</strong>
-                  </div>
-
-                  <div className="confirmation-card__meta">
-                    <span>제안 시각 {formatDateTime(request.createdAt)}</span>
-                    <span>
-                      정보 출처{' '}
-                      {request.source === 'AI'
-                        ? 'AI 분석'
-                        : request.source === 'ROBOT'
-                          ? '로봇 대화'
-                          : request.source}
-                    </span>
-                  </div>
-
                   {isPending ? (
-                    <div className="confirmation-card__actions">
+                    <>
+                      <p className="confirmation-card__ask">
+                        {request.question}
+                      </p>
                       {canDirectlyResolve ? (
-                        <>
+                        <div className="confirmation-card__actions">
                           <Button
                             size="small"
-                            onClick={() =>
-                              openResolutionDialog(request, 'CONFIRM')
-                            }
+                            onClick={() => void resolve(request, 'CONFIRM')}
                             isLoading={isProcessing}
                             disabled={pendingActionId !== null && !isProcessing}
                           >
-                            확인하고 반영하기
+                            {ACTION_LABELS[request.kind].confirm}
                           </Button>
                           <Button
-                            variant="ghost"
                             size="small"
-                            onClick={() =>
-                              openResolutionDialog(request, 'REJECT')
-                            }
+                            variant="ghost"
+                            onClick={() => void resolve(request, 'REJECT')}
                             disabled={pendingActionId !== null}
                           >
-                            반영하지 않기
+                            {ACTION_LABELS[request.kind].reject}
                           </Button>
-                        </>
+                        </div>
                       ) : (
                         <p className="confirmation-card__guardrail" role="note">
                           {request.waitingReason
                             ? WAITING_REASON_COPY[request.waitingReason]
-                            : request.riskLevel === 'HIGH'
-                              ? '민감도가 높은 정보라 바로 확정할 수 없어요. 어르신과 안전한 확인 절차를 거쳐 주세요.'
-                              : '이 정보는 바로 확정할 수 없어요. 필요한 확인 절차를 먼저 진행해 주세요.'}
+                            : showCoordination
+                              ? COORDINATION_LABELS[request.coordinationStatus] +
+                                ' 상태예요. 그 확인이 끝나야 남길 수 있어요.'
+                              : '지금은 바로 남길 수 없어요. 어르신과 한 번 더 확인해 주세요.'}
                         </p>
                       )}
+                      {/*
+                        세 번째 선택지는 버튼에서 링크로 내렸다. 버튼 셋을 나란히 두면
+                        무엇이 기본 동작인지 사라진다 — 보호자가 매번 셋을 다 읽어야 했다.
+                      */}
                       {request.canRequestRecheck !== false ? (
-                        <Button
-                          variant="secondary"
-                          size="small"
-                          onClick={() =>
-                            openResolutionDialog(request, 'REASK')
-                          }
-                          disabled={pendingActionId !== null}
-                        >
-                          어르신께 다시 확인하기
-                        </Button>
+                        <p className="confirmation-card__recheck">
+                          잘 모르겠으면{' '}
+                          <button
+                            type="button"
+                            className="link-button"
+                            onClick={() => void resolve(request, 'REASK')}
+                            disabled={pendingActionId !== null}
+                          >
+                            보미가 다시 여쭤볼게요
+                          </button>
+                        </p>
                       ) : null}
-                    </div>
+                    </>
                   ) : (
                     <div className="confirmation-card__resolution">
                       <strong>{STATUS_LABELS[request.status]}</strong>
-                      <span>
-                        {request.resolvedAt
-                          ? formatDateTime(request.resolvedAt)
-                          : '처리 시각 미기록'}
-                      </span>
-                      {request.resolutionNote ? (
-                        <p>{request.resolutionNote}</p>
+                      {request.resolvedAt ? (
+                        <span>{formatSpokenDateTime(request.resolvedAt)}</span>
                       ) : null}
                       {request.waitingReason === 'EXPIRED' ? (
                         <p>{WAITING_REASON_COPY.EXPIRED}</p>
@@ -683,17 +752,6 @@ export function ConfirmationRequestsPage() {
         {resolutionDialog?.request.kind === 'MEDICATION_CONFLICT' ? (
           <MedicationSafetyNotice />
         ) : null}
-        <label className="form-field resolution-note">
-          <span className="form-field__label">처리 메모 (선택)</span>
-          <textarea
-            value={resolutionNote}
-            onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
-              setResolutionNote(event.target.value)
-            }
-            rows={3}
-            placeholder="판단 근거나 어르신께 다시 물어볼 내용을 적어 주세요."
-          />
-        </label>
         {dialogError ? (
           <p className="form-error" role="alert">
             {dialogError}

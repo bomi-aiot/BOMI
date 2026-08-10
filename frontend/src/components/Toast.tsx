@@ -10,6 +10,12 @@ export interface ToastProps {
   onDismiss: () => void;
   actionLabel?: string;
   onAction?: () => void;
+  /**
+   * 'critical' 은 위급 알림 전용이다. tone 과 따로 두는 이유 — tone 은 색이고
+   * emphasis 는 "화면 어디에 얼마나 크게 뜨는가"라서, danger 토스트를 전부
+   * 화면 한가운데로 끌어올리면 저장 실패 같은 사소한 실패까지 위급처럼 보인다.
+   */
+  emphasis?: 'normal' | 'critical';
 }
 
 export function Toast({
@@ -21,6 +27,7 @@ export function Toast({
   onDismiss,
   actionLabel,
   onAction,
+  emphasis = 'normal',
 }: ToastProps) {
   useEffect(() => {
     if (!open || durationMs <= 0) {
@@ -35,11 +42,12 @@ export function Toast({
     return null;
   }
 
-  const isAlert = tone === 'danger';
+  const isCritical = emphasis === 'critical';
+  const isAlert = tone === 'danger' || isCritical;
 
   return (
     <div
-      className={`toast toast--${tone}`}
+      className={`toast toast--${tone}${isCritical ? ' toast--critical' : ''}`}
       role={isAlert ? 'alert' : 'status'}
       aria-live={isAlert ? 'assertive' : 'polite'}
     >

@@ -142,3 +142,6 @@ warn_unused_ignores = true
 show_error_codes = true
 pretty = true
 strict_equality = true
+
+[project.scripts]
+bomi-vision-udp = "bomi_vision.udp_main:main"

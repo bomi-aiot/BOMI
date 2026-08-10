@@ -140,11 +140,23 @@ function normalizeCoordinationStatus(value: string): CoordinationStatus {
     : 'COORDINATION_REQUIRED'
 }
 
+// 화면에 내보낼 수 있는 키. 여기 없는 키는 통째로 버린다 — proposedValue 는 서버가
+// 검증하지 않는 자유 JSON 이라, 모르는 키를 그대로 그리면 무엇이 나올지 알 수 없다.
+//
+// ★ 'content' 가 빠져 있었다. 그리고 로봇이 보내는 키는 그것 하나다
+//   (ai_chat fact_contract.to_intake_payload — 나머지 키를 채우는 경로는 APPOINTMENT
+//   뿐이다). 그래서 이 목록은 <b>로봇이 만든 모든 확인 요청의 값을 100% 걸러냈고</b>,
+//   화면에는 "AI가 제안한 내용"이라는 제목이 붙은 빈 상자만 남았다. 보호자가 무엇을
+//   확정하는지 모르는 채로 확정 버튼을 누르는 화면이었다.
+//
+//   허용 목록 자체는 유지한다 — 없애면 방어선이 사라진다. 대신 실제로 오는 키를
+//   목록에 넣는다. 어느 종류든 content 는 어르신이 한 말이므로 전부에 넣는다.
 const SAFE_VALUE_KEYS: Record<ConfirmationKind, readonly string[]> = {
-  INTEREST: ['memoryType', 'title', 'keywords'],
-  SCHEDULE: ['recordType', 'title', 'startsAt'],
-  HEALTH: ['recordType', 'title', 'statusLevel'],
+  INTEREST: ['content', 'memoryType', 'title', 'keywords'],
+  SCHEDULE: ['content', 'recordType', 'title', 'startsAt'],
+  HEALTH: ['content', 'note', 'recordType', 'title', 'statusLevel'],
   MEDICATION_CONFLICT: [
+    'content',
     'medicationName',
     'localTime',
     'localTimes',
@@ -167,7 +179,17 @@ function sanitizeValue(
   return safeEntries.length > 0 ? Object.fromEntries(safeEntries) : undefined
 }
 
-function safeCopy(kind: ConfirmationKind): Pick<
+// 서버 문구가 비어 올 때만 쓰는 폴백.
+//
+// 왜 "폴백만" 인가 — 예전에는 이 문구가 서버 값을 <b>덮어썼다.</b> 그러면 어떤 건강
+// 후보든 화면에 한 글자도 다르지 않게 보인다. 보호자는 "확인 배경"이라는 칸을 매번
+// 읽지만 거기서 얻는 정보는 언제나 0이고, 서버가 실제로 보낸 근거("사용자 직접 발화")도
+// 함께 버려진다. 같은 실수를 안전 알림에서 이미 한 번 고쳤다
+// (mappers/dashboard.ts 의 mapKnownT1Alert / mapGuardianSafeActivity 주석).
+//
+// 그래도 폴백을 지우지는 않는다 — 서버가 문구를 못 만든 경우(구버전 백엔드, 빈 문자열)에
+// 카드가 빈 줄을 그리면 안 되기 때문이다. 위 두 함수와 정확히 같은 구조다.
+function fallbackCopy(kind: ConfirmationKind): Pick<
   ConfirmationRequest,
   'title' | 'summary' | 'question' | 'evidence'
 > {
@@ -205,9 +227,23 @@ function safeCopy(kind: ConfirmationKind): Pick<
 
 // --- 전체 매핑 -------------------------------------------------------------
 
+const preferServerText = (
+  value: string | null | undefined,
+  fallback: string,
+): string => {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  return trimmed.length > 0 ? trimmed : fallback
+}
+
 export function mapFactCandidate(dto: FactCandidateDto): ConfirmationRequest {
   const kind = deriveConfirmationKind(dto.targetDomain, dto.factType, dto.operation)
-  const copy = safeCopy(kind)
+  const fallback = fallbackCopy(kind)
+  const copy = {
+    title: preferServerText(dto.title, fallback.title),
+    summary: preferServerText(dto.summary, fallback.summary),
+    question: preferServerText(dto.question, fallback.question),
+    evidence: preferServerText(dto.evidence, fallback.evidence),
+  }
   const proposedValue = sanitizeValue(dto.proposedValue, kind) ?? {}
   const currentValue = sanitizeValue(dto.currentValue, kind)
   const canResolve = dto.status === 'NEEDS_CONFIRMATION'
@@ -229,6 +265,14 @@ export function mapFactCandidate(dto: FactCandidateDto): ConfirmationRequest {
     riskLevel,
     coordinationStatus,
     source: CONFIRMATION_SOURCE,
+    origin:
+      dto.sourceType === 'CONVERSATION_MESSAGE'
+        ? 'CONVERSATION'
+        : dto.sourceType === 'ONBOARDING_ANSWER'
+          ? 'ONBOARDING'
+          : undefined,
+    sourceConversationId: dto.conversationId ?? undefined,
+    sourceMessageId: dto.sourceMessageId ?? undefined,
     createdAt: dto.createdAt,
     resolvedAt: dto.confirmedAt ?? dto.materializedAt ?? undefined,
     appliedEntityId: dto.materializedTargetId ?? undefined,

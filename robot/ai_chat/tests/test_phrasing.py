@@ -19,7 +19,11 @@
 import pytest
 
 from bomi_ai_chat import policy
-from bomi_ai_chat.graph.phrasing import phrasing_key
+from bomi_ai_chat.graph.phrasing import (
+    REACTIVE_ORIGIN,
+    phrasing_key,
+    phrasing_key_for_turn,
+)
 from bomi_ai_chat.localstore import db, phrasings
 
 SENIOR = "senior-1"
@@ -207,3 +211,55 @@ def test_clear_removes_all_history_for_senior():
     phrasings.clear(SENIOR)
 
     assert phrasings.recent(SENIOR, key) == []
+
+
+# ── 반응형 턴의 표현 이력 (2026-08-10) ───────────────────────────────────────
+#
+# 왜 이 절이 생겼는가
+#   원래는 능동/명령 턴만 표현 이력을 남겼다. 그래서 웨이크워드 대화 — 사람이
+#   말을 거는 대화 전부 — 에서 반복 방지가 통째로 꺼져 있었다. 실측으로 21턴을
+#   대화한 뒤에도 spoken_phrasing 이 0행이었고 같은 되묻기가 세 번 연속 나왔다.
+
+
+def test_reactive_turn_gets_a_key_of_its_own():
+    """반응형 턴도 키를 받는다. 이게 없으면 반복 방지가 대화에서 꺼진다."""
+    key = phrasing_key_for_turn("user_utterance", "", "companion")
+    assert key, "반응형 턴이 빈 키를 받으면 기록도 조회도 일어나지 않는다"
+    assert key == f"companion:{REACTIVE_ORIGIN}"
+
+
+def test_reactive_turn_ignores_a_stale_speech_origin():
+    """반응형 턴은 남아 있는 speech_origin 을 쓰지 않는다.
+
+    speech_origin 은 reducer 없는 체크포인트 필드라 직전 능동 턴의 값이 그대로
+    남는다. 그것으로 키를 만들면 지난 알림의 표현 이력이 이번 대화에 샌다.
+    """
+    stale = phrasing_key_for_turn("user_utterance", "schedule:meal:0800", "companion")
+    assert stale == f"companion:{REACTIVE_ORIGIN}"
+    assert "schedule" not in stale
+
+
+def test_proactive_turn_still_keys_on_origin():
+    """능동 턴의 동작은 바뀌지 않는다 — 끼니별로 키가 갈려야 한다."""
+    assert phrasing_key_for_turn(
+        "proactive", "schedule:meal:0800", "companion"
+    ) == phrasing_key("schedule:meal:0800", "companion")
+
+
+def test_reactive_intents_do_not_share_a_bucket():
+    """되묻기 반복은 핸들러 단위로 갈린다. 같은 버킷에 섞이면 안 된다."""
+    a = phrasing_key_for_turn("user_utterance", "", "companion")
+    b = phrasing_key_for_turn("user_utterance", "", "emotional")
+    assert a != b
+
+
+def test_no_intent_still_yields_no_key():
+    """intent 를 모르면 다양화할 단위도 없다."""
+    assert phrasing_key_for_turn("user_utterance", "", "") == ""
+
+
+def test_reactive_history_round_trips():
+    """반응형 턴에서 기록한 표현이 같은 키로 다시 읽힌다."""
+    key = phrasing_key_for_turn("user_utterance", "", "companion")
+    phrasings.record("senior-1", key, "어떤 노래를 불러드릴까요?")
+    assert "어떤 노래를 불러드릴까요?" in phrasings.recent("senior-1", key)

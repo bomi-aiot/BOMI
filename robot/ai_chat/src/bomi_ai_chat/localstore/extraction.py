@@ -71,11 +71,23 @@ def enqueue(
 
 
 def pending(limit: int | None = None) -> list[dict]:
-    """아직 처리되지 않은 행을 오래된 순으로 돌려준다.
+    """아직 처리되지 않은 행을 실패가 적은 순 → 오래된 순으로 돌려준다.
 
     누가 호출하는가
         jobs.ticks.extraction_flush. 큐의 순서가 발화의 순서이므로, 오래된
         것부터 처리해야 preceding_robot_utterance 의 맥락이 어긋나지 않는다.
+
+    ★ 왜 attempts 가 첫 번째 정렬 키인가 (S15P11E102-393)
+        오래된 순으로만 뽑으면 **한 행의 실패가 큐 전체를 막는다.** 실패한 행은
+        일부러 extracted 로 표시하지 않고 남기는데(재시도가 목적이다), 영원히
+        성공하지 못하는 행이 batch 크기만큼 모이면 매 flush 가 그 행들만 다시
+        시도하고 뒤에 쌓인 새 발화는 차례가 오지 않는다. 실제 경로: 리허설
+        사이에 서버 DB 만 초기화하면 로컬 큐에 남은 행의 conversationId 가
+        서버에 없어 400 이 돌아오고, 400 은 재시도 대상이 아니라 즉시 실패한다.
+
+        실패 횟수를 먼저 보면 한 번도 시도하지 않은 행이 항상 앞선다. 앞막힘이
+        정책이 아니라 **구조적으로** 불가능해진다. 전부 실패 횟수가 같은
+        정상 상태에서는 정렬이 예전과 완전히 같다 — 맥락 순서는 그대로다.
 
     인자
         limit: 최대 건수. None 이면 전부(테스트에서만 쓴다 — 운영 경로는
@@ -83,7 +95,10 @@ def pending(limit: int | None = None) -> list[dict]:
     """
     connection = runtime_db()
     schema.init_runtime(connection)
-    query = "SELECT * FROM extraction_job WHERE extracted = 0 ORDER BY created_at, id"
+    query = (
+        "SELECT * FROM extraction_job WHERE extracted = 0 "
+        "ORDER BY attempts, created_at, id"
+    )
     params: tuple = ()
     if limit is not None:
         query += " LIMIT ?"
@@ -108,6 +123,51 @@ def mark_extracted(row_id: int) -> None:
     schema.init_runtime(connection)
     connection.execute(
         "UPDATE extraction_job SET extracted = 1 WHERE id = ?", (row_id,)
+    )
+
+
+def record_failure(row_id: int) -> None:
+    """이 행을 처리하려다 실패했다고 적는다 — attempts 를 1 올린다.
+
+    누가 호출하는가
+        jobs.ticks.extraction_flush. LLM 추출이 실패했거나 백엔드 제출이
+        실패해서 그 행을 다음 flush 로 넘길 때마다 부른다.
+
+    왜 필요한가
+        pending() 의 정렬 키다. 이 값을 올리지 않으면 실패한 행이 계속 큐
+        맨 앞에 남아 뒤의 새 발화를 막는다 — 이 함수와 그 정렬이 한 쌍이다
+        (S15P11E102-393).
+
+    주의사항
+        상한은 없다. 몇 번을 실패해도 행을 버리지 않는다는 뜻이고, 의도한
+        것이다 — 백엔드가 한 시간 죽어 있었다는 이유로 어르신의 기억을
+        조용히 잃으면 안 된다. 버리는 판단은 mark_given_up 하나만 한다.
+    """
+    connection = runtime_db()
+    schema.init_runtime(connection)
+    connection.execute(
+        "UPDATE extraction_job SET attempts = attempts + 1 WHERE id = ?", (row_id,)
+    )
+
+
+def mark_given_up(row_id: int) -> None:
+    """행을 '포기'로 닫는다(extracted=2). 다시는 시도하지 않는다.
+
+    누가 호출하는가
+        jobs.ticks.extraction_flush, 서버가 되돌릴 수 없는 실패로 답했을 때만.
+        구체적으로는 401/403(인증)과 429/502/503(일시적)을 제외한 4xx 다 —
+        "이 요청은 틀렸다"는 답이고, 같은 요청을 다시 보내도 같은 답이 온다.
+
+    왜 mark_extracted 를 쓰지 않는가
+        1 은 "처리 완료"다. 서버가 거절한 행을 1 로 닫으면 큐 지표가 "다
+        잘 처리됐다"고 거짓말한다. 값을 나눠 두면 나중에 "포기한 행이 몇
+        건인가"를 물을 수 있다 — extracted=0 만 보는 조회(pending,
+        pending_count, 부분 색인)는 어느 쪽이든 영향이 없다.
+    """
+    connection = runtime_db()
+    schema.init_runtime(connection)
+    connection.execute(
+        "UPDATE extraction_job SET extracted = 2 WHERE id = ?", (row_id,)
     )
 
 
