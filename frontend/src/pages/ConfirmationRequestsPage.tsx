@@ -593,6 +593,7 @@ export function ConfirmationRequestsPage() {
             return (
               <li key={request.id}>
                 <Card
+                  compact
                   as="article"
                   className={`confirmation-card confirmation-card--${request.kind
                     .toLocaleLowerCase()
@@ -667,6 +668,7 @@ export function ConfirmationRequestsPage() {
                       {canDirectlyResolve ? (
                         <div className="confirmation-card__actions">
                           <Button
+                            size="small"
                             onClick={() => void resolve(request, 'CONFIRM')}
                             isLoading={isProcessing}
                             disabled={pendingActionId !== null && !isProcessing}
@@ -674,6 +676,7 @@ export function ConfirmationRequestsPage() {
                             {ACTION_LABELS[request.kind].confirm}
                           </Button>
                           <Button
+                            size="small"
                             variant="ghost"
                             onClick={() => void resolve(request, 'REJECT')}
                             disabled={pendingActionId !== null}

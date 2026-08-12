@@ -2,6 +2,7 @@ package com.ssafy.bomi.care.repository;
 
 import com.ssafy.bomi.care.domain.CareRecord;
 import com.ssafy.bomi.care.domain.CareRecordStatus;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -11,6 +12,26 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface CareRecordRepository extends JpaRepository<CareRecord, UUID> {
+
+    /**
+     * 보호자 화면에 필요한 알림 열만 읽는 경량 뷰.
+     *
+     * <p>대시보드는 예전처럼 이 어르신의 모든 care_record 를 엔티티로 펼치지 않는다.
+     * 환경 관찰은 계속 쌓이는 시계열이고, 그중 한 행의 사용하지 않는 JSON/enum 값이
+     * 잘못돼도 응급 알림까지 사라져서는 안 된다. 안전 화면은 알림에 필요한 값만 DB에서
+     * 뽑아 별도 경로로 읽는다.</p>
+     */
+    interface GuardianAlertView {
+        UUID getId();
+
+        String getNotificationTier();
+
+        Instant getOccurredAt();
+
+        String getReason();
+
+        String getConfirmedBy();
+    }
 
     // 가디언 대시보드용 조회 (S15P11E102-221).
     List<CareRecord> findBySeniorId(UUID seniorId);
@@ -25,6 +46,22 @@ public interface CareRecordRepository extends JpaRepository<CareRecord, UUID> {
 
     List<CareRecord> findBySeniorIdAndRecordTypeAndStatus(
             UUID seniorId, String recordType, CareRecordStatus status);
+
+    @Query(value = """
+        SELECT id,
+               notification_tier AS "notificationTier",
+               occurred_at AS "occurredAt",
+               details ->> 'reason' AS reason,
+               details ->> 'confirmed_by' AS "confirmedBy"
+        FROM care_record
+        WHERE senior_id = :seniorId
+          AND record_type = 'GUARDIAN_ALERT'
+          AND status = 'ACTIVE'
+          AND notification_tier IS NOT NULL
+        ORDER BY occurred_at DESC NULLS LAST, id
+        """, nativeQuery = true)
+    List<GuardianAlertView> findActiveGuardianAlertViews(
+        @Param("seniorId") UUID seniorId);
 
     /**
      * Active care records of the given types for one senior.

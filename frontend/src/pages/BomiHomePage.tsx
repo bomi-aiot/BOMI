@@ -157,6 +157,31 @@ export function BomiHomePage() {
         actions={<Button variant="secondary" onClick={() => void refresh()}>새로고침</Button>}
       />
 
+      {hasUrgentAlert ? (
+        <section
+          className="bomi-emergency-banner"
+          role="alert"
+          aria-labelledby="bomi-emergency-title"
+          data-testid="bomi-emergency-banner"
+        >
+          <div className="bomi-emergency-banner__icon" aria-hidden="true">!</div>
+          <div className="bomi-emergency-banner__copy">
+            <p>응급 알림</p>
+            <h2 id="bomi-emergency-title">지금 바로 어르신을 확인해 주세요</h2>
+            <ul>
+              {safetyAlerts?.map((alert) => (
+                <li key={alert.id}>
+                  <strong>{alert.message}</strong>
+                  {alert.occurredAt ? (
+                    <time dateTime={alert.occurredAt}>{formatRelativeTime(alert.occurredAt)}</time>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+      ) : null}
+
       <section className="bomi-status-hero">
         <div className="bomi-status-hero__orb" aria-hidden="true"><span>B</span></div>
         <div>
@@ -220,17 +245,8 @@ export function BomiHomePage() {
           ) : hasUrgentAlert ? (
             <div className="safety-alert-card__body" role="alert">
               <Badge tone="danger">즉시 확인 필요</Badge>
-              <strong>지금 직접 확인이 필요해요.</strong>
-              <ul className="safety-alert-list">
-                {safetyAlerts.map((alert) => (
-                  <li key={alert.id}>
-                    <span>{alert.message}</span>
-                    {alert.occurredAt ? (
-                      <time dateTime={alert.occurredAt}>{formatRelativeTime(alert.occurredAt)}</time>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
+              <strong>위 응급 알림이 계속 활성화되어 있어요.</strong>
+              <p>어르신의 상태를 직접 확인할 때까지 빨간 알림을 놓치지 마세요.</p>
             </div>
           ) : (
             /*
