@@ -231,11 +231,15 @@ def _record_phrasing(state: ConvState) -> None:
     """이번에 실제로 한 말을 표현 이력에 남긴다 (§17.8, S15P11E102-256).
 
     무엇을 하는가
-        능동/명령 턴(스케줄러, 침묵 사다리, 백엔드 명령)에서만 phrasing_key 를
-        만들어 localstore.phrasings.record 를 부른다. 반응형 턴은 애초에
-        speech_origin 이 이번 턴의 것이라는 보장이 없으므로 건드리지 않는다 —
-        같은 가드가 graph/context.py 의 조회 쪽에도 있다. 둘이 어긋나면 저장은
-        되는데 조회는 안 되거나 그 반대가 되므로, 반드시 같은 조건을 쓴다.
+        graph.phrasing.phrasing_key_for_turn 으로 이 턴의 키를 만들어
+        localstore.phrasings.record 를 부른다. 능동/명령 턴은 origin 기반 키,
+        반응형 턴은 intent 기반 키다 — 반응형 턴에서 speech_origin 이 이번 턴의
+        것이라는 보장이 없기 때문이다(그 판단의 근거는 phrasing.py 에 있다).
+        조회 쪽(graph/context.py)이 같은 함수를 쓴다. 둘이 어긋나면 저장은
+        되는데 조회는 안 되거나 그 반대가 되므로, 반드시 같은 함수를 쓴다.
+
+        2026-08-10 이전에는 반응형 턴을 통째로 건너뛰었다. 그래서 웨이크워드
+        대화 전부에서 반복 방지가 꺼져 있었다(실측: 21턴 뒤에도 0행).
 
     왜 memory_write 안의 별도 함수인가
         memory_write 는 이미 "턴을 기록한다"는 책임 하나를 지고 있다. 발화
@@ -250,19 +254,32 @@ def _record_phrasing(state: ConvState) -> None:
         실패했다고 해서 이미 확정된 발화를 취소하거나 턴을 실패시키면, 통계성
         기능 하나가 대화 전체를 망가뜨리는 것이다(완료 조건).
     """
-    if state.get("trigger_type") not in ("proactive", "backend_command"):
-        return
-
     senior_id = state.get("senior_id")
     text = (state.get("final_utterance") or state.get("response") or "").strip()
+
+    # 이야기 턴은 반응형이라 위 가드에 걸리지만, 여기서만은 반드시 남겨야 한다.
+    # 남기지 않으면 다음에 "심심해" 하실 때 같은 옛날이야기가 또 나온다 —
+    # 목록만 주면 모델은 거의 언제나 첫 번째 것을 고른다 (2026-08-10 피드백).
+    if state.get("wants_story") and senior_id and text:
+        try:
+            from bomi_ai_chat.localstore import phrasings
+
+            phrasings.record(senior_id, policy.STORY_PHRASING_KEY, text)
+        except Exception:  # noqa: BLE001 - 이력 기록 실패가 턴을 죽이면 안 된다
+            logger.warning("failed to record the story just told", exc_info=True)
+
     if not senior_id or not text:
         return
 
     try:
-        from bomi_ai_chat.graph.phrasing import phrasing_key
+        from bomi_ai_chat.graph.phrasing import phrasing_key_for_turn
         from bomi_ai_chat.localstore import phrasings
 
-        key = phrasing_key(state.get("speech_origin") or "", state.get("intent") or "")
+        key = phrasing_key_for_turn(
+            state.get("trigger_type"),
+            state.get("speech_origin") or "",
+            state.get("intent") or "",
+        )
         phrasings.record(senior_id, key, text)
     except Exception:  # noqa: BLE001 - 표현 이력 기록 실패가 턴을 죽이면 안 된다
         logger.warning("failed to record spoken phrasing", exc_info=True)

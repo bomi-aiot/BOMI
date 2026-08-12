@@ -133,5 +133,6 @@ bomi_run_mqtt_bridge() {
         -p waypoint_file:="$BOMI_WAYPOINTS" \
         -p approach_enabled:=false \
         -p search_enabled:="${BOMI_SEARCH_ENABLED:-false}" \
-        -p search_start_topic:="${BOMI_SEARCH_START_TOPIC:-/wake_search/start}"
+        -p search_start_topic:="${BOMI_SEARCH_START_TOPIC:-/wake_search/start}" \
+        -p zigzag_enabled:="${BOMI_ZIGZAG_ENABLED:-false}"
 }

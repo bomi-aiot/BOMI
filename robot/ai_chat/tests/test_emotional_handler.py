@@ -167,7 +167,7 @@ def test_a_mixed_utterance_is_heard_before_it_is_answered():
     못 듣고 위로도 못 받는다.
     """
     assert context_node.classify_intent(
-        {"user_input": "외로운데 오늘 며칠이야"}) == {"intent": "emotional"}
+        {"user_input": "외로운데 오늘 며칠이야"})["intent"] == "emotional"
 
     llm = RecordingLLM()
     handlers.set_llm(llm)

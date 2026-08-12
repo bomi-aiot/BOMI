@@ -33,6 +33,7 @@ import type {
   WalkAction,
   WalkRequestResult,
 } from "../types/domain";
+import { fireDesktopAlert } from "../utils/desktopAlerts";
 
 export interface BomiToast {
   id: number;
@@ -122,6 +123,14 @@ interface BomiProviderProps {
  * 걸린다. getDashboard() 하나만 돌리면 탭당 1r/s 라 여유가 크다.
  */
 const DASHBOARD_POLL_INTERVAL_MS = 1000;
+
+/**
+ * 탭이 숨겨져 있을 때는 이 배수마다 한 번만 조회한다(1초 × 5 = 5초).
+ *
+ * 숨은 탭은 그릴 화면이 없으니 초당 갱신이 의미가 없다. 그래도 0으로 두지 않는 이유는
+ * 이 루프가 위급 알림을 발견하는 유일한 경로이기 때문이다 — 위 useEffect 주석 참고.
+ */
+const HIDDEN_POLL_TICK_RATIO = 5;
 
 /**
  * 산책 요청이 거절된 이유를 보호자의 말로 옮긴다.
@@ -253,6 +262,13 @@ export function BomiProvider({ children }: BomiProviderProps) {
                 : `${fresh[0].message} (외 ${fresh.length - 1}건)`,
               "EMERGENCY",
             );
+            // 화면 밖으로도 내보낸다. 토스트는 이 탭을 보고 있는 사람에게만
+            // 닿는데, 위급이 도착하는 시각을 보호자가 고를 수는 없다.
+            // 권한이 없으면 아무 일도 일어나지 않는다(조용히 통과).
+            //
+            // 토스트와 달리 접지 않고 건별로 부른다 — 백엔드가 T1 을 사유별로
+            // 묶지 않는 것과 같은 이유다. OS 가 알아서 쌓아 준다.
+            fresh.forEach((alert) => fireDesktopAlert(alert.id, alert.message));
           }
         }
       }
@@ -326,10 +342,32 @@ export function BomiProvider({ children }: BomiProviderProps) {
   }, [refresh]);
 
   // 대시보드 자동 갱신. isLoading 을 건드리지 않으므로 로딩 스켈레톤이 깜빡이지 않고,
-  // 화면은 바뀐 값만 조용히 다시 그린다. 탭이 보이지 않을 때는 요청하지 않는다.
+  // 화면은 바뀐 값만 조용히 다시 그린다.
+  //
+  // ★ 탭이 숨겨져 있어도 폴링을 멈추지 않는다 (다만 느리게).
+  //
+  //   원래는 보이지 않으면 요청을 아예 걸렀다. 화면을 안 보는데 그릴 이유가 없다는
+  //   판단이었고, 그릴 것이 화면뿐이었다면 맞는 말이다. 그런데 이 루프는 위급 알림을
+  //   발견하는 유일한 경로이기도 하다 — 멈춰 있는 동안 도착한 위급은 보호자가 그 탭을
+  //   다시 열 때까지 아무 데도 도달하지 않는다. 정작 알림이 가장 필요한 순간이
+  //   "이 탭을 보고 있지 않을 때"인데, 바로 그때 감시가 꺼져 있었다.
+  //
+  //   대신 주기를 늘린다. 숨은 탭에서 초당 한 번은 얻는 것 없이 요청만 쓴다.
+  //   (브라우저가 백그라운드 타이머를 더 조이면 그보다도 느려진다 — 크롬은 5분 뒤부터
+  //   분 단위다. 그건 우리가 제어할 수 없고, 그래도 0보다는 낫다.)
   useEffect(() => {
+    let hiddenTicks = 0;
     const tick = () => {
-      if (document.visibilityState === "visible") void refreshDashboard();
+      if (document.visibilityState === "visible") {
+        hiddenTicks = 0;
+        void refreshDashboard();
+        return;
+      }
+      hiddenTicks += 1;
+      if (hiddenTicks >= HIDDEN_POLL_TICK_RATIO) {
+        hiddenTicks = 0;
+        void refreshDashboard();
+      }
     };
     const timer = window.setInterval(tick, DASHBOARD_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);

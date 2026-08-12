@@ -34,6 +34,7 @@ import threading
 
 from bomi_ai_chat import policy
 from bomi_ai_chat.clock import clock
+from bomi_ai_chat.display_status import publish as publish_display_status
 
 logger = logging.getLogger(__name__)
 
@@ -67,12 +68,14 @@ class EchoGuard:
             self._started_at = clock.now()
         logger.debug("echo guard: playback started (ignoring input for %.2fs)",
                      policy.ECHO_GUARD_SEC)
+        publish_display_status("SPEAKING")
 
     def mark_playback_stopped(self) -> None:
         """재생이 끝났거나 취소됐다."""
         with self._lock:
             self._playing = False
         logger.debug("echo guard: playback stopped")
+        publish_display_status("IDLE")
 
     @property
     def is_playing(self) -> bool:

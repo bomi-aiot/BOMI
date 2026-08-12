@@ -110,7 +110,32 @@ _SCAFFOLD_LABEL = re.compile(r"\[[^\]\n]{1,20}\]\s*")
 _ECHOED_SPEAKER = re.compile(r"^(어르신|사용자)\s*[:：]")
 
 # 모델이 자기 답변에 붙이는 접두사. 이건 내용이 뒤에 있으므로 접두사만 뗀다.
-_ANSWER_PREFIX = re.compile(r"^(답변|응답)\s*[:：]\s*")
+#
+# '보미'가 여기 있는 이유 (2026-08-10 실측)
+#   프롬프트의 대화 예시가 "보미: ..." 형태라 모델이 그 라벨을 그대로 베껴
+#   말했다 — "보미: 혹시 유진 님께서 민방위 훈련에 대해...". _ECHOED_SPEAKER 는
+#   어르신/사용자만 잡으므로 이건 그물 밖이었다.
+#
+#   왜 버리지 않고 접두사만 떼는가
+#     어르신 라벨과 반대다. "어르신:" 뒤의 말은 어르신의 말이라 로봇이 하면 안
+#     되지만, "보미:" 뒤의 말은 로봇이 하려던 진짜 말이다. 버리면 그 턴이 통째로
+#     침묵이 된다.
+_ANSWER_PREFIX = re.compile(r"^(답변|응답|보미)\s*[:：]\s*")
+
+# 모델이 "채울 것이 없다"는 뜻으로 뱉는 자리표시 토큰. 문장 전체가 이것뿐일 때만
+# 버린다.
+#
+# 왜 필요한가 (2026-08-10 실측)
+#   로봇이 "없음⏎⏎어르신, 어떤 유명한 트로트 말씀이세요?" 라고 말했다. 앞의
+#   "없음" 은 모델이 프롬프트의 빈 슬롯에 답한 것이지 어르신에게 한 말이 아니다.
+#
+#   왜 부분 일치가 아니라 완전 일치인가
+#     "없음" 은 정상 발화에도 들어간다("불편하신 데는 없음이 확인됐어요"). 문장
+#     전체가 자리표시일 때만 버려야 진짜 말을 지우지 않는다.
+_PLACEHOLDER_ONLY = re.compile(
+    r"^(없음|없습니다|해당\s*없음|정보\s*없음|N\s*/?\s*A|none|null)[.\s]*$",
+    re.IGNORECASE,
+)
 
 # 모델에는 상대 날짜 계산을 위해 현재 시각을 항상 제공하지만, 그 참고값을 일반
 # 대화에서 먼저 읽어서는 안 된다. 프롬프트만으로는 드물게 새므로 응답 단계에서도
@@ -125,19 +150,33 @@ _CURRENT_TIME_ANSWER = re.compile(
 _INTERNAL_DATA_ROW = re.compile(
     r"^\s*[-*]?\s*(?:날씨|기온|하늘\s*상태|강수\s*확률)\s*[:：]"
 )
-_CLOSING_UTTERANCE = "오늘도 고생 많으셨어요."
+# 마지막 턴에 반드시 남는 문장. 모델이 마무리를 안 하거나 질문으로 끝내도 여기서
+# 결정적으로 붙인다. 마무리의 종류별로 다르다 (state.closing_kind, handlers 의
+# _CLOSING_INSTRUCTIONS 와 짝) — 값이 없으면 "homecoming" 이다(이 분기가 생기기
+# 전의 동작).
+_CLOSING_UTTERANCES = {
+    "homecoming": "오늘도 고생 많으셨어요.",
+    "farewell": "필요하면 언제든 다시 불러 주세요.",
+}
+
+
+def _closing_utterance(closing_kind: str | None) -> str:
+    """마무리 종류에 맞는 마지막 문장을 고른다. 모르는 값은 기존 동작으로."""
+    return _CLOSING_UTTERANCES.get(
+        closing_kind or "homecoming", _CLOSING_UTTERANCES["homecoming"])
 
 
 def strip_prompt_scaffolding(text: str) -> str:
     """프롬프트 뼈대가 음성으로 새어 나가는 것을 결정적으로 막는다.
 
     무엇을 하는가
-        세 가지를 순서대로 처리한다.
+        네 가지를 순서대로 처리한다.
           1. `[현재 정보]` 같은 대괄호 라벨은 '떼기만' 한다. 그 뒤 문장은 대개
              진짜 내용이라("오늘은 ... 수요일입니다") 통째로 버리면 답을 잃는다.
           2. `어르신:` / `사용자:` 로 시작하는 문장은 '버린다'. 어르신의 말을
              되읽은 것이므로 라벨만 떼면 그 말이 로봇의 말이 된다.
-          3. `답변:` 접두사는 뗀다. 뒤에 진짜 답이 있다.
+          3. `답변:` / `보미:` 접두사는 뗀다. 뒤에 진짜 답이 있다.
+          4. 남은 것이 `없음` 같은 자리표시뿐이면 그 문장을 버린다.
 
     왜 프롬프트가 아니라 여기서도 막는가
         프롬프트는 확률적이다. 같은 지시를 넣어도 입력이 어수선하면 다시 샌다.
@@ -160,6 +199,16 @@ def strip_prompt_scaffolding(text: str) -> str:
         - 이 함수가 무언가를 지웠다면 프롬프트가 제 일을 못 한 것이다.
           호출부가 그 사실을 로그로 남긴다.
     """
+    # 줄 단위 자리표시를 먼저 걷어낸다.
+    #
+    #   실제 사례는 "없음\n\n어르신, 어떤 트로트 말씀이세요?" 였다. split_sentences
+    #   는 개행으로 나누지 않으므로 이 전체가 한 '문장'이 되고, 아래 문장 루프의
+    #   완전 일치 판정으로는 잡히지 않는다. 그래서 줄로 먼저 거른다.
+    text = "\n".join(
+        line for line in (text or "").splitlines()
+        if not _PLACEHOLDER_ONLY.match(line.strip())
+    )
+
     kept: list[str] = []
     for sentence in split_sentences(text):
         cleaned = _SCAFFOLD_LABEL.sub("", sentence).strip()
@@ -168,8 +217,10 @@ def strip_prompt_scaffolding(text: str) -> str:
         if _ECHOED_SPEAKER.match(cleaned):
             continue
         cleaned = _ANSWER_PREFIX.sub("", cleaned).strip()
-        if cleaned:
-            kept.append(cleaned)
+        # 접두사를 뗀 뒤에 판정한다. "보미: 없음" 처럼 둘이 겹쳐 오기 때문이다.
+        if not cleaned or _PLACEHOLDER_ONLY.match(cleaned):
+            continue
+        kept.append(cleaned)
     return " ".join(kept)
 
 
@@ -222,7 +273,18 @@ def response_shaper(state: ConvState) -> dict:
           아예 도달하지 않는다(게이트가 END 로 보낸다).
     """
     text = state.get("response", "")
-    limit = policy.MAX_SENTENCES_TERSE if state.get("terse") else policy.MAX_SENTENCES
+    # 이야기 턴만 상한이 다르다 (2026-08-10 실사용 피드백).
+    #
+    # ★ 이 두 줄이 없으면 프롬프트만 고쳐도 아무 일이 일어나지 않는다
+    #   모델이 여덟 문장짜리 옛날이야기를 만들어도 여기서 두 문장에 잘려 나가
+    #   도입부만 남는다. 프롬프트(builder.max_sentences)와 이 절단은 같은 정책을
+    #   두 곳에서 강제하므로 항상 함께 바꾼다.
+    if state.get("terse"):
+        limit = policy.MAX_SENTENCES_TERSE
+    elif state.get("wants_story"):
+        limit = policy.MAX_SENTENCES_STORY
+    else:
+        limit = policy.MAX_SENTENCES
 
     # 프롬프트 뼈대를 먼저 걷어낸다. 절단보다 앞에 두는 이유는, 라벨이 한 문장을
     # 통째로 차지하면 그것이 MAX_SENTENCES 자리를 잡아먹어 진짜 할 말이 잘리기
@@ -254,14 +316,15 @@ def response_shaper(state: ConvState) -> dict:
 
     all_sentences = split_sentences(text)
     if state.get("closing_turn"):
+        closing = _closing_utterance(state.get("closing_kind"))
         statements = [
             sentence for sentence in all_sentences
             if not sentence.rstrip().endswith(("?", "？"))
         ]
-        if statements and statements[-1] == _CLOSING_UTTERANCE:
+        if statements and statements[-1] == closing:
             sentences = statements[:limit]
         else:
-            sentences = statements[:max(0, limit - 1)] + [_CLOSING_UTTERANCE]
+            sentences = statements[:max(0, limit - 1)] + [closing]
     else:
         sentences = all_sentences[:limit]
 

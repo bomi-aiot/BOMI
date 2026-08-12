@@ -66,3 +66,36 @@ def phrasing_key(origin: str, intent: str) -> str:
     if any(origin.startswith(prefix) for prefix in policy.RECENT_PHRASING_EXCLUDED_ORIGIN_PREFIXES):
         return ""
     return f"{intent}:{origin}"
+
+
+# 반응형 턴의 origin 자리에 쓰는 고정 값. 실제 origin 이 아니라 "이 턴은 어르신이
+# 먼저 말해서 시작됐다"는 표시다.
+REACTIVE_ORIGIN = "reactive"
+
+
+def phrasing_key_for_turn(trigger_type: str | None, origin: str, intent: str) -> str:
+    """이 턴에 쓸 표현 이력 키. 반응형 턴은 origin 을 쓰지 않는다.
+
+    왜 이 함수가 생겼는가 (2026-08-10)
+        원래는 능동/명령 턴만 표현 이력을 남기고 조회했다. 그 결과 웨이크워드
+        대화 — 즉 사람이 말을 거는 대화 전부 — 에서 반복 방지가 통째로 꺼져
+        있었다. 실측: 21턴을 대화한 뒤에도 spoken_phrasing 이 0행이었고,
+        "어떤 노래를 불러드릴까요?" 가 세 번 연속 나왔다.
+
+    왜 가드를 그냥 없애지 않는가
+        speech_origin 은 reducer 없는 체크포인트 필드라, 능동 턴이 남긴 값이
+        바로 다음 반응형 턴에도 그대로 남아 있다. 가드만 걷으면 지난 알림의
+        표현 이력이 이번 대화에 새어 들어간다 — 원래 가드가 막던 것이 그것이다.
+        그래서 origin 을 쓰지 않는 별도 키를 준다. 버킷은 intent 하나로 갈리며,
+        그것이 "같은 되묻기를 또 하고 있는가"를 판정하는 올바른 단위다.
+
+    왜 기록과 조회가 같은 함수를 쓰는가
+        phrasing_key 와 같은 이유다. 둘이 어긋나면 저장은 되는데 조회가 안 되고,
+        그 실패는 아무 로그도 남기지 않는다.
+    """
+    intent = (intent or "").strip()
+    if not intent:
+        return ""
+    if trigger_type in ("proactive", "backend_command"):
+        return phrasing_key(origin, intent)
+    return f"{intent}:{REACTIVE_ORIGIN}"

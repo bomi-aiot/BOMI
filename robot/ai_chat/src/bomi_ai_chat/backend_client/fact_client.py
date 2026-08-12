@@ -46,6 +46,7 @@ from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.http import (
     ExternalServiceError,
     is_auth_failure,
+    is_permanent_rejection,
     request_with_retry,
 )
 
@@ -58,7 +59,17 @@ class FactSubmissionError(RuntimeError):
     누가 잡는가
         jobs.ticks.extraction_flush. 잡으면 그 큐 행을 extracted=1 로 표시하지
         '않고' 다음 flush 로 넘긴다 — 재시도가 이 예외의 존재 이유다.
+
+    permanent
+        재시도해도 결과가 달라지지 않는 실패인가 (S15P11E102-393). True 면
+        호출부가 그 행을 포기로 닫는다(extraction.mark_given_up). 판정은
+        is_permanent_rejection 이 하고, 기본값 False 는 "모르면 재시도" 다 —
+        틀린 쪽으로 기울 때 기억을 잃지 않는 방향이다.
     """
+
+    def __init__(self, message: str, *, permanent: bool = False) -> None:
+        super().__init__(message)
+        self.permanent = permanent
 
 
 class BackendFactClient:
@@ -85,6 +96,7 @@ class BackendFactClient:
         source_message_id: str | None,
         facts: list[dict[str, Any]],
         now_local: datetime | None = None,
+        utterance: str | None = None,
     ) -> None:
         """추출된 사실을 백엔드에 올린다. 실패하면 FactSubmissionError 를 올린다.
 
@@ -99,6 +111,9 @@ class BackendFactClient:
                 형태(추출 프롬프트의 어휘). 서버 계약으로의 변환은
                 fact_contract.to_intake_payload 가 맡는다. 빈 리스트면 아무것도
                 하지 않는다 — 호출할 이유가 없다.
+            utterance: 이 사실들이 나온 어르신 발화 **원문**. 약속의 요일 검산에만
+                쓴다(fact_contract._appointment_starts_at). 모델이 만든 content 가
+                아니라 원문이어야 채점이 성립한다.
 
         왜 max_attempts 를 설정값 그대로 쓰는가(conversation_client 와 다르게
         max_attempts=1 로 낮추지 않는가)
@@ -116,6 +131,7 @@ class BackendFactClient:
                 conversation_id=conversation_id,
                 source_message_id=source_message_id,
                 now_local=now_local,
+                utterance=utterance,
             )
             try:
                 request_with_retry(
@@ -140,7 +156,10 @@ class BackendFactClient:
                         error.status_code,
                     )
                 raise FactSubmissionError(
-                    f"fact candidate submission failed: {error}"
+                    f"fact candidate submission failed: {error}",
+                    # 400 처럼 "요청이 틀렸다"는 답은 재시도가 의미 없다. 호출부가
+                    # 그 행을 포기로 닫아야 뒤에 쌓인 발화가 흐른다 (S15P11E102-393).
+                    permanent=is_permanent_rejection(error),
                 ) from error
 
     def cancel_conversation(self, senior_id: str, conversation_id: str) -> None:

@@ -1,17 +1,22 @@
 package com.ssafy.bomi.fact.application;
 
 import com.ssafy.bomi.care.domain.CareRecord;
+import com.ssafy.bomi.care.domain.CareRecordStatus;
 import com.ssafy.bomi.care.domain.CareRecordTime;
 import com.ssafy.bomi.care.repository.CareRecordRepository;
 import com.ssafy.bomi.fact.domain.FactCandidate;
 import com.ssafy.bomi.fact.domain.FactTargetDomain;
 import com.ssafy.bomi.memory.domain.Memory;
 import com.ssafy.bomi.memory.domain.MemoryType;
+import com.ssafy.bomi.memory.domain.MemoryVisibility;
 import com.ssafy.bomi.memory.repository.MemoryRepository;
 import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,6 +38,19 @@ import org.springframework.transaction.annotation.Transactional;
  */
 @Component
 public class FactMaterializer {
+
+    private static final Logger log = LoggerFactory.getLogger(FactMaterializer.class);
+
+    /**
+     * 같은 시각이면 같은 약속으로 보는 기록 유형.
+     *
+     * <p>{@code ConversationContextService.SCHEDULE_RECORD_TYPES} 와 같은 목록이지만
+     * 일부러 복사해 둔다. 저쪽은 "동의 게이트에서 어떤 유형을 일정으로 볼지"이고
+     * 이쪽은 "어떤 유형에 중복 판정을 걸지"다. 두 질문이 언젠가 갈릴 수 있고,
+     * 그때 한쪽을 고치다 다른 쪽이 조용히 따라 바뀌면 안 된다.</p>
+     */
+    private static final Set<String> SCHEDULE_RECORD_TYPES =
+        Set.of("APPOINTMENT", "PERSONAL_SCHEDULE");
 
     private final MemoryRepository memoryRepository;
     private final CareRecordRepository careRecordRepository;
@@ -88,14 +106,57 @@ public class FactMaterializer {
 
         FactTargetDomain domain = candidate.getTargetDomain();
         if (domain == FactTargetDomain.MEMORY) {
+            // ⚠️ 시연 임시 조치 (2026-08-10) — 되돌릴 것.
+            //
+            //   기본값은 PRIVATE 이고, 그것을 SHARED_WITH_PRIMARY 로 올리는 경로는
+            //   보호자 승인 하나뿐이다(ConfirmationRequestService). 그런데 위험도
+            //   NORMAL 인 사실은 자동 CONFIRMED 로 지나가 승인 요청 자체가 생기지
+            //   않는다(pendingConfirmationCount=0 으로 실측). 그래서 대화에서 뽑힌
+            //   기억은 만들어지자마자 PRIVATE 로 굳고, 대시보드의 4중 SHARED 필터에
+            //   걸려 보호자 화면에 영원히 나타나지 않는다.
+            //
+            //   시연은 "대화한 내용이 화면에 뜬다"를 보여야 하므로 여기서만 공유로
+            //   만든다. 이것은 T4 프라이버시 계약(CLAUDE.md §9)을 우회하는 것이다 —
+            //   어르신이 승인한 적 없는 대화 파생 내용이 보호자에게 자동 공개된다.
+            //   시연이 끝나면 이 커밋을 revert 한다. 제대로 된 해결은 승인 플로우를
+            //   태우거나(risk_level 상향) 보호자 화면에 승인 UI 를 붙이는 것이다.
+            MemoryType type = memoryType(confirmedValue, recordType);
             Memory memory = Memory.create(
-                candidate.getSeniorId(), memoryType(confirmedValue, recordType), memoryContent(confirmedValue));
+                candidate.getSeniorId(), type, memoryContent(confirmedValue),
+                MemoryVisibility.SHARED_WITH_PRIMARY);
+            // 중요도를 여기서 정한다 (2026-08-10). 비워 두면 랭킹의 한 축이 상수로
+            // 죽어(NULL→3), 방금 들어온 오인식 잔해가 최근성만으로 어르신의 인생
+            // 이야기를 밀어낸다 — MemoryImportancePolicy 의 설명 참고.
+            memory.setImportance(MemoryImportancePolicy.importanceFor(
+                type, candidate.getConversationId() != null));
             memory.attachSources(candidate.getConversationId(), null, candidate.getId());
             Memory saved = memoryRepository.save(memory);
             candidate.materialize(saved.getId());
             return Optional.of(new MaterializedTarget(FactTargetDomain.MEMORY, saved.getId()));
         }
         if (domain == FactTargetDomain.CARE_RECORD) {
+            // ★ 같은 약속은 한 번만 저장한다 (2026-08-10)
+            //
+            //   어르신이 "다음 주 화요일에 병원 간다"를 사흘에 걸쳐 다섯 번 말하면
+            //   발화마다 별개의 fact_candidate 가 생기고, 각각이 여기서 별개의
+            //   care_record 가 됐다. 실제로 시연 DB 에 거의 같은 문장의 APPOINTMENT
+            //   행이 9개 쌓여 있었고, 그것이 문맥 조립의 상위 5건(careRecordLimit)을
+            //   통째로 차지해 정작 필요한 기록을 밀어냈다.
+            //
+            //   V13 의 유니크 인덱스는 (senior_id, source_message_id, fact_type) 이라
+            //   '같은 발화의 재시도'만 막는다. 다른 발화가 같은 약속을 말한 경우는
+            //   그 인덱스의 범위 밖이다 — 여기서 막아야 하는 이유다.
+            Optional<CareRecord> duplicate =
+                existingSchedule(candidate.getSeniorId(), recordType, confirmedValue);
+            if (duplicate.isPresent()) {
+                UUID existingId = duplicate.get().getId();
+                log.info("schedule already recorded for {} at {}; reusing care_record {} "
+                        + "instead of creating a duplicate",
+                    candidate.getSeniorId(), CareRecordTime.fromDetails(confirmedValue), existingId);
+                candidate.materialize(existingId);
+                return Optional.of(new MaterializedTarget(FactTargetDomain.CARE_RECORD, existingId));
+            }
+
             CareRecord record = CareRecord.create(candidate.getSeniorId(), recordType, confirmedValue);
             // 확인된 값이 시각을 품고 있으면 그것을 쓰고, 없으면 확인한 지금이다
             // (S15P11E102-230). 어르신이 "어제 병원 다녀왔어"라고 한 것을 오늘
@@ -113,6 +174,44 @@ public class FactMaterializer {
         // PROFILE / CARE_RELATIONSHIP: 이 컴포넌트가 쓸 최종 테이블이 없다.
         // candidate 는 CONFIRMED 로 남는다 — 이것이 정직한 상태다.
         return Optional.empty();
+    }
+
+    /**
+     * 같은 어르신·같은 시각의 일정이 이미 ACTIVE 로 있으면 그 행을 돌려준다.
+     *
+     * <p><b>왜 시각으로 비교하는가.</b> 문장은 매번 다르다 — "다음 주 화요일에 병원에
+     * 간다", "다음 주 화요일 오후 두 시에 병원에 간다", "화요일에 병원 예약 있어".
+     * 같은 약속인지 아닌지를 가르는 것은 문장이 아니라 그 약속이 열리는 시각이다.
+     * 그 시각은 이미 {@link CareRecordTime#fromDetails} 가 뽑아 {@code occurred_at}
+     * 으로 저장돼 있으므로, 새 후보의 시각과 그것만 맞춰 보면 된다.</p>
+     *
+     * <p><b>왜 복약(MEDICATION)은 대상이 아닌가.</b> 같은 약을 다시 말하는 것은
+     * 대개 용량·복용법의 변경이고, 그것을 "이미 있다"며 조용히 버리면 바뀐 처방이
+     * 반영되지 않는다. 그건 중복보다 위험하다. 일정은 반대다 — 같은 시각의 같은
+     * 약속을 두 번 저장할 이유가 없다.</p>
+     *
+     * <p><b>시각을 모르면 중복 판정을 하지 않는다.</b> {@code startsAt} 이 없는
+     * 일정끼리 "둘 다 시각 없음"을 근거로 합치면 서로 다른 약속이 하나로 사라진다.
+     * 모르면 그대로 새 행을 만든다 — 중복 하나가 소실 하나보다 낫다.</p>
+     */
+    private Optional<CareRecord> existingSchedule(
+        UUID seniorId, String recordType, Map<String, Object> confirmedValue) {
+
+        if (!SCHEDULE_RECORD_TYPES.contains(recordType)) {
+            return Optional.empty();
+        }
+        OffsetDateTime when = CareRecordTime.fromDetails(confirmedValue);
+        if (when == null) {
+            return Optional.empty();
+        }
+        return careRecordRepository
+            .findBySeniorIdAndRecordTypeAndStatus(seniorId, recordType, CareRecordStatus.ACTIVE)
+            .stream()
+            // isEqual 은 오프셋이 달라도 같은 순간이면 참이다. "+09:00" 과 "Z" 로
+            // 표기된 같은 시각을 다른 약속으로 세지 않는다.
+            .filter(existing -> existing.getOccurredAt() != null
+                && existing.getOccurredAt().isEqual(when))
+            .findFirst();
     }
 
     /**

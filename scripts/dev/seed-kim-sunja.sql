@@ -51,6 +51,19 @@ INSERT INTO app_user (
     schedule_consent_status,
     guardian_sharing_consent_status,
     status,
+    -- 아래 8개는 V2·V9·V11·V17 로 늘어난 nullable 컬럼이다. 지금까지 seed 가
+    -- 채우지 않아 김순자 행에서 전부 NULL 이었고, 그 결과 각 컬럼의 소비처가
+    -- 조용히 빈손으로 돌았다 — 나이 줄 누락(computeAge), 날씨 지역 폴백 무효화
+    -- (weather.extract_city), 루틴 베이스라인 없음, 병원 안내 출처 없음.
+    -- 보호자 두 행은 소비처가 어르신 프로필뿐이므로 NULL 로 남긴다.
+    birth_date,
+    home_address,
+    home_latitude,
+    home_longitude,
+    wake_time,
+    sleep_time,
+    chronic_pain_area,
+    preferred_hospital,
     created_at,
     updated_at
 ) VALUES
@@ -68,6 +81,24 @@ INSERT INTO app_user (
     'GRANTED',
     'GRANTED',
     'ACTIVE',
+    -- 만 80세. 아래 memory/onboarding_answer 의 "국민학교 교사로 30년"과 어긋나지
+    -- 않는 나이다(국민학교 세대).
+    DATE '1946-03-12',
+    -- 시·군·구 수준까지만 둔다(V17 의 개인정보 범위). 앞 두 글자 '부산'이
+    -- weather.client.CITY_GRID 의 키와 일치해야 날씨 폴백이 실제로 동작한다.
+    '부산광역시 강서구',
+    -- 병원·약국 근처 조회의 기준점. 실측값 35°05′39.6″N / 128°51′18.6″E 를 십진수로
+    -- 옮긴 값이다. numeric(9,6) 이라 소수 6자리에서 잘린다.
+    35.094333,
+    128.855167,
+    -- 아침 08:00 식사(DAILY_ROUTINE)보다 앞서고, quiet_hours 기본값
+    -- 22:00~07:00 과도 어긋나지 않는 값으로 둔다.
+    TIME '07:00',
+    TIME '22:00',
+    -- care_record 의 관절염약과 같은 곳을 가리킨다. 이 값은 문맥 조립에만 실리고
+    -- 응급 티어 판정은 읽지 않는다(V11 주석).
+    '양쪽 무릎, 허리',
+    '부산 강서구보건소',
     CURRENT_TIMESTAMP - INTERVAL '30 days',
     CURRENT_TIMESTAMP - INTERVAL '10 minutes'
 ),
@@ -85,6 +116,7 @@ INSERT INTO app_user (
     'NOT_ASKED',
     'NOT_ASKED',
     'ACTIVE',
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
     CURRENT_TIMESTAMP - INTERVAL '30 days',
     CURRENT_TIMESTAMP - INTERVAL '10 minutes'
 ),
@@ -102,6 +134,7 @@ INSERT INTO app_user (
     'NOT_ASKED',
     'NOT_ASKED',
     'ACTIVE',
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
     CURRENT_TIMESTAMP - INTERVAL '30 days',
     CURRENT_TIMESTAMP - INTERVAL '10 minutes'
 );

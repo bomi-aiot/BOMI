@@ -165,13 +165,15 @@ pipeline {
                 sh '''set -eu
                     BACKEND_IMAGE_TAG="$BOMI_GIT_SHA" \
                     OPERATOR_CONSOLE_IMAGE_TAG="$BOMI_GIT_SHA" \
-                    WAYPOINT_EDITOR_IMAGE_TAG="$BOMI_GIT_SHA" docker compose \
+                    WAYPOINT_EDITOR_IMAGE_TAG="$BOMI_GIT_SHA" \
+                    DB_VIEWER_IMAGE_TAG="$BOMI_GIT_SHA" docker compose \
                       --env-file "$BOMI_ENV_FILE" \
                       -f "$BOMI_COMPOSE_FILE" \
-                      build backend operator-console waypoint-editor
+                      build backend operator-console waypoint-editor db-viewer
                     docker image inspect "bomi-backend:$BOMI_GIT_SHA" >/dev/null
                     docker image inspect "bomi-operator-console:$BOMI_GIT_SHA" >/dev/null
-                    docker image inspect "bomi-waypoint-editor:$BOMI_GIT_SHA" >/dev/null'''
+                    docker image inspect "bomi-waypoint-editor:$BOMI_GIT_SHA" >/dev/null
+                    docker image inspect "bomi-db-viewer:$BOMI_GIT_SHA" >/dev/null'''
             }
         }
 

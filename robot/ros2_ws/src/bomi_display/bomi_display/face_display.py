@@ -1,6 +1,7 @@
 """PySide6 이벤트 루프와 ROS 2 구독을 함께 실행하는 LCD 진입점."""
 
 import argparse
+from pathlib import Path
 import signal
 import sys
 
@@ -17,6 +18,7 @@ def _parse_app_args(arguments: list[str]) -> tuple[argparse.Namespace, list[str]
     parser.add_argument("--demo", action="store_true")
     parser.add_argument("--windowed", action="store_true")
     parser.add_argument("--sensor-timeout", type=float, default=3.0)
+    parser.add_argument("--ai-status-file", default="/tmp/bomi_ai_status")
     return parser.parse_known_args(arguments)
 
 
@@ -39,6 +41,7 @@ def main(args=None) -> None:
 
     try:
         import rclpy
+        from geometry_msgs.msg import Twist
         from rclpy.node import Node
         from std_msgs.msg import Bool, Empty, String
     except ImportError as error:
@@ -54,6 +57,9 @@ def main(args=None) -> None:
             self.create_subscription(String, "/bomi/tts_status", self._on_tts, 10)
             self.create_subscription(Bool, "/bomi/mqtt_connected", self._on_mqtt, 10)
             self.create_subscription(Empty, "/bomi/sensor_heartbeat", self._on_sensor, 10)
+            self.create_subscription(Twist, "/cmd_vel", self._on_velocity, 10)
+            self.ai_status_file = Path(app_args.ai_status_file)
+            self.ai_status_mtime_ns = -1
 
         def _on_nav(self, message) -> None:
             """Nav2 상태를 화면 모델에 반영한다."""
@@ -72,13 +78,39 @@ def main(args=None) -> None:
             del message
             self.model.mark_sensor_update()
 
+        def _on_velocity(self, message) -> None:
+            """최종 모터 속도 명령으로 실제 이동 여부를 판단한다."""
+            moving = (
+                abs(message.linear.x) > 0.01
+                or abs(message.linear.y) > 0.01
+                or abs(message.angular.z) > 0.01
+            )
+            self.model.update_motion(moving)
+
+        def refresh_ai_status(self) -> None:
+            """AI 가상환경이 기록한 대화 상태를 변경될 때만 반영한다."""
+            try:
+                mtime_ns = self.ai_status_file.stat().st_mtime_ns
+                if mtime_ns == self.ai_status_mtime_ns:
+                    return
+                value = self.ai_status_file.read_text(encoding="utf-8").strip()
+            except OSError:
+                return
+            self.ai_status_mtime_ns = mtime_ns
+            if value:
+                self.model.update_tts(value)
+
     rclpy.init(args=ros_args)
     node = DisplayNode()
     ros_timer = QTimer()
     ros_timer.timeout.connect(lambda: rclpy.spin_once(node, timeout_sec=0.0))
     ros_timer.start(10)
     view_timer = QTimer()
-    view_timer.timeout.connect(lambda: widget.set_snapshot(node.model.snapshot()))
+    def refresh_view() -> None:
+        node.refresh_ai_status()
+        widget.set_snapshot(node.model.snapshot())
+
+    view_timer.timeout.connect(refresh_view)
     view_timer.start(100)
     app.aboutToQuit.connect(node.destroy_node)
     app.aboutToQuit.connect(rclpy.shutdown)
@@ -97,6 +129,7 @@ def _start_demo(widget: FaceWidget) -> None:
             FaceState.IDLE: "기다리고 있어요",
             FaceState.DRIVING: "이동 중",
             FaceState.LISTENING: "듣고 있어요",
+            FaceState.THINKING: "생각하는 중",
             FaceState.SPEAKING: "말하는 중",
             FaceState.ERROR: "연결 오류",
         }
