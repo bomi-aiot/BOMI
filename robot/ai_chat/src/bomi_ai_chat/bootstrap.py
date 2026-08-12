@@ -33,8 +33,9 @@ import logging
 import os
 import queue
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from bomi_ai_chat.config import Settings, get_settings
 
@@ -79,6 +80,10 @@ class Runtime:
     # 귀가 대본(문 열림 -> 현관 도착 -> 인사 -> 추종 -> 온습도)이 도는 동안
     # 웨이크워드를 막는 게이트(homecoming_gate.HomecomingGate).
     homecoming_gate: Any = None
+    # 시연 영상 대본 응답기(demo_script.ScriptedResponder). None 이면 꺼져 있고
+    # 반응형 턴은 평소처럼 그래프(run_user_turn)를 탄다. 이 브랜치 전용 —
+    # SCRIPTED_DIALOGUE_ENABLED=true 촬영 환경에서만 만들어진다.
+    scripted_responder: Any = None
 
     def shutdown(self, *, wait_for_speech_sec: float = 0.0) -> None:
         """백그라운드 스레드를 정리한다. 실패해도 종료를 막지 않는다.
@@ -185,6 +190,21 @@ def build_runtime(
         tts=tts, audio_out=audio_out,
         homecoming_gate=HomecomingGate(),
     )
+
+    # 시연 영상 대본 모드 (이 브랜치 전용). 켜져 있으면 기동 시점에 모든 답변을
+    # 미리 합성해 둔다 — 대본 모드의 목적이 지연 제거라서, 턴마다 TTS 왕복이
+    # 남아 있으면 반쪽이기 때문이다.
+    from bomi_ai_chat.demo_script import build_scripted_responder
+    runtime.scripted_responder = build_scripted_responder()
+    if runtime.scripted_responder is not None:
+        if tts is not None:
+            warmed = runtime.scripted_responder.warm(tts)
+            logger.info(
+                "SCRIPTED dialogue mode is ON; pre-synthesized %d responses",
+                warmed)
+        else:
+            logger.info("SCRIPTED dialogue mode is ON (no tts; text only)")
+
     if start_background:
         runtime.scheduler = _start_scheduler(senior_id, app)
         runtime.door_subscriber = _start_door_subscriber(
@@ -697,6 +717,30 @@ def _speak_ack(tts, audio_out, *, message: str | None = None) -> None:
         publish_display_status("IDLE")
 
 
+def _speak_scripted(runtime, text: str) -> None:
+    """대본 답변 하나를 블로킹으로 재생한다 (_speak_ack 과 같은 계약).
+
+    그래프의 emit(논블로킹 + TTS_HANDLES 상태 관리) 대신 블로킹 재생을 쓰는
+    이유: 대본 모드에는 barge-in 이 없고, 재생이 끝난 뒤 돌아오므로 호출부의
+    _wait_for_playback 이 자연스럽게 no-op 이 된다. 오디오는 기동 시 사전
+    합성된 캐시에서 나온다(demo_script.ScriptedResponder.warm).
+    """
+    print(f"[보미·대본] {text}")
+    tts = runtime.tts
+    audio_out = runtime.audio_out
+    if tts is None or audio_out is None:
+        return
+    from bomi_ai_chat.display_status import publish as publish_display_status
+
+    try:
+        publish_display_status("SPEAKING")
+        audio_out.play(runtime.scripted_responder.audio_for(tts, text))
+    except Exception:  # noqa: BLE001 - 대본 한 마디의 실패가 루프를 죽이면 안 된다
+        logger.exception("failed to speak a scripted response")
+    finally:
+        publish_display_status("IDLE")
+
+
 def _advance(session, event: str):
     """세션 상태를 한 칸 전진시킨다. 부기 실수로 로봇이 죽지 않게 감싼다.
 
@@ -751,6 +795,15 @@ def _run_graph_conversation(
     from bomi_ai_chat import conversation_control, policy
     from bomi_ai_chat.graph.turn import run_user_turn
 
+    # 시연 영상 대본 모드(이 브랜치 전용). 켜져 있으면 아래 턴 처리에서 그래프
+    # 대신 대본 응답기를 태우고, 무응답 종료 초도 촬영용 값으로 바꾼다.
+    responder = getattr(runtime, "scripted_responder", None)
+    onset_timeout = policy.CONVERSATION_IDLE_TIMEOUT_SEC
+    if responder is not None:
+        responder.reset()
+        if responder.idle_timeout_sec is not None:
+            onset_timeout = responder.idle_timeout_sec
+
     session = conversation_control.SessionState.LISTENING
     session_turns = 0
     logger.info("SESSION_STARTED senior=%s", runtime.senior_id)
@@ -766,7 +819,7 @@ def _run_graph_conversation(
         try:
             text, duration, no_speech = _listen(
                 audio_in, stt,
-                onset_timeout_seconds=policy.CONVERSATION_IDLE_TIMEOUT_SEC,
+                onset_timeout_seconds=onset_timeout,
             )
         except KeyboardInterrupt:
             session = _advance(session, "interrupted")
@@ -815,14 +868,20 @@ def _run_graph_conversation(
             session_turn_limit is not None
             and session_turns + 1 >= session_turn_limit
         )
-        run_user_turn(
-            runtime.app,
-            runtime.senior_id,
-            text,
-            duration_sec=duration,
-            closing_turn=closing_turn,
-            closing_kind="farewell" if farewell else "homecoming",
-        )
+        if responder is not None:
+            # 시연 영상 대본 모드: 그래프(문맥 조회 + LLM 생성 + 기억 저장)를
+            # 통째로 우회하고 지정 답변을 즉시 재생한다. farewell 판정·세션
+            # 전이·재생 대기는 평소와 완전히 같다 — 바뀌는 것은 답변의 출처뿐.
+            _speak_scripted(runtime, responder.respond(text, farewell=farewell))
+        else:
+            run_user_turn(
+                runtime.app,
+                runtime.senior_id,
+                text,
+                duration_sec=duration,
+                closing_turn=closing_turn,
+                closing_kind="farewell" if farewell else "homecoming",
+            )
         session = _advance(session, "turn_done")
         turns += 1
         session_turns += 1
@@ -977,30 +1036,37 @@ def _run_backend_conversation(
     """
     from bomi_ai_chat import policy
 
-    config = {"configurable": {"thread_id": runtime.senior_id}}
-    try:
-        runtime.app.invoke(
-            {
-                "trigger_type": "backend_command",
-                "senior_id": runtime.senior_id,
-                "command": {
-                    "text": command.text,
-                    # 그래프의 7개 인텐트 중 "greeting" 이 정확히 이 역할이다
-                    # (handle_greeting: "백엔드가 정한 문구를 발화로 옮긴다").
-                    # 백엔드의 intent(WELLNESS_CHECK 등)는 그 자체로는 그래프
-                    # 라우팅에 쓸 수 없는 값이라 origin 태그로만 남긴다.
-                    "intent": "greeting",
-                    "origin": f"scenario:{command.intent}",
+    if getattr(runtime, "scripted_responder", None) is not None:
+        # 시연 영상 대본 모드: 시드 문장은 원래도 LLM 없이 백엔드 text 를 그대로
+        # 읽는 경로지만(handle_greeting), 그래프 호출에 딸려 오는 문맥 조회와
+        # 체크포인트 왕복까지 건너뛰어 지연을 없앤다. 발화 실패는
+        # _speak_scripted 가 삼키므로 "failed" 로 떨어질 일도 없다.
+        _speak_scripted(runtime, command.text)
+    else:
+        config = {"configurable": {"thread_id": runtime.senior_id}}
+        try:
+            runtime.app.invoke(
+                {
+                    "trigger_type": "backend_command",
+                    "senior_id": runtime.senior_id,
+                    "command": {
+                        "text": command.text,
+                        # 그래프의 7개 인텐트 중 "greeting" 이 정확히 이 역할이다
+                        # (handle_greeting: "백엔드가 정한 문구를 발화로 옮긴다").
+                        # 백엔드의 intent(WELLNESS_CHECK 등)는 그 자체로는 그래프
+                        # 라우팅에 쓸 수 없는 값이라 origin 태그로만 남긴다.
+                        "intent": "greeting",
+                        "origin": f"scenario:{command.intent}",
+                    },
                 },
-            },
-            config,
-        )
-    except Exception:  # noqa: BLE001 - 한 대화의 실패가 루프를 죽이면 안 된다
-        logger.exception(
-            "backend conversation seed turn failed (conversationId=%s)",
-            command.conversation_id,
-        )
-        return turns, "failed"
+                config,
+            )
+        except Exception:  # noqa: BLE001 - 한 대화의 실패가 루프를 죽이면 안 된다
+            logger.exception(
+                "backend conversation seed turn failed (conversationId=%s)",
+                command.conversation_id,
+            )
+            return turns, "failed"
 
     turns += 1
     _wait_for_playback(runtime.echo_guard)
