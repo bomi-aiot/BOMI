@@ -55,7 +55,8 @@ import logging
 import os
 import threading
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from bomi_ai_chat.config import Settings, get_settings
 from bomi_ai_chat.door.mqtt import _parse_broker_url
