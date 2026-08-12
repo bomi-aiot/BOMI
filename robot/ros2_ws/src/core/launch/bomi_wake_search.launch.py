@@ -52,7 +52,11 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import (
+    LaunchConfiguration,
+    PathJoinSubstitution,
+    TextSubstitution,
+)
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -87,6 +91,16 @@ def generate_launch_description() -> LaunchDescription:
     ai_chat_python = LaunchConfiguration("ai_chat_python")
     ai_chat_dir = LaunchConfiguration("ai_chat_dir")
     robot_udp_host = LaunchConfiguration("robot_udp_host")
+    vision_confidence = LaunchConfiguration("vision_confidence")
+    vision_forward_threshold = LaunchConfiguration(
+        "vision_forward_threshold")
+    vision_horizontal_dead_zone = LaunchConfiguration(
+        "vision_horizontal_dead_zone")
+    vision_lost_tolerance_frames = LaunchConfiguration(
+        "vision_lost_tolerance_frames")
+    primary_min_confidence = LaunchConfiguration("primary_min_confidence")
+    primary_min_height_ratio = LaunchConfiguration(
+        "primary_min_height_ratio")
 
     robot_id = LaunchConfiguration("robot_id")
     broker_host = LaunchConfiguration("broker_host")
@@ -148,18 +162,67 @@ def generate_launch_description() -> LaunchDescription:
     )
 
     # ── 4) AI 비전 (별도 가상환경) ──────────────────────────────────────────
+    # --select-primary-person: 이 launch 는 "웨이크워드 방향으로 돈 뒤 화면
+    # 중앙 사람을 따라간다"는 시나리오 전용이라 항상 켠다(기본값이 꺼져 있는
+    # 건 ai_vision 단독 실행 시 다중 인물 상황에서 안전하게 멈추기 위해서다).
+    # 2026-08-08 실기: 이걸 안 켠 채로는 부르지 않은 사람이 잠깐 화각에
+    # 들어와도 그 사람을 그대로 추종 대상으로 확정해 버렸다.
+    # --no-window: 이 launch 는 SSH 로 접속한 젯슨에서 헤드리스로 뜬다.
+    # udp_main 기본값(show_window=True)은 DISPLAY 가 없으면 OpenCV 의 Qt
+    # 플러그인 로딩에서 그대로 죽는다(2026-08-08 실기, ai_vision 즉시 종료로
+    # 전체 launch 가 함께 내려감) — 물리 디스플레이가 붙은 디버그 세션에서만
+    # 수동으로 udp_main 을 따로 띄워 확인한다.
+    # --confidence: main.py 의 기본값(0.8)은 노트북 웹캠 MVP 확인용으로 잡은
+    # 값이라 실기(젯슨 카메라·조명·CPU 폴백 추론)에서는 지나치게 보수적이다
+    # (2026-08-08 실기, 카메라가 사람을 비춰도 한 번도 탐지되지 않았다 — YOLO
+    # 자체가 0.8 미만 박스를 이미 버려서, 그 뒤의 primary_min_confidence(0.5)
+    # 필터는 애초에 발동할 기회가 없었다). 이 launch 는 웹캠 데모가 아니라
+    # 실기 시나리오라 primary_min_confidence 와 맞춰 0.5 로 낮춘다.
     ai_vision_process = ExecuteProcess(
         condition=IfCondition(use_ai_vision),
         cmd=[
             ai_vision_python, "-m", "bomi_vision.udp_main",
             "--host", robot_udp_host,
             "--port", vision_udp_port,
+            "--no-window",
+            "--confidence", vision_confidence,
+            "--forward-threshold", vision_forward_threshold,
+            "--horizontal-dead-zone", vision_horizontal_dead_zone,
+            "--lost-tolerance-frames", vision_lost_tolerance_frames,
+            "--select-primary-person",
+            "--primary-min-confidence", primary_min_confidence,
+            "--primary-min-height-ratio", primary_min_height_ratio,
         ],
         cwd=ai_vision_dir,
         name="ai_vision",
         output="screen",
-        # PYTHONPATH 가 ROS 2 것으로 오염되면 가상환경 패키지가 가려진다.
-        additional_env={"PYTHONPATH": ""},
+        additional_env={
+            # PYTHONPATH 가 ROS 2 것으로 오염되면 가상환경 패키지가 가려진다.
+            "PYTHONPATH": "",
+            # YOLO 를 GPU 로 돌리기 위한 라이브러리 탐색 순서
+            # (2026-08-09, CPU 0.75초 -> GPU 0.041초).
+            #   venv/nvidia/cu12/lib  JetPack 에 없는 최신 cuDNN(9.24)과
+            #                         libcudss. torch 2.11 이 이 둘을 요구한다.
+            #   /usr/local/cuda/lib64 cuBLAS 등 나머지. Tegra 내장 GPU 는
+            #                         JetPack 것을 써야 한다 — pip 으로 받은
+            #                         일반 GPU용 cuBLAS 를 쓰면
+            #                         CUBLAS_STATUS_ALLOC_FAILED 로 죽는다.
+            #                         (그래서 venv 에서 nvidia-cublas-cu12 를
+            #                         일부러 제거해 둔 상태다.)
+            "LD_LIBRARY_PATH": [
+                PathJoinSubstitution([
+                    ai_vision_dir, "venv", "lib", "python3.10",
+                    "site-packages", "nvidia", "cu12", "lib",
+                ]),
+                TextSubstitution(
+                    text=":/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu"),
+            ],
+            # 파이프로 나가는 stdout 은 기본이 블록 버퍼링이라, ros2 launch
+            # 화면에 실시간이 아니라 프로세스가 죽거나 버퍼가 찰 때 몰아서
+            # 찍힌다(2026-08-08 실기, 시작 로그가 크래시 트레이스백 '뒤'에
+            # 찍혀 시간순 디버깅이 불가능했다).
+            "PYTHONUNBUFFERED": "1",
+        },
         on_exit=Shutdown(),
     )
 
@@ -175,6 +238,7 @@ def generate_launch_description() -> LaunchDescription:
         additional_env={
             "PYTHONPATH": "",
             "AI_CHAT_ENV_FILE": PathJoinSubstitution([ai_chat_dir, ".env"]),
+            "PYTHONUNBUFFERED": "1",
         },
         on_exit=Shutdown(),
     )
@@ -216,6 +280,36 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             "vision_udp_port", default_value="5005",
             description="ai_vision → vision_udp_bridge 수신 포트"),
+        DeclareLaunchArgument(
+            "vision_confidence", default_value="0.5",
+            description="YOLO 검출 자체의 최소 신뢰도(main.py 기본 0.8은 "
+                        "웹캠 MVP 용 — 실기 카메라·조명에는 너무 높다)"),
+        DeclareLaunchArgument(
+            "vision_forward_threshold", default_value="1.0",
+            description="사람 박스가 화면 높이의 이 비율을 넘으면 전진을 멈춘다. "
+                        "카메라가 낮게 달려 있어 박스 높이는 거리의 척도가 "
+                        "되지 못한다(main.py 기본 0.45는 몇 m 밖에서도 넘겨 "
+                        "로봇이 출발조차 안 했다). 1.0 = 화면을 꽉 채울 때만 "
+                        "정지 — 실질적인 정지 거리는 LiDAR 의 "
+                        "person_stop_distance_m(0.4m)가 정한다"),
+        DeclareLaunchArgument(
+            "vision_horizontal_dead_zone", default_value="0.3",
+            description="사람이 화면 중앙에서 이 비율 안에 있으면 '정면'으로 "
+                        "보고 좌우 보정을 하지 않는다. 좌우 보정은 비례제어가 "
+                        "아니라 고정 속도 on/off 라 좁으면 중앙을 지나칠 "
+                        "때마다 반대로 꺾어 지그재그가 된다. 0.15 -> 0.3"),
+        DeclareLaunchArgument(
+            "vision_lost_tolerance_frames", default_value="12",
+            description="이 프레임 수만큼 연속으로 놓쳐야 '잃어버림'으로 본다. "
+                        "기본 3은 30FPS 기준 0.1초를 의도한 값이라, GPU 로 "
+                        "24FPS 나오는 지금은 순간 미검출마다 추적 상태가 "
+                        "뒤집혀 정지 명령이 섞인다. 12 = 약 0.5초"),
+        DeclareLaunchArgument(
+            "primary_min_confidence", default_value="0.5",
+            description="화면 중앙 사람 선택 후보의 최소 검출 신뢰도"),
+        DeclareLaunchArgument(
+            "primary_min_height_ratio", default_value="0.0",
+            description="화면 중앙 사람 선택 후보의 최소 박스 높이 비율"),
 
         # ── 구성 요소 켜고 끄기 ─────────────────────────────────────────────
         DeclareLaunchArgument(

@@ -216,22 +216,22 @@ def test_scenario_d_weather_follows_the_trip_context(frozen_clock):
     assert docs and docs[0]["title"] == "제주 날씨"
 
 
-def test_scenario_b_a_rain_followup_keeps_the_region(frozen_clock):
-    """★ 시나리오 B: "비는?" — 웨이크워드도 지역도 다시 말하지 않아도 이어진다."""
+def test_scenario_b_a_followup_keeps_the_region(frozen_clock):
+    """★ 시나리오 B: 이어지는 질문에 지역을 다시 말하지 않아도 부산으로 조회된다."""
     frozen_clock(start=NOW)
     weather = FakeWeather()
     context_node.set_weather_client(weather)
     candidates = context_slots.update([], "부산 날씨 어때?", NOW)
 
     docs, _ = context_node._gather_lookup_documents(
-        lookup_state("비는?", candidates))
+        lookup_state("내일 날씨는?", candidates))
 
     assert weather.cities == ["부산"]
     assert docs
 
 
 def test_scenario_h_after_a_correction_the_lookup_uses_the_new_city(frozen_clock):
-    """★ 시나리오 H 후반: 정정 뒤의 "거긴 덥나?" 는 대구로 조회된다."""
+    """★ 시나리오 H 후반: 정정 뒤의 질문은 대구로 조회된다."""
     frozen_clock(start=NOW)
     weather = FakeWeather()
     context_node.set_weather_client(weather)
@@ -239,10 +239,67 @@ def test_scenario_h_after_a_correction_the_lookup_uses_the_new_city(frozen_clock
     candidates = context_slots.update(candidates, "대전 말고 대구", NOW)
 
     docs, _ = context_node._gather_lookup_documents(
-        lookup_state("거긴 덥나?", candidates))
+        lookup_state("거기 날씨 덥나?", candidates))
 
     assert weather.cities == ["대구"]
     assert docs
+
+
+def test_a_followup_needs_an_open_weather_thread(frozen_clock):
+    """★ "비는?" 은 날씨 대화가 열려 있을 때만 조회된다 (2026-08-10 피드백).
+
+    조회 표지는 '날씨' 하나로 좁혔다 — "오늘 좀 춥네" 같은 잡담이 예보를 프롬프트에
+    밀어 넣지 않게 하려는 것이다. 후속 질문은 그 규칙의 예외이고, 예외를 여는 열쇠는
+    어르신이 쥔다: 먼저 '날씨'를 꺼낸 대화 안에서만 넓은 표지가 살아난다.
+
+    아래 두 경우가 정확히 그 차이다. 같은 "거긴 덥나?"인데 앞선 발화가 다르다.
+    """
+    frozen_clock(start=NOW)
+    weather = FakeWeather()
+    context_node.set_weather_client(weather)
+    candidates = context_slots.update([], "부산 날씨 어때?", NOW)
+
+    opened = context_node.next_weather_thread_at(
+        lookup_state("부산 날씨 어때?", candidates))
+    assert opened is not None
+
+    for followup in ("비는?", "거긴 덥나?"):
+        weather.cities.clear()
+        state = lookup_state(followup, candidates)
+        state["weather_thread_at"] = opened
+        docs, _ = context_node._gather_lookup_documents(state)
+        assert weather.cities == ["부산"], followup
+        assert docs, followup
+
+    # 날씨를 꺼낸 적 없는 대화(여행 이야기만 오간 경우)에서는 같은 말이 조용하다.
+    trip_only = context_slots.update([], "내일 대구 가", NOW)
+    weather.cities.clear()
+    docs, _ = context_node._gather_lookup_documents(
+        lookup_state("거긴 덥나?", trip_only))
+    assert weather.cities == []
+    assert docs == []
+
+
+def test_the_weather_thread_expires(frozen_clock):
+    """열어둔 창은 policy.WEATHER_FOLLOWUP_WINDOW_SEC 이 지나면 닫힌다.
+
+    닫히지 않으면 한나절 뒤의 "덥네" 한마디가 아침에 한 날씨 질문을 근거로 다시
+    기상청을 부른다 — 좁힌 이유가 그대로 무너진다.
+    """
+    frozen_clock(start=NOW)
+    weather = FakeWeather()
+    context_node.set_weather_client(weather)
+    candidates = context_slots.update([], "부산 날씨 어때?", NOW)
+
+    stale = NOW - policy.WEATHER_FOLLOWUP_WINDOW_SEC - 1
+    state = lookup_state("비는?", candidates)
+    state["weather_thread_at"] = stale
+
+    docs, _ = context_node._gather_lookup_documents(state)
+
+    assert weather.cities == []
+    assert docs == []
+    assert context_node.next_weather_thread_at(state) is None
 
 
 def test_no_context_and_no_city_still_means_no_lookup(frozen_clock):

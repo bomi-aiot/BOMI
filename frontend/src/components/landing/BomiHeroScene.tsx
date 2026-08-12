@@ -217,13 +217,14 @@ export default function BomiHeroScene({ onStatusChange }: BomiHeroSceneProps) {
       robotGroup.rotation.y = reducedMotion ? 0 : pointerX * 0.12
       robotGroup.rotation.z = reducedMotion ? 0 : pointerX * -0.018
       robotGroup.position.x = reducedMotion ? 0 : pointerX * 0.11
-      robotGroup.position.y = idleLift - scrollProgress * 0.22
-      const sceneScale = 1 - scrollProgress * 0.055
-      robotGroup.scale.setScalar(sceneScale)
+      // 스크롤에 로봇을 끌어내리면(구 -scrollProgress * 0.22) 페이지가 올라가는 만큼
+      // 비주얼이 제자리에 남아 "스크롤이 안 먹는" 느낌을 준다. 로봇은 페이지와 같이 흐르게 두고,
+      // 스크롤 반응은 배경 회전에만 아주 옅게 남긴다.
+      robotGroup.position.y = idleLift
 
       atmosphereGroup.rotation.z = reducedMotion
         ? 0.04
-        : timeSeconds * 0.018 + pointerX * 0.025 + scrollProgress * 0.34
+        : timeSeconds * 0.018 + pointerX * 0.025 + scrollProgress * 0.08
       atmosphereGroup.rotation.x = reducedMotion ? 0 : pointerY * 0.025
       particles.rotation.y = reducedMotion ? 0 : timeSeconds * -0.025
       ribbonMaterial.opacity = reducedMotion
@@ -231,8 +232,7 @@ export default function BomiHeroScene({ onStatusChange }: BomiHeroSceneProps) {
         : 0.48 + Math.sin(timeSeconds * 0.82) * 0.08
 
       camera.position.x = reducedMotion ? 0 : pointerX * 0.07
-      camera.position.y = scrollProgress * 0.08
-      camera.lookAt(0, -scrollProgress * 0.05, 0)
+      camera.lookAt(0, 0, 0)
       renderer.render(scene, camera)
     }
 
@@ -271,11 +271,22 @@ export default function BomiHeroScene({ onStatusChange }: BomiHeroSceneProps) {
       scheduleFrame()
     }
 
-    const updateScrollProgress = () => {
-      const hero = host.closest('.landing-hero')
-      if (!hero) return
-      const rect = hero.getBoundingClientRect()
+    // 히어로 요소는 바뀌지 않으므로 한 번만 찾는다. 스크롤 이벤트마다 closest() 와
+    // getBoundingClientRect() 를 부르면 이벤트마다 강제 레이아웃이 발생하므로,
+    // 측정은 requestAnimationFrame 으로 프레임당 한 번으로 합친다.
+    const heroSection = host.closest('.landing-hero')
+    let scrollFrameId = 0
+
+    const measureScrollProgress = () => {
+      scrollFrameId = 0
+      if (!heroSection) return
+      const rect = heroSection.getBoundingClientRect()
       scrollProgress = MathUtils.clamp(-rect.top / Math.max(rect.height * 0.72, 1), 0, 1)
+    }
+
+    const updateScrollProgress = () => {
+      if (scrollFrameId) return
+      scrollFrameId = window.requestAnimationFrame(measureScrollProgress)
     }
 
     const handlePointerMove = (event: PointerEvent) => {
@@ -356,7 +367,7 @@ export default function BomiHeroScene({ onStatusChange }: BomiHeroSceneProps) {
     document.addEventListener('visibilitychange', handleVisibilityChange)
     reducedMotionQuery.addEventListener('change', handleMotionChange)
     canvas.addEventListener('webglcontextlost', handleContextLost)
-    updateScrollProgress()
+    measureScrollProgress()
     updateSize()
 
     const textureLoader = new TextureLoader()
@@ -475,6 +486,7 @@ export default function BomiHeroScene({ onStatusChange }: BomiHeroSceneProps) {
       host.removeEventListener('pointercancel', handlePointerEnd)
       window.removeEventListener('resize', updateSize)
       window.removeEventListener('scroll', updateScrollProgress)
+      if (scrollFrameId) window.cancelAnimationFrame(scrollFrameId)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
       reducedMotionQuery.removeEventListener('change', handleMotionChange)
       canvas.removeEventListener('webglcontextlost', handleContextLost)

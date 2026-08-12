@@ -114,7 +114,9 @@ controller_server:
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.5
     min_theta_velocity_threshold: 0.001
-    failure_tolerance: 0.3
+    # 0.3 은 사람이 앞을 스쳐 지나가는 것만으로도 주행을 실패시킨다.
+    # 대화 직후 어르신이 로봇 앞에 있는 것은 정상 상황이므로 그 정도는 흡수한다.
+    failure_tolerance: 2.0
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["general_goal_checker"]
     controller_plugins: ["FollowPath"]
@@ -132,17 +134,24 @@ controller_server:
     #
     # 아래 속도·가속도 값은 실측 튜닝 전 초안이다(#8에서 실측 후 조정).
     # 근거: 피코 펌웨어 MAX_TARGET_REV_S=0.8 rev/s,
-    # DISTANCE_PER_REV_M=0.1929m 기준 최고 선속도 약 0.154 m/s.
+    # DISTANCE_PER_REV_M=0.1929m 기준 바퀴 하나의 최고 속도 0.1543 m/s.
+    #
+    # 그 0.1543은 직진일 때의 한계지 max_vel_x 의 상한이 아니다. 차동구동은
+    # 돌 때 바깥 바퀴가 v + w x track/2 로 빨라지므로, 실제로 지켜야 하는 것은
+    #     max_vel_x + max_vel_theta x 0.139 <= 0.1543   (track_width_m=0.278)
+    # 이다. 예전 값(0.15, 0.5)은 이 예산의 142%여서 회전이 섞인 명령이 거의
+    # 전부 드라이버에서 잘렸고, 잘린 만큼 곡률이 틀어져 경로에서 빗겨 나갔다
+    # (2026-08-10 실기). 지금 값은 0.10 + 0.36 x 0.139 = 0.1500 으로 97%다.
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"
       debug_trajectory_details: True
       min_vel_x: 0.0
       min_vel_y: 0.0
-      max_vel_x: 0.15
+      max_vel_x: 0.10
       max_vel_y: 0.0
-      max_vel_theta: 0.5
+      max_vel_theta: 0.36
       min_speed_xy: 0.0
-      max_speed_xy: 0.15
+      max_speed_xy: 0.10
       min_speed_theta: 0.0
       acc_lim_x: 0.3
       acc_lim_y: 0.0
@@ -349,8 +358,10 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: False
     feedback: "OPEN_LOOP"
-    max_velocity: [0.15, 0.0, 0.5]
-    min_velocity: [-0.15, 0.0, -0.5]
+    # FollowPath 의 max_vel_x / max_vel_theta 와 같은 값을 유지한다. 여기가 더
+    # 크면 스무더가 드라이버 한계를 넘는 명령을 다시 만들어 낸다.
+    max_velocity: [0.10, 0.0, 0.36]
+    min_velocity: [-0.10, 0.0, -0.36]
     max_accel: [0.3, 0.0, 0.8]
     max_decel: [-0.3, 0.0, -0.8]
     odom_topic: "odom"

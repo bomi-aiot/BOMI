@@ -312,6 +312,79 @@ p {
   margin-left: var(--sidebar-width);
 }
 
+/*
+  사이드바가 없는 한 장짜리 화면. 본문이 왼쪽 여백을 되찾는다.
+*/
+.app-shell--flat .app-shell__body {
+  margin-left: 0;
+}
+
+.app-shell--flat .app-header__leading {
+  gap: 18px;
+}
+
+/*
+  구역 구분선. 화면 넷을 한 장에 쌓았으므로 "여기서부터 다른 이야기"가 눈에 보여야 한다.
+  선 하나와 여백이면 충분하다 — 카드 안에 카드를 또 두면 깊이만 늘어난다.
+*/
+.one-page {
+  display: grid;
+  gap: 0;
+}
+
+/*
+  헤더가 sticky 라 구역을 화면 맨 위로 보내면 제목이 헤더 밑에 깔린다.
+  종 아이콘을 눌러 도착한 자리에서 제목이 안 보이면 어디로 온 건지 알 수 없다.
+*/
+.one-page__section {
+  /* 실제 헤더는 --header-height(최소값)보다 커질 수 있어 여유를 넉넉히 둔다. */
+  scroll-margin-top: calc(var(--header-height) + 44px);
+}
+
+.one-page__section + .one-page__section {
+  padding-top: 34px;
+  margin-top: 34px;
+  border-top: 1px solid var(--line);
+}
+
+/*
+  구역 제목은 페이지 제목보다 작아야 한다. 페이지 컴포넌트를 그대로 재사용하므로
+  각자 PageHeader 를 들고 오는데, 그 크기 그대로면 한 화면에 대문짝만한 제목이 넷이다.
+  프로퍼티를 심는 대신 여기서만 줄인다 — 되돌리려면 이 블록을 지우면 된다.
+*/
+.one-page__section .page-header__title {
+  font-size: 1.32rem;
+}
+
+.one-page__section .page-header {
+  margin-bottom: 4px;
+}
+
+/* 문의 안내. 사이드바에서 본문 맨 아래로 내려왔다. */
+.app-support {
+  padding: 22px 0 8px;
+  margin-top: 40px;
+  border-top: 1px solid var(--line);
+}
+
+.app-support__title {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.app-support__body {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+}
+
+.app-support__link {
+  color: var(--brand-700);
+  font-weight: 700;
+}
+
 .app-header {
   position: sticky;
   z-index: 30;
@@ -400,17 +473,34 @@ p {
   border: 0;
 }
 
+/* 글자 대신 종 아이콘 하나. 정사각형으로 두고 가운데 맞춘다. */
 .notification-button {
   position: relative;
-  min-width: 42px;
+  display: grid;
+  width: 40px;
   height: 40px;
-  padding: 0 9px;
+  padding: 0;
+  place-items: center;
   color: var(--ink-soft);
-  font-size: 0.75rem;
-  font-weight: 700;
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 9px;
+  cursor: pointer;
+}
+
+.notification-button:hover:not(:disabled) {
+  color: var(--brand-700);
+  background: var(--brand-50);
+  border-color: #c6e0d7;
+}
+
+.notification-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.notification-button__icon {
+  display: block;
 }
 
 .notification-button__count {
@@ -2161,12 +2251,21 @@ p {
   white-space: nowrap;
 }
 
-.preference-card__actions,
-.confirmation-card__actions {
+.preference-card__actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
+}
+
+/*
+  오른쪽 정렬을 왼쪽으로 바꿨다. 선택지가 카드 오른쪽 끝에 몰려 있으면 왼쪽에서
+  읽어 내려온 눈이 한 번 더 이동해야 한다 — 질문 바로 아래가 답의 자리다.
+*/
+.confirmation-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .confirmation-toolbar {
@@ -2238,6 +2337,123 @@ p {
   color: var(--ink-soft);
   font-size: 0.75rem;
   line-height: 1.6;
+}
+
+/*
+  카드의 새 뼈대 — 언제 / 어르신의 말 / 질문 / 선택.
+  글자 크기가 곧 우선순위다. 어르신이 한 말이 카드에서 가장 큰 글씨이고,
+  나머지는 그 말을 읽는 데 필요한 만큼만 작게 남는다.
+*/
+.today-medication-summary {
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.today-medication-summary__headline {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.today-medication-summary__headline strong {
+  font-weight: 800;
+}
+
+.today-medication-summary__detail {
+  margin: 8px 0 0;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.today-medication-summary__detail--warn {
+  color: #8a5a12;
+}
+
+.confirmation-card__when {
+  margin: 0 0 10px;
+  color: var(--ink-muted);
+  font-size: 0.7rem;
+}
+
+.confirmation-card__quote {
+  padding: 0;
+  margin: 0 0 16px;
+  color: var(--ink);
+  font-size: 1.02rem;
+  font-weight: 600;
+  line-height: 1.55;
+  word-break: keep-all;
+}
+
+.confirmation-card__quote::before {
+  content: '“';
+}
+
+.confirmation-card__quote::after {
+  content: '”';
+}
+
+.confirmation-card__ask {
+  margin: 16px 0 10px;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.confirmation-card__recheck {
+  margin: 10px 0 0;
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+}
+
+/*
+  한 화면에 제목·어르신의 말·질문·선택을 모두 보여 준다.
+  내용을 접지 않고 카드 안의 수직 여백만 줄인다.
+*/
+.one-page__section .confirmation-card .card__content {
+  padding: 12px 16px 14px;
+}
+
+.one-page__section .confirmation-card__when {
+  margin-bottom: 6px;
+}
+
+.one-page__section .confirmation-card__quote {
+  margin-bottom: 10px;
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.one-page__section .confirmation-card__ask {
+  margin: 10px 0 7px;
+}
+
+.one-page__section .confirmation-card__actions {
+  gap: 6px;
+}
+
+.one-page__section .confirmation-card__recheck {
+  margin-top: 7px;
+}
+
+/* 버튼이 아니라 글 안의 링크처럼 보여야 한다 — 선택지 셋이 동등해 보이면 안 된다. */
+.link-button {
+  padding: 0;
+  color: var(--brand-700);
+  font: inherit;
+  text-decoration: underline;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.link-button:disabled {
+  color: var(--ink-muted);
+  cursor: default;
 }
 
 .confirmation-evidence {
@@ -2330,6 +2546,42 @@ p {
   margin: 0;
   color: var(--ink);
   font-size: 0.69rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/*
+  값을 한 줄도 그리지 못했을 때. 조용한 빈칸 대신 눈에 보이게 남긴다 —
+  빈 상자는 "볼 것이 없다"로 읽히지만 여기서는 "못 읽었다"가 사실이다.
+*/
+.desktop-alert-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.desktop-alert-setting__note {
+  flex: 1 1 200px;
+  margin: 12px 0 0;
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.desktop-alert-setting .desktop-alert-setting__note {
+  margin: 0;
+}
+
+.value-panel__unreadable {
+  margin: 0;
+  color: var(--warn-700, #8a5a12);
+  font-size: 0.69rem;
+  font-style: italic;
   line-height: 1.5;
   word-break: break-word;
 }
@@ -2845,7 +3097,13 @@ p {
     left: 0;
     display: grid;
     min-height: 67px;
-    grid-template-columns: repeat(5, 1fr);
+
+    /*
+      칸 수를 항목 수에 맞춘다. repeat(5, 1fr) 로 고정돼 있어서, 데모 필터로 항목이
+      둘만 남았을 때 탭 두 개가 왼쪽에 몰리고 오른쪽 3/5가 빈 채로 남았다.
+    */
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
     padding: 6px 5px calc(6px + env(safe-area-inset-bottom));
     background: rgb(255 255 255 / 97%);
     border-top: 1px solid var(--line);
@@ -3156,6 +3414,136 @@ body {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
+}
+
+/* 안전 알림 카드 — 보미와 집 그리드의 오른쪽 자리.
+   평상시엔 다른 카드와 같은 톤이고, 알림이 있을 때만 붉은 테두리로 눈에 띈다. */
+.safety-alert-card--urgent {
+  border-color: var(--red-700);
+  background: var(--red-50);
+  box-shadow: 0 0 0 2px rgb(176 51 47 / 12%);
+}
+
+/*
+  T1 응급은 카드 그리드 안의 두 번째 정보가 아니다. 보미 구역 제목 바로 아래에서
+  가장 먼저 읽히게 하고, 진한 빨강 배경으로 정상 상태 카드와 한눈에 구분한다.
+*/
+.bomi-emergency-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  min-height: 88px;
+  padding: 16px 20px;
+  color: #fff;
+  background: linear-gradient(135deg, #b52f2f, #851c1c);
+  border: 2px solid #721616;
+  border-radius: 16px;
+  box-shadow: 0 14px 32px rgb(126 25 25 / 24%);
+}
+
+.bomi-emergency-banner__icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  place-items: center;
+  color: #941f1f;
+  font-size: 1.45rem;
+  font-weight: 950;
+  background: #fff;
+  border-radius: 50%;
+}
+
+.bomi-emergency-banner__copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.bomi-emergency-banner p,
+.bomi-emergency-banner h2,
+.bomi-emergency-banner ul {
+  margin: 0;
+}
+
+.bomi-emergency-banner p {
+  color: #ffd9d4;
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.bomi-emergency-banner h2 {
+  margin-top: 2px;
+  font-size: 1.2rem;
+  line-height: 1.35;
+}
+
+.bomi-emergency-banner ul {
+  display: grid;
+  gap: 2px;
+  padding: 0;
+  margin-top: 7px;
+  list-style: none;
+}
+
+.bomi-emergency-banner li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.bomi-emergency-banner time {
+  flex: none;
+  color: #ffd9d4;
+  font-size: 0.72rem;
+}
+
+.safety-alert-card__body {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+
+.safety-alert-card__body strong {
+  font-size: 0.98rem;
+  line-height: 1.5;
+}
+
+.safety-alert-card__body p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+  line-height: 1.6;
+}
+
+.safety-alert-list {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+.safety-alert-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--red-100);
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.safety-alert-list time {
+  flex: none;
+  color: var(--ink-muted);
+  font-size: 0.74rem;
 }
 
 .today-summary-card {
@@ -3598,6 +3986,139 @@ body {
   font-size: 0.8rem;
 }
 
+/* 보미 구역은 제목·응급·모드·환경·알림을 한 뷰포트에서 읽을 수 있게 조인다. */
+.one-page__section .bomi-home-page {
+  gap: 9px;
+}
+
+.one-page__section .bomi-home-page .page-header {
+  padding: 0;
+  margin-bottom: 0;
+}
+
+.one-page__section .bomi-home-page .page-header__eyebrow {
+  margin-bottom: 3px;
+  font-size: 0.66rem;
+}
+
+.one-page__section .bomi-home-page .page-header__title {
+  font-size: 1.2rem;
+  line-height: 1.15;
+}
+
+.one-page__section .bomi-home-page .page-header__description {
+  margin-top: 4px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.one-page__section .bomi-home-page .page-header__actions .button {
+  min-height: 36px;
+  padding-inline: 13px;
+}
+
+.one-page__section .bomi-emergency-banner {
+  min-height: 0;
+  gap: 11px;
+  padding: 10px 15px;
+  border-radius: 13px;
+}
+
+.one-page__section .bomi-emergency-banner__icon {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+  font-size: 1.2rem;
+}
+
+.one-page__section .bomi-emergency-banner h2 {
+  font-size: 1.05rem;
+  line-height: 1.25;
+}
+
+.one-page__section .bomi-emergency-banner ul {
+  margin-top: 4px;
+}
+
+.one-page__section .bomi-emergency-banner li {
+  font-size: 0.75rem;
+  line-height: 1.3;
+}
+
+.one-page__section .bomi-status-hero {
+  gap: 11px;
+  padding: 10px 15px;
+  border-radius: 14px;
+}
+
+.one-page__section .bomi-status-hero__orb {
+  width: 44px;
+  height: 44px;
+  flex-basis: 44px;
+}
+
+.one-page__section .bomi-status-hero__orb span {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px 9px 9px 3px;
+}
+
+.one-page__section .bomi-status-hero h2 {
+  margin: 1px 0 2px;
+  font-size: 1.15rem;
+  line-height: 1.2;
+}
+
+.one-page__section .bomi-status-hero__actions .button {
+  min-height: 36px;
+  padding-inline: 13px;
+}
+
+.one-page__section .bomi-detail-grid {
+  gap: 9px;
+}
+
+.one-page__section .bomi-detail-grid .card__header {
+  padding: 9px 13px 0;
+}
+
+.one-page__section .bomi-detail-grid .card__content {
+  padding: 7px 13px 10px;
+}
+
+.one-page__section .bomi-detail-grid .card__description {
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
+.one-page__section .environment-readings {
+  gap: 6px;
+  margin-bottom: 5px;
+}
+
+.one-page__section .environment-readings > div {
+  padding: 7px 10px;
+}
+
+.one-page__section .environment-readings dd {
+  margin-top: 1px;
+  font-size: 1.08rem;
+}
+
+.one-page__section .safety-alert-card__body {
+  gap: 4px;
+}
+
+.one-page__section .safety-alert-card__body strong {
+  font-size: 0.9rem;
+  line-height: 1.3;
+}
+
+.one-page__section .safety-alert-card__body p,
+.one-page__section .observation-note {
+  line-height: 1.35;
+}
+
 .environment-readings {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3685,8 +4206,9 @@ body {
     min-height: 34px;
   }
 
-  .mobile-bottom-nav {
-    grid-template-columns: repeat(4, 1fr);
+  .mobile-bottom-nav__item {
+    /* 좁은 화면에서 라벨이 잘리지 않도록만 조인다. 칸 수는 위에서 항목 수를 따른다. */
+    font-size: 0.8125rem;
   }
 
   .today-primary-grid,
@@ -3699,6 +4221,16 @@ body {
 
   .urgent-care-alert {
     flex-wrap: wrap;
+  }
+
+  .bomi-emergency-banner {
+    padding: 14px 16px;
+  }
+
+  .bomi-emergency-banner li {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 1px;
   }
 
   .urgent-care-alert__copy {
@@ -3782,4 +4314,101 @@ body {
     grid-template-columns: 1fr;
   }
 
+}
+
+
+/* --- 위급 알림 토스트 -----------------------------------------------------
+   왜 평상시 토스트와 다른 자리인가
+     기본 토스트는 오른쪽 아래에 조용히 뜬다. 저장 완료·되돌리기처럼 놓쳐도
+     되는 것들의 자리다. 위급은 놓치면 안 되는 것이므로 시선이 먼저 가는
+     위쪽 가운데로 올리고, 크기와 색으로 나머지 화면을 이긴다.
+
+   왜 파일 끝에 두는가
+     아래쪽 모바일 미디어쿼리가 .toast 의 right/bottom/width 를 다시 잡는다.
+     같은 특정도라면 뒤에 오는 규칙이 이긴다 — 그 뒤에 둬야 모바일에서도
+     가운데 위로 뜬다. */
+
+.toast--critical {
+  top: 18px;
+  right: auto;
+  bottom: auto;
+  left: 50%;
+  width: min(560px, calc(100% - 32px));
+  padding: 17px 19px;
+  color: #fff;
+  background: linear-gradient(135deg, #b0332f, #8c2323);
+  border-color: #8c2323;
+  border-radius: 14px;
+  box-shadow: 0 18px 60px rgb(120 20 20 / 42%);
+  transform: translateX(-50%);
+  animation:
+    toast-critical-in 300ms ease-out,
+    toast-critical-pulse 1.5s ease-in-out 300ms 3;
+}
+
+.toast--critical .toast__indicator {
+  height: 44px;
+  background: rgb(255 255 255 / 88%);
+}
+
+.toast--critical .toast__title {
+  margin-bottom: 4px;
+  color: #fff;
+  font-size: 0.95rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.toast--critical .toast__message {
+  color: #fff;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.toast--critical .toast__action {
+  padding: 7px 12px;
+  color: #8c2323;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  background: #fff;
+  border-radius: 999px;
+}
+
+.toast--critical .toast__close {
+  color: rgb(255 255 255 / 78%);
+  font-size: 1.2rem;
+}
+
+@keyframes toast-critical-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -18px) scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+@keyframes toast-critical-pulse {
+  0%,
+  100% {
+    box-shadow: 0 18px 60px rgb(120 20 20 / 42%);
+  }
+
+  50% {
+    box-shadow:
+      0 18px 60px rgb(120 20 20 / 42%),
+      0 0 0 12px rgb(190 50 50 / 20%);
+  }
+}
+
+/* 애니메이션을 끈 사용자에게 흔들리는 경고를 강요하지 않는다. 위치와 색만으로도
+   충분히 구분된다. */
+@media (prefers-reduced-motion: reduce) {
+  .toast--critical {
+    animation: none;
+  }
 }

@@ -35,8 +35,11 @@ public class HomecomingOrchestrator {
 
     public static final String REASON_AI_START_TIMEOUT = "AI_START_TIMEOUT";
     public static final String REASON_CONVERSATION_TIMEOUT = "CONVERSATION_TIMEOUT";
+    public static final String REASON_HOMECOMING_FOLLOW_COMPLETED =
+        "HOMECOMING_FOLLOW_COMPLETED";
 
-    static final String DEFAULT_GREETING = "어서 오세요. 오늘 외출은 어떠셨어요?";
+    static final String DEFAULT_GREETING =
+        "할머니 기다리고 있었어요! 오늘 밖에서 뭐하고 오셨어요?";
 
     private static final Logger log = LoggerFactory.getLogger(HomecomingOrchestrator.class);
     private static final Duration ROBOT_COMMAND_TTL = Duration.ofMinutes(2);
@@ -248,7 +251,7 @@ public class HomecomingOrchestrator {
             scenarioId, conversationId);
     }
 
-    /** AI reported a terminal result; all results first return the robot to DEFAULT. */
+    /** AI reported a terminal result; homecoming continues by following the senior. */
     @Transactional
     public void onConversationEnded(
         UUID scenarioId,
@@ -270,11 +273,57 @@ public class HomecomingOrchestrator {
         conversationRepository.save(conversation);
         if (scenario.getFinalStatus() == ScenarioStatus.CHECKING_INTERACTION
             || scenario.getFinalStatus() == ScenarioStatus.CONVERSING) {
-            beginReturnToDefault(scenario, robot);
+            if (scenario.getScenarioType() == ScenarioType.HOMECOMING) {
+                if (REASON_HOMECOMING_FOLLOW_COMPLETED.equals(reasonCode)) {
+                    beginReturnToDefault(scenario, robot);
+                } else {
+                    beginFollowing(scenario, robot);
+                }
+            } else {
+                beginReturnToDefault(scenario, robot);
+            }
         } else {
             log.warn("Conversation ended after scenario left dialogue states: scenarioId={}, status={}",
                 scenarioId, scenario.getFinalStatus());
         }
+    }
+
+    /** Applies the FOLLOW_START acknowledgement for the post-conversation homecoming flow. */
+    @Transactional
+    public void onFollowResult(
+        String eventId,
+        UUID scenarioId,
+        String sourceRobotId,
+        String commandId,
+        OffsetDateTime occurredAt,
+        String outcome,
+        String resultCode,
+        String reasonCode
+    ) {
+        Scenario scenario = requireScenarioForUpdate(scenarioId);
+        Robot robot = requireRobot(scenario.getRobotId());
+        requireMatchingRobot(robot, sourceRobotId);
+        if (scenario.getFinalStatus() != ScenarioStatus.STARTING_FOLLOW) {
+            log.info("Late FOLLOW_RESULT ignored: scenarioId={}, status={}",
+                scenarioId, scenario.getFinalStatus());
+            return;
+        }
+        if (!scenario.getFollowStartCommandId().equals(commandId)) {
+            throw new MqttContractViolationException(
+                "FOLLOW_RESULT commandId does not match HOMECOMING FOLLOW_START");
+        }
+        if ("SUCCEEDED".equals(outcome)
+            && ("STARTED".equals(resultCode) || "UNCHANGED".equals(resultCode))) {
+            scenario.confirmHomecomingFollowing(
+                eventId, commandId, resultCode, reasonCode, occurredAt,
+                OffsetDateTime.now(clock));
+        } else if ("CANCELLED".equals(outcome)) {
+            scenario.cancel(resultCode, reasonCode);
+        } else {
+            scenario.fail(resultCode, reasonCode);
+        }
+        scenarioRepository.save(scenario);
+        syncRobotMode(robot, scenario);
     }
 
     /** Called by the 10-second watchdog for a command AI did not acknowledge. */
@@ -329,6 +378,28 @@ public class HomecomingOrchestrator {
         scenario.decideReturn();
         scenario.returnToDefault();
         enqueueNavigate(scenario, robot, HomecomingContract.TARGET_DEFAULT);
+        syncRobotMode(robot, scenario);
+    }
+
+    private void beginFollowing(Scenario scenario, Robot robot) {
+        if (robot.getCurrentMode() == RobotMode.SAFE_STOP) {
+            scenario.fail(null, "SAFETY_STOP");
+            scenarioRepository.save(scenario);
+            return;
+        }
+        scenario.decideReturn();
+        OffsetDateTime now = OffsetDateTime.now(clock);
+        String commandId = UUID.randomUUID().toString();
+        scenario.beginHomecomingFollowStart(commandId, now);
+        scenarioRepository.save(scenario);
+        commandPublisher.publish(new RobotCommand(
+            commandId,
+            scenario.getId(),
+            robot.getDeviceId(),
+            RobotCommandType.FOLLOW_START,
+            now,
+            now.plus(ROBOT_COMMAND_TTL),
+            Map.of()));
         syncRobotMode(robot, scenario);
     }
 

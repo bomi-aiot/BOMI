@@ -31,6 +31,7 @@ from core.follow_state_machine import (
 from core.person_following_controller import (
     PersonFollowingController,
     VelocityCommand,
+    ramp_toward,
 )
 
 
@@ -55,6 +56,9 @@ class PersonFollower(Node):
         enable_topic = str(
             self.get_parameter("enable_topic").value
         )
+        status_topic = str(
+            self.get_parameter("status_topic").value
+        )
 
         # 추종 스위치. False 인 동안은 _publish_velocity 가 아무것도 발행하지
         # 않는다(끄는 순간의 정지 1회는 스위치를 내리기 '전'에 내보낸다 —
@@ -77,6 +81,20 @@ class PersonFollower(Node):
             self.get_parameter(
                 "require_lidar_before_motion"
             ).value
+        )
+        self._approach_uses_lidar_only = bool(
+            self.get_parameter(
+                "approach_uses_lidar_only"
+            ).value
+        )
+        self._hold_motion_on_brief_loss = bool(
+            self.get_parameter("hold_motion_on_brief_loss").value
+        )
+        self._linear_accel_limit = float(
+            self.get_parameter("linear_accel_limit").value
+        )
+        self._angular_accel_limit = float(
+            self.get_parameter("angular_accel_limit").value
         )
 
         obstacle_half_angle_deg = float(
@@ -129,6 +147,9 @@ class PersonFollower(Node):
             angular_speed=float(
                 self.get_parameter("angular_speed").value
             ),
+            turn_linear_ratio=float(
+                self.get_parameter("turn_linear_ratio").value
+            ),
             person_stop_distance_m=float(
                 self.get_parameter(
                     "person_stop_distance_m"
@@ -159,6 +180,9 @@ class PersonFollower(Node):
             reason="node_started",
         )
         self._last_logged_state: FollowState | None = None
+        self._last_logged_velocity_reason: str | None = None
+        self._last_publish_sec: float | None = None
+        self._arrival_sent = False
 
         self._vision_timeout_handled = True
         self._lidar_timeout_stop_sent = True
@@ -166,6 +190,16 @@ class PersonFollower(Node):
         self._velocity_publisher = self.create_publisher(
             Twist,
             output_topic,
+            10,
+        )
+
+        # wake_search 가 "추종을 포기했다"를 알 수 있는 유일한 통로
+        # (S15P11E102-376, 엉뚱한 사람 락온 후 영구 정지 버그 수정).
+        # 상태 자체가 아니라 상태 '전이'를 알려야 하므로 QoS depth 는
+        # 작게 두고 최신 전이만 흘려보낸다.
+        self._status_publisher = self.create_publisher(
+            String,
+            status_topic,
             10,
         )
 
@@ -257,6 +291,10 @@ class PersonFollower(Node):
             "enable_topic",
             "/person_following/enable",
         )
+        self.declare_parameter(
+            "status_topic",
+            "/person_following/status",
+        )
 
         self.declare_parameter(
             "linear_speed",
@@ -265,6 +303,10 @@ class PersonFollower(Node):
         self.declare_parameter(
             "angular_speed",
             0.5,
+        )
+        self.declare_parameter(
+            "turn_linear_ratio",
+            0.0,
         )
 
         self.declare_parameter(
@@ -295,6 +337,28 @@ class PersonFollower(Node):
         self.declare_parameter(
             "require_lidar_before_motion",
             True,
+        )
+        # 기본값 False — 카메라가 사람 전신을 담을 수 있게 달린 기존 구성의
+        # 동작을 바꾸지 않는다. 이 로봇처럼 카메라가 낮은 경우에만 켠다.
+        self.declare_parameter(
+            "approach_uses_lidar_only",
+            False,
+        )
+        # 정지 상태에서 목표 속도로 튀어나가면 바로 앞의 사람에게 위협적으로
+        # 느껴진다(2026-08-09 실기 피드백). 0 이면 제한하지 않는다.
+        # 짧은 미검출에 정지를 내보내지 않는다. 기본 False 로 두어 기존
+        # 사용처(순찰 등)의 동작을 바꾸지 않는다.
+        self.declare_parameter(
+            "hold_motion_on_brief_loss",
+            False,
+        )
+        self.declare_parameter(
+            "linear_accel_limit",
+            0.0,
+        )
+        self.declare_parameter(
+            "angular_accel_limit",
+            0.0,
         )
         self.declare_parameter(
             "person_stop_distance_m",
@@ -393,7 +457,27 @@ class PersonFollower(Node):
             now_sec=now_sec,
         )
 
+        # 한 프레임만 놓쳐도 비전은 temporarily_lost 를 낸다(실측: 9.4FPS 중
+        # 20%). 그때마다 정지를 발행하면 다가가는 내내 가다 서다를 반복해
+        # 앞에서 깔짝거리는 것처럼 보인다(2026-08-09 실기). 짧은 누락에는
+        # 아무것도 발행하지 않고 직전 명령이 흐르게 둔다 — 진짜로 끊기면
+        # Pico 워치독(0.5초)이 알아서 세우므로 정지가 늦어지지 않는다.
+        if (
+            self._hold_motion_on_brief_loss
+            and decision.state is FollowState.TEMPORARILY_LOST
+        ):
+            self._log_state_change(
+                decision.state,
+                decision.reason,
+                decision.target_track_id,
+            )
+            return
+
         movement_allowed = decision.movement_allowed
+        command = self._effective_command(
+            payload["command"],
+            movement_allowed,
+        )
         person_distance_m: float | None = None
         emergency_obstacle_distance_m: float | None = None
         node_stop_reason: str | None = None
@@ -408,13 +492,10 @@ class PersonFollower(Node):
                     self._front_obstacle_distance_m
                 )
 
-                if payload["command"] == "move_forward":
-                    person_distance_m = (
-                        self._front_person_distance_m
-                    )
+                person_distance_m = self._front_person_distance_m
 
         velocity = self._controller.calculate_velocity(
-            command=payload["command"],
+            command=command,
             movement_allowed=movement_allowed,
             person_distance_m=person_distance_m,
             emergency_obstacle_distance_m=(
@@ -448,6 +529,34 @@ class PersonFollower(Node):
             f"angular.z={velocity.angular_z:.2f}, "
             f"reason={velocity.reason}"
         )
+
+    def _effective_command(
+        self,
+        command: str,
+        movement_allowed: bool,
+    ) -> str:
+        """비전의 "충분히 가깝다" 판정을 LiDAR 에 넘길지 결정한다.
+
+        비전은 사람 상자가 화면 높이의 얼마를 차지하는지로 거리를 가늠한다.
+        카메라가 종아리 높이에 달린 이 로봇에서는 그 비율이 거리와 무관하게
+        늘 0.98~1.00(상자가 화면에 잘림)이라, 몇 m 밖에서도 "다 왔다"(stop)만
+        나와 로봇이 전진을 시작조차 못 한다(2026-08-09 실측).
+
+        approach_uses_lidar_only 가 켜져 있으면 그 판정을 무시하고 전진으로
+        바꾼다. 실제 정지는 LiDAR 가 person_stop_distance_m 에서 시킨다.
+        좌우 정렬(turn_left/turn_right)은 화면 좌우 위치로 판단하므로 카메라
+        높이와 무관하다 — 그대로 둔다.
+
+        movement_allowed 가 False 면 대상이 확정되지 않은 상태(다중 인물·
+        추적 상실 등)이므로 어떤 것도 전진으로 바꾸지 않는다.
+        """
+        if not self._approach_uses_lidar_only:
+            return command
+        if not movement_allowed:
+            return command
+        if command != "stop":
+            return command
+        return "move_forward"
 
     def _scan_callback(self, message: LaserScan) -> None:
         """LiDAR에서 사람 접근 거리와 긴급 장애물 거리를 계산한다."""
@@ -844,6 +953,7 @@ class PersonFollower(Node):
             decision = self._state_machine.enable(now_sec)
             self._vision_timeout_handled = True
             self._lidar_timeout_stop_sent = True
+            self._arrival_sent = False
             self.get_logger().info("사람 추종을 켭니다 (접근 단계 시작)")
         else:
             # 순서 중요: 정지 발행이 먼저, 스위치 내리기가 나중.
@@ -874,11 +984,64 @@ class PersonFollower(Node):
         if not self._enabled:
             return
 
+        now_sec = self._time_to_sec(self.get_clock().now())
+        elapsed_sec = (
+            0.0
+            if self._last_publish_sec is None
+            else now_sec - self._last_publish_sec
+        )
+        self._last_publish_sec = now_sec
+
+        previous = self._last_velocity
+        linear_x = ramp_toward(
+            velocity.linear_x,
+            0.0 if previous is None else previous.linear_x,
+            self._linear_accel_limit,
+            elapsed_sec,
+        )
+        angular_z = ramp_toward(
+            velocity.angular_z,
+            0.0 if previous is None else previous.angular_z,
+            self._angular_accel_limit,
+            elapsed_sec,
+        )
+        velocity = VelocityCommand(
+            linear_x=linear_x,
+            angular_z=angular_z,
+            reason=velocity.reason,
+        )
+
         twist = Twist()
         twist.linear.x = velocity.linear_x
         twist.angular.z = velocity.angular_z
 
         self._velocity_publisher.publish(twist)
+
+        # 판단 근거가 바뀔 때만 남긴다. "사람은 찾았는데 왜 안 다가가는가"는
+        # 이 reason(person_distance_unavailable, lidar_not_ready,
+        # waiting_for_person_resume_distance …) 없이는 밖에서 알 수 없다.
+        if velocity.reason != self._last_logged_velocity_reason:
+            self._last_logged_velocity_reason = velocity.reason
+            self.get_logger().info(
+                "추종 속도 판단: "
+                f"reason={velocity.reason}, "
+                f"linear.x={velocity.linear_x:.2f}, "
+                f"angular.z={velocity.angular_z:.2f}"
+            )
+
+        # 사람 앞에 다 왔다는 사실은 상태(FollowState)가 아니라 속도 판단
+        # 근거로만 나타난다. 도착 뒤에도 추종을 켜 둔 채로 두면 대화 중
+        # 어르신이 조금만 움직여도 계속 재정렬·재접근해서 앞에서 좌우로
+        # 깔짝거린다(2026-08-09 실기) — wake_search 가 추종을 끌 수 있도록
+        # 한 번만 알린다.
+        if velocity.reason == "person_too_close" and not self._arrival_sent:
+            self._arrival_sent = True
+            self._publish_status(
+                state="arrived",
+                reason=velocity.reason,
+                target_track_id=self._state_machine.target_track_id,
+            )
+
         self._last_velocity = velocity
 
     def _publish_stop(self, reason: str) -> None:
@@ -909,6 +1072,30 @@ class PersonFollower(Node):
             f"target_track_id={target_track_id}, "
             f"reason={reason}"
         )
+
+        self._publish_status(
+            state=state.value,
+            reason=reason,
+            target_track_id=target_track_id,
+        )
+
+    def _publish_status(
+        self,
+        *,
+        state: str,
+        reason: str,
+        target_track_id: int | None,
+    ) -> None:
+        """wake_search 가 구독하는 상태 토픽에 한 줄 알린다."""
+        status_msg = String()
+        status_msg.data = json.dumps(
+            {
+                "state": state,
+                "target_track_id": target_track_id,
+                "reason": reason,
+            }
+        )
+        self._status_publisher.publish(status_msg)
 
     @staticmethod
     def _is_stopped(

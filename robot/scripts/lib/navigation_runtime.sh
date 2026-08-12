@@ -47,6 +47,24 @@ bomi_navigation_load_state() {
     fi
 }
 
+# 노드가 정확히 active 가 될 때까지 기다린다. 되면 0, 시간초과면 1.
+#
+# 앞을 고정해서 비교하는 이유: 이전 구현은 *"active "* 패턴이라
+# "inactive [2]" 에도 걸렸다. 그래서 죽은 Nav2 를 "준비 완료"로 보고했고,
+# 2026-08-09 실기에서 지도 없이 주행을 시작해 모든 명령이 실패했다.
+# 서비스 호출이 타임아웃나면 빈 문자열이 오는데, 그때는 계속 기다린다.
+bomi_wait_active() {
+    local node=$1 tries=$2 state
+    for _ in $(seq 1 "$tries"); do
+        state=$(timeout 8 ros2 lifecycle get "$node" 2>&1 | head -1 || true)
+        case "$state" in
+            "active "*) return 0 ;;
+        esac
+        sleep 3
+    done
+    return 1
+}
+
 bomi_navigation_start() {
     # ROS 2 Humble의 setup.bash는 일부 선택 환경변수를 값 없이 참조한다.
     # 호출 스크립트의 nounset(-u)은 유지하되 setup 파일을 읽는 동안만 끈다.
@@ -76,14 +94,14 @@ bomi_navigation_start() {
         use_rviz:=false >"$BOMI_NAV_LOG" 2>&1 &
     BOMI_NAV_PGID=$!
 
-    local active=no
-    for _ in $(seq 1 40); do
-        case "$(timeout 8 ros2 lifecycle get /amcl 2>&1 || true)" in
-            *"active "*) active=yes; break ;;
-        esac
-        sleep 3
-    done
-    if [ "$active" != yes ]; then
+    # map_server 도 본다. 2026-08-09 실기에서 amcl 의 change_state 응답이
+    # 타임아웃나며 localization 쪽 활성화가 중단됐는데, 확인 대상이 아니라
+    # 지도 없이 "준비 완료"로 넘어갔다.
+    if ! bomi_wait_active /map_server 20; then
+        echo "map_server가 활성화되지 않았습니다. 로그: $BOMI_NAV_LOG" >&2
+        return 1
+    fi
+    if ! bomi_wait_active /amcl 40; then
         echo "AMCL이 활성화되지 않았습니다. 로그: $BOMI_NAV_LOG" >&2
         return 1
     fi
@@ -93,14 +111,7 @@ bomi_navigation_start() {
     timeout 40 python3 "$BOMI_SCRIPT_DIR/lib/set_initpose.py" \
         "$BOMI_START_X" "$BOMI_START_Y" "$BOMI_START_YAW"
 
-    active=no
-    for _ in $(seq 1 25); do
-        case "$(timeout 8 ros2 lifecycle get /bt_navigator 2>&1 || true)" in
-            *"active "*) active=yes; break ;;
-        esac
-        sleep 3
-    done
-    if [ "$active" != yes ]; then
+    if ! bomi_wait_active /bt_navigator 25; then
         echo "bt_navigator가 활성화되지 않았습니다. 로그: $BOMI_NAV_LOG" >&2
         return 1
     fi
@@ -120,5 +131,8 @@ bomi_run_mqtt_bridge() {
         -p username:="${MQTT_USERNAME:-bomi-jetson}" \
         -p password:="$MQTT_PASSWORD" \
         -p waypoint_file:="$BOMI_WAYPOINTS" \
-        -p approach_enabled:=false
+        -p approach_enabled:=false \
+        -p search_enabled:="${BOMI_SEARCH_ENABLED:-false}" \
+        -p search_start_topic:="${BOMI_SEARCH_START_TOPIC:-/wake_search/start}" \
+        -p zigzag_enabled:="${BOMI_ZIGZAG_ENABLED:-false}"
 }

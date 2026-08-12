@@ -361,17 +361,38 @@ CREATE TABLE IF NOT EXISTS extraction_job (
     -- 0 = 아직 flush 가 처리하지 않았다. 1 = 처리 완료(뽑을 것이 없었거나,
     -- 뽑아서 백엔드 제출까지 성공했다). 제출에 실패하면 0 인 채로 남아
     -- 다음 flush 가 다시 시도한다 (jobs/ticks.extraction_flush 참고).
+    -- 2 = 포기(S15P11E102-393). 서버가 "이 요청은 틀렸다"고 답한 행이다 —
+    -- 다시 보내도 같은 답이 오므로 대기 목록에서 뺀다. 1 과 나눠 두는 이유는
+    -- "처리했다"와 "잃었다"가 같은 값이면 운영 지표가 거짓말을 하기 때문이다.
     extracted                 INTEGER NOT NULL DEFAULT 0,
     created_at                REAL    NOT NULL
 )
 """
 
-# flush 는 "아직 처리 안 된" 행만, 오래된 순으로 찾는다. outbox 와 같은 이유로
-# 부분 인덱스를 쓴다 — 대부분의 행은 곧 extracted=1 이 되므로 대기 중인 것만
-# 색인하는 편이 표가 커져도 조회가 느려지지 않는다.
+# extraction_job 에 뒤늦게 추가된 컬럼. _RUNTIME_STATE_ADDED_COLUMNS 와 같은 이유로
+# 필요하다 — CREATE TABLE IF NOT EXISTS 는 이미 돌고 있던 로봇의 표를 고쳐주지 않고,
+# SELECT * 로 읽는 pending() 이 KeyError 로 죽는다.
+#
+# attempts: 이 행을 flush 가 처리하려다 실패한 횟수. 기본 0 이 "아직 한 번도 실패한
+# 적 없다"를 뜻하므로 이관된 기존 행에도 그대로 맞는 값이다.
+_EXTRACTION_JOB_ADDED_COLUMNS = (
+    ("attempts", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+# flush 는 "아직 처리 안 된" 행만, 실패가 적은 순 → 오래된 순으로 찾는다. outbox 와
+# 같은 이유로 부분 인덱스를 쓴다 — 대부분의 행은 곧 extracted=1 이 되므로 대기
+# 중인 것만 색인하는 편이 표가 커져도 조회가 느려지지 않는다.
+#
+# 색인의 선두 열이 attempts 인 이유는 pending() 의 정렬과 같아야 하기 때문이다
+# (S15P11E102-393). 정렬이 색인과 어긋나면 SQLite 가 매번 임시 정렬을 만든다.
+#
+# 왜 이름을 바꿨는가 — CREATE INDEX IF NOT EXISTS 는 '같은 이름'만 보고 넘어간다.
+# 이미 돌고 있던 로봇에는 (created_at) 짜리 옛 색인이 같은 이름으로 남아 있어서,
+# 이름을 그대로 두면 정의가 영원히 갱신되지 않는다. 옛 이름은 아래에서 지운다.
+_EXTRACTION_JOB_INDEX_LEGACY_DROP = "DROP INDEX IF EXISTS idx_extraction_job_pending"
 _EXTRACTION_JOB_INDEX = """
-CREATE INDEX IF NOT EXISTS idx_extraction_job_pending
-    ON extraction_job (created_at)
+CREATE INDEX IF NOT EXISTS idx_extraction_job_pending_by_attempts
+    ON extraction_job (attempts, created_at)
     WHERE extracted = 0
 """
 
@@ -424,6 +445,10 @@ def init_runtime(connection: sqlite3.Connection) -> None:
     connection.execute(_CONSENT_REQUEST)
     connection.execute(_CONSENT_REQUEST_INDEX)
     connection.execute(_EXTRACTION_JOB)
+    # 색인이 attempts 를 참조하므로 컬럼 이관이 반드시 먼저다. 순서를 뒤집으면
+    # 기존 DB 에서 "no such column: attempts" 로 여기서 죽는다.
+    _add_missing_columns(connection, "extraction_job", _EXTRACTION_JOB_ADDED_COLUMNS)
+    connection.execute(_EXTRACTION_JOB_INDEX_LEGACY_DROP)
     connection.execute(_EXTRACTION_JOB_INDEX)
     connection.execute(_FACT_CANCEL_REQUEST)
     connection.execute(_FACT_CANCEL_REQUEST_INDEX)

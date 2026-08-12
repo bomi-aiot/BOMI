@@ -18,17 +18,31 @@ MAP=${1:-bomi_demo}
 shift 2>/dev/null || true
 LAUNCH_EXTRA=("$@")
 
-# LiDAR의 base_link 기준 장착 위치(m). launch 기본값 0은 임시값이므로
-# 반드시 넘겨야 한다.
+# LiDAR의 base_link 기준 장착 위치(m). joystick_slam_robot.launch.py 기본값은
+# 아직 0이므로 이 스크립트가 실측값을 넘겨 준다 — 즉 **이 값이 곧 실기 기준이다.**
+# 환경변수는 재보는 중일 때만 쓰고, 확정되면 여기 기본값을 고친다. 기억해서
+# 넘겨야만 지도가 맞는 스크립트는 언젠가 반드시 잊는다.
 #
-# 왜 중요한가: LiDAR가 회전 중심에서 앞으로 나와 있으면, 제자리 회전에서
+# 왜 x가 중요한가: LiDAR가 회전 중심에서 앞으로 나와 있으면, 제자리 회전에서
 # 스캔 원점은 반지름 0.135 m의 원을 그린다. TF가 0이라고 하면 그 이동분이
 # 통째로 지도 오차가 되어, 회전할 때마다 방이 조금씩 돌아간 채 겹쳐 쌓인다.
 # 2026-08-07 오전 실기의 증상이 정확히 이것이었다. 같은 날 새벽에 깨끗한
 # 지도가 나온 실행은 이 값을 손으로 넘기고 있었다(bash history 1529행 등).
+#
+# 왜 z가 중요한가: 2D 주행 계산에는 z가 거의 쓰이지 않는다(스캔은 XY로 투영되고
+# AMCL도 x, y, yaw만 맞춘다). 진짜 문제는 **지도가 이 높이의 단면**이라는 것이다.
+# 24cm에서 그린 지도는 소파 하단·의자 다리를 담고, 46.6cm에서 그린 지도는 좌석과
+# 좌탁 상판을 담는다. 둘은 같은 방인데도 실루엣이 달라 서로 매칭되지 않는다.
+# 그래서 이 값을 바꾸면 **반드시 다시 그려야 하고**, 다시 그렸으면 여기와
+# bomi_navigation_real.launch.py 의 laser_z 기본값이 같아야 한다. 어긋나면
+# "그릴 때와 다른 높이로 주행"이 되어 AMCL이 조용히 위치를 놓친다.
+#
+# 2026-08-10: LiDAR 마운트를 높여 z가 0.240 -> 0.466 이 되었다.
+# ★ x, y는 아직 2026-08-07 실측값 그대로다. 마운트가 바뀌었으므로 줄자로 다시
+#   재서 여기를 고칠 것 — 특히 x는 위 이유로 지도 품질에 직결된다.
 LASER_X=${BOMI_LASER_X:-0.135}
 LASER_Y=${BOMI_LASER_Y:-0.0}
-LASER_Z=${BOMI_LASER_Z:-0.240}
+LASER_Z=${BOMI_LASER_Z:-0.466}
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 WS=$(cd "$HERE/../ros2_ws" && pwd)
 WAYPOINTS=$WS/src/core/config/room_waypoints.yaml
@@ -151,10 +165,37 @@ GUIDE
 read -rp "옮겼으면 Enter > " _
 
 echo "▶ 3/4 출발 좌표 기록"
-START=$(timeout 40 python3 "$HERE/lib/read_pose.py") || {
-    echo "❌ 좌표를 읽지 못했습니다"; exit 1; }
-echo "  출발: $START"
-read -r SX SY SYAW <<<"$START"
+
+# 현관과 출발이 너무 가까우면 되묻는다. 2026-08-10 실기에서 로봇을 옮기지 않고
+# Enter 를 눌러 둘이 0.555m 로 찍혔고, 그대로 시연에 들어가 Nav2 가 팽창 영역
+# 안에서 출발하느라 경로 생성부터 실패했다. 조용히 지나가는 것이 문제였다.
+# 하한 1.0m 은 지그재그 min_distance_m 과 같은 값이다 — 이보다 가까우면
+# 현관 지그재그도 자동으로 꺼진다.
+MIN_START_GAP_M=1.0
+while :; do
+    START=$(timeout 40 python3 "$HERE/lib/read_pose.py") || {
+        echo "❌ 좌표를 읽지 못했습니다"; exit 1; }
+    read -r SX SY SYAW <<<"$START"
+
+    GAP=$(python3 -c 'import math,sys; print("%.3f" % math.hypot(
+        float(sys.argv[1])-float(sys.argv[3]),
+        float(sys.argv[2])-float(sys.argv[4])))' "$SX" "$SY" "$EX" "$EY")
+
+    if python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) >= float(sys.argv[2]) else 1)' \
+        "$GAP" "$MIN_START_GAP_M"; then
+        echo "  출발: $START  (현관까지 ${GAP}m)"
+        break
+    fi
+
+    echo "  ⚠ 현관에서 ${GAP}m 뿐입니다 (최소 ${MIN_START_GAP_M}m)."
+    echo "    로봇을 실제로 옮기지 않았을 가능성이 큽니다."
+    read -rp "  옮기고 Enter (이대로 쓰려면 s 입력) > " ANSWER
+    if [ "$ANSWER" = "s" ]; then
+        echo "  ⚠ 경고를 무시하고 ${GAP}m 로 진행합니다"
+        echo "  출발: $START"
+        break
+    fi
+done
 
 # 출발 좌표를 sofa(=LIVING_ROOM)와 charging(=DEFAULT)에도 넣는다.
 #

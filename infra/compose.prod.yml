@@ -116,8 +116,10 @@ services:
       MQTT_CLIENT_ID_PREFIX: bomi-backend-prod
       MQTT_USERNAME: ${MQTT_USERNAME:?MQTT_USERNAME is required}
       MQTT_PASSWORD: ${MQTT_PASSWORD:?MQTT_PASSWORD is required}
-      # 온습도 안부 확인(WELLNESS_CHECK) 임계값·쿨다운. 시연장에서 드라이기 연출에
-      # 맞춰 재배포 없이 조정할 수 있어야 한다 (env 만 바꾸고 컨테이너 재시작).
+      # 온습도 안부 확인(WELLNESS_CHECK) 실행 여부·임계값·쿨다운. 귀가 연속 시연에서는
+      # 독립 이동을 막기 위해 SCENARIO_ENABLED=false로 두고, AI가 최신 관측값을
+      # 추종 후 대화에 사용한다 (env 변경 후 컨테이너 재시작).
+      WELLNESS_SCENARIO_ENABLED: ${WELLNESS_SCENARIO_ENABLED:-true}
       WELLNESS_TEMP_THRESHOLD: ${WELLNESS_TEMP_THRESHOLD:-30.0}
       WELLNESS_HUMIDITY_THRESHOLD: ${WELLNESS_HUMIDITY_THRESHOLD:-80.0}
       WELLNESS_COOLDOWN_MINUTES: ${WELLNESS_COOLDOWN_MINUTES:-30}
@@ -235,7 +237,7 @@ services:
         - -c
         - >-
           import urllib.request;
-          urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=2).read()
+          urllib.request.urlopen('http://127.0.0.1:8501/operator-console/_stcore/health', timeout=2).read()
       interval: 10s
       timeout: 5s
       retries: 10
@@ -251,6 +253,82 @@ services:
       - backend-net
       # backend-net is internal-only. A non-internal network is also required for
       # Docker to activate the loopback-only published port above.
+      - proxy-net
+
+  # DB 실시간 뷰어. 읽기 전용이고 backend 를 거치지 않고 Postgres 에 직접 붙는다 —
+  # 백엔드 API 로는 "모든 테이블의 모든 컬럼"을 볼 수 없기 때문이다.
+  db-viewer:
+    build:
+      context: ../backend/tools/db_viewer
+      dockerfile: Dockerfile
+    image: bomi-db-viewer:${DB_VIEWER_IMAGE_TAG:-local}
+    container_name: bomi-db-viewer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOME: /tmp
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8501/db-viewer/_stcore/health', timeout=2).read()
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    mem_limit: 512m
+    cpus: 0.5
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend-net
+      - proxy-net
+
+  waypoint-editor:
+    build:
+      context: ../robot
+      dockerfile: tools/waypoint_editor/Dockerfile
+    image: bomi-waypoint-editor:${WAYPOINT_EDITOR_IMAGE_TAG:-local}
+    container_name: bomi-waypoint-editor
+    restart: unless-stopped
+    environment:
+      WAYPOINT_EDITOR_ALLOW_SERVER_WRITE: "false"
+      PYTHONDONTWRITEBYTECODE: "1"
+      HOME: /tmp
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8501/waypoint-editor/_stcore/health', timeout=2).read()
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    mem_limit: 512m
+    cpus: 0.5
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    networks:
       - proxy-net
 
   frontend:
@@ -318,6 +396,12 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      operator-console:
+        condition: service_healthy
+      waypoint-editor:
+        condition: service_healthy
+      db-viewer:
+        condition: service_healthy
       frontend:
         condition: service_healthy
     ports:
@@ -327,6 +411,9 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - ${CERTBOT_CONF_DIR:?CERTBOT_CONF_DIR is required}:/etc/letsencrypt:ro
       - ${CERTBOT_WEBROOT_DIR:?CERTBOT_WEBROOT_DIR is required}:/var/www/certbot:ro
+      - ${NGINX_OPERATOR_CONSOLE_HTPASSWD_FILE:?NGINX_OPERATOR_CONSOLE_HTPASSWD_FILE is required}:/etc/nginx/operator-console.htpasswd:ro
+      - ${NGINX_WAYPOINT_EDITOR_HTPASSWD_FILE:?NGINX_WAYPOINT_EDITOR_HTPASSWD_FILE is required}:/etc/nginx/waypoint-editor.htpasswd:ro
+      - ${NGINX_DB_VIEWER_HTPASSWD_FILE:?NGINX_DB_VIEWER_HTPASSWD_FILE is required}:/etc/nginx/db-viewer.htpasswd:ro
       # 가디언웹 채널 단기 접근 제어용 htpasswd 마운트 (S15P11E102-310) — 2026-08-05
       # 임시 보류. bomi.conf 의 auth_basic 이 주석 처리되어 지금은 이 파일을 읽지
       # 않는다. htpasswd 파일이 운영 호스트에 아직 없는 상태에서 릴리즈를 진행해야

@@ -16,7 +16,6 @@ const ROBOT_MODE_COPY: Record<RobotMode, string> = {
   SCENARIO_ACTIVE: '돌봄 수행 중',
   REST_GUARD: '휴식 지킴 중',
   SAFE_STOP: '안전 정지 · 확인 필요',
-  HOMECOMING: '귀가 맞이 중',
 }
 
 const MEDICATION_RESPONSE_COPY: Record<MedicationResponseStatus, string> = {
@@ -63,7 +62,6 @@ function ScheduleRow({ schedule }: { schedule: Schedule }) {
 export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const {
     dashboard,
-    elderProfile,
     medications,
     isLoading,
     error,
@@ -118,7 +116,6 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
   const lastObservedAt = elder.lastObservedAt ?? homeEnvironment.lastObservedAt
   const observationIsStale = isStale(lastObservedAt)
   const hasUrgentAlert = safetyAlerts !== null && safetyAlerts.length > 0
-  const phone = elderProfile?.elder.phone?.trim()
 
   const careSummary = hasUrgentAlert
     ? '보미가 즉시 확인이 필요한 알림을 보냈어요.'
@@ -182,15 +179,14 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
               ))}
             </ul>
           </div>
-          {phone ? (
-            <a className="button button--danger button--medium urgent-care-alert__action" href={`tel:${phone.replace(/[^+\d]/g, '')}`}>
-              어르신께 전화하기
-            </a>
-          ) : (
-            <p className="urgent-care-alert__contact-note" role="note">
-              등록된 연락처가 없어 평소 사용하던 연락 수단으로 직접 확인해 주세요.
-            </p>
-          )}
+          {/*
+            전화 버튼을 뺐다. app_user 에 phone 컬럼이 없어(마이그레이션 V1~V20 전수 확인)
+            매퍼가 채울 값 자체가 없었고, 실서버에서는 한 번도 뜬 적이 없는 분기였다.
+            없는 연락처로 "전화하기"를 그리는 것보다 직접 확인하라고 말하는 편이 정직하다.
+          */}
+          <p className="urgent-care-alert__contact-note" role="note">
+            평소 사용하던 연락 수단으로 어르신께 직접 확인해 주세요.
+          </p>
         </section>
       ) : (
         <section className="alert-availability" aria-label="긴급 알림 조회 결과">

@@ -20,14 +20,39 @@ docker inspect bomi-operator-console \
   --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}'
 ```
 
-서비스는 EC2의 `127.0.0.1:8501`에만 공개된다. 운영자 PC에서 SSH 터널을 연다.
+서비스는 EC2의 `127.0.0.1:8501`과 HTTPS의 `/operator-console/` 경로에서 접근한다.
+공개 HTTPS 경로는 Nginx Basic 인증으로 보호하며, Backend 운영 API용
+`OPERATOR_SHARED_SECRET`과 다른 자격 증명을 사용한다.
+
+최초 배포 전에 EC2에서 인증 파일을 생성한다. 비밀번호와 생성된 해시는 저장소에
+커밋하지 않는다.
+
+```bash
+docker run --rm httpd:2.4-alpine \
+  htpasswd -Bbn <운영자 아이디> '<강한 비밀번호>' \
+  > /home/ubuntu/bomi/secrets/operator-console.htpasswd
+NGINX_GID="$(docker run --rm nginx:1.30.4-alpine id -g nginx)"
+sudo chown root:"$NGINX_GID" /home/ubuntu/bomi/secrets/operator-console.htpasswd
+sudo chmod 640 /home/ubuntu/bomi/secrets/operator-console.htpasswd
+```
+
+`/home/ubuntu/bomi/secrets/production.env`에는 다음 경로를 설정한다.
+
+```dotenv
+NGINX_OPERATOR_CONSOLE_HTPASSWD_FILE=/home/ubuntu/bomi/secrets/operator-console.htpasswd
+```
+
+배포 후 `https://i15e102.p.ssafy.io/operator-console/`을 열고 위에서 지정한
+자격 증명으로 로그인한다.
+
+SSH 터널 접근도 유지된다. Streamlit의 기준 경로가 `/operator-console/`이므로
+터널을 연 뒤 `http://localhost:8501/operator-console/`을 사용한다.
 
 ```bash
 ssh -N -L 8501:127.0.0.1:8501 <EC2 SSH Host 별칭>
 ```
 
-브라우저에서 `http://localhost:8501`을 연다. EC2 보안 그룹에 8501 포트를 공개하지
-않는다.
+EC2 보안 그룹에 8501 포트를 공개하지 않는다.
 
 ## 로컬 수동 실행
 

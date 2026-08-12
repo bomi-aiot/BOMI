@@ -485,7 +485,7 @@ components:
             payload:
               seniorId: 34fb4e45-65aa-4c64-8474-92931f825e86
               intent: HOMECOMING_GREETING
-              text: 어서 오세요. 오늘 외출은 어떠셨어요?
+              text: 다녀오셨어요? 오늘 외출은 어떠셨어요?
               triggerContext:
                 sourceId: door-sensor-01
                 location: ENTRANCE

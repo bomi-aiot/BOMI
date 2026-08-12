@@ -178,3 +178,32 @@ def is_slot_completed(senior_id: str, slot_key: str) -> bool:
         (senior_id, slot_key),
     ).fetchone()
     return row is not None
+
+
+def completed_slot_times(senior_id: str, since: float) -> list[float]:
+    """since 이후에 완료로 표시된 슬롯의 완료 시각들. 이른 순.
+
+    누가 호출하는가  (2026-08-10 실사용 피드백)
+        graph/context.py 의 context_read. "아침에 약을 먹었는지 기억이 안 나"에
+        답하려면 '언제 드셨는지'가 프롬프트에 있어야 한다.
+
+    ★ 이 값이 무엇이고 무엇이 아닌가
+        어르신이 "먹었어"라고 **말한** 시각이다. 약을 삼킨 시각도 아니고, 복약
+        기록의 권위도 아니다(그건 백엔드 care_record 다). 프롬프트에 실을 때 그
+        차이를 문구로 지켜야 한다 — "드셨습니다"가 아니라 "드셨다고 하셨어요".
+        지금 백엔드 쪽 복약 이행 집계는 비어 있어서(daily_activity_metric 미집계,
+        medicationScheduledCount 는 설계상 항상 null) 로봇이 가진 유일한 단서다.
+
+    인자
+        since: epoch 초. 보통 어르신 로컬 시간대의 오늘 0시.
+    """
+    if not senior_id:
+        return []
+    connection = runtime_db()
+    schema.init_runtime(connection)
+    rows = connection.execute(
+        "SELECT completed_at FROM completed_slot "
+        "WHERE senior_id = ? AND completed_at >= ? ORDER BY completed_at",
+        (senior_id, float(since)),
+    ).fetchall()
+    return [float(row[0]) for row in rows]

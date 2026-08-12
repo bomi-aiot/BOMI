@@ -30,11 +30,17 @@ import type {
   UpdateConversationPreferenceInput,
   UpdateMedicationInput,
   UpdateScheduleInput,
+  WalkAction,
+  WalkRequestResult,
 } from "../types/domain";
+import { fireDesktopAlert } from "../utils/desktopAlerts";
 
 export interface BomiToast {
   id: number;
-  tone: "SUCCESS" | "INFO" | "ERROR";
+  // EMERGENCY 는 ERROR 와 다르다. ERROR 는 "내가 누른 것이 실패했다"이고,
+  // EMERGENCY 는 "어르신 쪽에서 지금 무슨 일이 일어났다"이다. 같은 톤으로
+  // 그리면 저장 실패 토스트와 위급 알림이 구분되지 않는다.
+  tone: "SUCCESS" | "INFO" | "ERROR" | "EMERGENCY";
   message: string;
   actionLabel?: string;
   actionRequestId?: string;
@@ -87,6 +93,7 @@ export interface BomiContextValue {
   deleteMedication: (id: string) => Promise<void>;
   toggleMedicationReminder: (id: string) => Promise<Medication>;
   addSchedule: (input: CreateScheduleInput) => Promise<Schedule>;
+  requestWalk: (action: WalkAction) => Promise<WalkRequestResult>;
   updateSchedule: (
     id: string,
     input: UpdateScheduleInput,
@@ -116,6 +123,32 @@ interface BomiProviderProps {
  * 걸린다. getDashboard() 하나만 돌리면 탭당 1r/s 라 여유가 크다.
  */
 const DASHBOARD_POLL_INTERVAL_MS = 1000;
+
+/**
+ * 탭이 숨겨져 있을 때는 이 배수마다 한 번만 조회한다(1초 × 5 = 5초).
+ *
+ * 숨은 탭은 그릴 화면이 없으니 초당 갱신이 의미가 없다. 그래도 0으로 두지 않는 이유는
+ * 이 루프가 위급 알림을 발견하는 유일한 경로이기 때문이다 — 위 useEffect 주석 참고.
+ */
+const HIDDEN_POLL_TICK_RATIO = 5;
+
+/**
+ * 산책 요청이 거절된 이유를 보호자의 말로 옮긴다.
+ * 백엔드 WalkRequestDisposition 의 reasonCode 와 1:1.
+ */
+const WALK_REJECT_COPY: Record<string, string> = {
+  NO_ACTIVE_WALK: "지금 진행 중인 산책이 없습니다.",
+  ALREADY_STOPPING: "산책을 종료하는 중입니다.",
+  UNKNOWN_ROBOT: "등록된 보미를 찾을 수 없습니다.",
+  INACTIVE_ROBOT: "보미가 지금 사용 중이 아닙니다.",
+  UNASSIGNED_ROBOT: "보미가 어르신께 연결되어 있지 않습니다.",
+  SAFE_STOP: "보미가 안전 정지 상태예요. 확인 후 다시 시도해 주세요.",
+  REST_GUARD: "지금은 어르신 휴식 시간이라 산책을 시작하지 않습니다.",
+  ACTIVE_SCENARIO: "보미가 다른 돌봄을 수행 중이에요. 끝난 뒤 다시 시도해 주세요.",
+  BUSY_MODE: "보미가 지금 다른 일을 하고 있어요.",
+  REQUEST_ID_REUSED: "이미 처리된 요청입니다.",
+  MQTT_UNAVAILABLE: "보미와 연결이 끊겨 요청을 전달하지 못했습니다.",
+};
 
 const messageFromError = (error: unknown): string =>
   error instanceof Error
@@ -166,12 +199,79 @@ export function BomiProvider({ children }: BomiProviderProps) {
   // 겹쳐 쌓이고, 그대로 두면 스스로 rate limit 을 때린다.
   const dashboardInFlight = useRef(false);
 
+  // 이미 본 위급 알림(T1) id.
+  //
+  // 왜 "지금 알림이 있다"를 조건으로 쓰지 않는가
+  //   폴링이 1초다. 존재 여부로 판정하면 알림이 남아 있는 동안 매 초 토스트가
+  //   다시 뜬다. 화면에 계속 떠 있는 경고는 곧 아무도 안 보는 경고가 된다.
+  //
+  // 왜 첫 응답은 기준선으로만 쓰는가 (null → Set)
+  //   화면을 여는 순간 어제 알림이 위급 토스트로 튀어나오면, 정작 진짜 위급이
+  //   왔을 때 아무도 그 토스트를 믿지 않는다. 첫 응답에 들어 있던 것은
+  //   "이미 있던 것"으로 간주하고, 그 이후에 새로 생긴 id 만 알린다.
+  const seenAlertIds = useRef<Set<string> | null>(null);
+
   const refreshDashboard = useCallback(async () => {
     if (dashboardInFlight.current) return;
     dashboardInFlight.current = true;
     try {
-      const nextDashboard = await bomiService.getDashboard();
+      // 왜 allSettled 인가 (Promise.all 이 아니라)
+      //   일정 조회가 실패하면 all 은 대시보드 응답까지 버린다. 그러면 백엔드의
+      //   일정 엔드포인트 하나가 흔들릴 때 위급 알림이 그 틱 동안 화면에 안 뜬다.
+      //   안전 경로를 부가 정보의 가용성에 묶으면 안 된다 — 각각 성공한 것만 쓴다.
+      //
+      // 왜 일정만 추가하는가
+      //   대시보드 응답 하나가 복약 응답과 확인 요청을 이미 담고 있어서 그 둘은
+      //   공짜다. 일정은 별도 엔드포인트라 따로 쳐야 한다. 복약 '목록'은 사람이
+      //   등록할 때만 바뀌므로 여기에 넣지 않는다 — 요청만 늘고 얻는 것이 없다.
+      const [dashboardResult, schedulesResult] = await Promise.allSettled([
+        bomiService.getDashboard(),
+        bomiService.getSchedules(),
+      ]);
+
+      if (schedulesResult.status === "fulfilled") {
+        setSchedules(schedulesResult.value);
+      }
+
+      if (dashboardResult.status !== "fulfilled") return;
+      const nextDashboard = dashboardResult.value;
       setDashboard(nextDashboard);
+      // 대시보드 응답 하나가 복약 응답과 확인 요청까지 이미 담고 있다.
+      // 이 값을 각 화면의 상태로 흘려보내면 요청 수를 늘리지 않고도
+      // 복약 관리·확인할 일 화면이 같은 1초 주기로 살아난다.
+      // (복약 "목록" 자체는 사람이 등록할 때만 바뀌므로 여기서 건드리지 않는다.)
+      setMedicationResponses(nextDashboard.medicationResponses);
+      setConfirmationRequests(nextDashboard.confirmationRequests);
+
+      // safetyAlerts 가 null 이면 "확인하지 못했다"는 뜻이다. 그 응답으로
+      // 기준선을 세우거나 알림을 지우면 안 된다 — 다음 성공 응답까지 기다린다.
+      const alerts = nextDashboard.safetyAlerts;
+      if (alerts !== null) {
+        const seen = seenAlertIds.current;
+        if (seen === null) {
+          seenAlertIds.current = new Set(alerts.map((alert) => alert.id));
+        } else {
+          const fresh = alerts.filter((alert) => !seen.has(alert.id));
+          fresh.forEach((alert) => seen.add(alert.id));
+          if (fresh.length > 0) {
+            // 여러 건이 한 틱에 같이 오면 가장 위의 한 건만 문장으로 보여주고
+            // 나머지는 건수로 접는다. 토스트를 여러 개 쌓으면 서로를 가린다.
+            showToast(
+              fresh.length === 1
+                ? fresh[0].message
+                : `${fresh[0].message} (외 ${fresh.length - 1}건)`,
+              "EMERGENCY",
+            );
+            // 화면 밖으로도 내보낸다. 토스트는 이 탭을 보고 있는 사람에게만
+            // 닿는데, 위급이 도착하는 시각을 보호자가 고를 수는 없다.
+            // 권한이 없으면 아무 일도 일어나지 않는다(조용히 통과).
+            //
+            // 토스트와 달리 접지 않고 건별로 부른다 — 백엔드가 T1 을 사유별로
+            // 묶지 않는 것과 같은 이유다. OS 가 알아서 쌓아 준다.
+            fresh.forEach((alert) => fireDesktopAlert(alert.id, alert.message));
+          }
+        }
+      }
     } catch {
       // 주 변경은 이미 성공했으므로 파생 요약 갱신 실패를 액션 실패로 되돌리지 않는다.
       // 폴링에서도 같은 이유로 삼킨다 — 일시적 실패에 1초마다 에러를 띄우면
@@ -179,7 +279,7 @@ export function BomiProvider({ children }: BomiProviderProps) {
     } finally {
       dashboardInFlight.current = false;
     }
-  }, []);
+  }, [showToast]);
 
   const refreshPersonalizationState = useCallback(async () => {
     try {
@@ -242,10 +342,32 @@ export function BomiProvider({ children }: BomiProviderProps) {
   }, [refresh]);
 
   // 대시보드 자동 갱신. isLoading 을 건드리지 않으므로 로딩 스켈레톤이 깜빡이지 않고,
-  // 화면은 바뀐 값만 조용히 다시 그린다. 탭이 보이지 않을 때는 요청하지 않는다.
+  // 화면은 바뀐 값만 조용히 다시 그린다.
+  //
+  // ★ 탭이 숨겨져 있어도 폴링을 멈추지 않는다 (다만 느리게).
+  //
+  //   원래는 보이지 않으면 요청을 아예 걸렀다. 화면을 안 보는데 그릴 이유가 없다는
+  //   판단이었고, 그릴 것이 화면뿐이었다면 맞는 말이다. 그런데 이 루프는 위급 알림을
+  //   발견하는 유일한 경로이기도 하다 — 멈춰 있는 동안 도착한 위급은 보호자가 그 탭을
+  //   다시 열 때까지 아무 데도 도달하지 않는다. 정작 알림이 가장 필요한 순간이
+  //   "이 탭을 보고 있지 않을 때"인데, 바로 그때 감시가 꺼져 있었다.
+  //
+  //   대신 주기를 늘린다. 숨은 탭에서 초당 한 번은 얻는 것 없이 요청만 쓴다.
+  //   (브라우저가 백그라운드 타이머를 더 조이면 그보다도 느려진다 — 크롬은 5분 뒤부터
+  //   분 단위다. 그건 우리가 제어할 수 없고, 그래도 0보다는 낫다.)
   useEffect(() => {
+    let hiddenTicks = 0;
     const tick = () => {
-      if (document.visibilityState === "visible") void refreshDashboard();
+      if (document.visibilityState === "visible") {
+        hiddenTicks = 0;
+        void refreshDashboard();
+        return;
+      }
+      hiddenTicks += 1;
+      if (hiddenTicks >= HIDDEN_POLL_TICK_RATIO) {
+        hiddenTicks = 0;
+        void refreshDashboard();
+      }
     };
     const timer = window.setInterval(tick, DASHBOARD_POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
@@ -510,6 +632,41 @@ export function BomiProvider({ children }: BomiProviderProps) {
     [refreshDashboard, runAction],
   );
 
+  /**
+   * 산책 시작·종료 요청.
+   *
+   * 성공 응답이어도 accepted 가 false 일 수 있어(예: 종료할 산책이 없음, 로봇이
+   * SAFE_STOP) reasonCode 를 사람 말로 바꿔 알린다. 백엔드가 거절한 것을 화면이
+   * 성공처럼 보여주면 발표자가 로봇을 계속 기다리게 된다.
+   *
+   * 요청 뒤 대시보드를 한 번 당겨온다 — 1초 폴링이 곧 따라잡지만, 버튼을 누른
+   * 사람에게는 즉시 반응이 보여야 한다.
+   */
+  const requestWalk = useCallback(
+    async (action: WalkAction): Promise<WalkRequestResult> => {
+      const deviceId = dashboard?.robot.deviceId;
+      if (!deviceId) {
+        const message = "보미의 기기 정보를 확인할 수 없어 산책을 요청하지 못했습니다.";
+        showToast(message, "ERROR");
+        throw new Error(message);
+      }
+      const result = await runAction(
+        `walk-${action.toLowerCase()}`,
+        () => bomiService.requestWalk(action, deviceId),
+      );
+      if (result.accepted) {
+        showToast(
+          action === "START" ? "산책을 시작했습니다." : "산책을 종료했습니다.",
+        );
+      } else {
+        showToast(WALK_REJECT_COPY[result.reasonCode ?? ""] ?? "산책 요청이 처리되지 않았습니다.", "INFO");
+      }
+      void refreshDashboard();
+      return result;
+    },
+    [dashboard?.robot.deviceId, refreshDashboard, runAction, showToast],
+  );
+
   const addSchedule = useCallback(
     async (input: CreateScheduleInput): Promise<Schedule> => {
       const created = await runAction(
@@ -605,6 +762,7 @@ export function BomiProvider({ children }: BomiProviderProps) {
       deleteMedication,
       toggleMedicationReminder,
       addSchedule,
+      requestWalk,
       updateSchedule,
       resetDemoData,
       clearError,
@@ -638,6 +796,7 @@ export function BomiProvider({ children }: BomiProviderProps) {
       deleteMedication,
       toggleMedicationReminder,
       addSchedule,
+      requestWalk,
       updateSchedule,
       resetDemoData,
       clearError,

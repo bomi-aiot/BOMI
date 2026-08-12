@@ -101,6 +101,11 @@ TARGET_LIVING_ROOM = "LIVING_ROOM"
 # 백엔드 RobotCommand 가 검증하는 NAVIGATE 목적지 전체. 이 밖의 값은 백엔드가
 # 아예 발행하지 못하지만, 방어적으로 로봇 쪽에서도 같은 표를 기준으로 삼는다.
 NAVIGATION_TARGETS = frozenset({TARGET_ENTRANCE, TARGET_DEFAULT, TARGET_LIVING_ROOM})
+# LCD 주행 표시용 상태값. 백엔드 계약이 아니라 **로봇 내부 표시** 규약이다
+# — bomi_display 의 DisplayStateModel.ACTIVE_NAV_STATES 가 받는 문자열이라
+# 여기서 바꾸면 그쪽도 같이 봐야 한다.
+NAV_STATE_NAVIGATING = "NAVIGATING"
+NAV_STATE_IDLE = "IDLE"
 SPEAK_TEXT_KEY = "text"
 PAYLOAD_KEY = "payload"
 

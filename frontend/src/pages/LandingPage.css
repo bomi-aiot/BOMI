@@ -10,18 +10,84 @@
   --landing-ink: #35101f;
   --landing-muted: #765968;
   --landing-line: rgb(83 25 49 / 12%);
+  /* 푸터 min-height(140) + 위 여백(84). 마지막 스냅 판 계산에 쓰인다. */
+  --landing-footer-h: 224px;
   position: relative;
   min-height: 100vh;
   overflow: clip;
+  /* 한글은 word-break 기본값(normal)에서 어절 중간이 끊긴다("많이 말하 / 는 로봇이").
+     word-break 는 상속되므로 여기 한 번만 걸어 랜딩 전체 텍스트를 덮는다. */
+  word-break: keep-all;
   color: var(--landing-ink);
   font-family: 'Pretendard Variable', Pretendard, 'Noto Sans KR', -apple-system,
     BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--landing-cream);
 }
 
+/* ── 섹션 스냅 ────────────────────────────────────────────────────────
+   LandingPage 가 마운트된 동안에만 html 에 .landing-snap 이 붙는다.
+   대시보드와 html 을 공유하므로 언마운트 시 제거된다(LandingPage.tsx).
+   스냅은 데스크톱에서만 — 모바일은 day 섹션이 1695px 라 강제하면 잘린다. */
+html.landing-snap {
+  scroll-behavior: smooth;
+}
+
+@media (min-width: 900px) {
+  html.landing-snap {
+    scroll-snap-type: y mandatory;
+  }
+
+  html.landing-snap .landing-page main > section,
+  html.landing-snap .landing-page .landing-footer {
+    scroll-snap-align: start;
+    /* 빠르게 굴려도 섹션을 건너뛰지 않고 하나씩 선다 */
+    scroll-snap-stop: always;
+  }
+
+  /* 스냅 한 판 = 한 화면. 내용이 모자란 절은 세로 가운데로 모은다. */
+  html.landing-snap .landing-page .landing-call,
+  html.landing-snap .landing-page .landing-day,
+  html.landing-snap .landing-page .landing-sensing,
+  html.landing-snap .landing-page .landing-human {
+    min-height: 100svh;
+  }
+
+  html.landing-snap .landing-page .landing-day,
+  html.landing-snap .landing-page .landing-sensing {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  html.landing-snap .landing-page .landing-call {
+    align-content: center;
+  }
+
+  /* 푸터는 190px 뿐이라 독립 스냅 판을 주면 한 화면을 낭비한다.
+     마지막 절을 그만큼 줄여 둘이 한 화면에 함께 서게 한다. */
+  html.landing-snap .landing-page .landing-final {
+    /* margin-top 24px 이 남으면 스냅 지점이 24px 밀려 앞 섹션이 화면 위에 걸친다 */
+    min-height: calc(100svh - var(--landing-footer-h));
+    margin-top: 0;
+    scroll-snap-align: start;
+  }
+
+  html.landing-snap .landing-page .landing-footer {
+    scroll-snap-align: end;
+  }
+}
+
 .landing-page :focus-visible {
   outline-color: var(--landing-pink-ink);
   outline-offset: 4px;
+}
+
+/* main 은 스킵링크 대상이라 tabindex=-1 을 갖는다. 여기에 포커스가 닿으면 위 규칙이
+   페이지 전체를 두르는 아웃라인을 그려, 마지막 절 아래에 진분홍 가로선처럼 보였다.
+   랜드마크에는 표시하지 않고 실제 조작 요소(버튼·링크)에만 남긴다. */
+.landing-page main:focus,
+.landing-page main:focus-visible {
+  outline: none;
 }
 
 .landing-page .skip-link {
@@ -104,35 +170,81 @@
   text-transform: uppercase;
 }
 
-.landing-page .landing-header__cta {
-  min-height: 42px;
-  padding: 0 18px;
+.landing-page .landing-installer-entry {
+  display: inline-flex;
+  min-height: 48px;
+  align-items: center;
+  gap: 11px;
+  padding: 7px 17px 7px 9px;
   color: var(--landing-wine);
-  font-size: 0.78rem;
-  font-weight: 800;
-  background: rgb(255 255 255 / 66%);
-  border-color: rgb(83 25 49 / 14%);
+  text-decoration: none;
+  background: rgb(255 255 255 / 72%);
+  border: 1px solid rgb(83 25 49 / 14%);
   border-radius: 999px;
-  box-shadow: 0 8px 24px rgb(83 25 49 / 6%);
-  backdrop-filter: blur(16px);
+  box-shadow: 0 10px 26px rgb(83 25 49 / 8%);
+  backdrop-filter: blur(12px);
+  transition:
+    background 200ms ease,
+    border-color 200ms ease,
+    box-shadow 200ms ease,
+    transform 200ms ease;
 }
 
-.landing-page .landing-header__cta:hover:not(:disabled) {
+.landing-page .landing-installer-entry:hover {
+  background: #fff;
+  border-color: rgb(239 57 127 / 34%);
+  box-shadow: 0 14px 30px rgb(83 25 49 / 13%);
+  transform: translateY(-2px);
+}
+
+.landing-page .landing-installer-entry__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
   color: #fff;
+  font-size: 1rem;
+  font-weight: 900;
   background: var(--landing-wine);
-  border-color: var(--landing-wine);
+  border-radius: 50%;
+}
+
+.landing-page .landing-installer-entry > span:last-child {
+  display: flex;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.landing-page .landing-installer-entry small {
+  color: var(--landing-muted);
+  font-size: 0.62rem;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+}
+
+.landing-page .landing-installer-entry strong {
+  font-size: 0.82rem;
+  font-weight: 850;
+  line-height: 1.25;
 }
 
 .landing-page .landing-hero {
   position: relative;
   display: grid;
-  width: min(1480px, 100%);
-  min-height: max(760px, 100svh);
+  /* 폭을 1480px 로 묶으면 분홍 배경(::before inset:0)도 거기서 끊겨, 1920px 화면에서
+     양옆 220px 씩 크림색 페이지 배경이 드러났다. 섹션은 화면 끝까지 채우고 내용만
+     좌우 패딩으로 원래 자리(1480px)에 붙잡는다. 넓어지는 건 CSS 그라데이션이라
+     비트맵을 늘릴 때 같은 왜곡이 없다 — atmosphere.webp 는 비주얼 칼럼 안이라 무관. */
+  width: 100%;
+  min-height: 100svh;
   grid-template-columns: minmax(0, 0.88fr) minmax(500px, 1.12fr);
   align-items: center;
   gap: clamp(24px, 3vw, 54px);
-  padding: 124px clamp(40px, 6vw, 96px) 90px;
-  margin: 0 auto;
+  padding-block: clamp(104px, 11vh, 124px) clamp(76px, 9vh, 90px);
+  padding-inline: calc(max(0px, 100% - 1480px) / 2 + clamp(40px, 6vw, 96px));
+  margin: 0;
   isolation: isolate;
 }
 
@@ -177,8 +289,19 @@
   z-index: 10;
   max-width: 640px;
   padding-bottom: 28px;
-  animation: landing-hero-copy-in 900ms cubic-bezier(0.2, 0.72, 0.2, 1) both;
 }
+
+/* 시네마틱 등장: 카피 블록을 통짜로 띄우는 대신 눈썹→제목→설명→CTA→노트 순서로
+   시차를 두어 공간에 "들어서는" 감각을 만든다. */
+.landing-page .landing-stage {
+  animation: landing-hero-copy-in 880ms cubic-bezier(0.2, 0.72, 0.2, 1) both;
+}
+
+.landing-page .landing-stage--1 { animation-delay: 40ms; }
+.landing-page .landing-stage--2 { animation-delay: 170ms; }
+.landing-page .landing-stage--3 { animation-delay: 320ms; }
+.landing-page .landing-stage--4 { animation-delay: 450ms; }
+.landing-page .landing-stage--5 { animation-delay: 560ms; }
 
 .landing-page .landing-eyebrow {
   display: flex;
@@ -282,30 +405,49 @@
   left: 112%;
 }
 
-.landing-page .landing-secondary-link {
+/* 2차 CTA. 주 CTA(진한 자홍 solid)와 위계가 분명히 갈리도록 같은 분홍 계열의
+   밝은 아웃라인으로 두되, 높이·라운드는 맞춰 한 쌍으로 읽히게 한다. */
+.landing-page .landing-ghost-cta {
   display: inline-flex;
-  min-height: 44px;
+  min-height: 56px;
   align-items: center;
-  gap: 10px;
-  color: var(--landing-wine);
-  font-size: 0.86rem;
-  font-weight: 800;
-  text-decoration: none;
-}
-
-.landing-page .landing-secondary-link > span {
-  display: grid;
-  width: 30px;
-  height: 30px;
-  place-items: center;
+  gap: 11px;
+  padding: 0 24px;
   color: var(--landing-pink-ink);
-  background: rgb(255 255 255 / 65%);
-  border: 1px solid rgb(239 57 127 / 16%);
-  border-radius: 50%;
-  transition: transform 180ms ease;
+  font-size: 0.92rem;
+  font-weight: 850;
+  text-decoration: none;
+  background: rgb(255 255 255 / 78%);
+  border: 1.5px solid rgb(239 57 127 / 26%);
+  border-radius: 999px;
+  box-shadow: 0 10px 26px rgb(239 57 127 / 12%);
+  transition:
+    background 200ms ease,
+    border-color 200ms ease,
+    box-shadow 200ms ease,
+    transform 200ms ease;
 }
 
-.landing-page .landing-secondary-link:hover > span {
+.landing-page .landing-ghost-cta:hover {
+  background: var(--landing-pink-pale);
+  border-color: rgb(239 57 127 / 48%);
+  box-shadow: 0 14px 32px rgb(239 57 127 / 20%);
+  transform: translateY(-2px);
+}
+
+.landing-page .landing-ghost-cta > span {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  color: #fff;
+  font-size: 0.7rem;
+  background: var(--landing-pink-strong);
+  border-radius: 50%;
+  transition: transform 200ms ease;
+}
+
+.landing-page .landing-ghost-cta:hover > span {
   transform: translateY(3px);
 }
 
@@ -347,8 +489,8 @@
   position: relative;
   z-index: 5;
   width: min(720px, 100%);
-  height: min(700px, calc(100svh - 100px));
-  min-height: 590px;
+  height: min(700px, calc(100svh - 210px));
+  min-height: 430px;
   justify-self: center;
   margin: 0;
   overflow: visible;
@@ -499,7 +641,8 @@
   position: absolute;
   z-index: 10;
   bottom: 28px;
-  left: clamp(40px, 6vw, 96px);
+  /* 히어로가 풀블리드가 됐으므로 본문과 같은 기준선에 맞춘다 */
+  left: calc(max(0px, 100% - 1480px) / 2 + clamp(40px, 6vw, 96px));
   display: flex;
   align-items: center;
   gap: 12px;
@@ -534,7 +677,9 @@
 .landing-page .landing-day {
   position: relative;
   width: min(1320px, calc(100% - 80px));
-  padding: clamp(110px, 12vw, 170px) 0;
+  /* 한 화면 안에 머리말 + 카드 4장이 모두 들어가야 하므로 세로 여백은 vw 가 아니라
+     vh 기준으로 잡는다 (세로 800px 화면에서 911px 로 넘치던 원인). */
+  padding: clamp(56px, 7vh, 96px) 0;
   margin: 0 auto;
 }
 
@@ -554,7 +699,7 @@
   grid-template-columns: minmax(0, 1fr) 300px;
   gap: 18px 60px;
   align-items: end;
-  margin-bottom: 78px;
+  margin-bottom: clamp(32px, 5vh, 64px);
 }
 
 .landing-page .landing-section-heading .landing-eyebrow {
@@ -606,16 +751,17 @@
 
 .landing-page .landing-day__steps > li {
   position: relative;
-  min-height: 360px;
+  min-height: clamp(248px, 34vh, 318px);
   padding: 28px;
   overflow: hidden;
+  /* 카드 4장에 걸린 backdrop-filter 는 스크롤마다 대면적 리페인트를 만든다.
+     배경을 불투명하게 올려 같은 인상을 유지하면서 블러를 걷어낸다. */
   background:
     radial-gradient(circle at 100% 0, rgb(255 180 207 / 28%), transparent 34%),
-    rgb(255 255 255 / 82%);
+    rgb(255 255 255 / 94%);
   border: 1px solid rgb(83 25 49 / 9%);
   border-radius: 28px;
   box-shadow: 0 24px 64px rgb(83 25 49 / 6%);
-  backdrop-filter: blur(12px);
   transition:
     transform 280ms ease,
     box-shadow 280ms ease,
@@ -623,7 +769,7 @@
 }
 
 .landing-page .landing-day__steps > li:nth-child(even) {
-  margin-top: 46px;
+  margin-top: clamp(18px, 4vh, 46px);
   background:
     radial-gradient(circle at 90% 0, rgb(255 95 162 / 22%), transparent 36%),
     var(--landing-pink-pale);
@@ -637,7 +783,7 @@
 }
 
 .landing-page .landing-day__number {
-  margin-bottom: 76px;
+  margin-bottom: clamp(40px, 6vh, 76px);
   color: rgb(239 57 127 / 48%);
   font-size: 0.69rem;
   font-weight: 900;
@@ -691,14 +837,269 @@
   content: '';
 }
 
+/* ── "보미야" 호출 3단계 ─────────────────────────────────────────────
+   히어로 바로 다음에 오는 절이라 카드 대신 얇은 목록으로 두어, 연속된
+   풀블리드 덩어리가 반복되지 않게 한다(스크롤 리듬). */
+.landing-page .landing-call {
+  position: relative;
+  display: grid;
+  width: min(1320px, calc(100% - 80px));
+  grid-template-columns: minmax(0, 0.86fr) minmax(0, 1.14fr);
+  gap: clamp(36px, 5vw, 88px);
+  align-items: start;
+  padding: clamp(56px, 7vh, 104px) 0;
+  margin: 0 auto;
+}
+
+.landing-page .landing-call::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--landing-line) 15%, var(--landing-line) 85%, transparent);
+  content: '';
+}
+
+.landing-page .landing-call__intro h2 {
+  margin: 0;
+  color: var(--landing-wine);
+  font-size: clamp(2.3rem, 3.5vw, 3.9rem);
+  font-weight: 820;
+  line-height: 1.12;
+  letter-spacing: -0.065em;
+  word-break: keep-all;
+}
+
+/* ── 제목 라인 리빌: 마스크 밖에서 줄 단위로 올라온다 ──
+   기존 리빌(.is-visible)이 컨테이너를 띄울 때 안의 줄이 시차를 두고 따라온다. */
+.landing-page .landing-rv {
+  display: block;
+  overflow: hidden;
+}
+
+.landing-page .landing-rv > span {
+  display: block;
+  transform: translateY(112%);
+  transition: transform 800ms cubic-bezier(0.2, 0.72, 0.2, 1);
+}
+
+.landing-page .landing-rv + .landing-rv > span {
+  transition-delay: 90ms;
+}
+
+.landing-page [data-landing-reveal].is-visible .landing-rv > span {
+  transform: translateY(0);
+}
+
+.landing-page .landing-rv--accent {
+  color: var(--landing-pink-strong);
+}
+
+.landing-page .landing-human .landing-rv--accent {
+  color: var(--landing-pink-soft);
+}
+
+.landing-page .landing-call__intro > p:last-child {
+  max-width: 400px;
+  margin: 26px 0 0;
+  color: var(--landing-muted);
+  font-size: 0.94rem;
+  line-height: 1.8;
+  word-break: keep-all;
+}
+
+.landing-page .landing-call__steps {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  border-top: 1px solid var(--landing-line);
+}
+
+/* 한 화면짜리 절인데 항목 3개가 얇으면 화면 가운데만 채워진다.
+   문구를 늘리는 대신 세로 리듬을 키워 day/sensing 절과 무게를 맞춘다. */
+.landing-page .landing-call__steps > li {
+  display: grid;
+  grid-template-columns: 56px 1fr;
+  gap: 18px;
+  padding: clamp(30px, 5.2vh, 58px) 4px;
+  border-bottom: 1px solid var(--landing-line);
+}
+
+.landing-page .landing-call__number {
+  padding-top: 4px;
+  color: var(--landing-pink-strong);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.landing-page .landing-call__steps h3 {
+  margin: 0;
+  color: var(--landing-wine);
+  font-size: clamp(1.14rem, 1.6vw, 1.42rem);
+  line-height: 1.4;
+  letter-spacing: -0.035em;
+  word-break: keep-all;
+}
+
+.landing-page .landing-call__steps p {
+  margin: 12px 0 0;
+  color: var(--landing-muted);
+  font-size: 0.92rem;
+  line-height: 1.8;
+  word-break: keep-all;
+}
+
+/* ── 어떻게 아는가 (센서·스택) ───────────────────────────────────── */
+.landing-page .landing-sensing {
+  position: relative;
+  width: min(1320px, calc(100% - 80px));
+  padding: clamp(56px, 7vh, 104px) 0;
+  margin: 0 auto;
+}
+
+.landing-page .landing-sensing::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--landing-line) 15%, var(--landing-line) 85%, transparent);
+  content: '';
+}
+
+.landing-page .landing-sensing__lead {
+  max-width: 700px;
+  margin-bottom: clamp(40px, 5vw, 58px);
+}
+
+.landing-page .landing-sensing__lead h2 {
+  margin: 0;
+  color: var(--landing-wine);
+  font-size: clamp(2.1rem, 3vw, 3.2rem);
+  font-weight: 820;
+  line-height: 1.14;
+  letter-spacing: -0.062em;
+  word-break: keep-all;
+}
+
+.landing-page .landing-sensing__lead > p:last-child {
+  margin: 22px 0 0;
+  color: var(--landing-muted);
+  font-size: 0.96rem;
+  line-height: 1.82;
+  word-break: keep-all;
+}
+
+.landing-page .landing-sensing__list {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+/* 카드가 얇으면 한 화면짜리 절에서 내용이 가운데 조금 뜬 것처럼 보인다.
+   day 절 카드와 비슷한 무게를 줘서 화면을 채운다(문구를 늘리지 않고 여백으로). */
+.landing-page .landing-sensing__list > li {
+  display: flex;
+  min-height: clamp(196px, 26vh, 262px);
+  flex-direction: column;
+  padding: 26px 24px;
+  background:
+    radial-gradient(circle at 100% 0, rgb(255 180 207 / 20%), transparent 40%),
+    rgb(255 255 255 / 82%);
+  border: 1px solid rgb(83 25 49 / 9%);
+  border-radius: 24px;
+  box-shadow: 0 18px 44px rgb(83 25 49 / 5%);
+}
+
+.landing-page .landing-sensing__list strong {
+  display: block;
+  color: var(--landing-pink-ink);
+  font-size: 0.94rem;
+  font-weight: 850;
+  letter-spacing: 0.01em;
+}
+
+.landing-page .landing-sensing__list p {
+  margin: 11px 0 0;
+  color: var(--landing-muted);
+  font-size: 0.83rem;
+  line-height: 1.74;
+  word-break: keep-all;
+}
+
+/* "무엇을 하는가" 다음에 "그래서 어떤가"를 한 줄 붙인다. 카드가 설명 한 문장으로
+   끝나면 읽는 사람 입장에서 남는 게 없다. */
+.landing-page .landing-sensing__list .landing-sensing__effect {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: auto;
+  padding-top: 15px;
+  color: var(--landing-wine);
+  font-size: 0.81rem;
+  font-weight: 750;
+  line-height: 1.55;
+  border-top: 1px solid rgb(83 25 49 / 10%);
+}
+
+.landing-page .landing-sensing__list .landing-sensing__effect::before {
+  color: var(--landing-pink-strong);
+  font-weight: 900;
+  content: '→';
+}
+
+.landing-page .landing-sensing__where {
+  display: inline-flex;
+  align-self: flex-start;
+  padding: 5px 9px;
+  margin-bottom: 20px;
+  color: var(--landing-muted);
+  font-size: 0.63rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  background: rgb(83 25 49 / 5%);
+  border-radius: 999px;
+}
+
+/* 센서 나열로 끝나면 "그래서 뭐"가 남는다. 절을 한 문장으로 닫아 준다. */
+.landing-page .landing-sensing__closing {
+  max-width: 760px;
+  margin: clamp(30px, 4vh, 52px) auto 0;
+  color: var(--landing-muted);
+  font-size: clamp(1.05rem, 1.5vw, 1.35rem);
+  line-height: 1.7;
+  text-align: center;
+  letter-spacing: -0.03em;
+}
+
+.landing-page .landing-sensing__closing strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--landing-wine);
+  font-weight: 820;
+}
+
+.landing-page .landing-sensing__stack {
+  margin: clamp(34px, 4vw, 46px) 0 0;
+  color: var(--landing-muted);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-align: center;
+}
+
 .landing-page .landing-human {
   position: relative;
   display: grid;
   width: min(1400px, calc(100% - 48px));
-  min-height: 720px;
-  grid-template-columns: minmax(0, 1.08fr) minmax(380px, 0.92fr);
+  grid-template-columns: minmax(0, 1.3fr) minmax(360px, 0.7fr);
   align-items: center;
-  gap: clamp(60px, 8vw, 130px);
+  gap: clamp(48px, 6.5vw, 112px);
   padding: clamp(82px, 9vw, 132px);
   margin: 0 auto;
   overflow: hidden;
@@ -743,14 +1144,13 @@
   color: var(--landing-pink-soft);
 }
 
+/* 이 제목은 반칼럼 안에 들어가므로 공용 크기(최대 5.7rem)로는 "많이 말하는 / 로봇이"
+   처럼 어절이 갈린다. 한 줄에 한 구가 온전히 들어가는 크기로 따로 잡는다. */
 .landing-page .landing-human h2 {
+  font-size: clamp(2.3rem, 3.4vw, 4.2rem);
   color: #fff;
 }
 
-.landing-page .landing-human h2 > span {
-  display: block;
-  color: var(--landing-pink-soft);
-}
 
 .landing-page .landing-human__statement > p:last-child {
   max-width: 610px;
@@ -804,9 +1204,8 @@
   position: relative;
   display: grid;
   width: min(1400px, calc(100% - 48px));
-  min-height: 700px;
   place-items: center;
-  padding: 100px 40px;
+  padding: clamp(84px, 8vw, 116px) 40px;
   margin: 24px auto 0;
   overflow: hidden;
   text-align: center;
@@ -846,12 +1245,15 @@
   border-color: rgb(255 255 255 / 68%);
 }
 
+/* 표제가 두 줄이 되면서 정중앙 구체가 글자와 겹친다. 장식이 타이포를 이기지 않도록
+   지름을 줄이고 살짝 눕힌다. */
 .landing-page .landing-final__rings > span:nth-child(3) {
-  width: 13%;
+  width: 8.5%;
   aspect-ratio: 1;
   background: radial-gradient(circle at 35% 30%, #fff, #ffb1cd 55%, #ff639f);
   border: 0;
   box-shadow: 0 22px 48px rgb(239 57 127 / 22%);
+  opacity: 0.8;
 }
 
 .landing-page .landing-final__content {
@@ -878,11 +1280,13 @@
 .landing-page .landing-footer {
   display: grid;
   width: min(1320px, calc(100% - 80px));
-  min-height: 190px;
+  min-height: 140px;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 24px;
-  margin: 0 auto;
+  /* 위쪽 둥근 박스에 바로 붙으면 답답하다. 띄운 만큼은 --landing-footer-h 에
+     반영돼 있어야 마지막 스냅 판(final + footer = 한 화면)이 어긋나지 않는다. */
+  margin: 84px auto 0;
   color: var(--landing-muted);
   border-top: 1px solid var(--landing-line);
 }
@@ -901,12 +1305,187 @@
   font-size: 0.65rem;
 }
 
+/* ── 모션 레이어 (LandingMotion 이 pointer:fine + 모션 허용에서만 켠다) ──────
+   .landing-motion-on / .landing-buddy-on 클래스는 컴포넌트 언마운트 때 제거되므로
+   대시보드에는 어떤 규칙도 새지 않는다. */
+
+/* 커서 점·링 */
+.landing-page .landing-cursor-dot,
+.landing-page .landing-cursor-ring {
+  position: fixed;
+  z-index: 70;
+  top: 0;
+  left: 0;
+  display: none;
+  border-radius: 50%;
+  transform: translate(-120px, -120px);
+  pointer-events: none;
+  will-change: transform;
+}
+
+.landing-page .landing-cursor-dot {
+  width: 8px;
+  height: 8px;
+  background: var(--landing-pink-strong);
+}
+
+.landing-page .landing-cursor-ring {
+  width: 34px;
+  height: 34px;
+  border: 1.5px solid rgb(239 57 127 / 55%);
+  transition: background-color 250ms ease, border-color 250ms ease;
+}
+
+.landing-page .landing-cursor-ring.is-hot {
+  background: rgb(255 95 162 / 12%);
+  border-color: rgb(239 57 127 / 25%);
+}
+
+.landing-page.landing-motion-on .landing-cursor-dot,
+.landing-page.landing-motion-on .landing-cursor-ring {
+  display: block;
+}
+
+.landing-page.landing-motion-on,
+.landing-page.landing-motion-on a,
+.landing-page.landing-motion-on button {
+  cursor: none;
+}
+
+/* 미니 보미 동행 */
+.landing-page .landing-buddy {
+  position: fixed;
+  z-index: 28;
+  top: 0;
+  left: 0;
+  display: none;
+  width: 86px;
+  transform: translate(-200px, -200px);
+  filter: drop-shadow(0 12px 14px rgb(112 32 63 / 22%));
+  will-change: transform;
+}
+
+.landing-page.landing-motion-on.landing-buddy-on .landing-buddy {
+  display: block;
+}
+
+.landing-page .landing-buddy img {
+  display: block;
+  width: 100%;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.landing-page .landing-buddy__bubble {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  padding: 9px 13px;
+  color: var(--landing-wine);
+  font-size: 0.76rem;
+  font-weight: 750;
+  white-space: nowrap;
+  background: #fff;
+  border-radius: 14px 14px 14px 4px;
+  box-shadow: 0 10px 26px rgb(83 25 49 / 14%);
+  opacity: 0;
+  translate: -50% -10px;
+  transition: opacity 300ms ease, translate 300ms ease;
+  pointer-events: none;
+}
+
+.landing-page .landing-buddy__bubble.is-show {
+  opacity: 1;
+  translate: -50% -16px;
+}
+
+/* 하트 버스트 */
+.landing-page .landing-heart {
+  position: fixed;
+  z-index: 60;
+  font-size: 14px;
+  line-height: 1;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* "보미야" 호출 데모 버튼 — 모션 레이어가 살아 있을 때만 보인다 */
+.landing-page .landing-call__try {
+  display: none;
+  min-height: 52px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 24px;
+  margin-top: 26px;
+  color: var(--landing-pink-ink);
+  font-size: 0.9rem;
+  font-weight: 850;
+  background: var(--landing-pink-pale);
+  border: 1.5px solid rgb(239 57 127 / 22%);
+  border-radius: 999px;
+  transition: background 200ms ease, border-color 200ms ease, box-shadow 200ms ease;
+  will-change: transform;
+}
+
+.landing-page.landing-motion-on .landing-call__try {
+  display: inline-flex;
+}
+
+.landing-page .landing-call__try:hover {
+  background: #ffddea;
+  border-color: rgb(239 57 127 / 40%);
+  box-shadow: 0 12px 28px rgb(239 57 127 / 16%);
+}
+
+.landing-page .landing-call__try > span {
+  color: var(--landing-pink-strong);
+}
+
+/* 카드 틸트 글레어 — 포인터 위치(--landing-mx/my)를 따라 도는 하이라이트 */
+.landing-page .landing-day__steps > li,
+.landing-page .landing-sensing__list > li {
+  --landing-mx: 50%;
+  --landing-my: 50%;
+  position: relative;
+}
+
+.landing-page.landing-motion-on .landing-day__steps > li::after,
+.landing-page.landing-motion-on .landing-sensing__list > li::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(
+    300px circle at var(--landing-mx) var(--landing-my),
+    rgb(255 255 255 / 50%),
+    transparent 55%
+  );
+  opacity: 0;
+  transition: opacity 250ms ease;
+  pointer-events: none;
+  content: '';
+}
+
+.landing-page.landing-motion-on .landing-day__steps > li:hover::after,
+.landing-page.landing-motion-on .landing-sensing__list > li:hover::after {
+  opacity: 1;
+}
+
+/* 입자 캔버스 (어두운 절) */
+.landing-page .landing-dust {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* 720ms + 34px 는 화면에 들어온 뒤에도 한참 비어 보여 스크롤이 끊긴 느낌을 준다.
+   짧고 얕게 올려 스크롤 속도를 따라오게 한다. */
 .landing-page [data-landing-reveal] {
   opacity: 0;
-  transform: translateY(34px);
+  transform: translateY(18px);
   transition:
-    opacity 720ms var(--landing-delay, 0ms) ease,
-    transform 720ms var(--landing-delay, 0ms) cubic-bezier(0.2, 0.72, 0.2, 1);
+    opacity 460ms var(--landing-delay, 0ms) ease,
+    transform 460ms var(--landing-delay, 0ms) cubic-bezier(0.2, 0.72, 0.2, 1);
 }
 
 .landing-page [data-landing-reveal].is-visible {
@@ -977,6 +1556,10 @@
     margin-top: 26px;
   }
 
+  .landing-page .landing-sensing__list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .landing-page .landing-human {
     padding: 80px;
   }
@@ -1018,8 +1601,15 @@
     display: none;
   }
 
-  .landing-page .landing-day {
+  .landing-page .landing-day,
+  .landing-page .landing-sensing {
     width: calc(100% - 48px);
+  }
+
+  .landing-page .landing-call {
+    width: calc(100% - 48px);
+    grid-template-columns: 1fr;
+    gap: 34px;
   }
 
   .landing-page .landing-section-heading {
@@ -1072,10 +1662,23 @@
     display: none;
   }
 
-  .landing-page .landing-header__cta {
-    min-height: 38px;
-    padding: 0 13px;
-    font-size: 0.7rem;
+  .landing-page .landing-installer-entry {
+    min-height: 44px;
+    padding: 5px 12px 5px 6px;
+  }
+
+  .landing-page .landing-installer-entry__icon {
+    width: 32px;
+    height: 32px;
+  }
+
+  .landing-page .landing-installer-entry small {
+    display: none;
+  }
+
+  .landing-page .landing-installer-entry strong {
+    max-width: 92px;
+    font-size: 0.72rem;
   }
 
   .landing-page .landing-hero {
@@ -1110,8 +1713,9 @@
     width: 100%;
   }
 
-  .landing-page .landing-secondary-link {
-    padding-left: 4px;
+  .landing-page .landing-ghost-cta {
+    width: 100%;
+    justify-content: center;
   }
 
   .landing-page .landing-hero__note {
@@ -1143,6 +1747,22 @@
   .landing-page .landing-day {
     width: calc(100% - 32px);
     padding: 90px 0;
+  }
+
+  .landing-page .landing-call,
+  .landing-page .landing-sensing {
+    width: calc(100% - 32px);
+    padding: 76px 0;
+  }
+
+  .landing-page .landing-call__steps > li {
+    grid-template-columns: 38px 1fr;
+    gap: 12px;
+    padding: 24px 0;
+  }
+
+  .landing-page .landing-sensing__list {
+    grid-template-columns: 1fr;
   }
 
   .landing-page .landing-section-heading h2,
@@ -1218,8 +1838,14 @@
     transform: none;
   }
 
+  .landing-page .landing-rv > span {
+    transform: none;
+    transition: none;
+  }
+
   .landing-page .landing-hero__copy,
   .landing-page .landing-hero__visual,
+  .landing-page .landing-stage,
   .landing-page .landing-orbit-label,
   .landing-page .landing-scroll-cue > span::after {
     animation: none !important;
