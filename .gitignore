@@ -58,3 +58,10 @@ Thumbs.db
 
 # 로봇 접속 대상은 사람마다/네트워크마다 다르다 (robot/scripts/lib/remote.sh).
 robot/scripts/demo_host.local.sh
+
+# 백업 env (API 키 포함)
+**/.env.*
+
+# 레포 루트에서 colcon build 시 생기는 산출물
+/install/
+/log/
