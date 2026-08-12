@@ -11,6 +11,7 @@
 #
 #   bomi_map.sh bomi_demo do_loop_closing:=false
 #   bomi_map.sh bomi_demo use_scan_matching:=false
+# RViz2는 기본으로 함께 실행한다. 화면 없이 매핑해야 할 때만 끈다.
 #   bomi_map.sh bomi_demo use_rviz:=false
 set -o pipefail
 
@@ -93,6 +94,7 @@ echo "  LiDAR 장착 위치 x=$LASER_X y=$LASER_Y z=$LASER_Z"
 setsid ros2 launch core joystick_slam_robot.launch.py \
     pico_port:=/dev/ttyACM0 lidar_port:=/dev/ttyUSB0 \
     laser_x:="$LASER_X" laser_y:="$LASER_Y" laser_z:="$LASER_Z" \
+    use_rviz:=true \
     ${LAUNCH_EXTRA[@]+"${LAUNCH_EXTRA[@]}"} > "$LOG" 2>&1 &
 LAUNCH_PGID=$!
 

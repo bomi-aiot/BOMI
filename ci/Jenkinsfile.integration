@@ -102,7 +102,7 @@ pipeline {
     }
 
     environment {
-        BOMI_RELEASE_BRANCH = 'hotfix/scenario-integration'
+        BOMI_RELEASE_BRANCH = 'main'
         BOMI_ENV_FILE = '/home/ubuntu/bomi/secrets/production.env'
         BOMI_COMPOSE_FILE = 'infra/compose.prod.yml'
         // MQTT 는 별도 Compose 프로젝트(bomi-mqtt)이고 env 파일도 다르다.
@@ -113,7 +113,7 @@ pipeline {
     }
 
     stages {
-        stage('Checkout hotfix/scenario-integration') {
+        stage('Checkout main') {
             steps {
                 script {
                     def scmVars = checkout scm
