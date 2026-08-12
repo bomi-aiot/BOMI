@@ -1,15 +1,52 @@
 #!/usr/bin/env bash
 # 개발 PC(WSL)에서 로봇에 접속·배포하는 공용 함수.
 #
-# 환경변수로 바꿀 수 있다:
-#   BOMI_HOST     기본 ssafy@192.168.30.30 (강의장 와이파이 기준)
+# 접속 대상은 세 곳에서 온다. 뒤로 갈수록 우선한다.
+#   1. 저장소 기본값 (아래 ssafy@192.168.30.30 — 강의장 와이파이 기준)
+#   2. robot/scripts/demo_host.local.sh  (개인 설정, 저장소에 안 들어간다)
+#   3. 환경변수 BOMI_HOST
+#   4. --host 옵션
+#
+# 2번이 있는 이유: 로봇 IP 는 네트워크마다 바뀌는데(강의장 ↔ 집 ↔ DHCP 재할당)
+# 저장소 기본값은 누군가에게는 항상 틀린 값이다. 매번 --host 를 붙이는 대신
+# 한 번 적어두고 쓴다. 개인 환경 값이라 커밋하지 않는다.
+#
+#   echo 'BOMI_HOST=home' > robot/scripts/demo_host.local.sh
+#
+# IP 대신 별칭을 쓸 수 있다(아래 _bomi_resolve_alias). 네트워크가 바뀔 때
+# 외워야 할 것이 주소가 아니라 장소 이름이면 된다.
+#
+#   demo-map.sh --host home bomi_real_20
+#
 #   BOMI_REMOTE   로봇 쪽 저장소 경로. 기본 ~/S15P11E102
 
-BOMI_HOST=${BOMI_HOST:-ssafy@192.168.30.30}
+_HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+
+# 네트워크별 로봇 주소. 새 장소가 생기면 여기 한 줄 추가한다.
+#
+# 별칭 해석은 계정명을 붙이기 '전'에 해야 한다 — 별칭 ssafy 와 계정명 ssafy 가
+# 같은 글자라, 순서가 바뀌면 ssafy 가 ssafy@ssafy 로 풀린다.
+_bomi_resolve_alias() {
+    case "$1" in
+        ssafy)     echo 192.168.30.30 ;;   # 강의장 와이파이
+        home)      echo 192.168.0.12 ;;    # 집
+        dkhotspot) echo 10.113.168.103 ;;  # 핫스팟
+        *)         echo "$1" ;;            # 별칭이 아니면 그대로 (IP·호스트명)
+    esac
+}
+
+_BOMI_HOST_DEFAULT=ssafy
+# 로컬 파일은 BOMI_HOST 에 그냥 대입한다. 그래서 환경변수를 먼저 챙겨두지
+# 않으면 파일이 그것을 덮어써 우선순위가 뒤집힌다.
+_BOMI_HOST_ENV=${BOMI_HOST:-}
+if [ -f "$_HERE/demo_host.local.sh" ]; then
+    # shellcheck source=/dev/null
+    source "$_HERE/demo_host.local.sh"
+fi
+
+BOMI_HOST=${_BOMI_HOST_ENV:-${BOMI_HOST:-$_BOMI_HOST_DEFAULT}}
 BOMI_REMOTE=${BOMI_REMOTE:-\~/S15P11E102}
 BOMI_REMOTE_SCRIPTS=$BOMI_REMOTE/robot/scripts
-
-_HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 # 인자에서 접속 대상을 뽑아내고, 나머지를 BOMI_ARGS 에 남긴다.
 # 네트워크가 바뀌면 IP 도 바뀌므로(강의장 ↔ 집) 파일을 고치지 않고
@@ -39,11 +76,13 @@ bomi_parse_host() {
                 ;;
         esac
     done
-    # 사용자명이 없으면 로봇 계정을 붙인다.
+    # 별칭 -> 주소. 계정명이 붙어 있으면 주소 부분만 바꾼다.
+    local user="" addr="$BOMI_HOST"
     case "$BOMI_HOST" in
-        *@*) ;;
-        *) BOMI_HOST=ssafy@$BOMI_HOST ;;
+        *@*) user=${BOMI_HOST%@*}; addr=${BOMI_HOST#*@} ;;
     esac
+    addr=$(_bomi_resolve_alias "$addr")
+    BOMI_HOST="${user:-ssafy}@$addr"
 }
 
 # 저장소의 스크립트를 로봇으로 복사한다. 로봇에 남은 옛 사본을 쓰다가

@@ -48,8 +48,10 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
-from bomi_ai_chat import degradation
+from bomi_ai_chat import degradation, policy
 from bomi_ai_chat.backend_client import BackendContextClient
 from bomi_ai_chat.clock import clock
 from bomi_ai_chat.graph import context_slots, contract_dialogue
@@ -179,6 +181,20 @@ def context_read(state: ConvState) -> dict:
         # 어차피 둘 다 "모델이 답을 지어내지 말고 참고할 것"이라는 같은 역할이다.
         ctx = {**ctx, "documents": [*(ctx.get("documents") or []), *lookup_documents]}
 
+    # 오늘 "약 먹었어"라고 하신 시각. 백엔드 계약이 아니라 로봇의 로컬 기록이다.
+    # 키 이름에 Reported 를 넣은 것은 의도적이다 — 이건 복약 '기록'이 아니라
+    # 어르신의 '말'이고, 프롬프트 문구가 그 차이를 지켜야 한다.
+    reported = _medication_reported_times(state.get("senior_id") or "", ctx)
+    if reported:
+        ctx = {**ctx, "medicationReportedTimes": reported}
+
+    # 최근에 들려드린 이야기. 이야기 턴에만 조회한다 — 잡담마다 저장소를 두드릴
+    # 이유가 없고, 이 값을 읽는 프롬프트 절도 그때만 붙는다.
+    if state.get("wants_story"):
+        told = _recent_stories(senior_id)
+        if told:
+            ctx = {**ctx, "recentStories": told}
+
     retrieval_status = _normalize_retrieval_status(
         ctx,
         is_cached=result.is_cached,
@@ -239,9 +255,88 @@ def context_read(state: ConvState) -> dict:
         # 이번 턴까지 새는 것을 막는다. checkpoint 된 state 는 이 노드가 손대지
         # 않는 키를 그대로 들고 있기 때문이다(state.py 의 is_medical_query 설명 참고).
         "is_medical_query": medical_flag,
+        # 날씨 대화가 열린 시각. 다음 턴의 "비는?" 이 조회로 통과할지를 정한다.
+        # 매 턴 반환한다 — 만료된 값을 None 으로 덮어써야 낡은 표식이 남지 않는다.
+        "weather_thread_at": next_weather_thread_at(state),
         "retrieval_status": retrieval_status,
         "recent_phrasings": _lookup_recent_phrasings(state, senior_id),
     }
+
+
+def _recent_stories(senior_id: str) -> list[str]:
+    """최근에 들려드린 이야기의 앞부분 조각들.
+
+    왜 조각인가
+        무엇을 이미 했는지 알아볼 만큼만 있으면 된다. 이야기 전문을 다시 실으면
+        프롬프트가 이야기 하나당 여덟 문장씩 불어난다.
+
+    왜 제목이 아닌가
+        발화에서 제목을 되뽑으려면 목록과 발화를 맞춰 보는 규칙이 하나 더 생기고,
+        모델이 "옛날 옛적에 형제가 살았는데"로 시작하면 그 규칙이 조용히 빗나간다.
+        앞 40자면 사람도 모델도 어떤 이야기였는지 안다.
+    """
+    if not senior_id:
+        return []
+    try:
+        from bomi_ai_chat.localstore import phrasings
+
+        told = phrasings.recent(senior_id, policy.STORY_PHRASING_KEY)
+    except Exception:  # noqa: BLE001 - 이력 조회 실패가 턴을 죽이면 안 된다
+        logger.warning("failed to look up recent stories", exc_info=True)
+        return []
+    return [text[:policy.RECENT_STORY_SNIPPET_CHARS] for text in told if text]
+
+
+def _medication_reported_times(senior_id: str, ctx: dict) -> list[str]:
+    """오늘 "약 먹었어"라고 하신 시각을 어르신 로컬 "HH:MM" 로.
+
+    왜 이것이 필요한가  (2026-08-10 실사용 피드백)
+        "아침에 약을 먹었는지 기억이 안 나"에 로봇이 답할 수 없었다. 백엔드
+        todayState 의 복약 이행은 지금 비어 있다 — daily_activity_metric 은 일일
+        요약 배치가 돌 때만 채워지고, medicationScheduledCount 는 설계상 항상
+        null 이다(DailyActivityMetricService.scheduledCount 자바독). 즉 프롬프트에
+        복약 이행이 실린 적이 한 번도 없다.
+
+        로봇에는 한 가지 단서가 있다. 복약 알림에 "먹었어"라고 답하면
+        handlers.handle_schedule 이 그 슬롯을 완료로 남긴다(게이트 1 이 읽는 값).
+        그 완료 시각이면 "아침"인지 "점심"인지 어르신이 판단할 수 있다.
+
+    왜 시각 목록인가 (슬롯 이름이 아니라)
+        slot_key 형식이 두 갈래다 — 백엔드가 내려준 "med-{id}-{날짜}-{시각}" 과
+        로컬 제안의 "{날짜}:med:morning". 이름을 파싱해 아침/점심을 복원하려 들면
+        형식이 하나 더 생기는 날 조용히 틀린다. completed_at 은 형식과 무관하다.
+
+    시간대를 모르면 빈손으로 돌아온다
+        "오늘"의 경계를 모르면 어제 저녁 복약이 오늘 아침으로 보일 수 있다. 그건
+        이 기능이 고치려는 혼란을 그대로 다시 만드는 일이다 — 모르면 말하지 않는다.
+    """
+    if not senior_id:
+        return []
+    zone_name = ((ctx or {}).get("profile") or {}).get("timeZone")
+    if not zone_name:
+        logger.warning(
+            "senior %s has no profile.timeZone; skipping today's medication reports",
+            senior_id)
+        return []
+    try:
+        zone = ZoneInfo(str(zone_name))
+    except Exception:  # noqa: BLE001 - 알 수 없는 시간대가 턴을 죽이면 안 된다
+        logger.warning("unknown time zone %r for senior %s", zone_name, senior_id)
+        return []
+
+    # 지역 import 는 _lookup_recent_phrasings 와 같은 이유다 — localstore 는 import
+    # 시점에 DB 경로(Settings)를 읽으므로 모듈 최상단에서 끌어오면 테스트가 환경을
+    # 바꾸기 전에 굳는다.
+    from bomi_ai_chat.localstore import proposals
+
+    now_local = datetime.fromtimestamp(clock.now(), tz=zone)
+    day_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        stamps = proposals.completed_slot_times(senior_id, day_start.timestamp())
+    except Exception:  # noqa: BLE001 - 로컬 저장소 실패가 턴을 죽이면 안 된다
+        logger.warning("could not read today's completed slots", exc_info=True)
+        return []
+    return [datetime.fromtimestamp(stamp, tz=zone).strftime("%H:%M") for stamp in stamps]
 
 
 def _normalize_retrieval_status(
@@ -303,32 +398,38 @@ def _lookup_recent_phrasings(state: ConvState, senior_id: str) -> list[str]:
     """같은 종류의 알림에서 최근에 쓴 표현을 찾는다 (§17.8, S15P11E102-256).
 
     무엇을 하는가
-        능동/명령 턴(trigger_type in "proactive"/"backend_command")에서만
-        phrasing_key 를 만들어 localstore.phrasings.recent 로 조회한다.
+        graph.phrasing.phrasing_key_for_turn 으로 이 턴의 키를 만들어
+        localstore.phrasings.recent 로 조회한다. 능동/명령 턴은 origin 기반 키,
+        반응형 턴은 intent 기반 키다.
 
-    ★ 왜 반응형 턴은 항상 빈 리스트인가 — 이 함수에서 가장 중요한 판단
+    ★ 왜 반응형 턴이 origin 을 쓰지 않는가 — 이 함수에서 가장 중요한 판단
         speech_origin 과 intent 는 checkpoint 된 state 의 필드라 reducer 가 없다
         (state.py 참고). 능동 턴이 "silence_ladder:1" 을 남기고 나면, 바로 다음
         어르신 발화(user_utterance) 턴에도 그 값이 그대로 남아 있다 — 아무도
-        지우지 않았을 뿐이다. 이 함수가 trigger_type 을 보지 않고 speech_origin
-        만 봤다면, "능동 턴 직후의 반응형 턴"에 지난 알림의 표현 이력이 새어
-        들어간다. graph/build.py._record_phrasing 도 기록 쪽에서 같은 가드를
-        쓴다 — 둘이 어긋나면 저장과 조회 중 하나만 걸러져 조용히 틀린다.
+        지우지 않았을 뿐이다. 그 값으로 키를 만들면 지난 알림의 표현 이력이
+        이번 대화에 새어 들어간다.
+
+        원래는 그래서 반응형 턴을 통째로 제외했다. 그 대가가 컸다 — 웨이크워드
+        대화 전부에서 반복 방지가 꺼졌고, 같은 되묻기가 세 번 연속 나왔다
+        (2026-08-10 실측, spoken_phrasing 0행). 지금은 제외하는 대신 origin 을
+        빼고 intent 로만 키를 만든다. graph/build.py._record_phrasing 이 같은
+        함수를 쓴다 — 둘이 어긋나면 저장과 조회 중 하나만 걸러져 조용히 틀린다.
 
     누가 호출하는가
         context_read, ctx 를 만든 다음.
 
     반환값
-        표현 문자열 목록. 반응형 턴이거나, origin/intent 가 다양화 대상이 아니면
-        (graph.phrasing.phrasing_key 참고) 빈 리스트.
+        표현 문자열 목록. intent 가 없거나 origin 이 다양화 대상이 아니면
+        (graph.phrasing 참고) 빈 리스트.
     """
-    if state.get("trigger_type") not in ("proactive", "backend_command"):
-        return []
-
-    from bomi_ai_chat.graph.phrasing import phrasing_key
+    from bomi_ai_chat.graph.phrasing import phrasing_key_for_turn
     from bomi_ai_chat.localstore import phrasings
 
-    key = phrasing_key(state.get("speech_origin") or "", state.get("intent") or "")
+    key = phrasing_key_for_turn(
+        state.get("trigger_type"),
+        state.get("speech_origin") or "",
+        state.get("intent") or "",
+    )
     return phrasings.recent(senior_id, key)
 
 
@@ -339,8 +440,9 @@ def _lookup_recent_phrasings(state: ConvState, senior_id: str) -> list[str]:
 # 전부 "무엇을 조회할지"만 정하고, 실제 호출은 이미 검증된 기존 클라이언트
 # (weather/client.py, llm/medical_flow.py)에 위임한다 — 재구현하지 않는다.
 #
-# _WEATHER_MARKERS 는 아래에서 정의하지 않는다. _INFO_MARKERS 바로 위(§8 절)에
-# 이미 있고, 여기서 또 만들면 "날씨 질문"의 기준이 두 곳에 생긴다.
+# 날씨 표지는 아래에서 정의하지 않는다. _INFO_MARKERS 바로 위(§8 절)에 두 벌이
+# 함께 있다 — 분류용 _WEATHER_TOPIC_MARKERS(넓게)와 조회용
+# _WEATHER_LOOKUP_MARKERS(= "날씨" 하나). 둘을 나눈 이유는 그 자리 주석 참고.
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -417,9 +519,50 @@ def _gather_lookup_documents(state: ConvState) -> tuple[list[dict], bool | None]
         if medical_flag:
             return _lookup_medical_documents(text), medical_flag
 
-    if any(marker in text for marker in _WEATHER_MARKERS):
+    if _weather_lookup_allowed(state, text):
         return _lookup_weather_documents(state, text), medical_flag
     return [], medical_flag
+
+
+def _weather_lookup_allowed(state: ConvState, text: str) -> bool:
+    """이 발화로 기상청을 불러도 되는가.
+
+    두 가지 길이 있다.
+        1. 어르신이 '날씨'라고 말했다 — 언제나 연다.
+        2. 날씨 대화가 아직 열려 있고(_weather_thread_is_open), 넓은 표지가 있다 —
+           "비는?", "거긴 덥나?" 같은 후속 질문이 여기로 통과한다.
+
+    왜 2번이 조건부인가
+        넓은 표지를 늘 열어두면 "오늘 좀 춥네" 같은 잡담 한마디가 전부 조회를 태우고,
+        돌아온 예보가 참고 자료로 실려 대화를 날씨로 끌고 간다 — 그것이 이 게이트를
+        좁힌 이유다(_WEATHER_LOOKUP_MARKERS). 열쇠를 어르신이 쥐게 하면 두 요구를
+        동시에 만족시킬 수 있다: 먼저 '날씨'를 꺼낸 대화 안에서만 넓게 듣는다.
+    """
+    if any(marker in text for marker in _WEATHER_LOOKUP_MARKERS):
+        return True
+    if not any(marker in text for marker in _WEATHER_TOPIC_MARKERS):
+        return False
+    return _weather_thread_is_open(state)
+
+
+def _weather_thread_is_open(state: ConvState) -> bool:
+    """직전에 날씨 조회를 한 지 policy.WEATHER_FOLLOWUP_WINDOW_SEC 안인가."""
+    opened_at = state.get("weather_thread_at")
+    if not isinstance(opened_at, (int, float)) or isinstance(opened_at, bool):
+        return False
+    return (clock.now() - float(opened_at)) <= policy.WEATHER_FOLLOWUP_WINDOW_SEC
+
+
+def next_weather_thread_at(state: ConvState) -> float | None:
+    """이 턴을 반영한 '날씨 대화가 열린 시각'. context_read 가 state 에 되돌린다.
+
+    이번 턴이 날씨 조회 턴이면 지금으로 갱신하고, 아니면 이전 값을 그대로 둔다
+    (만료됐으면 None 으로 지운다 — 낡은 값이 체크포인트에 영원히 남을 이유가 없다).
+    """
+    text = (state.get("user_input") or "").strip()
+    if _eligible_for_lookup(state, text) and _weather_lookup_allowed(state, text):
+        return clock.now()
+    return state.get("weather_thread_at") if _weather_thread_is_open(state) else None
 
 
 def _eligible_for_lookup(state: ConvState, text: str) -> bool:
@@ -576,21 +719,21 @@ def classify_intent(state: ConvState) -> dict:
     #   "schedule" 로 덮여 답 판정이 조용히 새어나간다. 그래서 pending_consent
     #   가 있으면 남아 있는 intent 값과 무관하게 먼저 확인한다.
     if _pending_consent_intent(state, text):
-        return {"intent": "emotional"}
+        return {"intent": "emotional", "wants_story": False, "wants_reminiscence": False}
 
     if state.get("intent"):
         # 능동/백엔드 명령은 인텐트가 이미 있지만 의료 판정은 이전 턴 값일 수 있다.
         # context_read 가 필요하면 이번 seed 로 다시 판정하도록 명시적으로 비운다.
-        return {"is_medical_query": None}
+        return {"is_medical_query": None, "wants_story": False, "wants_reminiscence": False}
 
     if not text:
         # 발화가 없는데 인텐트도 없다면 말벗으로 둔다. info 로 두면 있지도 않은
         # 질문에 답하려 든다.
-        return {"intent": "companion"}
+        return {"intent": "companion", "wants_story": False, "wants_reminiscence": False}
 
     pending = _pending_contract_intent(state, text)
     if pending:
-        return {"intent": pending}
+        return {"intent": pending, "wants_story": False, "wants_reminiscence": False}
 
     # 백엔드 문서 요청보다 먼저 intent 를 확정해야 "복지제도 알려줘"가
     # includeDocuments=true 로 나간다. 의료 힌트가 있는 문장은 같은 시점에 로컬
@@ -600,10 +743,69 @@ def classify_intent(state: ConvState) -> dict:
         marker in text for marker in _MEDICAL_HINT_MARKERS
     ):
         medical_hint = _is_medical(text)
-    result = {"intent": _classify(text, medical_hint=medical_hint)}
+    result = {
+        "intent": _classify(text, medical_hint=medical_hint),
+        # 이야기 모드는 매 턴 명시적으로 쓴다. 지난 턴의 True 가 남으면 다음
+        # 발화까지 여덟 문장을 허락하게 된다(is_medical_query 와 같은 이유).
+        "wants_story": wants_a_story(state, text),
+        "wants_reminiscence": opened_a_memory(text),
+    }
     if medical_hint is not None:
         result["is_medical_query"] = medical_hint
     return result
+
+
+def opened_a_memory(text: str) -> bool:
+    """어르신이 옛날 이야기 쪽으로 말을 여셨는가.  (2026-08-10)
+
+    문은 어르신이 연다
+        마중물 목록(reminiscence_stance.md)을 매 턴 실으면 평범한 잡담까지 옛날로
+        끌려간다 — 만성 통증 부위가 매 턴 프로필에 실려 대화를 무릎으로 끌고 갔던
+        것과 같은 실패다. 표지가 있는 턴에만 켠다.
+
+    ★ 이 값만으로는 프롬프트가 바뀌지 않는다
+        build_prompt 는 intent 가 companion/emotional 일 때만 이 지시를 붙인다.
+        "예전에 먹던 약이 뭐였지"는 표지에 걸리지만 복약 턴이고, 거기에 회상
+        태도를 얹으면 답해야 할 것을 안 답하고 옛날 이야기를 여쭙게 된다.
+    """
+    return any(marker in (text or "") for marker in policy.REMINISCENCE_MARKERS)
+
+
+def wants_a_story(state: ConvState, text: str) -> bool:
+    """이 턴에 어르신이 '이야기'를 원하는가.  (2026-08-10 실사용 피드백)
+
+    세 가지 길이 있다.
+        1. 직접 청했다        — "재미있는 이야기 해줘"
+        2. 상태를 말했다      — "심심해", "할 일이 없어"
+           로봇이 먼저 들려줘야 하는 자리다. "심심하시겠어요"로 받고 끝내면
+           어르신에게 남는 것이 없다.
+        3. 제안을 승낙했다    — 로봇이 "이야기 해드릴까요?" 한 다음의 "해줘"
+           "해줘" 세 글자에는 뜻이 없다. 직전 로봇 발화가 제안이었을 때만 읽는다.
+
+    ★ 3번이 state["response"] 를 읽는 것에 대하여
+        response 는 '한 턴만 사는' 키로 문서화돼 있지만(state.py), 실제로는
+        reducer 없는 LastValue 채널이라 다음 턴 시작 시점까지 직전 값이 남아
+        있다 — classify_intent 는 이번 턴 핸들러보다 먼저 돌기 때문에 여기서
+        읽는 값은 언제나 '직전 로봇 발화'다. is_medical_query 가 지난 턴 값을
+        조심하는 것과 같은 성질을 반대로 이용하는 셈이다.
+
+        ctx["recentMessages"] 를 쓰지 않는 이유는 그것이 백엔드를 한 바퀴 돌아온
+        값이라서다. 방금 한 말이 아직 올라가지 않았으면 승낙을 놓친다.
+    """
+    if not text:
+        return False
+    if any(marker in text for marker in policy.STORY_REQUEST_MARKERS):
+        return True
+    if any(marker in text for marker in policy.STORY_BOREDOM_MARKERS):
+        return True
+
+    stripped = text.strip().rstrip("!.~ ")
+    if not any(stripped == marker or stripped.startswith(marker + " ")
+               or stripped == marker + "요"
+               for marker in policy.STORY_AGREEMENT_MARKERS):
+        return False
+    previous = state.get("response") or ""
+    return any(marker in previous for marker in policy.STORY_OFFER_MARKERS)
 
 
 def _pending_contract_intent(state: ConvState, text: str) -> str | None:
@@ -675,14 +877,26 @@ def _pending_consent_intent(state: ConvState, text: str) -> bool:
     return True
 
 
-# 날씨 질문의 표지. _gather_lookup_documents(아래 §311 절)가 조회 여부를 정하는
-# 데도 그대로 재사용한다 — "info 로는 분류됐는데 조회는 안 됐다" 같은 두 곳의
-# 어긋남을 막으려면 표지가 하나여야 한다.
+# 날씨성 화제의 표지. _INFO_MARKERS(아래)를 만드는 데만 쓴다 — 즉 "이 발화는
+# 정보 질문이다"라는 분류에만 관여하고, 기상청을 부를지는 정하지 않는다.
 # "비는?", "거긴 덥나?" 같은 이어지는 질문(시나리오 B·H)도 잡도록 어간을 넓혔다.
-# "덥"/"춥" 은 "덥나/덥지/더워", "춥나/추워" 를 모두 덮는다. "덥석" 같은 오탐은
-# 조회 한 번이 헛돌 뿐 답변을 오염시키지 않는다(참고 자료가 비면 그만이다).
-_WEATHER_MARKERS = ("날씨", "기온", "비 와", "비와", "비는", "비 올", "비올",
-                    "우산", "추워", "더워", "덥", "춥")
+# "덥"/"춥" 은 "덥나/덥지/더워", "춥나/추워" 를 모두 덮는다.
+_WEATHER_TOPIC_MARKERS = ("날씨", "기온", "비 와", "비와", "비는", "비 올", "비올",
+                          "우산", "추워", "더워", "덥", "춥")
+
+# ★ 실제 조회를 여는 표지는 "날씨" 하나뿐이다 (2026-08-10 실사용 피드백)
+#
+#   원래는 위의 넓은 표지를 조회 판정에도 그대로 썼다. 표지를 하나로 두면
+#   "분류와 조회가 어긋나지 않는다"는 것이 이유였는데, 실기에서 돌아온 결과는
+#   "묻지도 않았는데 날씨로 답한다" 였다. "오늘 좀 춥네" 같은 잡담 한마디가
+#   기상청 조회를 태우고, 조회된 예보는 '참고 자료'로 프롬프트에 실린다 —
+#   모델은 눈앞에 있는 자료를 화제로 삼기 때문에(빈 섹션을 넣지 않는 이유와
+#   같은 성질, prompts/builder.py) 대화가 통째로 날씨로 끌려간다.
+#
+#   그래서 두 표지를 분리한다. "오늘 좀 춥네" 는 여전히 info 로 분류돼 평범하게
+#   답하고(분류는 넓게), 기상청은 어르신이 "날씨"라고 말했을 때만 부른다
+#   (조회는 좁게). 어긋남이 아니라 의도된 비대칭이다.
+_WEATHER_LOOKUP_MARKERS = ("날씨",)
 
 # 지남력·사실 질문의 표지.
 #
@@ -690,7 +904,7 @@ _WEATHER_MARKERS = ("날씨", "기온", "비 와", "비와", "비는", "비 올"
 # 잦아진다. 매번 따뜻하게 답해야 하므로 반드시 info 로 흘러가야 한다 (CLAUDE.md §8).
 _INFO_MARKERS = (
     "몇 시", "몇시", "며칠", "무슨 요일", "무슨요일", "오늘 날짜", "지금 몇",
-    *_WEATHER_MARKERS,
+    *_WEATHER_TOPIC_MARKERS,
     "뭐야", "뭔가요", "알려줘", "알려주", "가르쳐", "어디야", "어디에",
 )
 
@@ -731,6 +945,17 @@ def is_orientation_question(text: str) -> bool:
 # 복약·일정을 '처리'하려는 발화. 조회가 아니라 상태 변경이므로 schedule 로 간다.
 _SCHEDULE_MARKERS = (
     "약 먹었", "약먹었", "약 드셨", "복용했", "챙겨 먹었",
+    # ★ 조사가 붙은 형태를 따로 넣는다 (2026-08-10 실사용 피드백)
+    #   "아침에 약을 먹었는지 기억이 안 나" 는 위 표지에 하나도 안 걸려서
+    #   companion(잡담)으로 빠졌다 — "약 먹었" 과 "약을 먹었" 사이에 글자 하나가
+    #   더 있기 때문이다. 어르신이 복약을 물었는데 로봇이 맞장구만 치는 것은
+    #   이 제품에서 그냥 대화 품질 문제가 아니다.
+    "약을 먹었", "약은 먹었", "약도 먹었", "약을 드셨", "약 먹은", "약 드신",
+    "약 챙겼", "약을 챙겼",
+    # 부정형도 복약 턴이다. "약 안 먹었어"를 잡담으로 흘리면, 약을 거른 사실을
+    # 로봇이 듣고도 맞장구만 친다. 완료로 오인할 걱정은 없다 —
+    # handlers._is_completion_report 가 부정을 먼저 본다.
+    "약 안 먹", "약 못 먹", "약을 안 먹", "약을 못 먹", "약 아직",
     "일정", "약속", "병원 예약", "예약",
 )
 

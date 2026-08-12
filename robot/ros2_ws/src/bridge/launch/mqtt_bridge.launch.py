@@ -44,6 +44,14 @@ def generate_launch_description() -> LaunchDescription:
         "timed_drive_duration_seconds")
     timed_drive_linear_speed = LaunchConfiguration("timed_drive_linear_speed")
     cmd_vel_topic = LaunchConfiguration("cmd_vel_topic")
+    zigzag_enabled = LaunchConfiguration("zigzag_enabled")
+    zigzag_angle_deg = LaunchConfiguration("zigzag_angle_deg")
+    zigzag_leg_length_m = LaunchConfiguration("zigzag_leg_length_m")
+    zigzag_min_distance_m = LaunchConfiguration("zigzag_min_distance_m")
+    nav_through_poses_action_name = LaunchConfiguration(
+        "nav_through_poses_action_name")
+    nav_base_frame_id = LaunchConfiguration("nav_base_frame_id")
+    nav_status_topic = LaunchConfiguration("nav_status_topic")
 
     return LaunchDescription(
         [
@@ -149,6 +157,42 @@ def generate_launch_description() -> LaunchDescription:
                 "approach_duration_seconds", default_value="15.0",
                 description="Max seconds to keep person-following on after arrival",
             ),
+            # 현관 지그재그 접근(bridge/zigzag.py). 킬 스위치 — 기본 꺼짐.
+            # 실기에서 경유점이 벽 팽창 영역에 걸려 경로가 안 나오면
+            # zigzag_enabled:=false 로 검증된 직선 주행으로 되돌린다.
+            # 각도를 올리기보다 zigzag_leg_length_m 을 줄이는 쪽이 안전하다
+            # — 측면 이탈은 다리 길이 x tan(각도) 라 다리가 짧을수록 좁다.
+            DeclareLaunchArgument(
+                "zigzag_enabled", default_value="false",
+                description="Approach ENTRANCE in a zigzag instead of straight",
+            ),
+            DeclareLaunchArgument(
+                "zigzag_angle_deg", default_value="15.0",
+                description="Degrees to swing left/right off the straight axis",
+            ),
+            DeclareLaunchArgument(
+                "zigzag_leg_length_m", default_value="0.5",
+                description="Axial length of one zigzag leg in metres",
+            ),
+            DeclareLaunchArgument(
+                "zigzag_min_distance_m", default_value="1.0",
+                description="Shorter approaches stay straight",
+            ),
+            DeclareLaunchArgument(
+                "nav_through_poses_action_name",
+                default_value="navigate_through_poses",
+                description="Nav2 NavigateThroughPoses action name",
+            ),
+            DeclareLaunchArgument(
+                "nav_base_frame_id", default_value="base_link",
+                description="Robot base frame used to read the current pose",
+            ),
+            # LCD 주행 표시. bomi_display 가 이 토픽을 구독해 "이동 중"을
+            # 띄운다(DisplayStateModel.ACTIVE_NAV_STATES).
+            DeclareLaunchArgument(
+                "nav_status_topic", default_value="/bomi/nav_status",
+                description="Topic the LCD reads to show the driving state",
+            ),
             Node(
                 package="bridge",
                 executable="mqtt_bridge",
@@ -192,6 +236,18 @@ def generate_launch_description() -> LaunchDescription:
                         "timed_drive_linear_speed": ParameterValue(
                             timed_drive_linear_speed, value_type=float),
                         "cmd_vel_topic": cmd_vel_topic,
+                        "zigzag_enabled": ParameterValue(
+                            zigzag_enabled, value_type=bool),
+                        "zigzag_angle_deg": ParameterValue(
+                            zigzag_angle_deg, value_type=float),
+                        "zigzag_leg_length_m": ParameterValue(
+                            zigzag_leg_length_m, value_type=float),
+                        "zigzag_min_distance_m": ParameterValue(
+                            zigzag_min_distance_m, value_type=float),
+                        "nav_through_poses_action_name":
+                            nav_through_poses_action_name,
+                        "nav_base_frame_id": nav_base_frame_id,
+                        "nav_status_topic": nav_status_topic,
                     }
                 ],
             ),

@@ -69,6 +69,13 @@ export BOMI_SEARCH_ENABLED=true
 export BOMI_SEARCH_START_TOPIC=/person_following/enable
 export BOMI_HOMECOMING_READY_FILE="$HOMECOMING_READY_FILE"
 
+# 현관까지 좌우 15도로 번갈아 기울며 다가간다(bridge/zigzag.py). 어르신을
+# 반기러 나가는 걸음을 보여 주기 위한 것이라 귀가 대본에서만 켠다 —
+# 순찰·매핑처럼 사람이 보고 있지 않은 이동에서는 의미가 없다.
+# 실기에서 경유점이 벽에 걸려 경로가 안 나오면
+# BOMI_ZIGZAG_ENABLED=false bash robot/scripts/demo-start.sh 로 끈다.
+export BOMI_ZIGZAG_ENABLED="${BOMI_ZIGZAG_ENABLED:-true}"
+
 # 귀가 인사 뒤 추종을 끝내고 완전히 정지한 다음 최신 MQTT 온습도로
 # 후속 대화를 시작한다. 센서가 30초 주기라 최근 90초 값만 사용한다.
 export HOMECOMING_AMBIENT_ENABLED="${HOMECOMING_AMBIENT_ENABLED:-true}"
@@ -76,6 +83,13 @@ export HOMECOMING_HOT_THRESHOLD_C="${HOMECOMING_HOT_THRESHOLD_C:-30}"
 export HOMECOMING_AMBIENT_MAX_AGE_SEC="${HOMECOMING_AMBIENT_MAX_AGE_SEC:-90}"
 export HOMECOMING_FOLLOW_AMBIENT_PHASE="${HOMECOMING_FOLLOW_AMBIENT_PHASE:-true}"
 export HOMECOMING_FOLLOW_SECONDS="${HOMECOMING_FOLLOW_SECONDS:-20}"
+
+# 문이 열린 순간부터 위 온습도 대화가 끝날 때까지 "보미야"를 막는다. 현관으로
+# 가는 동안은 메인 루프가 웨이크워드 대기 상태라, 여기서 잡히면 귀가 대본을
+# 버리고 거실 호출 시나리오가 새로 시작된다. 대본이 도중에 실패해도 이 시간이
+# 지나면 웨이크워드는 스스로 돌아온다.
+export WAKE_BLOCK_DURING_HOMECOMING="${WAKE_BLOCK_DURING_HOMECOMING:-true}"
+export HOMECOMING_GATE_TIMEOUT_SEC="${HOMECOMING_GATE_TIMEOUT_SEC:-300}"
 
 if [ -n "${HOMECOMING_AMBIENT_TEST_TEMPERATURE_C:-}" ]; then
     echo "[테스트] 센서 대신 ${HOMECOMING_AMBIENT_TEST_TEMPERATURE_C}도 값을 사용합니다."

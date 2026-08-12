@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
@@ -56,6 +57,12 @@ from bomi_ai_chat.notify import GuardianNotifier, LoggingGuardianNotifier
 from bomi_ai_chat.state import ConvState
 
 logger = logging.getLogger(__name__)
+
+# 추출 flush 는 두 곳에서 불린다 — 스케줄러 틱과, 대화가 끝난 직후의 배경 스레드
+# (S15P11E102-393). 둘이 겹치면 같은 대기 행에 같은 LLM 호출을 두 번 쓴다. 락은
+# 모듈 수준이다: 이 프로세스에 추출 큐(runtime DB)가 하나뿐이라 어르신별로 나눌
+# 이유가 없고, 나누면 오히려 같은 DB 를 두 스레드가 동시에 쓰게 된다.
+_EXTRACTION_FLUSH_LOCK = threading.Lock()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 침묵 사다리
@@ -1077,11 +1084,17 @@ def extraction_flush(
         jobs.scheduler(policy.EXTRACTION_FLUSH_INTERVAL_SEC 마다), 그리고
         압축 시계 경로의 run_all_ticks_once, 그리고 테스트.
 
+    누가 호출하는가 (추가)
+        대화가 끝난 직후의 flush_extraction_soon (S15P11E102-393). 그래서 이
+        함수는 스케줄러 스레드와 그 배경 스레드에서 동시에 불릴 수 있고,
+        아래 논블로킹 락이 그 겹침을 한쪽으로 접는다.
+
     반환값
-        {"processed": n, "submitted": n, "failed": n} — processed 는 이번
-        flush 에서 extracted=1 로 표시한 행 수(뽑을 것이 없었던 행 포함),
-        submitted 는 실제로 백엔드에 올라간 사실 개수, failed 는 이번에
-        처리하지 못해 다음 flush 로 넘긴 행 수.
+        {"processed": n, "submitted": n, "failed": n, "given_up": n} —
+        processed 는 이번 flush 에서 extracted=1 로 표시한 행 수(뽑을 것이
+        없었던 행 포함), submitted 는 실제로 백엔드에 올라간 사실 개수,
+        failed 는 이번에 처리하지 못해 다음 flush 로 넘긴 행 수, given_up 은
+        서버가 되돌릴 수 없는 실패로 답해 영구히 닫은 행 수다.
 
     주의사항
         - 킬스위치(policy.EXTRACTION_ENABLED / config 의 환경변수) 중 하나라도
@@ -1090,10 +1103,37 @@ def extraction_flush(
           다음 flush 로 넘긴다 — 다시 시도하는 것이 조용히 잃는 것보다 낫다.
         - fact_client 제출이 실패하면(FactSubmissionError) 마찬가지로 표시하지
           않는다. 여기서 표시해버리면 그 사실은 다시는 제출 시도되지 않는다
-          (backend_client/fact_client.py 의 모듈 docstring 참고).
+          (backend_client/fact_client.py 의 모듈 docstring 참고). 예외는 서버가
+          "이 요청 자체가 틀렸다"고 답한 경우뿐이다 — 그 행은 포기로 닫는다.
+        - 넘긴 행은 반드시 extraction.record_failure 로 실패를 적는다. 안 적으면
+          그 행이 큐 맨 앞에 남아 뒤의 새 발화를 영원히 막는다 (S15P11E102-393,
+          localstore/extraction.pending 참고).
         - 예외를 밖으로 던지지 않는다. 이 틱이 죽으면 큐가 영원히 쌓이기만
           하고, 그 사실을 아무도 모르게 된다(다른 틱들과 같은 원칙).
     """
+    # 겹침 방지 (S15P11E102-393). 스케줄러 틱과 '대화 종료 직후 flush' 가 같은
+    # 순간에 들어오면 둘 다 같은 대기 행을 읽어 같은 LLM 호출을 두 번 하고 같은
+    # 사실을 두 번 제출한다(서버가 중복을 걸러 주므로 사고는 아니지만 순전한
+    # 낭비다). 기다리지 않고 그냥 건너뛰는 이유: 뒤늦게 한 번 더 도는 flush 는
+    # 어차피 60초 뒤 틱과 같은 일을 한다 — 스레드를 붙잡고 있을 값어치가 없다.
+    if not _EXTRACTION_FLUSH_LOCK.acquire(blocking=False):
+        logger.info("extraction flush already running; skipping this trigger")
+        return {"processed": 0, "submitted": 0, "failed": 0, "given_up": 0}
+    try:
+        return _extraction_flush_locked(
+            senior_id, llm=llm, fact_client=fact_client
+        )
+    finally:
+        _EXTRACTION_FLUSH_LOCK.release()
+
+
+def _extraction_flush_locked(
+    senior_id: str,
+    *,
+    llm=None,
+    fact_client=None,
+) -> dict[str, int]:
+    """extraction_flush 의 본체. 락을 이미 쥔 상태에서만 부른다."""
     # "기억하지 마"의 서버 취소부터 보낸다 (S15P11E102-348).
     #
     # ★ 추출 킬스위치보다 먼저다 — 추출이 꺼져 있어도 "지웠어요" 약속은 지켜져야
@@ -1102,7 +1142,7 @@ def extraction_flush(
     _flush_cancel_requests(senior_id, fact_client)
 
     if not policy.EXTRACTION_ENABLED:
-        return {"processed": 0, "submitted": 0, "failed": 0}
+        return {"processed": 0, "submitted": 0, "failed": 0, "given_up": 0}
 
     from bomi_ai_chat.config import get_settings
 
@@ -1111,7 +1151,7 @@ def extraction_flush(
             logger.info(
                 "fact extraction is disabled by the EXTRACTION_ENABLED env kill switch"
             )
-            return {"processed": 0, "submitted": 0, "failed": 0}
+            return {"processed": 0, "submitted": 0, "failed": 0, "given_up": 0}
     except Exception:  # noqa: BLE001 - 설정 문제로 틱이 죽으면 안 된다
         logger.warning(
             "could not read the extraction kill switch; assuming enabled",
@@ -1122,10 +1162,10 @@ def extraction_flush(
         rows = extraction.pending(limit=policy.EXTRACTION_FLUSH_BATCH_SIZE)
     except Exception:  # noqa: BLE001 - 틱이 죽으면 큐가 영원히 멈춘다
         logger.exception("extraction flush tick failed to read the queue")
-        return {"processed": 0, "submitted": 0, "failed": 0}
+        return {"processed": 0, "submitted": 0, "failed": 0, "given_up": 0}
 
     if not rows:
-        return {"processed": 0, "submitted": 0, "failed": 0}
+        return {"processed": 0, "submitted": 0, "failed": 0, "given_up": 0}
 
     resolved_llm = llm if llm is not None else _default_extraction_llm()
     resolved_fact_client = fact_client if fact_client is not None else _default_fact_client()
@@ -1142,7 +1182,7 @@ def extraction_flush(
     # 시각(created_at)이지 이 틱이 도는 시각이 아니다(_utterance_local_time 참고).
     zone_by_senior: dict[str, object] = {}
 
-    result = {"processed": 0, "submitted": 0, "failed": 0}
+    result = {"processed": 0, "submitted": 0, "failed": 0, "given_up": 0}
     for row in rows:
         row_senior = row["senior_id"]
         if row_senior not in zone_by_senior:
@@ -1156,7 +1196,7 @@ def extraction_flush(
                 "extraction failed for job %s; will retry next flush",
                 row["id"], exc_info=True,
             )
-            result["failed"] += 1
+            _defer_row(row["id"], result)
             continue
 
         if facts:
@@ -1170,29 +1210,70 @@ def extraction_flush(
                     # 갈리면 "모델은 발화 시각 기준으로 계산했는데 검증은 지금 기준으로
                     # 과거라고 판정"하는 모순이 생긴다.
                     now_local=spoken_at,
+                    # 요일 검산의 채점 기준. 프롬프트에 실은 것과 같은 발화 원문이다
+                    # — 모델이 만든 content 로 대조하면 같은 모델의 답을 같은 모델의
+                    # 답으로 채점하게 된다.
+                    utterance=row["content"],
                 )
-            except Exception:  # noqa: BLE001 - fact_client 는 FactSubmissionError 를
-                # 올리지만, 예상 못 한 예외까지도 이 행을 조용히 잃는 방향(잘못
-                # extracted=1 표시)으로 새면 안 된다. 좁게 못 잡을 이유가 없어도
-                # 넓게 잡아 안전한 쪽(재시도)으로 떨어뜨린다.
+            except Exception as error:  # noqa: BLE001 - fact_client 는
+                # FactSubmissionError 를 올리지만, 예상 못 한 예외까지도 이 행을
+                # 조용히 잃는 방향(잘못 extracted=1 표시)으로 새면 안 된다. 좁게
+                # 못 잡을 이유가 없어도 넓게 잡아 안전한 쪽(재시도)으로 떨어뜨린다.
+                if getattr(error, "permanent", False):
+                    # 서버가 "이 요청 자체가 틀렸다"고 답했다 (S15P11E102-393).
+                    # 다시 보내도 같은 답이 오고, 그때마다 이 행의 LLM 호출을
+                    # 한 번씩 더 태운다. 여기서 닫는다 — 잃는 것은 기억 하나이고,
+                    # 안 닫으면 매 분 같은 값을 서버에 미는 행이 하나 남는다.
+                    logger.warning(
+                        "backend permanently rejected job %s (%s); giving the row up",
+                        row["id"], error,
+                    )
+                    extraction.mark_given_up(row["id"])
+                    result["given_up"] += 1
+                    continue
                 logger.warning(
                     "fact candidate submission failed for job %s; will retry next flush",
                     row["id"], exc_info=True,
                 )
-                result["failed"] += 1
+                _defer_row(row["id"], result)
                 continue
             result["submitted"] += len(facts)
 
         extraction.mark_extracted(row["id"])
         result["processed"] += 1
 
-    if result["submitted"] or result["failed"]:
+    if result["submitted"] or result["failed"] or result["given_up"]:
         logger.info(
-            "extraction flush: processed=%d submitted=%d failed=%d pending=%d",
+            "extraction flush: processed=%d submitted=%d failed=%d given_up=%d "
+            "pending=%d",
             result["processed"], result["submitted"], result["failed"],
-            extraction.pending_count(senior_id),
+            result["given_up"], extraction.pending_count(senior_id),
         )
     return result
+
+
+def _defer_row(row_id: int, result: dict[str, int]) -> None:
+    """이 행을 다음 flush 로 넘긴다 — 실패를 기록하고 카운터를 올린다.
+
+    왜 기록이 함께여야 하는가  (S15P11E102-393)
+        넘기기만 하고 attempts 를 올리지 않으면 그 행이 다음 flush 에서도
+        큐 맨 앞이다. 영원히 성공하지 못하는 행이 배치 크기만큼 모이면 뒤에
+        쌓인 새 발화는 차례가 오지 않는다 — 지연이 아니라 정지다. 넘기는
+        자리가 두 곳(LLM 실패·제출 실패)이라, 한쪽에서 빠뜨리지 않도록
+        두 동작을 한 함수로 묶는다.
+
+    주의사항
+        DB 쓰기가 실패해도 틱을 죽이지 않는다. 기록에 실패하면 예전과 같은
+        앞막힘 가능성이 남을 뿐이고, 그것 때문에 남은 행 처리를 포기하는
+        편이 더 나쁘다.
+    """
+    try:
+        extraction.record_failure(row_id)
+    except Exception:  # noqa: BLE001 - 기록 실패가 틱을 죽이면 안 된다
+        logger.warning(
+            "could not record the failed attempt for job %s", row_id, exc_info=True
+        )
+    result["failed"] += 1
 
 
 def _default_extraction_llm():

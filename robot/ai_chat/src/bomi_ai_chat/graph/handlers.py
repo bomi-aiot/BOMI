@@ -128,6 +128,33 @@ def _timed_generate(prompt: str) -> str:
 _FALLBACK_RESPONSE = "죄송해요, 지금 잘 못 들었어요. 다시 한 번 말씀해 주시겠어요?"
 
 
+# 마지막 턴에 붙이는 지시. 마무리의 '종류'마다 다르다 (state.closing_kind).
+#
+# 왜 하나로 못 쓰는가
+#   원래 문구 하나뿐이었고, 그건 백엔드가 연 현관 인사 시나리오를 로봇이 스스로
+#   닫을 때를 위한 것이었다("오늘도 고생 많으셨어요"). 어르신이 "알겠어, 고마워"로
+#   닫은 대화에까지 하루를 치하하면 대화가 어긋난다 — 방금 인사를 끝낸 사람에게
+#   다시 인사하는 꼴이다. 그래서 마무리의 종류를 나눈다.
+_CLOSING_INSTRUCTIONS = {
+    "homecoming": (
+        "\n\n이번 답변은 대화의 마지막 답변입니다. 새로운 질문을 하지 말고, "
+        "사용자의 말을 짧게 받아준 뒤 오늘도 고생 많으셨다는 따뜻한 "
+        "귀가 인사로 끝내세요."
+    ),
+    "farewell": (
+        "\n\n사용자가 대화를 마치려고 합니다. 이번 답변이 마지막입니다. "
+        "새로운 질문을 하지 말고, 사용자의 말을 짧게 받아준 뒤 필요하면 다시 "
+        "부르라는 편안한 인사로 끝내세요."
+    ),
+}
+
+
+def _closing_instruction(closing_kind: str | None) -> str:
+    """마무리 종류에 맞는 프롬프트 지시를 고른다. 모르는 값은 기존 동작으로."""
+    return _CLOSING_INSTRUCTIONS.get(
+        closing_kind or "homecoming", _CLOSING_INSTRUCTIONS["homecoming"])
+
+
 def _generate(state: ConvState, *, fallback: str = _FALLBACK_RESPONSE) -> str:
     """이 턴의 '유일한' 생성 호출.
 
@@ -167,13 +194,11 @@ def _generate(state: ConvState, *, fallback: str = _FALLBACK_RESPONSE) -> str:
             recent_phrasings=state.get("recent_phrasings"),
             is_medical=bool(state.get("is_medical_query")),
             retrieval_status=state.get("retrieval_status"),
+            wants_story=bool(state.get("wants_story")),
+            wants_reminiscence=bool(state.get("wants_reminiscence")),
         )
         if state.get("closing_turn"):
-            prompt += (
-                "\n\n이번 답변은 대화의 마지막 답변입니다. 새로운 질문을 하지 말고, "
-                "사용자의 말을 짧게 받아준 뒤 오늘도 고생 많으셨다는 따뜻한 "
-                "귀가 인사로 끝내세요."
-            )
+            prompt += _closing_instruction(state.get("closing_kind"))
         # 참고 자료가 실제로 이 프롬프트에 실렸는지 확인할 방법이 없었다 —
         # context_read 가 문서를 찾아도, 그게 build_prompt 를 거쳐 실제로
         # "참고 자료" 섹션으로 들어갔는지는 지금까지 아무 데도 안 남았다.

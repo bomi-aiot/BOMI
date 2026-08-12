@@ -324,6 +324,15 @@ def generate_launch_description() -> LaunchDescription:
             # 오차가 되어 AMCL이 회전마다 위치를 놓친다. 매핑 쪽과 같은
             # 실측값을 기본값으로 둔다(joystick_slam_robot.launch.py는
             # 아직 0이 기본이므로 그쪽은 스크립트가 넘긴다).
+            #
+            # ★ 이 세 값은 robot/scripts/bomi_map.sh 의 LASER_X/Y/Z 와 **항상
+            #   같아야 한다.** 지도는 LiDAR 높이에서 잘라낸 단면이라, 그릴 때와
+            #   다른 높이로 주행하면 스캔이 지도와 매칭되지 않는다. 그 실패는
+            #   에러가 아니라 "AMCL이 조용히 위치를 놓침"으로 나타나므로 찾기
+            #   어렵다. 한쪽을 고치면 반드시 다른 쪽도 고치고, 재매핑한다.
+            #
+            # 2026-08-10: 마운트를 높여 z가 0.240 -> 0.466 이 되었다. x, y는
+            # 아직 2026-08-07 실측값이라 재측정이 필요하다(bomi_map.sh 참고).
             DeclareLaunchArgument(
                 "laser_x",
                 default_value="0.135",
@@ -336,7 +345,7 @@ def generate_launch_description() -> LaunchDescription:
             ),
             DeclareLaunchArgument(
                 "laser_z",
-                default_value="0.240",
+                default_value="0.466",
                 description="base_link 기준 LiDAR 높이(m). 실측값",
             ),
             DeclareLaunchArgument(

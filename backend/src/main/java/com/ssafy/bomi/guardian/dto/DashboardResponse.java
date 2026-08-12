@@ -13,6 +13,7 @@ import java.util.List;
  */
 public record DashboardResponse(
         ElderDto elder,
+        GuardianDto guardian,
         RobotDto robot,
         HomeEnvironmentDto homeEnvironment,
         int todayIncidentCount,
@@ -103,6 +104,19 @@ public record DashboardResponse(
      * 만들어진 것이라 SHARED_WITH_PRIMARY 로 표기한다. FE 는 이 값이 없는 건을
      * 그리지 않는다(PRIVATE 유출 방지).
      */
+    /**
+     * 지금 이 화면을 보는 보호자.
+     *
+     * <p>헤더가 "보호자"라는 일반명사만 띄우고 있어서, 화면이 누구의 시점인지 말한 적이
+     * 없었다. 여러 보호자가 연결되는 순간 그 모호함은 오해가 된다. 이름과 순위를 함께
+     * 싣고, 연결된 보호자가 없으면 통째로 null 로 둔다 — 없는 사람을 지어내지 않는다.</p>
+     */
+    public record GuardianDto(
+            String id,
+            String name,
+            String priority) {
+    }
+
     public record ActivityDto(
             String id,
             String title,

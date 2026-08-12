@@ -30,6 +30,10 @@ ros2 launch bomi_display display.launch.py
 | `/bomi/tts_status` | `std_msgs/String` | `IDLE`, `LISTENING`, `SPEAKING`, `FAILED` |
 | `/bomi/mqtt_connected` | `std_msgs/Bool` | `true`, `false` |
 | `/bomi/sensor_heartbeat` | `std_msgs/Empty` | 센서 데이터 수신 때마다 발행 |
+| `/cmd_vel` | `geometry_msgs/Twist` | 실제 속도 명령이 있으면 `이동 중` |
+
+`demo-start.sh`로 실행하면 AI Chat이 `/tmp/bomi_ai_status`에 기록하는
+`LISTENING`, `THINKING`, `SPEAKING`, `IDLE` 상태도 자동으로 반영합니다.
 
 테스트 발행 예시:
 
@@ -40,4 +44,4 @@ ros2 topic pub --once /bomi/mqtt_connected std_msgs/msg/Bool "{data: false}"
 ros2 topic pub --once /bomi/sensor_heartbeat std_msgs/msg/Empty "{}"
 ```
 
-표시 우선순위는 `오류 > 발화 > 듣기 > 주행 > 대기`입니다. 센서 만료 감시는 첫 생존 신호를 받은 뒤 시작하며 기본 만료 시간은 3초입니다. 다른 값은 실행 시 `--sensor-timeout 5.0`처럼 지정할 수 있습니다.
+표시 우선순위는 `오류 > 발화 > 생각 > 듣기 > 주행 > 대기`입니다. 센서 만료 감시는 첫 생존 신호를 받은 뒤 시작하며 기본 만료 시간은 3초입니다. 다른 값은 실행 시 `--sensor-timeout 5.0`처럼 지정할 수 있습니다.

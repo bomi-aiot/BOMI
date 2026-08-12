@@ -97,19 +97,149 @@ def _format_profile(ctx: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+# care_record.details 안의 '배관' 필드. 프롬프트에 실으면 안 된다.
+#
+# ★ 왜 목록이 필요한가 (2026-08-10 실측)
+#   details 를 통째로 펼치던 예전 렌더는 이런 줄을 만들었다.
+#
+#     - MEDICATION: activeIngredient 모름, dose 1정, ... reminderEnabled False
+#     - MEDICATION_SCHEDULE: localTimes ['09:00'], ... sourceType ONBOARDING_ANSWER,
+#       timeZone Asia/Seoul, verificationStatus USER_CONFIRMED
+#
+#   system.md 는 "내부 동작을 입에 담지 않습니다 — 기록에 따르면, 검색·기억·티어
+#   같은 말을 쓰지 않습니다"라고 금지하는데, 정작 우리가 `verificationStatus
+#   USER_CONFIRMED` 를 모델에게 직접 먹이고 있었다. 233 실기에서 로봇이
+#   "[현재 정보] ..." 를 소리 내어 읽은 것과 같은 종류의 누출이다.
+#
+#   또한 이 네 줄이 프롬프트에서 가장 큰 섹션(640자)이었다. 회상 턴처럼 복약이
+#   화제가 아닌 턴에서도 자리를 차지하고, 모델이 그쪽으로 화제를 틀 여지가 된다.
+_CARE_DETAIL_NOISE = frozenset({
+    "sourceType", "verificationStatus", "sourceCandidateId", "sourceMessageId",
+    "reminderEnabled", "reminderLeadMinutes", "timeZone",
+    # 복약 시각은 localTimes 하나로 충분하다. mealTimes 를 같이 실으면 어느 쪽이
+    # 약 먹는 시각인지 모델이 헷갈리고, instruction("매 끼니 식후 30분")이 이미
+    # 둘의 관계를 말한다.
+    "mealTimes",
+})
+
+# 기록 종류의 사람말 이름. 원문(MEDICATION)을 그대로 실으면 모델이 영어 라벨을
+# 읽어 버린다 — 이것도 '기계를 설명하지 않는다'(§17.9)에 걸린다.
+_CARE_TYPE_LABELS = {
+    "MEDICATION": "복약",
+    "MEDICATION_SCHEDULE": "복약 시각",
+    "ALLERGY": "알레르기",
+    "HEALTH_CONDITION": "질환",
+    "APPOINTMENT": "일정",
+    "PERSONAL_SCHEDULE": "일정",
+}
+
+# 값이 이것들이면 모른다는 뜻이다. "activeIngredient 모름"을 실으면 모델이
+# '모름'을 사실로 읽고 말한다 — 없는 것은 말하지 않는다(_section 과 같은 원칙).
+_CARE_EMPTY_VALUES = frozenset({"", "모름", "없음", "미상", "None", "null"})
+
+
+def _care_detail_items(details: dict[str, Any]) -> list[tuple[str, Any]]:
+    """배관 필드와 빈 값을 걷어낸 (키, 값) 목록. 원래 순서 대신 키 순서."""
+    kept = []
+    for key, value in sorted(details.items()):
+        if key in _CARE_DETAIL_NOISE or value is None:
+            continue
+        if isinstance(value, str) and value.strip() in _CARE_EMPTY_VALUES:
+            continue
+        if isinstance(value, (list, tuple)) and not value:
+            continue
+        kept.append((key, value))
+    return kept
+
+
+def _care_times(details: dict[str, Any]) -> str:
+    """복약 시각을 "08:30, 12:30" 으로. 파이썬 리스트 표기를 프롬프트에 넣지 않는다."""
+    times = details.get("localTimes")
+    if isinstance(times, (list, tuple)):
+        return ", ".join(str(item) for item in times)
+    return str(times) if times else ""
+
+
 def _format_care_records(ctx: dict[str, Any]) -> str:
     """복약·일정을 사실로 나열한다.
 
     정확 조회로 받은 값이므로 그대로 쓴다. 의미 검색을 거치지 않는 이유는
     "혈압약"과 "혈당약"이 임베딩상 거의 동일해서, 검색으로 가져오면 엉뚱한 약을
     말하게 되기 때문이다 (CLAUDE.md §8).
+
+    ★ 왜 intent 로 이 섹션을 끄지 않는가  (2026-08-10)
+        회상 턴에 복약이 왜 필요하냐는 물음은 옳다. 그런데 "복약은 schedule 턴에만
+        싣는다"로 만들면, **분류 실패가 곧 안전 실패가 된다.** 바로 오늘 고친
+        "아침에 약을 먹었는지 기억이 안 나"가 companion 으로 빠지던 버그가 그
+        증거다 — 그때 프롬프트에 복약이 없었다면 로봇은 되묻지도 못하고 그냥
+        모르는 채로 맞장구를 쳤을 것이다.
+
+        그래서 '언제 싣느냐'가 아니라 '무엇을 싣느냐'를 줄인다. 배관 필드를
+        걷어내고 같은 약의 두 줄을 합치면 640자가 100자대로 내려간다. 안전은
+        그대로 두고 잡음만 없앤다.
+
+    복약 두 줄을 한 줄로 합치는 이유
+        MEDICATION 과 MEDICATION_SCHEDULE 은 같은 약에 대한 두 기록이다. 따로
+        실으면 모델이 약이 두 개라고 읽을 수 있고, 실제로 프롬프트에서 "혈압약"이
+        두 번, "관절염약"이 두 번 나오고 있었다.
     """
     records = ctx.get("careRecords") or []
-    lines = []
+
+    # 약 이름 -> 복약 시각. 먼저 훑어 두어야 MEDICATION 줄에 붙일 수 있다.
+    times_by_medication: dict[str, str] = {}
     for record in records:
+        if record.get("recordType") != "MEDICATION_SCHEDULE":
+            continue
         details = record.get("details") or {}
-        rendered = ", ".join(f"{key} {value}" for key, value in sorted(details.items()))
-        lines.append(f"- {record.get('recordType', '기록')}: {rendered}")
+        name = str(details.get("medicationName") or "")
+        rendered = _care_times(details)
+        if name and rendered:
+            times_by_medication[name] = rendered
+
+    lines = []
+    merged: set[str] = set()
+    for record in records:
+        record_type = record.get("recordType", "")
+        details = record.get("details") or {}
+        label = _CARE_TYPE_LABELS.get(record_type, record_type or "기록")
+
+        if record_type == "MEDICATION_SCHEDULE":
+            name = str(details.get("medicationName") or "")
+            # 짝이 되는 MEDICATION 줄에 이미 합쳐졌으면 다시 쓰지 않는다.
+            if name and name in merged:
+                continue
+            rendered = _care_times(details)
+            lines.append(f"- {label} {name}: {rendered}".rstrip(": "))
+            continue
+
+        if record_type == "MEDICATION":
+            name = str(details.get("medicationName") or "")
+            parts = [
+                f"{value}{details.get('doseUnit', '')}" if key == "dose" else str(value)
+                for key, value in _care_detail_items(details)
+                if key not in ("medicationName", "doseUnit")
+            ]
+            when = times_by_medication.get(name)
+            if when:
+                merged.add(name)
+                parts.append(f"({when})")
+            lines.append(f"- {label} {name}: {', '.join(parts)}".replace(", (", " ("))
+            continue
+
+        if record_type in ("APPOINTMENT", "PERSONAL_SCHEDULE"):
+            # content 는 이미 사람이 읽는 한 문장이고("8월 10일 오후 2시에 병원에
+            # 간다"), title 과 startsAt 은 그 문장을 기계용으로 되풀이한 것이다.
+            # 셋을 다 실으면 같은 약속이 세 번 나오고, ISO 문자열("2026-08-10T
+            # 14:00:00+09:00")은 모델이 소리 내어 읽을 위험까지 있다(§17.9).
+            body = str(details.get("content") or details.get("title") or "").strip()
+            if not body:
+                body = ", ".join(str(value) for _, value in _care_detail_items(details))
+            if body:
+                lines.append(f"- {label}: {body}")
+            continue
+
+        parts = [str(value) for _, value in _care_detail_items(details)]
+        lines.append(f"- {label}: {', '.join(parts)}")
     return "\n".join(lines)
 
 
@@ -132,13 +262,31 @@ def _format_avoid_topics(ctx: dict[str, Any]) -> str:
 
 
 def _format_today(ctx: dict[str, Any]) -> str:
+    # 어르신이 오늘 "약 먹었어"라고 하신 시각. 백엔드 계약이 아니라 로봇의 로컬
+    # 기록이며, context_read 가 실어 준다 (graph/context._medication_reported_times).
+    #
+    # ★ 문구가 "드셨습니다"가 아닌 이유
+    #   이건 복약 기록이 아니라 어르신의 말이다. 로봇이 확인한 사실처럼 말하면,
+    #   기억이 흐린 분에게 "그럼 먹은 거네"라는 잘못된 확신을 준다. 출처를 문장에
+    #   남겨서 모델이 "8시 반쯤 드셨다고 하셨어요"처럼 말하게 한다.
+    reported = ctx.get("medicationReportedTimes") or []
+
     today = ctx.get("todayState")
-    if not today:
+    if not today and not reported:
         return ""
+    today = today or {}
     lines = []
     taken, scheduled = today.get("medicationTakenCount"), today.get("medicationScheduledCount")
     if scheduled:
         lines.append(f"- 복약: 예정 {scheduled}회 중 {taken or 0}회 드셨습니다")
+    elif taken:
+        # 예정 횟수(분모)는 백엔드가 설계상 늘 null 로 둔다
+        # (DailyActivityMetricService.scheduledCount). 예전에는 그 때문에 위
+        # 조건이 영원히 거짓이라 복약이 프롬프트에 한 번도 실리지 않았다.
+        # 분자만으로도 "오늘 두 번 드셨어요"는 말할 수 있다.
+        lines.append(f"- 복약: 오늘 {taken}회 드신 것으로 기록돼 있습니다")
+    if reported:
+        lines.append(f"- 어르신이 약을 드셨다고 말씀하신 시각: {', '.join(reported)}")
     for key, label, unit in (
         ("mealCount", "식사", "회"),
         ("waterIntakeCount", "물", "회"),
@@ -150,6 +298,15 @@ def _format_today(ctx: dict[str, Any]) -> str:
         if value is not None:
             lines.append(f"- {label}: {value}{unit}")
     return "\n".join(lines)
+
+
+def _format_recent_stories(ctx: dict[str, Any]) -> str:
+    """최근에 들려드린 이야기의 앞부분. 같은 것을 또 고르지 않게 하는 재료다.
+
+    비어 있으면 _section 이 이 절 자체를 만들지 않는다 — "(없음)"을 보여주면
+    모델이 그 사실을 화제로 삼는다(_section 주석 참고).
+    """
+    return "\n".join(f"- {snippet}…" for snippet in ctx.get("recentStories") or [])
 
 
 def _format_memories(ctx: dict[str, Any]) -> str:
@@ -279,6 +436,8 @@ def build_prompt(
     recent_phrasings: list[str] | None = None,
     is_medical: bool = False,
     retrieval_status: dict[str, Any] | None = None,
+    wants_story: bool = False,
+    wants_reminiscence: bool = False,
 ) -> str:
     """이번 턴의 프롬프트를 만든다. 순수 함수다.
 
@@ -319,7 +478,14 @@ def build_prompt(
             가능, 그래도 확실하지 않은 건 되묻는다)을 명시해서 참고 자료가 있는데
             안 쓰는 실패를 막는다.
     """
-    max_sentences = policy.MAX_SENTENCES_TERSE if terse else policy.MAX_SENTENCES
+    # 이야기 턴만 상한이 다르다. terse 가 이기는 이유는 그것이 quiet hours 이기
+    # 때문이다 — 새벽 두 시에 여덟 문장짜리 옛날이야기를 시작할 수는 없다.
+    if terse:
+        max_sentences = policy.MAX_SENTENCES_TERSE
+    elif wants_story:
+        max_sentences = policy.MAX_SENTENCES_STORY
+    else:
+        max_sentences = policy.MAX_SENTENCES
 
     blocks = [
         load_template("system.md"),
@@ -342,6 +508,28 @@ def build_prompt(
             #   맞는 말이다). is_medical 이 이번 턴에 실제로 의료 조회가
             #   있었는지를 정확히 가리키므로 여기서만 붙인다.
             blocks.append(load_template("medical_stance.md"))
+
+    if wants_story and not terse:
+        # 이야기를 청한 턴에만 붙인다. system.md 의 "짧게, 한 가지만"과 정면으로
+        # 부딪히는 지시라, 늘 켜 두면 알림·안내까지 길어진다. medical_stance.md 를
+        # 의료 조회가 있었던 턴에만 붙이는 것과 같은 이유다.
+        blocks.append(load_template("storytelling_stance.md"))
+        # ★ 목록을 함께 준다
+        #   태도만 주면 모델이 매번 즉석에서 고르고, 거의 언제나 같은 옛날이야기가
+        #   나온다. 무엇보다 근거 없는 이야기를 지어낼 여지가 생긴다 — 어르신께
+        #   실제로 있었던 일처럼 들리면 곤란하다.
+        blocks.append(load_template("stories.md"))
+        blocks.append(_section("최근에 들려드린 이야기", _format_recent_stories(ctx)))
+
+    if wants_reminiscence and intent in ("companion", "emotional"):
+        # ★ intent 를 함께 보는 이유
+        #   "예전에 먹던 약이 뭐였지"는 회상 표지에 걸리지만 복약 턴이다. 거기에
+        #   회상 태도를 얹으면 답해야 할 것을 안 답하고 옛날 이야기를 여쭙는다.
+        #   회상이 사는 자리는 말벗과 정서 턴이다.
+        #
+        #   terse 를 보지 않는 것은 이야기와 다르다 — 회상은 문장 수를 늘리지
+        #   않는다. 짧게 받고 되묻는 것이 회상의 정석이고, 그건 새벽에도 맞다.
+        blocks.append(load_template("reminiscence_stance.md"))
 
     if intent == "emotional":
         # 정서 턴에만 태도 지시를 넣는다 (S15P11E102-263).

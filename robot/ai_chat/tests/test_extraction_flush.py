@@ -66,14 +66,17 @@ class ScriptedLLM:
 class RecordingFactClient:
     """제출된 사실을 순서대로 모은다. 지정한 senior_id 에서는 실패한다."""
 
-    def __init__(self, *, fail_for: set[str] | None = None):
+    def __init__(self, *, fail_for: set[str] | None = None, permanent: bool = False):
         self.submissions = []
         self.fail_for = fail_for or set()
+        # 영구 거부(4xx)인가. 참이면 호출부가 재시도를 포기하고 행을 닫아야 한다.
+        self.permanent = permanent
 
     def submit_fact_candidates(self, senior_id, *, conversation_id, source_message_id,
-                               facts, now_local=None):
+                               facts, now_local=None, utterance=None):
         if senior_id in self.fail_for:
-            raise FactSubmissionError("backend rejected the batch")
+            raise FactSubmissionError(
+                "backend rejected the batch", permanent=self.permanent)
         self.submissions.append({
             "senior_id": senior_id,
             "conversation_id": conversation_id,
@@ -83,6 +86,9 @@ class RecordingFactClient:
             # 있어야 한다 — 둘이 갈리면 "모델은 발화 시각 기준으로 계산했는데 검증은
             # 지금 기준으로 과거라고 판정"하는 모순이 조용히 생긴다.
             "now_local": now_local,
+            # 요일 검산의 채점 기준. 프롬프트에 실린 발화 원문과 같아야 한다 —
+            # 모델이 만든 content 로 대조하면 채점이 성립하지 않는다.
+            "utterance": utterance,
         })
 
 
@@ -107,7 +113,7 @@ def test_a_job_with_facts_is_submitted_and_removed_from_the_queue(frozen_clock):
 
     result = ticks.extraction_flush(SENIOR, llm=llm, fact_client=fact_client)
 
-    assert result == {"processed": 1, "submitted": 1, "failed": 0}
+    assert result == {"processed": 1, "submitted": 1, "failed": 0, "given_up": 0}
     assert extraction.pending_count(SENIOR) == 0
     assert fact_client.submissions[0]["facts"] == [
         {"factType": "FAMILY", "content": "손자가 자주 놀러 온다."}
@@ -124,7 +130,7 @@ def test_a_job_with_no_facts_is_still_marked_processed(frozen_clock):
 
     result = ticks.extraction_flush(SENIOR, llm=llm, fact_client=fact_client)
 
-    assert result == {"processed": 1, "submitted": 0, "failed": 0}
+    assert result == {"processed": 1, "submitted": 0, "failed": 0, "given_up": 0}
     assert extraction.pending_count(SENIOR) == 0
     assert fact_client.submissions == []
 
@@ -153,7 +159,7 @@ def test_an_llm_failure_leaves_the_job_pending(frozen_clock):
 
     result = ticks.extraction_flush(SENIOR, llm=BrokenLLM(), fact_client=RecordingFactClient())
 
-    assert result == {"processed": 0, "submitted": 0, "failed": 1}
+    assert result == {"processed": 0, "submitted": 0, "failed": 1, "given_up": 0}
     assert extraction.pending_count(SENIOR) == 1
 
 
@@ -170,7 +176,7 @@ def test_a_submission_failure_leaves_the_job_pending(frozen_clock):
 
     result = ticks.extraction_flush(SENIOR, llm=llm, fact_client=fact_client)
 
-    assert result == {"processed": 0, "submitted": 0, "failed": 1}
+    assert result == {"processed": 0, "submitted": 0, "failed": 1, "given_up": 0}
     assert extraction.pending_count(SENIOR) == 1
 
 
@@ -182,7 +188,7 @@ def test_an_unparseable_reply_is_treated_as_nothing_found(frozen_clock):
 
     result = ticks.extraction_flush(SENIOR, llm=llm, fact_client=RecordingFactClient())
 
-    assert result == {"processed": 1, "submitted": 0, "failed": 0}
+    assert result == {"processed": 1, "submitted": 0, "failed": 0, "given_up": 0}
     assert extraction.pending_count(SENIOR) == 0
 
 
@@ -227,7 +233,7 @@ def test_the_policy_kill_switch_blocks_the_flush(frozen_clock, monkeypatch):
     result = ticks.extraction_flush(
         SENIOR, llm=ScriptedLLM(["[]"]), fact_client=RecordingFactClient())
 
-    assert result == {"processed": 0, "submitted": 0, "failed": 0}
+    assert result == {"processed": 0, "submitted": 0, "failed": 0, "given_up": 0}
     assert extraction.pending_count(SENIOR) == 1
 
 
@@ -241,7 +247,7 @@ def test_the_env_kill_switch_blocks_the_flush(frozen_clock, monkeypatch):
     try:
         result = ticks.extraction_flush(
             SENIOR, llm=ScriptedLLM(["[]"]), fact_client=RecordingFactClient())
-        assert result == {"processed": 0, "submitted": 0, "failed": 0}
+        assert result == {"processed": 0, "submitted": 0, "failed": 0, "given_up": 0}
         assert extraction.pending_count(SENIOR) == 1
     finally:
         clear_settings_cache()
@@ -322,6 +328,28 @@ def test_the_verification_anchor_matches_the_prompt_anchor(frozen_clock):
     assert fact_client.submissions[0]["now_local"].isoformat() == "2026-08-07T15:04:00+09:00"
 
 
+def test_the_weekday_check_scores_against_the_raw_utterance(frozen_clock):
+    """요일 검산의 채점 기준은 어르신 발화 **원문**이어야 한다 (S15P11E102-392).
+
+    검산이 존재하는 이유는 모델의 날짜 계산이 비결정적이기 때문이다. 그런데
+    대조 대상까지 모델의 출력(추출된 content)으로 삼으면, 같은 모델의 답을 같은
+    모델의 답으로 채점하는 셈이라 검산이 성립하지 않는다. 그래서 프롬프트에 실은
+    것과 같은 원문이 검증까지 내려가는지를 배선으로 고정한다.
+    """
+    frozen_clock(start=SEOUL_FRIDAY_1504)
+    _seed_time_zone("Asia/Seoul")
+    _enqueue(content="다음 주 화요일 세 시에 병원 가")
+
+    fact_client = RecordingFactClient()
+    ticks.extraction_flush(
+        SENIOR,
+        llm=ScriptedLLM(['[{"factType": "FAMILY", "content": "손자가 놀러 온다."}]']),
+        fact_client=fact_client,
+    )
+
+    assert fact_client.submissions[0]["utterance"] == "다음 주 화요일 세 시에 병원 가"
+
+
 def test_without_a_time_zone_no_date_is_invented(frozen_clock):
     """★ 시간대를 모르면 UTC 로 떨어지지 않는다 — 날짜를 아예 주지 않는다.
 
@@ -350,7 +378,7 @@ def test_an_unknown_time_zone_does_not_kill_the_tick(frozen_clock):
 
     result = ticks.extraction_flush(SENIOR, llm=llm, fact_client=RecordingFactClient())
 
-    assert result == {"processed": 1, "submitted": 0, "failed": 0}
+    assert result == {"processed": 1, "submitted": 0, "failed": 0, "given_up": 0}
     assert "오늘이 며칠인지 알 수 없습니다" in llm.prompts[0]
 
 
@@ -464,3 +492,37 @@ def test_extraction_flush_runs_inside_run_all_ticks_once(monkeypatch, frozen_clo
     scheduler_module.run_all_ticks_once(SENIOR)
 
     assert calls == [SENIOR]
+
+
+# ── 영구 거부는 큐를 막지 않는다 (2026-08-10) ────────────────────────────────
+
+
+def test_a_permanent_rejection_closes_the_job_instead_of_retrying(frozen_clock):
+    """4xx 는 다시 보내도 같다 — 그 행을 닫는다.
+
+    실제로 밟은 사고: 뷰어의 삭제 버튼이 서버의 conversation 을 지우자, 그 대화를
+    참조하는 큐 행이 매번 400 "unknown conversationId" 를 받았다. 그 대화는 돌아오지
+    않으므로 재시도는 영원히 실패하면서 큐를 막고 LLM 호출만 계속 썼다.
+    """
+    frozen_clock(start=1_700_000_000.0)
+    _enqueue()
+    llm = ScriptedLLM(['[{"factType": "FAMILY", "content": "손자가 자주 놀러 온다."}]'])
+    fact_client = RecordingFactClient(fail_for={SENIOR}, permanent=True)
+
+    result = ticks.extraction_flush(SENIOR, llm=llm, fact_client=fact_client)
+
+    assert result == {"processed": 0, "submitted": 0, "failed": 0, "given_up": 1}
+    assert extraction.pending_count(SENIOR) == 0, "영구 거부된 행이 큐에 남으면 안 된다"
+
+
+def test_a_temporary_failure_still_stays_in_the_queue(frozen_clock):
+    """5xx·네트워크 실패는 기다리면 되므로 예전처럼 남긴다 — 둘을 섞으면 안 된다."""
+    frozen_clock(start=1_700_000_000.0)
+    _enqueue()
+    llm = ScriptedLLM(['[{"factType": "FAMILY", "content": "손자가 자주 놀러 온다."}]'])
+    fact_client = RecordingFactClient(fail_for={SENIOR}, permanent=False)
+
+    result = ticks.extraction_flush(SENIOR, llm=llm, fact_client=fact_client)
+
+    assert result == {"processed": 0, "submitted": 0, "failed": 1, "given_up": 0}
+    assert extraction.pending_count(SENIOR) == 1

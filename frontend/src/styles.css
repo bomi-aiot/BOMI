@@ -312,6 +312,79 @@ p {
   margin-left: var(--sidebar-width);
 }
 
+/*
+  사이드바가 없는 한 장짜리 화면. 본문이 왼쪽 여백을 되찾는다.
+*/
+.app-shell--flat .app-shell__body {
+  margin-left: 0;
+}
+
+.app-shell--flat .app-header__leading {
+  gap: 18px;
+}
+
+/*
+  구역 구분선. 화면 넷을 한 장에 쌓았으므로 "여기서부터 다른 이야기"가 눈에 보여야 한다.
+  선 하나와 여백이면 충분하다 — 카드 안에 카드를 또 두면 깊이만 늘어난다.
+*/
+.one-page {
+  display: grid;
+  gap: 0;
+}
+
+/*
+  헤더가 sticky 라 구역을 화면 맨 위로 보내면 제목이 헤더 밑에 깔린다.
+  종 아이콘을 눌러 도착한 자리에서 제목이 안 보이면 어디로 온 건지 알 수 없다.
+*/
+.one-page__section {
+  /* 실제 헤더는 --header-height(최소값)보다 커질 수 있어 여유를 넉넉히 둔다. */
+  scroll-margin-top: calc(var(--header-height) + 44px);
+}
+
+.one-page__section + .one-page__section {
+  padding-top: 34px;
+  margin-top: 34px;
+  border-top: 1px solid var(--line);
+}
+
+/*
+  구역 제목은 페이지 제목보다 작아야 한다. 페이지 컴포넌트를 그대로 재사용하므로
+  각자 PageHeader 를 들고 오는데, 그 크기 그대로면 한 화면에 대문짝만한 제목이 넷이다.
+  프로퍼티를 심는 대신 여기서만 줄인다 — 되돌리려면 이 블록을 지우면 된다.
+*/
+.one-page__section .page-header__title {
+  font-size: 1.32rem;
+}
+
+.one-page__section .page-header {
+  margin-bottom: 4px;
+}
+
+/* 문의 안내. 사이드바에서 본문 맨 아래로 내려왔다. */
+.app-support {
+  padding: 22px 0 8px;
+  margin-top: 40px;
+  border-top: 1px solid var(--line);
+}
+
+.app-support__title {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.app-support__body {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.75rem;
+}
+
+.app-support__link {
+  color: var(--brand-700);
+  font-weight: 700;
+}
+
 .app-header {
   position: sticky;
   z-index: 30;
@@ -400,17 +473,34 @@ p {
   border: 0;
 }
 
+/* 글자 대신 종 아이콘 하나. 정사각형으로 두고 가운데 맞춘다. */
 .notification-button {
   position: relative;
-  min-width: 42px;
+  display: grid;
+  width: 40px;
   height: 40px;
-  padding: 0 9px;
+  padding: 0;
+  place-items: center;
   color: var(--ink-soft);
-  font-size: 0.75rem;
-  font-weight: 700;
   background: var(--surface-soft);
   border: 1px solid var(--line);
   border-radius: 9px;
+  cursor: pointer;
+}
+
+.notification-button:hover:not(:disabled) {
+  color: var(--brand-700);
+  background: var(--brand-50);
+  border-color: #c6e0d7;
+}
+
+.notification-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.notification-button__icon {
+  display: block;
 }
 
 .notification-button__count {
@@ -2161,12 +2251,21 @@ p {
   white-space: nowrap;
 }
 
-.preference-card__actions,
-.confirmation-card__actions {
+.preference-card__actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
+}
+
+/*
+  오른쪽 정렬을 왼쪽으로 바꿨다. 선택지가 카드 오른쪽 끝에 몰려 있으면 왼쪽에서
+  읽어 내려온 눈이 한 번 더 이동해야 한다 — 질문 바로 아래가 답의 자리다.
+*/
+.confirmation-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .confirmation-toolbar {
@@ -2238,6 +2337,93 @@ p {
   color: var(--ink-soft);
   font-size: 0.75rem;
   line-height: 1.6;
+}
+
+/*
+  카드의 새 뼈대 — 언제 / 어르신의 말 / 질문 / 선택.
+  글자 크기가 곧 우선순위다. 어르신이 한 말이 카드에서 가장 큰 글씨이고,
+  나머지는 그 말을 읽는 데 필요한 만큼만 작게 남는다.
+*/
+.today-medication-summary {
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.today-medication-summary__headline {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.today-medication-summary__headline strong {
+  font-weight: 800;
+}
+
+.today-medication-summary__detail {
+  margin: 8px 0 0;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  line-height: 1.55;
+}
+
+.today-medication-summary__detail--warn {
+  color: #8a5a12;
+}
+
+.confirmation-card__when {
+  margin: 0 0 10px;
+  color: var(--ink-muted);
+  font-size: 0.7rem;
+}
+
+.confirmation-card__quote {
+  padding: 0;
+  margin: 0 0 16px;
+  color: var(--ink);
+  font-size: 1.02rem;
+  font-weight: 600;
+  line-height: 1.55;
+  word-break: keep-all;
+}
+
+.confirmation-card__quote::before {
+  content: '“';
+}
+
+.confirmation-card__quote::after {
+  content: '”';
+}
+
+.confirmation-card__ask {
+  margin: 16px 0 10px;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.confirmation-card__recheck {
+  margin: 10px 0 0;
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+}
+
+/* 버튼이 아니라 글 안의 링크처럼 보여야 한다 — 선택지 셋이 동등해 보이면 안 된다. */
+.link-button {
+  padding: 0;
+  color: var(--brand-700);
+  font: inherit;
+  text-decoration: underline;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.link-button:disabled {
+  color: var(--ink-muted);
+  cursor: default;
 }
 
 .confirmation-evidence {
@@ -2330,6 +2516,42 @@ p {
   margin: 0;
   color: var(--ink);
   font-size: 0.69rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+/*
+  값을 한 줄도 그리지 못했을 때. 조용한 빈칸 대신 눈에 보이게 남긴다 —
+  빈 상자는 "볼 것이 없다"로 읽히지만 여기서는 "못 읽었다"가 사실이다.
+*/
+.desktop-alert-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.desktop-alert-setting__note {
+  flex: 1 1 200px;
+  margin: 12px 0 0;
+  color: var(--ink-muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+.desktop-alert-setting .desktop-alert-setting__note {
+  margin: 0;
+}
+
+.value-panel__unreadable {
+  margin: 0;
+  color: var(--warn-700, #8a5a12);
+  font-size: 0.69rem;
+  font-style: italic;
   line-height: 1.5;
   word-break: break-word;
 }
@@ -2845,7 +3067,13 @@ p {
     left: 0;
     display: grid;
     min-height: 67px;
-    grid-template-columns: repeat(5, 1fr);
+
+    /*
+      칸 수를 항목 수에 맞춘다. repeat(5, 1fr) 로 고정돼 있어서, 데모 필터로 항목이
+      둘만 남았을 때 탭 두 개가 왼쪽에 몰리고 오른쪽 3/5가 빈 채로 남았다.
+    */
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
     padding: 6px 5px calc(6px + env(safe-area-inset-bottom));
     background: rgb(255 255 255 / 97%);
     border-top: 1px solid var(--line);
@@ -3737,8 +3965,9 @@ body {
     min-height: 34px;
   }
 
-  .mobile-bottom-nav {
-    grid-template-columns: repeat(4, 1fr);
+  .mobile-bottom-nav__item {
+    /* 좁은 화면에서 라벨이 잘리지 않도록만 조인다. 칸 수는 위에서 항목 수를 따른다. */
+    font-size: 0.8125rem;
   }
 
   .today-primary-grid,

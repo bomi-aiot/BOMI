@@ -22,7 +22,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/v1/operator/robots/{deviceId}/active-scenario-cancellations")
-@Tag(name = "Operator Scenario Cancellation")
+@Tag(name = "Operator Scenario Cancellation",
+    description = "진행 중 시나리오 강제 취소 — 운영자 도구가 호출합니다.")
 @SecurityRequirement(name = OperatorChannelAuthFilterConfig.SECURITY_SCHEME_NAME)
 public class OperatorScenarioCancellationController {
 
