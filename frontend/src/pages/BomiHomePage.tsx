@@ -1,7 +1,14 @@
+import { useState } from 'react'
 import { Badge, Button, Card, ErrorState, LoadingState, PageHeader } from '../components'
 import { useBomi } from '../state/BomiContext'
 import type { RobotMode, ScenarioType } from '../types/domain'
 import { formatDateTime, formatRelativeTime } from '../utils/date'
+import {
+  desktopAlertPermission,
+  enableDesktopAlerts,
+  fireTestDesktopAlert,
+  type DesktopAlertPermission,
+} from '../utils/desktopAlerts'
 
 const MODE_COPY: Record<RobotMode, string> = {
   IDLE: '돌봄 대기 중',
@@ -27,6 +34,70 @@ const SCENARIO_COPY: Partial<Record<ScenarioType, string>> = {
   MEDICATION_REMINDER: '복약 알림 중',
   WELLNESS_CHECK: '안부 확인 중',
   WALK: '산책 동행 중',
+}
+
+/**
+ * 브라우저 알림 설정 줄.
+ *
+ * 왜 이 카드 안에 두는가 — 바로 위에서 "새 알림이 오면 바로 알려드릴게요" 라고 약속하고
+ * 있기 때문이다. 그 약속이 실제로 어디까지 닿는지를 같은 자리에서 말해야 한다. 지금까지
+ * 그 문장은 이 탭을 보고 있는 동안에만 참이었고, 화면은 그 조건을 밝힌 적이 없다.
+ *
+ * 거절된 상태에서 버튼을 다시 띄우지 않는 이유 — 한 번 거절되면 브라우저는 페이지의
+ * 재요청을 무시한다. 눌러도 아무 일이 없는 버튼은 "고장" 으로 읽히므로, 대신 사람이
+ * 실제로 할 수 있는 일(주소창에서 허용)을 적는다.
+ */
+function DesktopAlertSetting() {
+  const [permission, setPermission] = useState<DesktopAlertPermission>(() =>
+    desktopAlertPermission(),
+  )
+
+  if (permission === 'unsupported') {
+    return (
+      <p className="desktop-alert-setting__note">
+        이 브라우저는 알림을 지원하지 않아 화면을 보고 있을 때만 알려드릴 수 있어요.
+      </p>
+    )
+  }
+
+  if (permission === 'denied') {
+    return (
+      <p className="desktop-alert-setting__note">
+        브라우저에서 알림이 차단되어 있어요. 주소창의 자물쇠 아이콘에서 알림을 허용해
+        주세요.
+      </p>
+    )
+  }
+
+  if (permission === 'granted') {
+    return (
+      <div className="desktop-alert-setting">
+        <p className="desktop-alert-setting__note">
+          위급 알림이 오면 다른 화면을 보고 있어도 알려드려요. 이 탭은 열어 두세요.
+        </p>
+        <Button variant="quiet" size="small" onClick={() => fireTestDesktopAlert()}>
+          테스트 알림 보내기
+        </Button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="desktop-alert-setting">
+      <p className="desktop-alert-setting__note">
+        지금은 이 화면을 보고 있을 때만 알림이 보여요.
+      </p>
+      <Button
+        variant="secondary"
+        size="small"
+        onClick={() => {
+          void enableDesktopAlerts().then(setPermission)
+        }}
+      >
+        이 브라우저로 알림 받기
+      </Button>
+    </div>
+  )
 }
 
 const isStale = (value: string | undefined, hours = 6): boolean => {
@@ -82,7 +153,7 @@ export function BomiHomePage() {
       <PageHeader
         eyebrow="보미와 집"
         title="보미가 지금 맡은 돌봄"
-        description="등록 정보, 현재 모드와 실제 관측값을 서로 다른 의미로 보여드려요."
+        description="보미가 지금 무엇을 하고 있는지, 집 안은 어떤지 보여드려요."
         actions={<Button variant="secondary" onClick={() => void refresh()}>새로고침</Button>}
       />
 
@@ -111,7 +182,7 @@ export function BomiHomePage() {
       </section>
 
       <section className="bomi-detail-grid">
-        <Card heading="실내 환경" description="측정값과 마지막 측정 시각만 표시해요.">
+        <Card heading="집 안 온도와 습도">
           <dl className="environment-readings">
             <div><dt>온도</dt><dd>{homeEnvironment.temperatureC !== undefined ? `${homeEnvironment.temperatureC}℃` : '현재 확인할 수 없어요.'}</dd></div>
             <div><dt>습도</dt><dd>{homeEnvironment.humidityPercent !== undefined ? `${homeEnvironment.humidityPercent}%` : '현재 확인할 수 없어요.'}</dd></div>
@@ -131,7 +202,7 @@ export function BomiHomePage() {
         <Card
           className={hasUrgentAlert ? 'safety-alert-card safety-alert-card--urgent' : 'safety-alert-card'}
           heading="안전 알림"
-          description="보미가 보호자에게 바로 알려야 한다고 판단한 것만 올라와요."
+          description="바로 알려야 할 일만 올라와요."
         >
           {safetyAlerts === null ? (
             /*
@@ -174,6 +245,7 @@ export function BomiHomePage() {
               <p>보미가 계속 지켜보고 있어요. 새 알림이 오면 바로 알려드릴게요.</p>
             </div>
           )}
+          <DesktopAlertSetting />
         </Card>
 
       </section>

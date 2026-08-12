@@ -120,6 +120,24 @@ def test_weather_question_without_a_city_skips_the_api_call_silently():
     assert not out["ctx"].get("documents")
 
 
+def test_weather_talk_without_the_word_weather_does_not_call_the_forecast():
+    """'날씨'라고 말하지 않았으면 조회하지 않는다 (2026-08-10 실사용 피드백).
+
+    "오늘 서울 참 춥네" 는 도시명까지 있어서 예전 표지로는 곧장 기상청을
+    불렀고, 돌아온 예보가 참고 자료로 실려 모델이 날씨를 화제로 삼았다.
+    분류(info)는 그대로 두고 조회만 닫는다 — 모델은 참고 자료 없이 평범하게
+    맞장구치면 된다.
+    """
+    context_node.set_client(FakeContextClient())
+    weather = FakeWeather()
+    context_node.set_weather_client(weather)
+
+    for text in ("오늘 서울 참 춥네", "우산을 현관에 놓았어", "부산은 기온이 높네"):
+        out = context_node.context_read(_turn(text))
+        assert weather.calls == [], text
+        assert not out["ctx"].get("documents"), text
+
+
 def test_weather_lookup_failure_becomes_an_honest_reference_not_a_crash():
     """(완료 조건) 조회 실패는 지어내지 않고 솔직히 답하도록 지시한다."""
     context_node.set_client(FakeContextClient())
@@ -197,7 +215,9 @@ def test_medical_determination_is_reused_by_context_read_in_the_same_turn(
 
     state = _turn("근처 약국 어디야")
     intent_out = context_node.classify_intent(state)
-    assert intent_out == {"intent": "info", "is_medical_query": True}
+    assert intent_out == {
+        "intent": "info", "is_medical_query": True,
+        "wants_story": False, "wants_reminiscence": False}
     assert calls == ["근처 약국 어디야"], "classify_intent 가 라우터를 한 번만 불러야 한다"
 
     # LangGraph 가 노드 반환값을 state 에 병합하는 실제 순서로 이어 붙인다.
@@ -230,7 +250,9 @@ def test_medical_hint_routes_to_info_even_without_a_question_mark_or_info_marker
     state = _turn("부산 강서구 정형외과 찾아줘.")
     intent_out = context_node.classify_intent(state)
 
-    assert intent_out == {"intent": "info", "is_medical_query": True}
+    assert intent_out == {
+        "intent": "info", "is_medical_query": True,
+        "wants_story": False, "wants_reminiscence": False}
     context_out = context_node.context_read({**state, **intent_out})
     assert context_out["is_medical_query"] is True
     assert calls == ["부산 강서구 정형외과 찾아줘."], "라우터를 또 부르면 안 된다"

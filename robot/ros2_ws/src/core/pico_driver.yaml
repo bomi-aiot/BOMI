@@ -1,0 +1,77 @@
+pico_driver:
+  ros__parameters:
+    serial_port: /dev/ttyACM0
+    handshake_timeout_sec: 1.0
+    startup_response_timeout_sec: 5.0
+
+    # 자이로가 보고하는 회전량에 곱하는 보정 계수. 1.0은 보정 안 함.
+    # EKF는 yaw를 이 자이로 하나로만 만들므로(config/ekf.yaml), 배율이
+    # 틀리면 회전할 때마다 지도가 그만큼 어긋난 채 겹쳐 쌓인다.
+    #
+    # 2026-08-07: 배율 오차를 의심해 0.852를 넣어봤지만, 같은 측정을 두 번
+    # 하니 결과가 6% 어긋났다(1회 845°, 2회 환산 794°, 둘 다 실제 720°).
+    # 순수 배율이면 회차가 달라도 비율이 같아야 하므로 배율이 아니었다.
+    # 정지 상태에서 재 보니 자이로가 초당 1.56° 씩 흐르고 있었다(아래
+    # gyro_bias 참고). 오차는 회전량이 아니라 시간에 비례했던 것이다.
+    # 그래서 배율은 건드리지 않는다.
+    gyro_scale: 1.0
+
+    # 정지 상태에서 자이로가 흘리는 각속도(°/초)를 기동할 때 스스로 재서
+    # 뺀다. 0보다 크면 그 표본 수만큼 모아 평균을 바이어스로 쓴다.
+    #
+    # 왜 자동인가: 이 값은 재부팅·온도마다 달라진다. 2026-08-07 실기에서
+    # 재부팅 뒤 +1.5555 °/초(=93 °/분)가 나왔고, 40초짜리 제자리 회전이면
+    # 그것만으로 62°가 쌓인다. EKF는 yaw를 이 자이로 하나로만 만들므로
+    # (config/ekf.yaml) 그 오차가 그대로 지도의 회전 오차가 된다.
+    # 사람이 상수로 적어두면 다음 부팅에 또 틀린다.
+    #
+    # 100 표본 = 50 Hz 에서 2초. 이 동안 로봇은 반드시 정지해 있어야 한다.
+    gyro_bias_samples: 100
+
+    # 바이어스를 재는 동안 각속도가 이보다 크게 흔들리면 로봇이 움직이는
+    # 중이라고 보고 보정을 포기한다(잘못된 바이어스를 박아 넣는 것보다
+    # 안 하는 게 낫다). 실측 잡음은 0.12 °/초였다.
+    gyro_bias_max_spread_dps: 1.0
+
+    cmd_vel_topic: /cmd_vel
+    odom_topic: /odom
+    imu_topic: /imu
+    odom_frame_id: odom
+    base_frame_id: base_link
+    imu_frame_id: base_link
+    publish_tf: true
+
+    # 회전에 쓰는 유효 트레드. 기하학적 좌우 바퀴 간 거리는 0.257 m지만
+    # 스키드 스티어는 회전에서 바퀴가 옆으로 긁혀 실제로는 더 크다.
+    # 2026-08-06 자이로 실측: 좌우 ±0.352 rev/s(양쪽 대칭 확인, 엔코더
+    # lf/lr/rf/rr 모두 정상 계수)로 제자리 회전할 때 각속도가 28.0°/s였다.
+    # 기하값 0.257이면 30.3°/s가 나와야 하므로 유효 트레드는
+    # 2 x 0.352 x 0.1929 / 0.489 rad/s = 0.278 m다.
+    # 이 값은 /cmd_vel의 angular.z를 바퀴 속도로 바꿀 때만 쓴다.
+    # odometry의 yaw는 자이로에서 오므로 영향받지 않는다.
+    track_width_m: 0.278
+    distance_per_rev_m: 0.1929
+    max_target_rev_s: 0.8
+    left_front_cpr: 979
+    right_front_cpr: 979
+
+    # 펌웨어 제어 주기와 텔레메트리 주기(20 ms, 50 Hz)에 맞춘다.
+    # robot/docs/pico-serial-protocol.md `## 4`, `## 10` 참고.
+    # 이보다 낮으면 한 주기에 텔레메트리 여러 줄이 몰려 들어오고, 노드는
+    # 수신 시각으로 stamp를 찍으므로 실제 표본 시각과 최대 한 주기만큼
+    # 어긋난다. 그 오차는 회전 중 /scan과 odom TF가 어긋나는 만큼 지도에
+    # 그대로 남는다.
+    control_hz: 50.0
+
+    # V 명령 전송 주기. 읽기 주기(control_hz)와 분리한다.
+    # 펌웨어는 메인 루프 한 바퀴에 문자 하나만 읽으므로 전송이 잦으면
+    # USB 버퍼에 명령이 쌓여 조작 지연이 계속 누적된다. 워치독 300ms에
+    # 대해 20Hz면 6배 여유다.
+    command_hz: 20.0
+    cmd_vel_timeout_sec: 0.5
+    telemetry_timeout_sec: 1.0
+
+    # 실측 보정 전 잠정값. robot/docs/pico-serial-protocol.md `## 9` 참고.
+    angular_velocity_variance: 0.05
+    pose_covariance_diagonal: [0.05, 0.05, 1000000.0, 1000000.0, 1000000.0, 0.2]
+    twist_covariance_diagonal: [0.05, 1000000.0, 1000000.0, 1000000.0, 1000000.0, 0.2]

@@ -49,7 +49,6 @@ import math
 import os
 import subprocess
 
-
 AZIMUTH_COMMAND = "AEC_AZIMUTH_VALUES"
 
 

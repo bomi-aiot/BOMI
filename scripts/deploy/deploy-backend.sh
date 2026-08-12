@@ -12,10 +12,11 @@ deploy_log "Deploying Backend commit $GIT_SHA from $BOMI_RELEASE_BRANCH"
 set_env_value BACKEND_IMAGE_TAG "$GIT_SHA"
 set_env_value OPERATOR_CONSOLE_IMAGE_TAG "$GIT_SHA"
 set_env_value WAYPOINT_EDITOR_IMAGE_TAG "$GIT_SHA"
+set_env_value DB_VIEWER_IMAGE_TAG "$GIT_SHA"
 compose config --quiet
 compose up -d --wait --wait-timeout 60 postgres
-compose build backend operator-console waypoint-editor
-compose up -d --wait --wait-timeout 120 backend operator-console waypoint-editor
+compose build backend operator-console waypoint-editor db-viewer
+compose up -d --wait --wait-timeout 120 backend operator-console waypoint-editor db-viewer
 # Nginx must be recreated the first time so the operator-console htpasswd bind
 # mount is applied. On later deploys Compose leaves it running when unchanged.
 compose up -d --wait --wait-timeout 60 nginx
@@ -27,6 +28,7 @@ verify_container_health bomi-qdrant
 verify_container_health bomi-backend
 verify_container_health bomi-operator-console
 verify_container_health bomi-waypoint-editor
+verify_container_health bomi-db-viewer
 verify_container_health bomi-nginx
 # 공용 Nginx 가 마운트하는 conf.d 는 이 워크스페이스의 것이다(compose.prod.yml).
 # 방금 checkout 으로 파일이 바뀌었을 수 있으니 여기서 반영한다. Frontend 배포에는
@@ -42,4 +44,8 @@ waypoint_editor_status="$(curl --silent --output /dev/null --write-out '%{http_c
   "https://$BOMI_DOMAIN/waypoint-editor/")"
 [[ "$waypoint_editor_status" == 401 ]] \
   || deploy_fail "Waypoint Editor must reject unauthenticated requests (HTTP $waypoint_editor_status)"
+db_viewer_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  "https://$BOMI_DOMAIN/db-viewer/")"
+[[ "$db_viewer_status" == 401 ]] \
+  || deploy_fail "DB Viewer must reject unauthenticated requests (HTTP $db_viewer_status)"
 deploy_log "Backend deployment completed successfully: $GIT_SHA"
