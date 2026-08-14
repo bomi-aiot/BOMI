@@ -16,6 +16,16 @@ Raspberry Pi에서 동작하는 IoT 게이트웨이 구성 영역이다. 현재�
 `zigbee2mqtt/compose.yaml`은 Zigbee2MQTT, 로컬 Mosquitto, MQTT 번역기를 함께
 실행한다. Raspberry Pi Docker 실행 방법은 `zigbee2mqtt/README.md`를 따른다.
 
+## Zigbee2MQTT 연동 화면
+
+현관 도어 센서와 PIR 센서가 Zigbee2MQTT에 연결된 모습입니다. 최근 활동에서
+`occupancy` 변화와 장치별 링크 품질을 확인할 수 있습니다. 공개 문서용 이미지에서는
+내부 네트워크 주소와 Zigbee 장치 식별자를 제거했습니다.
+
+<p align="center">
+  <img src="../../docs/assets/zigbee2mqtt-dashboard.png" width="900" alt="현관 도어 센서와 PIR 센서가 연결된 Zigbee2MQTT 대시보드">
+</p>
+
 ## 매핑 규칙 (MVP)
 
 - 문(`contact`): 열림 전이는 `DOOR_OPENED`, 닫힘 전이는 `DOOR_CLOSED`.
