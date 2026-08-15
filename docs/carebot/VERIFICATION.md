@@ -66,7 +66,7 @@ cd backend && ./gradlew test
 |---|---|
 | 로봇 `1035 passed` (2026-08-15 실측) | ✅ |
 | 로봇 `All checks passed` | ✅ — 다만 **2026-08-15 현재 `ruff` 가 2건 실패합니다** (`UP035`, `bootstrap.py`·`entrance_cheer.py` 의 `from typing import Callable`). 고치기 전까지는 이 두 건만 나오는지 확인하고 넘어갑니다 |
-| 백엔드 `BUILD SUCCESSFUL` | ✅ |
+| 백엔드 `BUILD SUCCESSFUL` | ✅ — 다만 **2026-08-16 현재 `FlywayMigrationValidationTest` 가 빨간불입니다.** 버전 목록이 `"1"…"19"` 에서 멈춰 있는데 `db/migration/` 에는 `V20` 이 있습니다(§2.3·[`../database/flyway-guide.md`](../database/flyway-guide.md) "미해결"). 고치기 전까지는 이 한 건만 나오는지 확인하고 넘어갑니다 |
 | 하나라도 실패 | ❌ — 아래에서 어느 영역인지 좁힌다 |
 
 > 숫자는 티켓이 진행되며 늘어납니다. **줄어들면 누가 테스트를 지운 것**이므로 확인하십시오.
@@ -109,7 +109,7 @@ cd robot/ai_chat && python -m pytest tests/test_conversation_session.py tests/te
 | 파일 | 무엇이 깨진 것인가 |
 |---|---|
 | `test_conversation_session.py` | 웨이크워드 게이트(시나리오 A), 세션 중 웨이크워드 생략(B), "이제 됐어" 종료 후 재대기(L), 무응답 종료, **정상 종료된 재생을 끼어들기로 오분류하는 결함(B1)의 재발**, 잘린 발화 나머지의 재경쟁(B2) |
-| `test_context_slots.py` | "제주도 가"→"날씨 어때?" 지역 이어짐(D), "그런데" 화제 전환의 문맥 해제(E), "대전 말고 대구" 정정(H), 만료·감쇠 수명 규칙 (CLAUDE.md §30) |
+| `test_context_slots.py` | "제주도 가"→"날씨 어때?" 지역 이어짐(D), "그런데" 화제 전환의 문맥 해제(E), "대전 말고 대구" 정정(H), 만료·감쇠 수명 규칙 ([`임시보류_claude.md`](../../임시보류_claude.md) §30 — 설계 헌법은 통합 스프린트 동안 이 파일로 보관돼 있습니다) |
 | `test_memory_privacy.py` | 잡담 중 "우리끼리" 봉인, "기억하지 마"의 대기 행 삭제(K), 프로필 성향·만성 부위 프롬프트 반영, 주소 폴백(C 준비) |
 
 **실기에서 확인할 것:** "보미야" 한 번으로 여러 질문이 이어지는지, "이제 됐어" 후
@@ -258,6 +258,14 @@ cd backend && ./gradlew test --tests "com.ssafy.bomi.migration.FlywayMigrationVa
 
 새 V파일을 추가했다면 이 테스트의 기대 목록(`containsExactly("1","2",...)`)도 늘려야 합니다. 안 늘리면 실패하는데, **그게 의도**입니다 — 파일만 만들고 검증을 잊는 것을 막습니다.
 
+> 🔴 **지금이 바로 그 실패 상태입니다 (2026-08-16 확인).** 기대 목록은 `"1"…"19"` 인데
+> `db/migration/` 에는 `V20__allow_non_navigation_operator_scenario_cancellation.sql` 이
+> 있습니다. 즉 이 명령은 **현재 초록불이 아닙니다** — 여기서 실패가 나오면 여러분이 방금
+> 만든 변경 때문이 아니라 이 미이행분 때문일 가능성이 먼저입니다. 실패 메시지가 위 표의
+> 세 줄이 아니라 `containsExactly` 목록 불일치인지부터 확인하십시오. 경위는
+> [`../database/flyway-guide.md`](../database/flyway-guide.md) 의 "미해결 — 버전 목록이
+> `V20` 을 담고 있지 않습니다" 절에 있습니다.
+
 ---
 
 ### 2.4 문맥 조립 API — 6종이 다 오는가 (203)
@@ -308,7 +316,7 @@ curl -X POST http://localhost:8080/api/v1/seniors/{어르신UUID}/conversation-c
 | 확인 항목 | 성공 | 실패 |
 |---|---|---|
 | `memories` 개수 | 요청한 `memoryTopK` 이하 | 20개씩 오면 과적재 방지가 깨진 것 |
-| `availability.semanticSearch` | 지금은 `false` **가 정상** (218 은 이미 완료됐지만 임베딩 과금 때문에 `EMBEDDING_ENABLED` 기본값이 off) | `true` 인데 명시적으로 켠 적이 없으면 거짓 보고 |
+| `availability.semanticSearch` | **환경에 따라 다릅니다.** 코드 기본값·로컬 compose 는 `false`(218 은 완료됐지만 임베딩 과금 때문에 `EMBEDDING_ENABLED` 기본값이 off), 시연 서버(`i15e102`)는 2026-08-10 부터 `true` ([PROGRESS.md](PROGRESS.md) §2.4) | 이 환경의 `EMBEDDING_ENABLED` 와 값이 어긋나면 거짓 보고 |
 | `retrieval.semanticRequested/semanticUsed` | 요청·실행 여부가 실제 폴백과 일치 | 임베딩 실패인데 `semanticUsed=true`, 또는 필드 없이 성공으로 간주 |
 | `retrieval.fallbackReason` | `semanticUsed=false`이면 운영자가 이해할 수 있는 사유 | 빈 값이라 폴백 원인을 추적할 수 없음 |
 | `profile.avoidTopics` | 회피 주제가 실려 온다 | 비어 있으면 프롬프트가 금지문을 못 만든다 |
@@ -580,7 +588,7 @@ semantic search unavailable; memories ranked by keyword overlap...
 |---|---|
 | 로봇이 아무 말도 안 함 | 로그에 `turn failed` 가 있는지. 미구현 핸들러일 가능성 |
 | 로봇이 자기 말에 멈춤 | `ECHO_GUARD_SEC`·`ECHO_VAD_THRESHOLD_MULTIPLIER` (실기 실측 필요) |
-| 기억을 못 함 | `availability.semanticSearch` 가 `false` 인지 (218 은 완료됐지만 `EMBEDDING_ENABLED` 기본값이 꺼짐이면 정상) |
+| 기억을 못 함 | 이 환경의 `EMBEDDING_ENABLED` 와 응답의 `availability.semanticSearch` 가 **같은 값인지.** 로컬은 둘 다 `false` 가 정상이고, 시연 서버는 둘 다 `true` 여야 합니다 — 서버에서 `false` 가 나오면 `secrets/production.env` 의 `EMBEDDING_ENABLED`·`EMBEDDING_SYNC_ENABLED` 두 줄을 확인하십시오([PROGRESS.md](PROGRESS.md) §2.4 가 "두 스위치가 파일에 아예 없어서 compose 기본값으로 뜨던" 사고를 실제로 겪었습니다) |
 | 복약을 잘못 말함 | 🔴 즉시 확인. `careRecords` 가 정확 조회로 왔는지, 의미 검색이 섞이지 않았는지 |
 | 보호자에게 알림이 안 감 | `outbox` 테이블의 `status`·`last_error`. 채널이 아직 없으면 로그만 |
 | 새벽에 말을 검 | `app_user.quiet_hours_start/end` 와 게이트 (206) |

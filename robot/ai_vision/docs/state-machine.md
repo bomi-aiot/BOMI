@@ -13,10 +13,12 @@
 
 따라서 AI 비전 모듈은 단일 프레임 결과가 아니라 이전 상태와 일정 시간 동안의 관찰 결과를 함께 사용해 최종 상태를 결정한다.
 
-이 문서는 다음 두 종류의 상태를 다룬다.
+이 문서는 다음 두 종류의 상태를 다루며, **둘의 구현 상태가 다르다.**
 
-1. 사람 탐지 및 추적 상태
-2. 상호작용 제한을 위한 사용자 상태
+1. 사람 탐지 및 추적 상태 — **구현됨.** `src/bomi_vision/tracking.py`와 `src/bomi_vision/domain/tracking.py`가 이 문서의 §3~§13을 그대로 따르며, 각 전환 메서드가 여기 절 번호를 주석으로 인용한다. §4.4·§5.4·§6.5·§7.5·§8.4·§9.5의 전환표는 코드와 일치한다.
+2. 상호작용 제한을 위한 사용자 상태 — **미구현(설계만).** §14~§21이 정의하는 `AWAKE`/`RESTING`/`SLEEPING_ESTIMATED`와 `interaction_allowed`·`movement_allowed`는 2026-08 기준 코드에 존재하지 않는다(`grep -rn "RESTING\|AWAKE" src` → 0건). 자세·움직임 분석 방식이 결정되기 전까지 목표 상태로만 읽는다.
+
+각 상태 절의 "상태 정책" 항목 중 "능동 대화", "이동 허용", "사용자 상태" 세 줄도 2번에 속하므로 아직 코드에 대응물이 없다. `TrackingResult`의 필드는 `status`·`person_count`·`track_id`·`position` 넷뿐이다. 현재 코드에서 그 취지를 담당하는 것은 `follow.py`의 정지 폴백이다 — `TRACKING`이 아닌 다섯 상태와 위치·Track ID 결손은 전부 `stop` 명령이 된다.
 
 현재 확정되지 않은 자세 분석 기술이나 수면 판단 방식은 이 문서에서 강제하지 않는다.
 
@@ -83,18 +85,46 @@ AI 비전은 외부 시스템이 사용할 수 있도록 다음과 같은 결과
 
 ---
 
-## 3. 사람 추적 상태
+## 3. 사람 추적 상태 (구현됨)
 
-사람 탐지 및 추적에는 다음 상태를 사용한다.
+사람 탐지 및 추적에는 다음 상태를 사용한다. 코드에서는 `domain/tracking.py`의 `TrackingResultStatus`이며, enum 멤버 이름은 대문자지만 **직렬화 값은 소문자**다. UDP로 나가는 것은 값이므로 수신측(`vision_udp_bridge` → `person_follower`)과 맞출 때는 오른쪽 열을 본다.
 
-```text
-NOT_DETECTED
-TRACKING
-TEMPORARILY_LOST
-MULTIPLE_PENDING
-MULTIPLE_PERSONS
-SINGLE_RECOVERY
+| 이 문서의 표기 | 코드의 값 (외부 계약) |
+|---|---|
+| `NOT_DETECTED` | `not_detected` |
+| `TRACKING` | `tracking` |
+| `TEMPORARILY_LOST` | `temporarily_lost` |
+| `MULTIPLE_PENDING` | `multiple_pending` |
+| `MULTIPLE_PERSONS` | `multiple_persons` |
+| `SINGLE_RECOVERY` | `single_recovery` |
+
+전체 전환을 한눈에 보면 다음과 같다. 상태별 상세는 §4~§9에 있다.
+
+```mermaid
+stateDiagram-v2
+  [*] --> not_detected
+  not_detected --> tracking: 1명
+  not_detected --> multiple_pending: 2명 이상
+  tracking --> tracking: 1명 지속
+  tracking --> temporarily_lost: 0명
+  tracking --> multiple_pending: 2명 이상
+  temporarily_lost --> tracking: 허용 프레임 안에 1명
+  temporarily_lost --> not_detected: 허용 프레임 초과
+  temporarily_lost --> multiple_pending: 2명 이상
+  multiple_pending --> tracking: 확정 전 1명
+  multiple_pending --> multiple_persons: 확인 프레임 충족
+  multiple_pending --> temporarily_lost: 0명 · 직전 단일 추적 이력 있음
+  multiple_pending --> not_detected: 0명 · 이력 없음
+  multiple_persons --> single_recovery: 1명
+  multiple_persons --> not_detected: 0명
+  single_recovery --> tracking: 안정화 완료
+  single_recovery --> multiple_persons: 2명 이상 (pending 건너뜀)
+  single_recovery --> not_detected: 0명
 ```
+
+### 3.1 상태 정책의 실제 구현체
+
+"이 상태에서는 보호대상자를 선택하지 않는다"는 정책은 문장이 아니라 **생성자 불변식으로 강제된다.** `TrackingResult`는 `TRACKING`일 때만 `track_id`와 `position`을 허용하고, 그 밖의 상태에 둘 중 하나라도 실려 있으면 `ValueError`를 던진다. 상태와 사람 수의 조합도 함께 검증한다. 이 불변식을 완화하면 안전 규칙 전체가 헐거워지므로 바꾸기 전에 §7.3·§9.3을 다시 읽는다.
 
 ---
 
@@ -220,6 +250,8 @@ MVP 운영 전제에 따라 한 명의 유효한 사람을 보호대상자로 �
 | 미검출이 허용 범위를 초과함     | `NOT_DETECTED`     |
 | 두 명 이상 검출           | `MULTIPLE_PENDING` |
 
+경계 조건 하나를 값에서 읽을 수 없다. 초과 판정이 `>` 비교라 **누락 프레임이 허용값을 넘어선 다음 프레임에 `NOT_DETECTED`가 된다.** `--lost-tolerance-frames 1`이면 첫 0명 프레임은 `TEMPORARILY_LOST`, 두 번째 0명 프레임에서 `NOT_DETECTED`다. `0`으로 두면 첫 0명 프레임에서 곧바로 대상을 폐기한다.
+
 ---
 
 ## 7. `MULTIPLE_PENDING`
@@ -247,17 +279,11 @@ MVP 운영 전제에 따라 한 명의 유효한 사람을 보호대상자로 �
 
 다중 인물 확인이 완료되기 전이라도 특정 사람을 보호대상자로 임의 선택하지 않는다.
 
-### 7.4 확인 기준
+### 7.4 확인 기준 (확정됨)
 
-다중 인물 상태의 확정 기준은 설정값으로 관리한다.
+**연속 검출 프레임 수로 확정했다.** 상태 머신에 시각 입력이 없으므로 지속시간 기준은 쓰지 않는다. 기본값은 `--multiple-confirm-frames 5`(30 FPS 기준 약 0.17초)이며 실제 카메라로 조정한다.
 
-가능한 기준은 다음과 같다.
-
-* 연속 검출 프레임 수
-* 다중 인물 지속시간
-* 두 기준의 조합
-
-정확한 기본값은 실제 카메라 FPS와 탐지 결과를 확인한 뒤 결정한다.
+한 가지 동작이 값에서 바로 읽히지 않는다. **`multiple_confirm_frames=1`이어도 첫 프레임은 확정하지 않는다.** 다중 인물 진입 시 카운터를 1로 세팅하고 무조건 `MULTIPLE_PENDING`을 반환하므로, 확정은 두 번째 프레임부터다. 한 프레임의 중복 탐지로 보호대상자를 잃지 않기 위한 의도이며 회귀 테스트가 이를 고정한다(`tests/unit/test_tracking.py`).
 
 ### 7.5 전환 가능 상태
 
@@ -299,6 +325,8 @@ MVP 운영 전제에 따라 한 명의 유효한 사람을 보호대상자로 �
 * 화면 중심과 가장 가까운 사람
 
 해당 기준을 사용하려면 별도의 신원 확인 요구사항과 설계 결정이 필요하다.
+
+> **예외 하나가 실제로 도입돼 있다.** `--select-primary-person`(기본 꺼짐)을 켜면 "화면 중심과 가장 가까운 사람"으로 후보를 한 명으로 줄인다. 다만 그 선택은 **이 상태 머신 안이 아니라 앞에서** 일어난다(`primary_person.py`). 상태 머신은 이미 걸러진 목록을 받으므로 여기 적힌 금지 규칙과 §3.1의 생성자 불변식은 하나도 완화되지 않는다. 조건을 통과한 후보가 없으면 원본 목록을 그대로 넘겨 `MULTIPLE_PENDING` 경로가 살아난다. 신뢰도가 아니라 중앙 근접을 쓰는 이유는 로봇이 소리 방향으로 이미 몸을 돌린 뒤라는 전제 때문이며, 근거는 `primary_person.py` 모듈 docstring에 있다.
 
 ### 8.4 전환 가능 상태
 
@@ -342,6 +370,10 @@ MVP 운영 전제에 따라 한 명의 유효한 사람을 보호대상자로 �
 | 한 명이 복귀 기준까지 안정적으로 유지됨 | `TRACKING`         |
 | 두 명 이상이 다시 검출됨         | `MULTIPLE_PERSONS` |
 | 모든 사람이 사라짐             | `NOT_DETECTED`     |
+
+두 번째 행은 **`MULTIPLE_PENDING`을 건너뛴다.** 이미 한 번 확정된 다중 인물이 다시 관찰된 것이므로 확인 단계를 반복하지 않는다. 다른 상태에서 2명 이상이 되면 항상 `MULTIPLE_PENDING`을 거치는 것과 다른 유일한 자리다.
+
+또한 §9.2의 진입 자체가 첫 프레임을 확정하지 않는다. 다중 인물이 해제된 직후의 한 명이 기존 보호대상자인지 알 수 없으므로, 복귀 기준값과 무관하게 첫 프레임은 언제나 `SINGLE_RECOVERY`다.
 
 ---
 
@@ -403,14 +435,16 @@ SINGLE_RECOVERY
 
 사람 추적 상태 머신의 기본 초기 상태는 `NOT_DETECTED`로 한다.
 
-초기 프레임이 입력되기 전까지는 다음 값을 사용한다.
+초기 프레임이 입력되기 전까지는 다음 값을 사용한다. 앞의 세 항목은 구현돼 있고, 뒤의 세 항목은 §14~§21과 함께 아직 코드에 없다.
 
-* 보호대상자: 없음
-* Track ID: 없음
-* 사람 수: 0
-* 사용자 상태: `UNKNOWN`
-* 능동 대화 허용: `false`
-* 이동 허용: `false`
+* 보호대상자: 없음 — 구현됨
+* Track ID: 없음 — 구현됨
+* 사람 수: 0 — 구현됨
+* 사용자 상태: `UNKNOWN` — 미구현
+* 능동 대화 허용: `false` — 미구현
+* 이동 허용: `false` — 미구현
+
+세 개의 히스테리시스 카운터(일시 누락, 다중 인물 확인, 한 명 복귀 안정화)도 모두 0에서 시작한다. 이 카운터가 인스턴스 상태이므로 `UserTrackingService`를 프레임마다 새로 만들면 안 되고, 여러 영상 흐름에서 공유해서도 안 된다.
 
 첫 번째 유효한 프레임이 입력된 뒤 관찰 결과에 따라 상태를 갱신한다.
 
@@ -449,7 +483,9 @@ Track ID 유지 여부는 추적 품질을 평가하는 참고 정보로 사용�
 
 ---
 
-## 14. 사용자 상태
+## 14. 사용자 상태 (미구현 — 설계만)
+
+> **여기부터 §21까지는 목표 상태다.** `grep -rn "RESTING\|AWAKE\|SLEEPING" src tests scripts` 결과는 0건이고, 이 상태들을 계산하거나 저장하는 코드가 없다. 앞의 §3~§13(사람 추적)과 같은 어조로 쓰여 있지만 구현 상태는 정반대이므로, 코드를 읽기 전에 이 배지를 먼저 본다. 현재 코드에서 "불확실하면 말 걸지 않는다"는 취지를 대신 담당하는 것은 `follow.py`의 정지 폴백이다.
 
 사용자의 휴식 또는 수면 가능성과 관련된 상태는 다음과 같이 정의한다.
 
@@ -561,7 +597,9 @@ Codex는 활성 실행 계획에 수면 상태 구현이 포함되기 전까지 
 
 ---
 
-## 20. 능동 대화 허용 상태
+## 20. 능동 대화 허용 상태 (미구현 — 설계만)
+
+> **`interaction_allowed`라는 값은 코드에 없다.** 이 판정을 하는 함수도 없다. 다만 취지("불확실하면 허용하지 않는다")는 이미 다른 형태로 구현돼 있다 — `follow.py`가 `TRACKING`이 아닌 다섯 상태를 전부 `stop`으로 바꾸므로, 아래 표의 "금지" 행과 결과적으로 같은 보수성을 갖는다. 사용자 상태 축(`AWAKE`/`RESTING`/…)만 없는 셈이다.
 
 능동 대화는 다음 조건을 모두 만족할 때만 허용한다.
 
@@ -593,7 +631,9 @@ user_state == AWAKE
 
 ---
 
-## 21. 이동 허용 상태
+## 21. 이동 허용 상태 (다른 형태로 구현됨)
+
+> **`movement_allowed`라는 필드는 없다.** 같은 정보를 `FollowCommand`가 대신 실어 나른다 — `TRACKING` 외 다섯 상태는 전부 `stop`이고, `TRACKING`일 때만 `turn_left`/`turn_right`/`move_forward`가 나온다. 아래 표의 `true`/`false`와 일대일로 대응하지만, 외부 시스템이 받는 것은 boolean이 아니라 방향 명령이다. 수신측을 만들 때는 이 표가 아니라 `README.md`의 UDP 계약을 본다.
 
 AI 비전 모듈은 실제 모터를 제어하지 않지만 외부 주행 시스템이 참고할 수 있는 이동 허용 상태를 제공할 수 있다.
 
@@ -632,9 +672,31 @@ AI 비전 모듈은 실제 모터를 제어하지 않지만 외부 주행 시스
 
 상태 변경 이유는 디버깅, 로그, ROS2 메시지 및 대시보드에서 사용할 수 있다.
 
+### 22.1 현재 구현 — 사람용 문장이 아니라 기계용 토큰
+
+위 예시는 사람이 읽을 로그를 상정했지만, **구현된 `reason`은 한국어 문장이 아니라 영문 스네이크 토큰이고 UDP로 그대로 나가는 외부 계약이다.** 둘은 용도가 다르다 — 위는 사람이 읽는 설명, 아래는 수신측이 분기할 수 있는 값이다. 값을 바꾸면 수신측이 깨지므로 임의로 번역하거나 표현을 다듬지 않는다.
+
+| `reason` | 언제 |
+|---|---|
+| `tracking_not_available` | `not_detected` |
+| `temporarily_lost` | `temporarily_lost` |
+| `multiple_people_pending` | `multiple_pending` |
+| `multiple_people_detected` | `multiple_persons` |
+| `single_recovery_stabilizing` | `single_recovery` |
+| `invalid_tracking_result` | 상태 조합이 유효하지 않거나 위치값이 허용 범위를 벗어남 |
+| `position_missing` | `tracking`인데 위치가 없음 |
+| `track_id_missing` | `tracking`인데 Track ID가 없음 |
+| `user_left_of_center` | 중앙 허용 범위보다 왼쪽 → `turn_left` |
+| `user_right_of_center` | 중앙 허용 범위보다 오른쪽 → `turn_right` |
+| `user_far_and_centered` | 중앙 정렬 + 화면에서 작게 보임 → `move_forward` |
+| `safe_follow_distance_reached` | 중앙 정렬 + 충분히 가까움 → `stop` |
+| `udp_sender_shutdown` | 프로세스 종료 시 마지막 정지 패킷 |
+
 ---
 
-## 23. 상태 전환 로그
+## 23. 상태 전환 로그 (미구현)
+
+> **상태 전이 로그는 없다.** `tracking.py`는 로거를 사용하지 않는다. 현재 관찰 수단은 UDP 페이로드의 `status`/`reason`과 디버그 창뿐이다. 아래는 로깅을 도입할 때의 규칙이다.
 
 상태가 변경될 때는 이전 상태와 새로운 상태를 로그로 기록한다.
 
@@ -652,9 +714,11 @@ AI 비전 모듈은 실제 모터를 제어하지 않지만 외부 주행 시스
 
 ---
 
-## 24. 상태 머신 테스트 요구사항
+## 24. 상태 머신 테스트 요구사항 (충족됨)
 
 사람 추적 상태 머신은 YOLO, ByteTrack, OpenCV 없이 단위 테스트할 수 있어야 한다.
+
+> **현재 상태: 충족.** 아래 다섯 시나리오는 `tests/unit/test_tracking.py`가 전부 잠그고 있다. §7.4의 첫 프레임 버퍼링, §9.5의 pending 건너뛰기, §6.5의 `>` 경계 같은 값에서 읽히지 않는 동작도 여기서 고정된다. 상태 전환 규칙을 바꾸려면 이 테스트를 먼저 읽는다.
 
 최소한 다음 시나리오를 테스트한다.
 
@@ -694,29 +758,36 @@ AI 비전 모듈은 실제 모터를 제어하지 않지만 외부 주행 시스
 
 다음 값은 상태 머신 내부에 하드코딩하지 않는다.
 
-* 다중 인물 확인 프레임 수
-* 다중 인물 확인 지속시간
-* 한 명 복귀 안정화 프레임 수
-* 한 명 복귀 안정화 지속시간
-* 일시적 추적 실패 허용 프레임 수
-* 일시적 추적 실패 허용시간
-* 최소 confidence
-* 최신 영상으로 인정할 최대 지연시간
-* 사용자 상태 전환시간
-* 사용자 상태 복귀시간
+| 값 | 현재 주입 방법 |
+|---|---|
+| 다중 인물 확인 프레임 수 | `--multiple-confirm-frames` (기본 5) |
+| 한 명 복귀 안정화 프레임 수 | `--single-recovery-frames` (기본 10) |
+| 일시적 추적 실패 허용 프레임 수 | `--lost-tolerance-frames` (기본 3) |
+| 최소 confidence | `--confidence` (탐지 단계에서 적용) |
 
-프레임 수와 시간 중 어떤 기준을 사용할지는 실제 처리 FPS와 통합 환경을 확인한 뒤 결정한다.
+**프레임 수 기준으로 확정했다.** 상태 머신에 시각 입력이 없으므로 "지속시간" 계열 값(다중 인물 확인 지속시간, 한 명 복귀 안정화 지속시간, 일시적 추적 실패 허용시간)은 존재하지 않는다. `UserTrackingService`의 생성자는 기본값을 코드에 두지 않고 세 프레임 수를 전부 주입받으며 시작 시 검증한다.
+
+다음 값은 개념 자체가 아직 코드에 없다 — 최신 영상으로 인정할 최대 지연시간, 사용자 상태 전환시간, 사용자 상태 복귀시간. §14~§21이 구현될 때 위 규칙을 적용한다.
 
 ---
 
-## 26. 미확정 사항
+## 26. 확정 사항과 미확정 사항
+
+### 26.1 코드로 확정된 항목
+
+| 항목 | 결정 | 위치 |
+|---|---|---|
+| 주 상태 전환 기준 | 프레임 수 (상태 머신에 시각 입력 없음) | `tracking.py` |
+| 다중 인물 확인 기본값 | 5 프레임 (30 FPS 기준 약 0.17초) | `main.py` `DEFAULT_MULTIPLE_CONFIRM_FRAMES` |
+| 한 명 복귀 안정화 기본값 | 10 프레임 (약 0.33초) | `main.py` `DEFAULT_SINGLE_RECOVERY_FRAMES` |
+| 일시적 추적 실패 허용 기본값 | 3 프레임 (약 0.1초) | `main.py` `DEFAULT_LOST_TOLERANCE_FRAMES` |
+
+세 기본값 모두 30 FPS를 가정한 값이고 선정 이유가 `main.py` 상수 주석에 남아 있다. 실기 젯슨은 24 FPS 안팎이라 launch·시연 스크립트가 `--lost-tolerance-frames 12`로 올려 쓴다(근거는 `README.md`의 실기 값 표).
+
+### 26.2 아직 미확정인 항목
 
 다음 항목은 실제 구현과 영상 테스트 후 확정한다.
 
-* 프레임 수와 시간 중 주 상태 전환 기준
-* 다중 인물 확인 기본값
-* 한 명 복귀 안정화 기본값
-* 일시적 추적 실패 허용 기본값
 * Track ID가 변경됐을 때의 상세 복구 정책
 * 자세 분석 방식
 * 움직임 분석 방식

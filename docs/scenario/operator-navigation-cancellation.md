@@ -61,8 +61,17 @@ curl -X POST \
 
 **이동 중이 아닌 Scenario도 취소된다.** 활성 `NAVIGATE` 명령이 없으면 MQTT `CANCEL` 만
 생략하고(감사 행의 대상·취소 command id 는 비어 있다) Scenario 종료와 `SAFE_STOP` 전환은
-그대로 수행한다. 취소를 거절하는 것은 **활성 Scenario가 두 개 이상일 때**뿐이며, 이 경우
-아무 상태도 바꾸지 않고 `409 REJECTED_MULTIPLE_ACTIVE_SCENARIOS` 를 반환한다.
+그대로 수행한다. 이것이 가능해진 것은 Flyway `V20`이 감사 테이블의
+`target_navigation_command_id`·`cancel_command_id` 의 `NOT NULL` 을 풀면서부터다 — 그전에는
+내비게이션 명령이 없는 Scenario(대화 중 고착 등)를 이 API 로 끝낼 수 없었다.
+
+로봇·어르신 전제 검사(미등록·비활성·미배정·배정 변경)를 통과해 **활성 Scenario를 찾은
+뒤에** 취소가 되돌아가는 경우는 둘뿐이고, 둘 다 아무 상태도 바꾸지 않는다.
+
+| 거절 | 응답 | 조건 |
+| --- | --- | --- |
+| `REJECTED_MULTIPLE_ACTIVE_SCENARIOS` | `409` | 활성 Scenario가 두 개 이상 — 어느 것을 끝낼지 서버가 고를 수 없다 |
+| `REJECTED_MQTT_UNAVAILABLE` | `503` | 활성 `NAVIGATE` 가 **있는데** MQTT 명령 발행기가 정확히 1개가 아님. 활성 `NAVIGATE` 가 없으면 애초에 발행할 것이 없으므로 이 검사를 건너뛴다 |
 
 응답 코드 전체
 

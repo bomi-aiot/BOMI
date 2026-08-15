@@ -258,7 +258,7 @@ venv/Scripts/ruff.exe check src tests                           ->  All checks p
 `"오늘은 너무 즐겁다"`, `"근처 병원 알려줘"` 에 붙은 것도 있었습니다.
 
 에코와 **별개인 두 번째 결함**이 여기 있었습니다 — `triage.py` 에 **중복 억제가 아예
-없었습니다.** 같은 사유로 3분간 15번을 그대로 다 보냅니다. CLAUDE.md §9 는 위양성을
+없었습니다.** 같은 사유로 3분간 15번을 그대로 다 보냅니다. `임시보류_claude.md` §9 는 위양성을
 감수하라고 했지 같은 알림을 열다섯 번 보내라고 하지 않았고, 이것이야말로 §9 가 경고한
 **알림 피로 → 진짜 응급이 묻힘** 경로입니다. 에코를 고쳐도 이 구멍은 남으므로
 `policy.T1_DUPLICATE_SUPPRESSION_SEC`(기본 10분)으로 따로 막았습니다.
@@ -351,7 +351,7 @@ deploying to a real senior.
 | **"외로워"** | emotional | **정상 (263)** |
 | "외로운데 오늘 며칠이야" | emotional | 정상 (263) — 정서를 정보보다 먼저 봅니다 |
 
-**함께 들어간 것: T3 동의 질문의 지연.** 속마음을 꺼낸 직후 "가족분께 전해도 될까요"로 끊으면, 로봇은 그 한 문장으로 말벗에서 감시 장치가 됩니다. 그 뒤로 어르신은 털어놓지 않고, 그러면 T3 로 보낼 내용 자체가 사라집니다(CLAUDE.md §9). 그래서 45분 뒤에 묻도록 제안 큐에 넣습니다.
+**함께 들어간 것: T3 동의 질문의 지연.** 속마음을 꺼낸 직후 "가족분께 전해도 될까요"로 끊으면, 로봇은 그 한 문장으로 말벗에서 감시 장치가 됩니다. 그 뒤로 어르신은 털어놓지 않고, 그러면 T3 로 보낼 내용 자체가 사라집니다(`임시보류_claude.md` §9). 그래서 45분 뒤에 묻도록 제안 큐에 넣습니다.
 
 게이트에 `not_before` 연기 확인을 추가했습니다. **이 확인이 없으면 지연은 장식입니다** — 큐에 넣은 제안은 다음 틱에 바로 후보가 되기 때문입니다. 폐기가 아니라 연기인 것이 중요합니다(아직 이른 것을 폐기하면 영영 사라집니다).
 
@@ -412,7 +412,7 @@ deploying to a real senior.
 
 **그런데 기본값이 꺼짐입니다.** 임베딩 API 가 과금되고 잔액이 프로토타입 시연까지 감당해야 하므로, `EMBEDDING_ENABLED` 와 `EMBEDDING_SYNC_ENABLED` 를 명시적으로 켜야 동작합니다. 켜지지 않은 동안은 여전히 **키워드 겹침 × 중요도 × 최근성**으로만 순위를 매기고, 한국어 조사 때문에 "무릎이"와 "무릎"이 매칭되지 않습니다.
 
-즉 **"이어짐"(CLAUDE.md §17.2)은 스위치를 켜기 전까지 여전히 거의 작동하지 않습니다.** 응답의 `availability.semanticSearch` 가 그 사실을 알려주며, AI WIP 커밋 `26e9635`부터 로봇도 이를 `retrieval_status`·로그·프롬프트 경고로 실제 소비합니다.
+즉 **"이어짐"(`임시보류_claude.md` §17.2)은 스위치를 켜기 전까지 여전히 거의 작동하지 않습니다.** 응답의 `availability.semanticSearch` 가 그 사실을 알려주며, AI WIP 커밋 `26e9635`부터 로봇도 이를 `retrieval_status`·로그·프롬프트 경고로 실제 소비합니다.
 
 배포 시 필요한 것: EC2 시크릿에 `UPSTAGE_API_KEY`(현재 없음), `QDRANT_DATA_DIR`, `QDRANT_API_KEY`.
 
@@ -539,7 +539,9 @@ graph LR
 ([근거 전체](../natural-conversation/current-state-audit.md)), 티켓에 안 잡혀 있던
 결함이 나왔습니다.
 
-**갱신 (같은 날, `ai/natural-conversation-wip`):** 아래 표의 **1·2번은 해소**됐습니다
+**갱신 (같은 날, 자연대화 WIP 작업분 — `92fb0c1` 로 스쿼시되어 `main` 에 있습니다.
+브랜치 `ai/natural-conversation-wip` 는 더는 존재하지 않으니 찾지 마십시오):** 아래 표의
+**1·2번은 해소**됐습니다
 (세션 테스트 18건으로 고정, 감사 문서 §0 해소 현황 참고). T4 봉인의 정서 턴 한정
 문제도 전 반응형 턴 검사로 해소됐고, "기억하지 마"의 로컬 처리(봉인+대기 행 삭제)가
 추가됐습니다. **3·4·5·6·7번은 여전히 유효합니다.**
@@ -613,7 +615,7 @@ Upstage 임베딩은 **4096차원**이라 `halfvec` 으로도 인덱스가 불�
 | `backend_command` 진입 경로 신설(게이트를 건너뛴다) | `graph/ingress.py` |
 | `handle_greeting` 이 얇아졌다(백엔드 문구를 옮길 뿐) | `graph/handlers.py` |
 | 로봇은 방향을 판정하지 않는다 | `contracts/door.py`, `door/occupancy.py` |
-| CLAUDE.md §5·§6·§7·§11·§22·§24 | 문서 |
+| `임시보류_claude.md` §5·§6·§7·§11·§22·§24 | 문서 |
 
 **함께 바뀐 것**: 로봇의 4게이트는 여전히 '로봇이 스스로 시작하는' 발화 전부를 심판합니다. 백엔드 명령만 별도 경로입니다. 게이트를 거치게 하면 백엔드가 보낸 인사가 로봇의 쿨다운에 조용히 삼켜지고, 백엔드는 자기가 보낸 인사가 나갔다고 기록합니다.
 
@@ -728,7 +730,7 @@ Upstage 임베딩은 **4096차원**이라 `halfvec` 으로도 인덱스가 불�
 | `SimClock(speed=8640)` 하루 10초 테스트 | ✅ |
 | **Jetson 실기 `pip install -e .`** | ❌ **미실시 (장비 없음)** |
 
-`.agents` 규칙 문서와 CLAUDE.md §21 충돌은 precedence 배너로 해소했습니다.
+`.agents` 규칙 문서와 `임시보류_claude.md` §21 충돌은 precedence 배너로 해소했습니다.
 
 ### 201 — 스키마 보강 ✅
 
@@ -947,7 +949,7 @@ CLAUDE.md 가 경고한 **`_is_absence_expected` 함정**을 처리했습니다.
 
 **테스트·워크스루가 잡은 것 2건**: 기존 end-to-end 테스트가 `"무릎이 아파"` 오탐을(§3.8), 신규 테스트가 자해 목록에서 `"그만 살고 싶어"` 누락을 잡았습니다.
 
-**미구현**: 자해 목록 검토(§2.2). 그리고 **에스컬레이션이 신뢰도 점수가 아니라 단일 판정입니다** — CLAUDE.md §10 은 여러 약한 신호의 조합을 요구하는데, 지금은 발화 하나로 결정하고 나머지 신호(occupancy·rest_state·ambient)는 payload 에 싣기만 합니다. 점수화는 212 의 실측 튜닝과 함께 해야 합니다.
+**미구현**: 자해 목록 검토(§2.2). 그리고 **에스컬레이션이 신뢰도 점수가 아니라 단일 판정입니다** — `임시보류_claude.md` §10 은 여러 약한 신호의 조합을 요구하는데, 지금은 발화 하나로 결정하고 나머지 신호(occupancy·rest_state·ambient)는 payload 에 싣기만 합니다. 점수화는 212 의 실측 튜닝과 함께 해야 합니다.
 
 ---
 
@@ -1156,7 +1158,7 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 
 **킬스위치 둘.** `policy.T3_CONSENT_ENABLED`(코드 상수, 기본 켜짐)와 `config.py` 의 `T3_CONSENT_ENABLED` 환경변수(운영 비상구)를 `consent_tick` 이 모두 확인합니다. 둘 중 하나만 꺼져도 질문을 올리지 않습니다 — 실기에서 이상 신고가 들어와도 재배포 없이 그날 안에 끌 수 있어야 하기 때문입니다.
 
-**범위 밖으로 명시.** 완료 조건의 마지막 항목(상위 동의 없는 어르신에게 질문 자체를 안 만드는 것)은 백엔드가 `guardianSharingConsent` 를 대화 문맥에 실어줘야 로봇이 판단할 수 있습니다. AI 워크트리에서 `backend/` 를 건드리지 않는다는 CLAUDE.md §25 원칙에 따라 별도 BE 티켓으로 남겼습니다.
+**범위 밖으로 명시.** 완료 조건의 마지막 항목(상위 동의 없는 어르신에게 질문 자체를 안 만드는 것)은 백엔드가 `guardianSharingConsent` 를 대화 문맥에 실어줘야 로봇이 판단할 수 있습니다. AI 워크트리에서 `backend/` 를 건드리지 않는다는 `임시보류_claude.md` §25 원칙에 따라 별도 BE 티켓으로 남겼습니다.
 
 미검증: 실기(Jetson) 전체. `emotion.is_conversation_sealed`·`consent_tick` 의 자연스러운 창 판정은 자동 테스트로만 확인했고, 실제 발화 리듬에서 문턱(3회)이 적절한지는 실사용 데이터로 튜닝해야 합니다.
 
@@ -1180,7 +1182,7 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 
 **킬스위치 둘 — T3 패턴 그대로.** `policy.EXTRACTION_ENABLED`(코드 상수, 기본 켜짐) + `config.py` 의 `EXTRACTION_ENABLED` 환경변수(운영 비상구). `_enqueue_extraction` 과 `extraction_flush` 둘 다 확인하고, 하나라도 꺼지면 아무것도 하지 않습니다. `.env.example` 에도 추가했습니다(`test_project_contract.py::test_env_example_covers_every_runtime_setting` 가 문서·코드 불일치를 잡아냈습니다).
 
-**백엔드 계약과 교차 확인이 필요합니다 — 미검증.** `POST /api/v1/robot/fact-candidates` 의 정확한 요청·응답 필드명은 255-be 쪽 구현이 이 시점에 확정돼 있지 않아, CLAUDE.md §12 의 계약 형태(`seniorId`/`conversationId`/`sourceMessageId`)를 따라 합리적으로 추정했습니다(`{"seniorId", "conversationId", "sourceMessageId", "facts": [{"factType", "content"}]}`). `factType` 값 목록(FAMILY/HOBBY/DAILY_LIFE/HEALTH/OTHER)도 백엔드의 `factType→targetDomain` 화이트리스트와 이름이 맞는지 확인되지 않았습니다. 255-be 가 먼저 배포돼야 하고(티켓 본문의 "배포 순서는 백엔드 → 로봇" 경고), 배포 후 실제 계약과 맞춰야 합니다.
+**백엔드 계약과 교차 확인이 필요합니다 — 미검증.** `POST /api/v1/robot/fact-candidates` 의 정확한 요청·응답 필드명은 255-be 쪽 구현이 이 시점에 확정돼 있지 않아, `임시보류_claude.md` §12 의 계약 형태(`seniorId`/`conversationId`/`sourceMessageId`)를 따라 합리적으로 추정했습니다(`{"seniorId", "conversationId", "sourceMessageId", "facts": [{"factType", "content"}]}`). `factType` 값 목록(FAMILY/HOBBY/DAILY_LIFE/HEALTH/OTHER)도 백엔드의 `factType→targetDomain` 화이트리스트와 이름이 맞는지 확인되지 않았습니다. 255-be 가 먼저 배포돼야 하고(티켓 본문의 "배포 순서는 백엔드 → 로봇" 경고), 배포 후 실제 계약과 맞춰야 합니다.
 
 **253 의 `is_conversation_sealed` 스텁을 그대로 소비했습니다.** `emotion.is_conversation_sealed` 는 253 시점 그대로이고(하드 블로커 아님, 티켓 본문의 명시적 지시), 이 값이 어긋나 있으면 "봉인된 대화에서 큐 미적재" 조건은 실질 검증되지 않습니다 — 253 의 PROGRESS 절과 같은 미검증 범위입니다.
 
@@ -1195,7 +1197,7 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 | 단일 `develop` 을 전제하는 문장이 남아 있지 않음 | ✅ §1~§15 전체 치환 |
 | 라인 간 untracked 현상이 문서에 설명됨 | ✅ §2 신규 절 추가 |
 | GitHub 과 GitLab 이 혼용되어 있지 않음 | ✅ clone 주소·MR 용어 전부 GitLab 기준으로 치환, `.github/PULL_REQUEST_TEMPLATE.md` 는 죽은 파일이라고 §6.1 에 명시(이전 여부는 범위 밖) |
-| `CLAUDE.md` §25 와의 권위 관계가 문서상 명확 | ✅ 문서 머리에 한 줄 선언 |
+| `임시보류_claude.md` §25 와의 권위 관계가 문서상 명확 | ✅ 문서 머리에 한 줄 선언 |
 
 **무엇을 고쳤나**: `CONTRIBUTING.md`(456줄) 절반 이상을 다시 썼습니다 — 전면 재작성이 아니라
 정정입니다. 커밋 위생, 리뷰 예절, 체크리스트의 취지처럼 사실과 어긋나지 않는 서술은 그대로
@@ -1237,7 +1239,7 @@ LastValue 채널) 그 `None` 이 체크포인터에 저장돼 있던 값을 매 
 | 253 푸시 후 | **정서 동의 지연 완성.** 263 의 즉시-큐잉을 걷어내고 누적 문턱(`localstore/emotion.py`, `jobs/ticks.consent_tick`)으로 바꿨다. `ConvState.pending_consent` + `localstore/consent.py` 로 "응"/"아니" 답을 규칙 판정하고 GRANTED 만 outbox 로 보낸다. "우리끼리 얘기" 봉인, 두 개의 킬스위치, `_generate` 의 `build_prompt` try 누락 수정, 온보딩 대기 중 정서 표현이 필드값으로 삼켜지던 결함도 함께 고쳤다. 상위 동의 확인은 BE 별도 티켓으로 남김 |
 | 294 푸시 후 | **CI 파이프라인이 존재하지 않는 `ai/` 를 보던 문제 수정.** `Jenkinsfile.ai`·`verify-ai.sh` 가 실제 경로 `robot/ai_chat` 을 보게 정정하고, 경로 없을 때 보류(`unstable`)가 아니라 실패(`error`)하도록 바꿨다. `verify-ai.sh` 에 없던 `ruff check` 를 신규 추가하고 pytest 에 마커 제외를 넣었다. `ci/README.md`·`pre-push-gate.sh` 주석의 낡은 `ai/` 전제를 정정했다. 트리거 브랜치 확장(develop 대상)과 pip 캐시 전략은 사람 결정 사항으로 미결 남김. 실제 Jenkins 실패 증명은 `ai-main` 릴리스 이후 선행 조건 |
 | 295 푸시 후 | **`CONTRIBUTING.md` 를 라인 4갈래 구조로 정정.** 단일 `develop` 전제·GitHub 용어·`type: 요약` 커밋 형식을 실제 관행(ai/be/fe/robot-develop, GitLab MR, `[영역](카테고리) S15P11E102-<n>`)으로 치환. "한 라인 체크아웃 시 다른 라인 소스가 untracked 로 보이는 것이 정상"이라는 신규 절 추가. 브랜치 서식(경로형/슬러그형)은 라인별 실측 분포를 그대로 두고 통일하지 않음. 코드 변경 없는 순수 문서 티켓 |
-| 309 푸시 후 | **검증 문서 4종 + CLAUDE.md §20 정합.** `VERIFICATION.md` §3 에서 이미 머지된 263·226·218·227·232 를 참조하던 항목을 걷어냈다(263/232/226/227 은 표에서 삭제, 218 은 "완료됐지만 기본값이 꺼짐"으로 정정). §0 에 백엔드 명령이 `be-develop` 전용이라는 전제를 추가하고 각 백엔드 절에 표시를 붙였다. 존재하지 않던 테스트 이름(`test_sim_clock_compresses_a_day_into_ten_seconds`)을 실제 이름으로 고쳤다. `V1~V5` 하드코딩을 `FlywayMigrationValidationTest` 자기참조로 바꿨다. `READING-ORDER.md` 에 `mvp-erd.md` 가 `be-develop` 전용이라는 것, `bootstrap.py` 와 232 이후 신규 모듈들을 추가했다. `CLAUDE.md` §20 의 "아직 없음" 구분선을 지우고 실제 트리로 승격했다. 저장소 루트의 일회성 인계 문서를 지우고 6곳의 참조를 `docs/carebot/PROGRESS.md §2.2` 로 옮겼다(스프린트 경위·선행조건 순서·자해 목록 검토 요구사항의 유래는 §8 로 보존). |
+| 309 푸시 후 | **검증 문서 4종 + `임시보류_claude.md` §20 정합.** `VERIFICATION.md` §3 에서 이미 머지된 263·226·218·227·232 를 참조하던 항목을 걷어냈다(263/232/226/227 은 표에서 삭제, 218 은 "완료됐지만 기본값이 꺼짐"으로 정정). §0 에 백엔드 명령이 `be-develop` 전용이라는 전제를 추가하고 각 백엔드 절에 표시를 붙였다. 존재하지 않던 테스트 이름(`test_sim_clock_compresses_a_day_into_ten_seconds`)을 실제 이름으로 고쳤다. `V1~V5` 하드코딩을 `FlywayMigrationValidationTest` 자기참조로 바꿨다. `READING-ORDER.md` 에 `mvp-erd.md` 가 `be-develop` 전용이라는 것, `bootstrap.py` 와 232 이후 신규 모듈들을 추가했다. `임시보류_claude.md` §20 의 "아직 없음" 구분선을 지우고 실제 트리로 승격했다. 저장소 루트의 일회성 인계 문서를 지우고 6곳의 참조를 `docs/carebot/PROGRESS.md §2.2` 로 옮겼다(스프린트 경위·선행조건 순서·자해 목록 검토 요구사항의 유래는 §8 로 보존). |
 | 255 푸시 후 | **사실 추출 큐 (로봇 절반).** `localstore/extraction.py` + `extraction_job` 표를 신설해 `memory_write` 가 반응형 턴마다(스킵 조건 7가지를 통과하면) LLM 없이 큐잉만 하고, `jobs/ticks.extraction_flush`(신규 틱, 양쪽 스케줄러 경로에 등록)가 턴 밖에서 생성 호출로 사실을 뽑아 `backend_client/fact_client.py`(신규, 실패 시 예외를 올려 conversation_client 와 반대 방향)로 제출한다. 티켓의 여섯 스킵 조건에 "서버가 메시지 id 를 못 돌려준 턴은 큐잉하지 않는다"를 추가로 넣었다(재시도 횟수 컬럼이 없어 영구 실패 행이 조용히 쌓이는 것을 막기 위해). `response_shaper → memory_write → emit` 이던 엣지를 `response_shaper → emit → memory_write` 로 재배선해, 블로킹 대화 적재 호출이 TTS 시작을 더 이상 막지 않게 했다. 백엔드 `POST /api/v1/robot/fact-candidates` 의 정확한 페이로드는 255-be 미확정 상태에서 추정했다 — 교차 확인 필요. |
 | 255 계약 정합 푸시 후 | **추정했던 페이로드가 실제 서버 계약과 달랐던 것을 바로잡음.** 255-be(위험도 분류)가 확정되면서 두 가지 어긋남이 드러났다. (1) 서버는 요청 하나당 후보 **한 건**을 만드는데 로봇은 `facts` 배열을 묶어 보내고 있었다 — 첫 건 외에는 서버에 도달조차 못 하는 구조였다. (2) 서버가 요구하는 필수 필드 여덟 개 중 `targetDomain`·`operation`·`proposedValue`·`riskLevel` 네 개가 아예 빠져 있어 bean validation 이 전부 400 으로 거절할 상태였다. `backend_client/fact_contract.py`(신규)에 추출 프롬프트 어휘(FAMILY/HOBBY/DAILY_LIFE/HEALTH/OTHER) → 서버 계약 변환표를 두고, `fact_client` 가 사실마다 한 번씩 POST 하도록 고쳤다. **HEALTH 만 CARE_RECORD 로 보낸다** — MEMORY 로 새면 서버의 `FactRiskPolicy` 가 "안전한 사실"로 보고 확인 없이 저장하기 때문이다. 목록 밖 factType 은 버리지 않고 OTHER 기억으로 떨어뜨린다(분류를 놓치는 것보다 내용을 잃는 것이 더 큰 손해). |
 | 253 상위 동의 푸시 후 | **253 의 마지막 남은 완료 조건을 닫았다.** 253 본작업은 "상위 동의 확인은 BE 별도 티켓"으로 남겨 뒀었다 — 백엔드가 `guardianSharingConsentGranted` 를 문맥에 실어주지 않아 로봇이 판단할 근거 자체가 없었기 때문이다. BE(`S15P11E102-253-be-상위동의`)가 그 필드를 `SeniorProfile` 에 추가했고, 로봇은 `consent_tick` 이 두 번째 게이트로 이 값을 확인하게 했다(`_guardian_sharing_consented`). 값의 출처는 `localstore/context_cache` 다 — 배경 틱이 백엔드를 직접 부르면 네트워크가 끊긴 동안 틱이 통째로 멈추기 때문이다. **캐시가 없거나·필드가 없거나·False 면 전부 묻지 않는다**(서버 `isGranted` 와 같은 "명시적 GRANTED 만 통과" 방향). 기존 T3 테스트 두 파일에 `guardian_sharing_granted` autouse 픽스처를 넣어, 새 게이트가 기존 검증을 "동의 없어서 0건"으로 무력화하지 않게 했다. |

@@ -288,13 +288,17 @@ trace ID, TTS 완료의 turn correlation이다. 메트릭을 추가한 것과 �
 명령을 돌리면 숫자가 다르다. 이 표가 증명하는 것은 "몇 개가 통과했는가"가 아니라 **각
 범위가 무엇을 증명하고 무엇을 증명하지 못하는가**의 구분이다.
 
+그래서 각 칸에 측정 시점을 함께 적는다. 이 문서만 읽고 다른 문서의 숫자와 비교하면 어느
+쪽이 맞는지 판단할 수 없기 때문이다 — 현재값은 [`../carebot/PROGRESS.md`](../carebot/PROGRESS.md)
+와 [`../carebot/VERIFICATION.md`](../carebot/VERIFICATION.md) 가 갖는다.
+
 | 범위 | 결과 | 실제로 증명하는 것 | 증명하지 못하는 것 |
 |---|---|---|---|
-| AI 전체 pytest | 712 passed | compiled graph, 실제 `BackendContextClient` POST 계약, intent→document flag, retrieval 상태→prompt, memory_write | 현장 마이크/스피커, 실제 Spring/Qdrant/Upstage |
+| AI 전체 pytest | 712 passed (2026-08-06 실측 — 2026-08-16 재실행에서는 `1035 tests collected`) | compiled graph, 실제 `BackendContextClient` POST 계약, intent→document flag, retrieval 상태→prompt, memory_write | 현장 마이크/스피커, 실제 Spring/Qdrant/Upstage |
 | AI Ruff | 통과 | `src`, `tests`, `evals` 정적 품질 | 런타임 외부 연동 |
-| backend 집중 테스트 | 98 passed | 저장 실패/부분복구, 권위 필터, 한국어 회귀, 문서 HTTP, health/metrics, env/OpenAPI | live Qdrant 네트워크 |
+| backend 집중 테스트 | 98 passed (2026-08-06 실측. **"집중 테스트 집합"의 정의가 이 문서 안에만 있어 그대로 재현할 수 없다** — 다시 세려면 오른쪽 "증명하는 것" 열의 범위를 `--tests` 인자로 옮겨 적어야 한다) | 저장 실패/부분복구, 권위 필터, 한국어 회귀, 문서 HTTP, health/metrics, env/OpenAPI | live Qdrant 네트워크 |
 | backend OpenAPI | 통과 | 기존 계약 문서 회귀 없음 | AI가 실제 배포 endpoint를 호출함 |
-| backend 전체 | 543 passed | 무료 단위·Spring·embedded PostgreSQL 회귀 전체 | 실제 Qdrant·Upstage 경계 |
+| backend 전체 | 543 passed (2026-08-06 실측 — 2026-08-15 기준 테스트 클래스 104개·메서드 709개, [`../carebot/PROGRESS.md`](../carebot/PROGRESS.md) §1) | 무료 단위·Spring·embedded PostgreSQL 회귀 전체 | 실제 Qdrant·Upstage 경계 |
 | Qdrant `integrationTest` | 9 passed | 공식 1.18.3 서버의 collection/upsert/search/filter/delete/recovery | 실제 Upstage 벡터 품질 |
 | 교차 모듈 RAG E2E | 1 passed | AI HTTP→Spring→PG/Qdrant→prompt→대화 저장→사실 추출→메모리 재색인→다음 턴 회상 | 실제 생성 LLM·TTS·Upstage |
 | Upstage | 미실행 | 대역으로 모델/차원/실패 계약 검증 | 실 키·과금·provider 지연 |

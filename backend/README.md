@@ -5,7 +5,9 @@ Java 17 / Spring Boot / Gradle 기반 중앙 백엔드입니다.
 1. 루트 `.env.example`을 루트 `.env`로 복사하고 값을 설정합니다. `docker compose`와
    `./gradlew bootRun`이 같은 파일을 읽습니다. (`backend/.env.example`은 백엔드 단독
    실행용 부분집합이며, 둘을 동시에 쓰지 않습니다.)
-2. 루트에서 `docker compose up -d`로 PostgreSQL + pgvector와 Mosquitto를 시작합니다.
+2. 루트에서 `docker compose up -d`로 PostgreSQL과 Mosquitto를 시작합니다. 이미지는
+   `pgvector/pgvector:0.8.5-pg17`이지만 `vector` 확장은 **쓰지 않습니다** — 임베딩은
+   Qdrant에 있습니다([`../docs/database/README.md`](../docs/database/README.md)).
 3. 이 디렉터리에서 `./gradlew bootRun`(Windows: `gradlew.bat bootRun`)을 실행합니다.
 4. `GET http://localhost:8080/api/health`로 상태를 확인합니다.
 

@@ -36,6 +36,11 @@ AI 프로젝트는 `robot/ai_chat/`에 있습니다. 디렉터리가 없을 때 
 이 기간의 EC2 배포는 `Jenkinsfile.integration` **하나만** 담당하며, 범위는 MQTT Broker,
 Backend, Frontend입니다.
 
+> ⚠️ `ci/Jenkinsfile.integration`의 머리말 주석은 아직 "`hotfix/scenario-integration` 전용"
+> 이라고 적혀 있습니다. 실제로 동작하는 값은 같은 파일의 `BOMI_RELEASE_BRANCH = 'main'`과
+> `stage('Checkout main')`이며, 주석만 `ed08b300`을 따라오지 못한 상태입니다.
+> **주석이 아니라 `BOMI_RELEASE_BRANCH`를 근거로 삼으십시오.**
+
 배포 순서와 각 단계에서 실패했을 때 운영이 어떤 상태인지는 다음과 같습니다.
 
 ```mermaid
@@ -58,7 +63,7 @@ push 한 번에 두 Job이 **동시에** 뜨고, 두 Job이 같은 `production.e
 Job이 하나면 `disableConcurrentBuilds()` 하나로 전부 직렬화되어 이 문제가 사라집니다.
 
 젯슨(`robot/ai_chat`·`bridge`·`ros2_ws`)과 파이(`iot`)는 수동 배포이므로 이 Pipeline의
-대상이 아닙니다. 해당 기계들은 이 브랜치를 직접 checkout해서 실행합니다.
+대상이 아닙니다. 해당 기계들은 `main`을 직접 checkout해서 실행합니다.
 
 ### MQTT Broker를 함께 배포합니다 (2026-08-07 추가)
 

@@ -121,7 +121,7 @@ flowchart LR
 
 ### 4.1 그렇다면 무엇이 중복을 막고 있는가
 
-현재 12테이블 ERD에는 모든 `eventId`·`commandId`를 저장할 통신 원장이 없습니다. 시나리오 시작 이벤트만 `scenario.external_event_id`에 보관합니다.
+현재 스키마(Flyway `V20`, 물리 테이블 19개)에는 모든 `eventId`·`commandId`를 저장할 통신 원장이 없습니다. 시나리오 시작 이벤트만 `scenario.external_event_id`에 보관합니다.
 
 중복을 실제로 막는 것은 백엔드 프로세스 **메모리 안의 10분짜리 기억**입니다.
 
@@ -448,7 +448,7 @@ Backend는 `SUCCEEDED`일 때만 시나리오를 진행하고, 그 밖의 종결
 - `occurredAt`이 파싱되지 않거나 필수 필드가 없으면 경고 로그를 남기고 폐기합니다.
 - **위반 시 송신자에게는 아무 응답도 가지 않습니다.** 계약 위반은 `log.warn` 후 ack 되므로 재전송도 일어나지 않습니다. 반면 핸들러 내부 오류(DB 실패 등)는 ack 없이 재던져 브로커가 QoS 1 재전송을 하게 합니다 — 두 실패의 겉모습이 다릅니다.
 - 생산자는 같은 논리 사건을 재전송할 때 같은 `eventId`를 유지합니다. 중복 제거의 실제 유효 범위는 §4.1을 참고합니다.
-- Backend는 시나리오 시작 이벤트의 `eventId`를 `scenario.external_event_id`에 저장합니다. 다른 통신 이벤트는 현재 12테이블 ERD에 수신 원장으로 보존하지 않습니다.
+- Backend는 시나리오 시작 이벤트의 `eventId`를 `scenario.external_event_id`에 저장합니다. 다른 통신 이벤트는 현재 스키마(Flyway `V20`, 물리 테이블 19개)에 수신 원장으로 보존하지 않습니다.
 - 로그에 인증 토큰이나 개인정보를 기록하지 않습니다.
 - 운영 MQTT는 인증과 TLS를 적용합니다. 실제 인증정보는 저장소에 커밋하지 않습니다.
 - Robot은 이미 처리한 `commandId`를 재실행하지 않습니다.
@@ -478,7 +478,7 @@ Backend는 `SUCCEEDED`일 때만 시나리오를 진행하고, 그 밖의 종결
 - [ ] 네 구독 패턴과 두 발행 토픽(robot/ai commands)을 설정함
 - [ ] `robotId`가 `robot.device_id`와 일치하는지 검증함(UUID인 `robot.id`가 아님)
 - [ ] 시나리오 시작 `eventId`를 `scenario.external_event_id`에 연결함
-- [ ] 현재 12테이블 모델에서도 저장하지 않는 `commandId`·기타 `eventId`를 영속화했다고 가정하지 않음
+- [ ] 현재 스키마(Flyway `V20`, 물리 테이블 19개)에서도 저장하지 않는 `commandId`·기타 `eventId`를 영속화했다고 가정하지 않음
 - [ ] 만료·실패·순서 역전 결과를 처리함
 - [ ] 최신 온습도 스냅샷과 임계 사건 저장을 분리함
 - [ ] 미등록 `sourceId`를 예외가 아니라 경고 후 폐기로 처리함(브로커 재전송 폭주 방지)

@@ -490,18 +490,20 @@ def update_state(self, person_count: int) -> PersonState:
 
 각 클래스는 역할 중심으로 분리한다.
 
-예시:
+현재 저장소의 실제 분리는 다음과 같다. 새 클래스를 만들 때 이 명명 방식을 따른다.
 
 ```text
-YoloPersonDetector
-PersonTracker
-PersonStateManager
-PostureAnalyzer
-MotionAnalyzer
-SleepStateManager
-VisionPipeline
-Ros2VisionNode
+UltralyticsByteTracker    외부 추적 모델 호출과 결과 변환 (adapters/tracking.py)
+OpenCVCamera              프레임 입력 (adapters/opencv.py)
+OpenCVDebugView           디버그 화면 (adapters/opencv.py)
+UdpFollowView             UDP 송신 + 선택적 디버그 화면 (adapters/udp.py)
+PrimaryPersonSelector     여러 명일 때 후보를 한 명으로 줄이는 전처리 (primary_person.py)
+UserTrackingService       사람 수 기반 추적 상태 머신 (tracking.py)
+FollowCommandGenerator    추종 희망 명령 판단 (follow.py)
+run_person_tracking()     위 요소를 조립하는 함수 (application.py)
 ```
+
+이름의 앞부분이 외부 기술(`Ultralytics`, `OpenCV`, `Udp`)이면 어댑터, 뒷부분이 역할(`Service`, `Generator`, `Selector`)이면 판단 로직이라는 규칙이 자연스럽게 서 있다. 자세·움직임 분석과 수면 상태 관리 클래스는 아직 없으며, 필요해질 때 같은 방식으로 추가한다.
 
 ---
 
@@ -563,9 +565,11 @@ class VisionPipeline:
 * 외부로 노출되는 속성
 
 ```python
-def detect(self, frame: np.ndarray) -> list[PersonDetection]:
+def track(self, frame: Frame) -> list[TrackedPerson]:
     ...
 ```
+
+프레임 타입에 `np.ndarray`를 직접 쓰지 않는 것에 주의한다. `ARCHITECTURE.md` §4.3이 `domain` 계층의 `numpy.ndarray` 의존을 금지하므로, 프레임은 어댑터가 정의한 타입 별칭(`Frame`)이나 `object`로 다루고 외부 객체는 `typing.Protocol`로 흉내 낸다.
 
 ---
 
@@ -583,9 +587,17 @@ def detect(frame: Any) -> list[dict]:
 좋은 예시:
 
 ```python
-def detect(frame: np.ndarray) -> list[PersonDetection]:
+def track(self, frame: Frame) -> list[TrackedPerson]:
     ...
 ```
+
+> **현재 예외 하나가 남아 있다.** `primary_person.py`의 시그니처가 느슨하다 — `select(tracked_people: Sequence, ...) -> Sequence`처럼 제네릭 파라미터가 없고, `_is_candidate(self, person, ...)`·`_center_x_of(person)`은 인자 타입이 아예 없으며 `getattr(person, "confidence", 0.0)` 같은 덕타이핑에 의존한다. mypy의 `disallow_untyped_defs`는 반환 타입만 있으면 통과하므로 이 느슨함은 검사에 잡히지 않는다. 새 코드를 이 파일에 맞추지 말고 위 규칙을 따른다.
+
+### 9.4 외부 객체는 Protocol로 흉내 낸다
+
+Ultralytics 결과 객체처럼 우리가 정의하지 않은 타입은 그대로 import하지 않고 필요한 속성만 `typing.Protocol`로 선언한다(`adapters/detection.py`, `adapters/tracking.py`에 4종이 있다). 그러면 타입 검사를 받으면서도 외부 타입이 계층 경계를 넘지 않는다.
+
+무거운 라이브러리는 **함수·생성자 안에서 지연 import**한다. `ultralytics`를 `__init__` 안에서 import하는 이유는 CLI 파싱과 단위 테스트가 모델 로딩 비용을 치르지 않게 하기 위해서다.
 
 ---
 
@@ -615,26 +627,38 @@ if state == "tracking":
 좋은 예시:
 
 ```python
-if state is PersonState.TRACKING:
+if status is TrackingResultStatus.TRACKING:
     ...
 ```
 
-Enum 예시:
+Enum 예시는 저장소의 실제 코드다(`domain/tracking.py`).
 
 ```python
 from enum import Enum
 
 
-class PersonState(str, Enum):
-    """보호대상자 탐지와 추적 과정에서 사용하는 상태를 정의한다."""
+class TrackingResultStatus(str, Enum):
+    """`docs/state-machine.md` §3이 정의한 사람 추적 상태를 표현한다."""
 
-    NOT_DETECTED = "NOT_DETECTED"
-    TRACKING = "TRACKING"
-    TEMPORARILY_LOST = "TEMPORARILY_LOST"
-    MULTIPLE_PENDING = "MULTIPLE_PENDING"
-    MULTIPLE_PERSONS = "MULTIPLE_PERSONS"
-    SINGLE_RECOVERY = "SINGLE_RECOVERY"
+    # 값은 소문자다. 이 문자열이 UDP 페이로드의 status로 그대로 나가는
+    # 외부 계약이므로, 대소문자를 바꾸면 수신측(vision_udp_bridge →
+    # person_follower)이 조용히 깨진다.
+    NOT_DETECTED = "not_detected"
+    TRACKING = "tracking"
+    TEMPORARILY_LOST = "temporarily_lost"
+    MULTIPLE_PENDING = "multiple_pending"
+    MULTIPLE_PERSONS = "multiple_persons"
+    SINGLE_RECOVERY = "single_recovery"
 ```
+
+### 10.1 프로세스 밖으로 나가는 문자열의 명명 규칙
+
+이 프로젝트에서 **파이썬 밖으로 나가는 문자열은 UDP 페이로드의 네 필드뿐**이다. 이 값들에는 별도 규칙이 적용된다.
+
+* 필드 이름은 `status` / `command` / `track_id` / `reason` 넷으로 고정이다.
+* enum 값은 **소문자 스네이크**다. 멤버 이름(대문자)이 아니라 값이 나간다.
+* `reason` 토큰도 소문자 스네이크의 영문이다(`user_far_and_centered` 등 13종). 사람이 읽을 한국어 문장을 여기 넣지 않는다 — 수신측이 분기하는 값이기 때문이다.
+* 이 값들을 바꾸는 것은 리팩터링이 아니라 **두 저장소 라인이 공유하는 계약 변경**이다. `robot/ros2_ws/src/core`의 `vision_udp_bridge`·`person_follower`와 함께 바꾼다.
 
 상태 전환 조건은 하나의 상태 관리자 또는 상태 머신에 모은다.
 
@@ -695,7 +719,20 @@ interaction_allowed = false
 movement_allowed = false
 ```
 
+**현재 구현은 같은 취지를 정지 명령으로 표현한다.** `sleep_state`·`interaction_allowed`·`movement_allowed`는 아직 존재하지 않는 값이고, 대신 `FollowCommandResult(STOP, reason, None)`이 나간다. 실패 상황을 이유별로 구분하되(`invalid_tracking_result`, `position_missing`, `track_id_missing`) 결과는 언제나 정지다.
+
 실패 상황에서 사용자가 깨어 있다고 가정하거나 대화를 허용하면 안 된다.
+
+### 11.5 `bool`을 `int`로 통과시키지 않는다
+
+파이썬에서 `bool`은 `int`의 하위 타입이라 `isinstance(True, int)`가 참이다. 그래서 사람 수나 포트 번호 검증에 `isinstance(x, int)`만 쓰면 `True`가 `1`로 조용히 통과한다. 이 프로젝트는 정수·실수를 받는 검증 지점마다 `isinstance(x, bool)`을 **먼저** 차단한다.
+
+```python
+if isinstance(person_count, bool) or not isinstance(person_count, int):
+    raise ValueError("Person count must be a non-negative integer.")
+```
+
+검증 실패를 조용히 통과시키지 않기 위한 규칙이며, 도메인 생성자·상태 머신·설정 dataclass·UDP 포트 검증 등 여러 곳에서 같은 형태로 반복된다. 새 검증을 쓸 때도 이 형태를 따른다.
 
 ---
 
@@ -761,9 +798,13 @@ logger.warning(
 
 모델 경로, 임계값, 프레임 수와 같은 값은 코드에 직접 분산해서 작성하지 않는다.
 
-설정 객체나 YAML 파일에서 관리한다.
+설정 객체나 명령행 인자로 관리한다.
 
-예시:
+**현재 이 프로젝트는 YAML 설정 파일을 쓰지 않는다.** `main.build_parser()`의 argparse 인자 12개와 모듈 상수(선정 이유 주석 포함)로 주입하며, 값 검증은 `parse_confidence`·`parse_unit_ratio` 같은 타입 함수가 파싱 시점에 수행한다. 아래 `VisionConfig` 예시는 설정 항목이 늘어 argparse로 감당하기 어려워질 때의 목표 형태이며 **아직 구현하지 않았다** — 이 예시를 보고 존재하지 않는 `VisionConfig`를 찾지 않는다.
+
+현재 실제 형태는 `PrimaryPersonConfig`(`primary_person.py`)에 가깝다. frozen dataclass에 `__post_init__` 검증을 붙이고, 값의 의미와 단위를 클래스 docstring에 적는다.
+
+예시(목표 형태):
 
 ```python
 from dataclasses import dataclass
@@ -812,12 +853,14 @@ def validate(self) -> None:
 
 ### 14.2 테스트 함수 docstring
 
-모든 테스트 함수에는 어떤 상황과 결과를 검증하는지 한국어 docstring을 작성한다.
+모든 테스트 함수에는 어떤 상황과 결과를 검증하는지 한국어 docstring을 작성한다. `scripts/check_korean_docstrings.py`가 이 규칙을 기계적으로 검사하며, `make check-docstrings`(따라서 `make check`)가 이를 선행 의존으로 건다.
 
 ```python
 def test_multiple_people_are_confirmed_after_threshold() -> None:
     """두 명 이상이 기준 프레임만큼 지속되면 다중 인물 상태가 되는지 검증한다."""
 ```
+
+> **현재 상태: 이 규칙을 어긴 파일이 하나 있다.** `tests/test_primary_person.py`의 테스트 20개와 가짜 클래스·메서드에 docstring이 없어 검사가 34건의 위반으로 실패하고, `make check`도 함께 실패한다. 이 파일은 다른 규약으로 나중에 추가된 흔적이다. 정리 전까지는 **"내 변경이 새 위반을 추가하지 않았는가"**를 완료 판정 기준으로 삼는다. 검사 실패를 자기 변경 탓으로 오해하지 않도록 여기 기록해 둔다.
 
 ---
 
@@ -985,6 +1028,8 @@ except Exception:
 
 코드를 변경했다면 관련 주석과 docstring도 반드시 함께 갱신한다.
 
+> **저장소에 실물 위반이 하나 있다.** `main.py`의 `--confidence` 도움말 문자열이 `(default: 0.5)`를 출력하지만 실제 기본값은 `DEFAULT_CONFIDENCE = 0.8`이다. 사용자가 `--help`로 보는 값과 실제 동작이 다르다. 그 파일을 고칠 일이 생기면 함께 정리한다.
+
 ### 17.6 코드 번역형 주석
 
 ```python
@@ -1000,7 +1045,7 @@ count += 1  # count를 증가시킨다.
 
 ## 18. 코드 작성 완료 전 점검표
 
-Codex와 개발자는 코드 작업을 완료하기 전에 다음 항목을 확인한다.
+코드 작업을 완료하기 전에 다음 항목을 확인한다. 마크다운 체크박스이므로 그대로 복사해 MR 본문에 붙여 쓰면 된다.
 
 ### 파일
 
@@ -1044,8 +1089,10 @@ Codex와 개발자는 코드 작업을 완료하기 전에 다음 항목을 확�
 
 ### 검증
 
-* [ ] 포맷 검사를 실행했는가?
-* [ ] 린트 검사를 실행했는가?
-* [ ] 한국어 docstring 검사를 실행했는가?
-* [ ] 관련 단위 테스트를 실행했는가?
+* [ ] 포맷 검사를 실행했는가? (`make format-check`)
+* [ ] 린트 검사를 실행했는가? (`make lint`)
+* [ ] 한국어 docstring 검사를 실행했는가? (`make check-docstrings` — 기존 34건 외에 **새 위반이 없는지** 본다. §14.2 참고)
+* [ ] 관련 단위 테스트를 실행했는가? (`make test` — `make test-unit`은 마커 없는 테스트를 수집하지 않는다)
 * [ ] 관련 통합 테스트를 실행했는가?
+
+`make check`는 `check-docstrings` 실패 때문에 현재 통과하지 않는다. 이 점검표를 문자 그대로 지키려다 막히면 §14.2의 기준을 적용한다.

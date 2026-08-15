@@ -5,10 +5,23 @@
 실서비스 표본이 아니라 모호한 한국어 표현과 오탐 사례를 의도적으로 넣은 고정
 회귀셋이므로, 100%라는 수치를 일반화 성능으로 해석하면 안 된다.
 
+평가셋 파일은 `evals/router_cases.json`이고 스크립트는 `evals/evaluate_router.py`다.
+`--legacy-model`은 제거한 임베딩 라우터를 함께 재는 옵션이므로 비교 평가용 선택
+의존성이 먼저 필요하다. 이 의존성은 torch를 끌어오므로 젯슨이 아니라 개발 PC에서
+설치한다.
+
 ```powershell
+python -m pip install -e ".[router-eval]"
 $env:HF_HUB_OFFLINE='1'
 $env:TRANSFORMERS_OFFLINE='1'
 .\venv\Scripts\python.exe evals\evaluate_router.py --legacy-model
+```
+
+현재 규칙만 재려면 `--legacy-model` 없이 실행하며 추가 의존성이 필요 없다. 회귀
+확인은 이쪽이 일상이다.
+
+```powershell
+.\venv\Scripts\python.exe evals\evaluate_router.py
 ```
 
 | 구현 | 정확도 | macro-F1 | 초기화 | working set 증가 | 의료 중앙값 | 날씨 중앙값 |
@@ -16,6 +29,9 @@ $env:TRANSFORMERS_OFFLINE='1'
 | 기존 SentenceTransformer | 71.67% | 0.7014 | 6.42초 | 732.3MB | 22.196ms | 22.085ms |
 | 현재 주제+조회 의도 규칙 | 100% | 1.0000 | import 0.0052초 | 0.8MB | 0.005ms | 0.004ms |
 | 단순 키워드 기준선 | 71.67% | 0.6975 | 해당 없음 | 해당 없음 | 해당 없음 | 해당 없음 |
+
+"working set 증가"는 라우터를 올린 뒤 프로세스 상주 메모리가 늘어난 양이다. 8GB
+장치에서 이 수치가 이 판단의 핵심 근거였다.
 
 기존 모델은 의료 정밀도 94.44%라는 장점이 있었지만 의료 재현율은 85%, 날씨
 재현율은 35%였다. 전체 정확도는 단순 키워드와 같았고, 8GB 장치에서 약 732MB를

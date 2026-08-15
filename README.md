@@ -79,7 +79,7 @@ flowchart LR
   AI <-->|사람 추적 UDP| Vision["Vision AI"]
   Vision -->|추적 좌표| Robot
   FE["React 보호자 대시보드"] -->|REST 폴링 1초| BE
-  BE --> DB[("PostgreSQL / pgvector")]
+  BE --> DB[("PostgreSQL 17")]
   BE --> Vector[("Qdrant")]
 ```
 
@@ -100,7 +100,7 @@ flowchart LR
 | Backend | Spring Boot 3.4, Java 17, Gradle, JPA, Flyway, MQTT |
 | AI | Python 3.10~3.12, STT/TTS, 대화 런타임(LangGraph), Vision |
 | Robot | Ubuntu 22.04, ROS 2 Humble, Nav2, SLAM Toolbox |
-| Data | PostgreSQL 17, pgvector, Qdrant |
+| Data | PostgreSQL 17, Qdrant (의미 검색 — 임베딩이 4096차원이라 pgvector 인덱스 불가) |
 | IoT / Message | Raspberry Pi 5, Eclipse Mosquitto, Zigbee |
 | Hardware | Jetson Orin Nano, LiDAR, Camera, IMU |
 | Infra | Docker Compose, Jenkins, Nginx |

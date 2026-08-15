@@ -4,34 +4,35 @@
 
 변경 대상에 더 가까운 `AGENTS.md`가 있으면 함께 적용하며, 충돌할 때는 더 가까운 문서를 우선한다. `robot/ai_vision/` 작업은 해당 디렉터리의 `AGENTS.md`와 그 문서가 지정한 설계 문서를 따른다.
 
+**`robot/ai_chat/`은 이 문서의 적용 대상이 아니다.** ROS 2 패키지가 아니라 독립 Python 패키지이며, 저장소 루트 [`CLAUDE.md`](../CLAUDE.md)와 [`ai_chat/README.md`](ai_chat/README.md)를 따른다. 대화 설계의 권위 문서는 [`임시보류_claude.md`](../임시보류_claude.md)다.
+
 [`CLAUDE.md`](CLAUDE.md)는 Claude 계열 도구를 위한 연결 문서다. 작업 규칙의 원본은 이 문서다.
+
+**커밋 규율: 한 커밋은 한 라인의 경로만 건드린다.** `robot/ai_chat/**` ↔ `ros2_ws/**`·`iot/**` ↔ `backend/**`를 한 커밋에 섞지 않는다. 라인별 cherry-pick 환류를 기계적으로 만드는 규칙이며 예외가 없다(저장소 루트 `CLAUDE.md`).
 
 ## 1. 개발 환경과 현재 상태
 
 기본 환경은 Ubuntu 22.04, ROS 2 Humble, Python 3.10이며 `colcon`으로 빌드한다.
 
-주행 관련 구현과 향후 실제 하드웨어 제어는 `robot/ros2_ws/src/core/` 패키지가 담당한다.
+주행과 실제 하드웨어 제어는 `robot/ros2_ws/src/core/` 패키지가, 백엔드 MQTT 명령의 수신과 Nav2 주행은 `robot/ros2_ws/src/bridge/`가 담당한다.
 
-| 실행 진입점 | 현재 동작 |
-| --- | --- |
-| `status_publisher` | `/bomi/status`에 `bomi is ready`를 1초마다 발행 |
-| `keyboard_teleop` | 키보드 입력을 `/cmd_vel`의 `geometry_msgs/Twist`로 발행 |
-| `mock_motor_driver` | `/cmd_vel`을 구독해 값을 로그로 출력 |
-| `joy_cmd_filter` | 조이스틱 입력을 `/cmd_vel` 명령으로 변환 |
-| `nav2_waypoint_patrol` | YAML 순찰 지점을 Nav2 `NavigateToPose` 목표로 순서대로 전송 |
-| `vision_udp_bridge` | AI 비전의 UDP 추적 결과를 `/vision/follow_result`로 발행 |
-| `person_follower` | 추적 결과와 LiDAR 스캔으로 속도 명령 생성, 근접 시 정지 |
-| `scan_sanitizer` | 각도 범위가 360°가 아닌 LaserScan을 버리고 나머지를 다시 발행 |
+**실행 진입점 목록은 여기서 관리하지 않는다.** 정본은 `core/setup.py`의 `console_scripts`이고, 설명은 [`robot/README.md`](README.md)의 "실행 진입점" 절에 있다. 같은 사실을 두 곳에 적으면 반드시 갈라진다 — §4 말미가 요구하는 "README를 실제 구현과 함께 갱신한다"도 같은 이유다.
 
-실제 하드웨어 제어는 아직 Mock 단계다. 실제 모터 드라이버, Pico 통신, 하드웨어 YAML 설정, 명령 타임아웃과 비상 정지는 구현되지 않았다. `mock_motor_driver`도 메시지를 기록할 뿐 GPIO나 PWM을 제어하지 않는다.
+실물 제어 경로는 구현·실기 검증을 마쳤다. `pico_driver`가 Pico H와 시리얼로 통신하며 `/cmd_vel`을 좌우 바퀴 목표 속도로 바꾸고 `/odom`·`/imu`를 발행한다. 하드웨어 값은 `core/config/pico_driver.yaml`에서 주입하고, 명령 타임아웃(`cmd_vel_timeout_sec` 기본 0.5초)과 텔레메트리 끊김(`telemetry_timeout_sec` 기본 1.0초)에서 정지한다. 펌웨어 워치독은 300 ms다(`robot/docs/pico-serial-protocol.md`).
 
-속도 명령원은 각자 별도 토픽에 발행하고 `twist_mux`가 우선순위로 중재해 최종 `/cmd_vel`을 만든다. 현재 `core/config/twist_mux.yaml`에는 `/cmd_vel_keyboard`와 `/cmd_vel_joy`만 등록되어 있다. `person_follower`의 기본 출력 `/cmd_vel_follow`와 Nav2의 출력은 아직 등록되지 않았으므로, 두 기능을 동시에 실행할 때 어느 명령이 로봇에 전달되는지 확인한 뒤 사용한다.
+`mock_motor_driver`는 남아 있지만 하드웨어 없는 배선 확인용이며 메시지를 기록할 뿐 GPIO나 PWM을 제어하지 않는다.
+
+속도 명령원은 각자 별도 토픽에 발행하고 `twist_mux`가 우선순위로 중재해 최종 `/cmd_vel`을 만든다. 현재 `core/config/twist_mux.yaml`에는 다섯 입력이 등록되어 있다 — joystick(100) > wake_search(90) > person_follow(85) > backend_test(75) > keyboard(50). 우선순위 선정 근거는 그 파일 주석에 있으며, 특히 wake_search가 person_follow보다 높은 이유(아직 사람을 못 찾은 추종기가 0을 계속 내보내 탐색 회전을 덮었던 2026-08-09 실기 사고)를 바꾸기 전에 반드시 읽는다.
+
+Nav2의 출력은 여전히 mux에 등록되어 있지 않고 `/cmd_vel`로 직접 나간다. Nav2와 추종·탐색을 동시에 띄우지 않는다.
 
 명령원을 추가하거나 출력 토픽을 바꿀 때는 `/cmd_vel`에 두 개 이상이 동시에 발행되지 않는지 확인한다.
 
-차량 하드웨어는 조립과 모터 구동 확인까지 완료했고 엔코더 값 확인과 IMU 설정이 진행 중이다. Odometry 보정과 실제 드라이버는 아직 남아 있다. 단계별 상태는 `robot/docs/hardware-control.md`를 따른다.
+차량 하드웨어는 조립·모터 구동 확인·엔코더 계수(CPR 979) 확정·IMU EKF 융합(자이로 바이어스 자동 보정 포함)까지 끝났고, Odometry 보정도 완료했다. 단계별 상태는 `robot/docs/hardware-control.md`를 따른다.
 
 `core/core/__pycache__/`, `ros2_ws/{build,install,log}/`과 별도 테스트에서 생성한 `{build,install,log}_core_test/`는 소스나 현재 기능으로 취급하지 않는다.
+
+**`core/` 패키지 루트에는 *추적되는* 중복 사본이 있다.** 복구 머지 사고로 `core/person_follower.py`·`core/twist_mux.yaml` 등이 패키지 루트에도 남았고 `core/core/`·`core/config/` 쪽과 바이트가 같다. 로컬 생성물이 아니라 git이 추적하는 소스이므로 §5-3의 "추적되는 소스와 로컬 생성물" 구분만으로는 걸러지지 않는다. **빌드에 쓰이는 것은 `core/core/`와 `core/config/` 쪽이며, 파일을 고칠 때는 그쪽을 고친다.**
 
 ## 2. 이동·제어 기준
 
@@ -46,7 +47,7 @@
 
 `linear.x`와 `angular.z`는 PWM에 직접 복사하지 않고 좌우 바퀴 목표 속도로 변환하는 순수 로직을 거친다. 차동구동이므로 `linear.x == 0`이고 `angular.z != 0`인 명령은 제자리 회전으로 변환하며, 두 값이 모두 0이면 좌우 모터 출력을 0으로 만든다.
 
-좌우 변환에는 바퀴 지름과 좌우 바퀴 간 거리가 필요하다. 두 값은 아직 측정하지 않았으므로 임시값을 코드에 넣지 않고 설정에서 주입받아 시작 시 검증한다.
+좌우 변환에는 바퀴 1회전 이동거리와 좌우 바퀴 간 거리가 필요하다. 두 값은 실측했고 `core/config/pico_driver.yaml`에 있다 — `distance_per_rev_m: 0.1929`, `track_width_m: 0.278`. 뒤 값은 기하학적 거리(0.257 m)가 아니라 스키드 스티어의 유효 트레드이며 2026-08-06 자이로 실측으로 얻었다(측정 근거는 그 파일 주석에 있다). 값은 여전히 코드에 넣지 않고 설정에서 주입받아 시작 시 검증한다.
 
 현재 `keyboard_teleop`의 속도와 키 매핑은 Mock 검증용이며 실차 보정값이 아니다.
 
@@ -84,17 +85,21 @@
 4. `robot/docs/hardware-control.md`의 진행 상태와 아직 확정하지 않은 값
 5. 기존 안전 정지 경로
 
-현재 `core/test/`에는 패키지 생성 시 만들어진 lint 테스트만 있다. 동작을 변경하거나 기능을 추가하면 외부에서 관찰되는 동작을 검증하는 테스트를 함께 작성한다.
+현재 `core/test/`에는 테스트 파일 20개가 있다. 그중 3개(`test_copyright`·`test_flake8`·`test_pep257`)는 패키지 생성 시 만들어진 lint 테스트이고, 나머지는 Pico 프로토콜·드라이버, 사람 추종, 회전 탐색, waypoint 경로, Nav2 설정 등 동작을 검증한다. 동작을 변경하거나 기능을 추가하면 외부에서 관찰되는 동작을 검증하는 테스트를 함께 작성하고, 기존 회귀 스위트를 함께 돌린다.
 
 기본 검증 명령은 다음과 같다.
 
 ```bash
 cd robot/ros2_ws
 source /opt/ros/humble/setup.bash
-colcon build --symlink-install
-colcon test --packages-select core
+colcon build --symlink-install --packages-select core bridge
+colcon test --packages-select core bridge
 colcon test-result --verbose
 ```
+
+`bridge`를 빌드 대상에서 빼면 waypoint 좌표를 `core`의 ament share에서 찾지 못해 모든 NAVIGATE가 FAILED로 끝난다. 두 패키지는 항상 함께 빌드한다.
+
+`robot/ai_chat/`은 `colcon` 대상이 아니다. 자체 venv에서 pytest로 검증하며, **젯슨에서는 `env -u PYTHONPATH`가 필요하다** — ROS 2가 주입한 `PYTHONPATH`의 lark·numpy가 pytest 수집 단계에서 인터프리터를 죽인다. 반대로 로봇을 *구동*할 때는 `PYTHONPATH`를 유지해야 한다. 진입점마다 구분한다.
 
 이동·제어 동작을 변경할 때는 작업 범위에 해당하는 항목을 검증한다.
 
