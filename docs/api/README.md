@@ -6,32 +6,87 @@ BOMI의 서비스 간 계약을 한 진입점에서 열람하기 위한 안내�
 
 OpenAPI와 AsyncAPI의 브라우저 렌더링용 스펙 파일은 Spring Boot 정적 리소스 디렉터리에서 각각 한 벌만 관리합니다. 이는 동일 스펙의 YAML·JSON 사본을 이중 관리하지 않는다는 뜻이며, 시나리오 메시지 의미의 계약 우선순위는 위 기준을 따릅니다.
 
+### 한 장으로 보는 이음새
+
+아래 표들은 모두 이 그림의 각주입니다. **누가 무엇으로 붙어 있는지**가 먼저 보여야 합니다.
+
+```mermaid
+graph LR
+    subgraph 로봇["젯슨 (한 대)"]
+        AC["ai_chat<br/>대화·웨이크워드"]
+        AV["ai_vision<br/>사람 추적"]
+        BR["bridge<br/>MQTT ↔ Nav2"]
+    end
+    SAAS["외부 SaaS<br/>Typecast · VITO · Gemini"]
+    FE["가디언웹 (SPA)"]
+    OP["운영자 도구"]
+    IOT["IoT 파이<br/>문·온습도"]
+    BE["Spring Boot<br/>i15e102.p.ssafy.io"]
+
+    AC -->|"REST + X-Robot-Shared-Secret<br/>[BE-Robot]"| BE
+    FE -->|"REST 무인증<br/>[BE-Guardian]"| BE
+    OP -->|"REST + X-Operator-Shared-Secret<br/>[BE-Operator]"| BE
+    AC <-->|"MQTT · AsyncAPI"| BE
+    BR <-->|"MQTT · AsyncAPI"| BE
+    IOT -->|"MQTT · AsyncAPI"| BE
+    AV -->|"UDP:5005 JSON<br/>스펙 문서 없음"| BR
+    AC -->|HTTPS| SAAS
+```
+
 ## 2. 도메인별 문서 위치
 
 | 도메인 | 무엇을 보는가 | 어디서 보는가 |
 | --- | --- | --- |
 | Backend — 로봇·AI 채널 | 로봇(`ai_chat`)이 호출하는 REST API | Swagger UI → `[BE-Robot] 로봇·AI 채널 API` |
 | Backend — 가디언웹 채널 | 가디언웹이 호출하는 REST API | Swagger UI → `[BE-Guardian] 가디언웹 채널 API` |
-| Backend — 운영자 채널 | 현장 안전 확인 뒤 Robot mode를 복구하는 제한 API | Swagger UI → `[BE-Operator] 운영자 채널 API` |
+| Backend — 운영자 채널 | 현장 안전 확인 뒤 시나리오를 강제 종료하거나 Robot mode를 복구하는 제한 API 3종 | Swagger UI → `[BE-Operator] 운영자 안전 복구 API` |
 | Backend — 전체 | 위 세 채널과 운영용 엔드포인트 전부 | Swagger UI → `[BE-All] 백엔드 전체 API` |
-| AI Vision | 인식 요청·결과 Callback 계약 | Swagger UI → `[AI-Vision] ...` (**미구현 계약**) |
-| AI Chat (대화·음성) | 문장·TTS 생성 계약 | Swagger UI → `[AI-Chat] ...` (**미구현 계약**) |
+| AI Vision (REST 안) | 인식 요청·결과 Callback 계약 | Swagger UI → `[AI-Vision] ...` (**채택되지 않은 계약** — 아래 설명) |
+| AI Chat (REST 안) | 문장·TTS 생성 계약 | Swagger UI → `[AI-Chat] ...` (**채택되지 않은 계약** — 아래 설명) |
 | IoT·Robot·AI 주행 | MQTT 토픽과 메시지 계약 | AsyncAPI 뷰어 `/asyncapi/mqtt/` |
 | 스트리밍 (예정) | WebSocket 메시지 계약 | `/asyncapi/websocket/` (**구현체 없음**) |
 | 프론트엔드 | 자체 제공 API가 없습니다 | 해당 없음 |
 
-### AI 서비스는 왜 REST 스펙이 "미구현 계약"인가
+### AI 서비스의 REST 스펙은 왜 호출할 수 없는가
 
-`robot/ai_chat`은 HTTP 서버가 아니라 **MQTT 소비자이자 Backend 호출자**입니다. `robot/ai_vision`은 아직 빈 패키지입니다. 따라서 두 도메인의 OpenAPI 문서는 합의된 계약일 뿐 지금 호출할 수 있는 API가 아니며, 제목에 `(계약·미구현)`을 붙여 구분합니다.
+두 스펙은 "아직 안 만든 것"이 아니라 **채택되지 않은 설계**입니다. 두 AI 라인 모두
+구현은 끝났지만, 계약서가 그린 HTTP 서버가 아닌 다른 이음새로 붙었습니다.
 
-`ai_chat`이 **호출하는** API는 실제로 동작하며 `[BE-Robot]` 그룹에 있습니다. `ai_chat`이 **구독·발행하는** 메시지는 AsyncAPI 뷰어에 있습니다.
+| 스펙 | 스펙이 그린 모습 | 실제로 구현된 모습 |
+| --- | --- | --- |
+| `vision-ai.openapi.yaml` | Spring Boot → AI Vision `POST /api/v1/recognitions` | `robot/ai_vision`이 UDP(포트 5005)로 `{status, command, track_id, reason}` JSON을 ROS2 `vision_udp_bridge`에 직접 보냅니다. HTTP 서버가 없습니다 |
+| `vision-callback.openapi.yaml` | AI Vision → Spring Boot `POST /api/v1/integrations/vision/results` | 수신 컨트롤러 자체가 없습니다. 인식 결과는 백엔드로 올라가지 않고 로봇 안에서 소비됩니다 |
+| `voice-ai.openapi.yaml` | Spring Boot·Robot → 자체 대화·음성 AI 서버 | `robot/ai_chat`이 외부 SaaS를 직접 호출합니다 — TTS는 Typecast, STT는 VITO, LLM은 Gemini(SSAFY GMS 프록시) |
+
+따라서 세 스펙은 **읽을 수는 있으나 호출할 수 없고, 지금 코드의 근거도 아닙니다.**
+표시명 끝의 `(계약·미구현)`은 그 표식이며, 되살릴지 폐기할지는 별도 판단이 필요합니다.
+
+`robot/ai_chat`은 HTTP 서버가 아니라 **MQTT 소비자이자 Backend 호출자**입니다.
+`ai_chat`이 **호출하는** 백엔드 API는 실제로 동작하며 `[BE-Robot]` 그룹에 있습니다.
+`ai_chat`이 **구독·발행하는** 메시지는 AsyncAPI 뷰어에 있습니다.
 
 | `ai_chat` 모듈 | 호출 대상 |
 | --- | --- |
 | `context_client` | `POST /api/v1/seniors/{seniorId}/conversation-context` |
-| `contract_client` | `/api/v1/robot/onboarding` |
+| `door_client` | `POST /api/v1/seniors/{seniorId}/door-events` |
 | `conversation_client` | `/api/v1/robot/conversation-events` |
-| `door_client` | `/api/v1/seniors/{seniorId}/door-events` |
+| `contract_client` | `/api/v1/robot/onboarding/sessions`, `.../{sessionId}/next`, `.../{sessionId}/answers`, `/api/v1/robot/clarifications/active`, `.../{candidateId}/answer` |
+| `fact_client` | `/api/v1/robot/fact-candidates`, `.../cancel` |
+| `notify/backend_notifier` | `/api/v1/robot/guardian-alerts` |
+
+### 채널별 인증 — Swagger `Try it out`이 배포에서 실패하는 이유
+
+| 채널 | 필요한 헤더 | Swagger UI 입력란 |
+| --- | --- | --- |
+| `[BE-Robot]` (`/api/v1/robot/**`, `/api/v1/seniors/**`) | `X-Robot-Shared-Secret` | **없음** |
+| `[BE-Guardian]` | 없음 | 해당 없음 |
+| `[BE-Operator]` | `X-Operator-Shared-Secret` | 있음 |
+
+`ROBOT_SHARED_SECRET`이 설정된 배포에서는 로봇 채널이 헤더 없이는 `401`입니다. 그런데 이
+헤더에는 OpenAPI `@SecurityScheme`이 없어 Swagger UI에 입력란조차 나오지 않습니다(스킴이
+선언된 것은 운영자 채널뿐입니다). 결과적으로 **`[BE-Robot]` 그룹은 GET이라도 배포 환경의
+Swagger에서 401로 실패합니다.** 계약을 읽는 용도로만 쓰고, 실제 호출은 로봇 런타임이나
+헤더를 직접 붙일 수 있는 도구로 하십시오.
 
 ## 3. 팀 공용 배포 주소
 
@@ -64,13 +119,38 @@ https://i15e102.p.ssafy.io/docs/
 /openapi/bomi-mqtt.asyncapi.json
 ```
 
-Swagger UI의 `Try it out`은 **GET에만 허용됩니다.** POST·PUT·PATCH·DELETE 계약은 문서에 보이지만 실행 버튼은 비활성입니다. 운영자 Robot mode 복구 API는 별도 shared-secret 인증이 필요한 POST이며, 실물 환경에서는 Swagger가 아니라 통제된 운영 도구로만 호출합니다.
+Swagger UI의 `Try it out`은 **GET에만 허용됩니다.** POST·PUT·PATCH·DELETE 계약은 문서에 보이지만 실행 버튼은 비활성입니다. 운영자 채널 API는 별도 shared-secret 인증이 필요한 POST이며, 실물 환경에서는 Swagger가 아니라 통제된 운영 도구로만 호출합니다. 그 도구는 **이미 만들어져 배포돼 있습니다** — `backend/tools/operator_console`(Streamlit)이 basic auth 뒤 `/operator-console/` 경로에 있고, `OPERATOR_SHARED_SECRET`은 그 컨테이너가 쥡니다. 새로 만들지 말고 이것을 쓰십시오.
 
 MQTT와 WebSocket은 HTTP가 아니라 브라우저에서 발행·구독 시험을 할 수 없습니다. 두 페이지는 계약 열람 전용입니다.
 
 배포 문서는 배포된 Backend 이미지에 포함된 파일이므로, 최신 Git 변경은 Backend가 다시 배포된 뒤 반영됩니다.
 
-### 운영자 Robot mode 복구 API
+### 운영자 채널 API 3종
+
+운영자 채널에는 엔드포인트가 세 개 있고, **순서가 곧 설명**입니다. 조회로 상태를 확인하고,
+필요하면 시나리오를 강제로 끝내고(이때 mode는 `SAFE_STOP`이 됩니다), 현장에서 물리 안전을
+확인한 뒤에야 `IDLE`로 되돌립니다.
+
+```mermaid
+flowchart TD
+    A["로봇이 멈췄다 / 시나리오가 안 끝난다"] --> B["GET runtime-state<br/>mode와 활성 시나리오 확인"]
+    B --> C{"활성 시나리오가 있는가"}
+    C -->|있음| D["POST active-scenario-cancellations<br/>시나리오 종료 · mode → SAFE_STOP<br/>주행 중이면 MQTT CANCEL 발행"]
+    C -->|"없고 mode가 SAFE_STOP"| E
+    D --> F["현장에서 로봇이 실제로 멈춘 것을 눈으로 확인"]
+    F --> E["POST mode-recoveries<br/>physicalSafetyConfirmed=true<br/>mode → IDLE · MQTT 발행 없음"]
+    E --> G["다음 시나리오 시작 가능"]
+```
+
+| 엔드포인트 | 하는 일 | mode 변화 | MQTT |
+| --- | --- | --- | --- |
+| `GET /api/v1/operator/robots/{deviceId}/runtime-state` | 현재 mode와 활성 시나리오 조회 | 없음 | 없음 |
+| `POST /api/v1/operator/robots/{deviceId}/active-scenario-cancellations` | 끝나지 않는 시나리오를 강제 종료 | → `SAFE_STOP` | 주행 중이면 `CANCEL` 발행 |
+| `POST /api/v1/operator/robots/{deviceId}/mode-recoveries` | 안전 확인 뒤 정상 복귀 | → `IDLE` | 발행하지 않음 |
+
+절차의 자세한 내용은 [`../scenario/operator-navigation-cancellation.md`](../scenario/operator-navigation-cancellation.md)에 있습니다.
+
+#### mode 복구 API 상세
 
 ```http
 POST /api/v1/operator/robots/{deviceId}/mode-recoveries
@@ -129,6 +209,7 @@ Content-Type: application/json
 ```text
 [BE-Robot]     백엔드 · 로봇·AI 채널
 [BE-Guardian]  백엔드 · 가디언웹 채널
+[BE-Operator]  백엔드 · 운영자 안전 복구
 [BE-All]       백엔드 · 전체
 [AI-Vision]    AI Vision
 [AI-Chat]      대화·음성 AI
@@ -153,7 +234,7 @@ Content-Type: application/json
 
 1. `backend/src/main/resources/application.yml` — `springdoc.swagger-ui.urls`에 표시명과 경로를 추가합니다.
 2. `infra/nginx/conf.d/bomi.conf` — 문서 `location` 정규식의 허용 목록에 파일명을 추가합니다.
-3. `docs/api/README.md` — 위 2절 표와 4절 표에 한 줄씩 추가합니다.
+3. `docs/api/README.md` — 위 2절 표와 4절 표에 한 줄씩 추가하고, **11절의 노출 경로 목록에도** 추가합니다(그 목록은 nginx 허용 목록의 사본이라 빠뜨리면 문서가 곧바로 거짓이 됩니다).
 
 `springdoc.group-configs`로 만든 **그룹**은 `swagger-ui.urls`에 적지 않습니다. springdoc이 `display-name`으로 이미 드롭다운에 넣으므로, 또 적으면 같은 항목이 두 번 뜹니다. `OpenApiDocumentationTest.dropdownHasNoDuplicateEntries` 가 이를 잡습니다.
 
@@ -221,8 +302,8 @@ AsyncAPI 명세에는 토픽 주소, 발행자·구독자, 메시지별 필드�
 
 문서를 제공하는 주소와 각 API를 실제로 호출하는 주소는 구분합니다.
 
-- Vision Callback은 배포 Backend인 `https://i15e102.p.ssafy.io`를 사용합니다.
-- AI Vision과 대화·음성 AI는 아직 구현체가 없으며, 명세의 `localhost` 주소는 구현 시점의 예시입니다.
+- Vision Callback 스펙은 수신 주소로 배포 Backend인 `https://i15e102.p.ssafy.io`를 적고 있지만, **그 컨트롤러는 아직 없습니다** — `/api/v1/integrations/vision/results`는 백엔드에 구현되어 있지 않습니다.
+- AI Vision과 대화·음성 AI의 **REST 서버**는 만들지 않았고 앞으로도 계획이 없습니다(2절 참고). 명세의 `localhost` 주소는 채택되지 않은 설계의 예시입니다.
 - AI 서버의 실제 주소와 인증정보는 환경변수 또는 비밀 저장소로 주입하며 Git에 저장하지 않습니다.
 
 ## 9. 변경 규칙
@@ -280,11 +361,12 @@ AsyncAPI 뷰어가 렌더링하는 기계 판독 스펙의 원본은 YAML 하나
 - 스펙과 예시에는 실제 서비스 토큰이나 비밀번호를 기록하지 않습니다.
 - 문서에 새 스펙을 추가하면 6절의 세 곳을 함께 변경합니다.
 
-## 12. 구현 전 합의 항목
+## 12. 남은 합의 항목
 
-- [ ] AI Vision이 인식 요청의 `requestId`, `scenarioId`, `robotId`를 그대로 Callback에 반환함
-- [ ] AI Vision과 Backend가 `PERSON_DETECTED`, `PERSON_NOT_FOUND`, `INFERENCE_FAILED`의 의미에 합의함
-- [ ] 대화·음성 AI가 같은 `requestId` 재요청에 동일한 결과를 반환함
-- [ ] Robot이 AI 서버의 `audioUri`에 접근할 네트워크와 내부 인증 방식을 확인함
 - [ ] 모든 서비스가 타임존을 포함한 ISO 8601 시각을 사용함
 - [ ] 내부 서비스 토큰을 저장소가 아닌 환경변수 또는 비밀 저장소로 주입함
+
+> 원래 이 목록에는 네 항목이 더 있었습니다 — AI Vision의 `requestId` 반환과 결과 enum 합의,
+> 대화·음성 AI의 멱등 응답, `audioUri` 접근 방식. 넷 다 **REST 경로를 전제로 한 항목**인데
+> 그 경로는 채택되지 않았으므로(2절 참고) 합의할 대상이 사라졌습니다. REST 스펙을 되살리기로
+> 결정한다면 그때 함께 되살리십시오.

@@ -1,4 +1,4 @@
-# 자연스러운 대화 — 목표 아키텍처 (target-architecture)
+# 자연스러운 대화 — 목표 구조
 
 작성일: 2026-08-06 · 전제: [current-state-audit.md](current-state-audit.md), [implementation-plan.md](implementation-plan.md)
 

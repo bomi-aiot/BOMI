@@ -1,4 +1,4 @@
-# Robot·IoT 통합 가이드
+# 로봇·IoT 실기 통합 가이드
 
 > 최종 메시지 기준은 [`scenario-contract-v1.md`](../mqtt/scenario-contract-v1.md)와
 > [`bomi-mqtt.asyncapi.yaml`](../../backend/src/main/resources/static/openapi/bomi-mqtt.asyncapi.yaml)이다.

@@ -1,4 +1,4 @@
-# 자연스러운 대화 — 구현 계획 (implementation-plan)
+# 자연스러운 대화 — 구현 계획
 
 작성일: 2026-08-06 · 전제: [current-state-audit.md](current-state-audit.md)
 
