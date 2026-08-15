@@ -1,18 +1,84 @@
-# Infrastructure
+# 인프라 설정과 운영 런북
 
-BOMI의 Docker Compose, PostgreSQL, Mosquitto, Nginx, Jenkins 설정을 관리합니다.
-공개 가능한 설정만 Git으로 관리하고 실제 비밀번호와 API 키는 EC2의
-`/home/ubuntu/bomi/secrets`에만 저장합니다.
+BOMI의 Docker Compose, PostgreSQL, Qdrant, Mosquitto, Nginx, Jenkins, 그리고 운영 도구
+3종(운영자 콘솔·DB 뷰어·웨이포인트 편집기) 설정을 관리합니다. 공개 가능한 설정만 Git으로
+관리하고 실제 비밀번호와 API 키는 EC2의 `/home/ubuntu/bomi/secrets`에만 저장합니다.
+
+이 문서는 **PostgreSQL·Backend·Nginx/HTTPS 런북**입니다. 다른 주제는 별도 문서가 있습니다.
+
+| 주제 | 문서 |
+| --- | --- |
+| Frontend 컨테이너 | [`FRONTEND.md`](FRONTEND.md) |
+| RAG·임베딩·Qdrant | [`RAG_OPERATIONS.md`](RAG_OPERATIONS.md) |
+| Jenkins | [`jenkins/README.md`](jenkins/README.md) |
+| MQTT 브로커 | [`../scripts/deploy/MQTT_DEPLOYMENT.md`](../scripts/deploy/MQTT_DEPLOYMENT.md) |
+| 자동 배포 파이프라인 | [`../ci/README.md`](../ci/README.md) |
+
+## 서비스와 네트워크 지도
+
+```mermaid
+flowchart TB
+  subgraph host["EC2 호스트에 공개된 포트"]
+    P80["80 / 443 → nginx"]
+    P8501["127.0.0.1:8501 → operator-console"]
+    P8883["8883 → mosquitto (프로젝트 bomi-mqtt)"]
+  end
+  P80 --> NG["nginx"]
+  subgraph proxy["bomi-proxy-net"]
+    NG --> FEC["frontend:8080"]
+    NG --> BE["backend:8080"]
+    NG --> OC["operator-console:8501"]
+    NG --> WE["waypoint-editor:8501"]
+    NG --> DV["db-viewer:8501"]
+    NG --> JK["jenkins:8080"]
+  end
+  subgraph internal["bomi-backend-net (internal: true)"]
+    BE --> PG[("postgres:5432")]
+    BE --> QD[("qdrant:6334")]
+    OC --> BE
+    DV --> PG
+  end
+  BE -->|bomi-mqtt-net| MQ["mosquitto:1883"]
+```
+
+**nginx는 backend·operator-console·waypoint-editor·db-viewer·frontend 다섯 개 모두의
+healthy를 `depends_on`으로 요구합니다.** 도구 컨테이너 하나가 불건강하면 리버스 프록시
+전체가 뜨지 않습니다. 장애 시 가장 먼저 확인할 사실입니다.
+
+Qdrant는 이미지 `qdrant/qdrant:v1.18.3`, 저장소는 named volume `bomi-qdrant-storage`이며
+호스트 포트를 공개하지 않습니다. `../scripts/deploy/deploy-backend.sh`가 배포 중에 별도로
+health를 확인합니다.
 
 ## 환경 구분
 
-- `../docker-compose.yml`: 로컬 개발용 구성
-- `compose.prod.yml`: EC2 운영용 구성
-- `production.env.example`: 운영 환경변수 형식 예제
-- `docker/postgres/init/`: PostgreSQL 최초 초기화 SQL
-- `docker/mosquitto/`: Mosquitto 설정
+- `../docker-compose.yml`: 로컬 개발용 구성 (PostgreSQL + Mosquitto만)
+- `compose.prod.yml`: EC2 운영용 구성 — Compose 프로젝트 `bomi`, 서비스 10개
+  (postgres, qdrant, backend, operator-console, db-viewer, waypoint-editor, frontend,
+  jenkins, nginx, 그리고 `--profile tools`의 nginx-bootstrap·certbot)
+- `compose.mqtt.prod.yml`: **별도 Compose 프로젝트 `bomi-mqtt`** — Mosquitto 전용
+- `production.env.example`: `compose.prod.yml`용 환경변수 예제
+- `mqtt.env.example`: `compose.mqtt.prod.yml`용 환경변수 예제 (**production.env와 다른 파일**)
+- `docker/postgres/init/`: PostgreSQL 최초 초기화 SQL (`CREATE EXTENSION vector`)
+- `docker/mosquitto/config/`: 로컬 개발용 브로커 설정 (익명 허용)
+- `docker/mosquitto/production/`: 운영 브로커 설정 + ACL (인증·TLS)
+- `nginx/conf.d/bomi.conf`: 운영 리버스 프록시. **이미지에 굽지 않고 마운트**하므로
+  파일을 고쳐도 `nginx -s reload` 전에는 반영되지 않습니다
 
-운영 명령은 별도 안내가 없는 한 Git 저장소 루트에서 실행합니다.
+`nginx -s reload`가 빠지면 조용히 깨집니다. 허용 경로를 추가해도 반영되지 않고, 그 경로
+요청이 프론트엔드 fallback으로 넘어가 200 + SPA HTML을 돌려주기 때문에 상태 코드만 보면
+정상처럼 보입니다. 배포 스크립트의 `reload_nginx_config`가 존재하는 이유입니다
+(`../scripts/deploy/deploy-common.sh` 주석에 사고 기록이 있습니다).
+
+운영 명령은 별도 안내가 없는 한 Git 저장소 루트에서 실행합니다. 아래 예제에서 반복되는
+compose 호출은 다음 축약으로 줄여 쓸 수 있습니다.
+
+```bash
+# 이 문서의 모든 예제에서 쓰는 축약입니다. 세션마다 한 번 정의합니다.
+bomi_compose() {
+  docker compose --env-file /home/ubuntu/bomi/secrets/production.env \
+    -f infra/compose.prod.yml "$@"
+}
+```
 
 ## PostgreSQL 운영 원칙
 
@@ -48,14 +114,25 @@ openssl rand -hex 32
 nano /home/ubuntu/bomi/secrets/production.env
 ```
 
-운영 파일에는 최소한 다음 값이 있어야 합니다.
+`compose.prod.yml`은 아래 값들을 `:?`로 선언합니다 — **하나라도 비면 `docker compose`가
+렌더링 단계에서 실패**하므로, PostgreSQL만 띄울 때도 전부 있어야 합니다.
 
-```dotenv
-POSTGRES_DB=bomi
-POSTGRES_USER=bomi
-POSTGRES_PASSWORD=<랜덤 비밀번호>
-POSTGRES_DATA_DIR=/home/ubuntu/bomi/data/postgres
-```
+| 그룹 | 변수 |
+| --- | --- |
+| PostgreSQL | `POSTGRES_DB` `POSTGRES_USER` `POSTGRES_PASSWORD` `POSTGRES_DATA_DIR` |
+| MQTT 접속(Backend용) | `MQTT_USERNAME` `MQTT_PASSWORD` |
+| 운영자 채널 | `OPERATOR_SHARED_SECRET` |
+| Jenkins | `DOCKER_GID` `JENKINS_HOME_DIR` |
+| 인증서 | `CERTBOT_CONF_DIR` `CERTBOT_WEBROOT_DIR` |
+| Basic 인증 파일 | `NGINX_OPERATOR_CONSOLE_HTPASSWD_FILE` `NGINX_WAYPOINT_EDITOR_HTPASSWD_FILE` `NGINX_DB_VIEWER_HTPASSWD_FILE` |
+
+경로 변수(`*_DIR`, `*_FILE`)는 배포 스크립트가 **절대경로인지까지** 검사합니다
+(`../scripts/deploy/deploy-common.sh`의 `require_absolute_path`). 상대경로를 넣으면
+Compose가 그 값을 "이름 있는 볼륨"으로 해석해 원인을 알기 어려운 오류가 납니다.
+
+> ⚠️ **`infra/production.env.example`에는 `MQTT_USERNAME`·`MQTT_PASSWORD`가 빠져 있습니다.**
+> 예제를 그대로 복사한 뒤 두 줄을 직접 추가해야 §2의 검증이 통과합니다. (값은
+> `MQTT_DEPLOYMENT.md` 3절에서 만든 `bomi-backend` 계정과 같아야 합니다.)
 
 ## 2. 배포 전 검증
 
@@ -156,7 +233,7 @@ ls -lh /home/ubuntu/bomi/backup
 
 백업은 EC2 디스크에만 두지 말고 추후 별도 저장소에도 복제해야 합니다.
 
-## 7. 복구 원칙
+## 7. 복구 원칙 (절차 미확정)
 
 복구는 기존 데이터를 덮어쓸 수 있는 작업입니다. 장애 상황에서 즉시 실행하지 말고
 대상 DB와 백업 파일을 재확인한 뒤 수행합니다. 평상시에는 백업 목록 검사까지만 합니다.
@@ -419,7 +496,55 @@ crontab -l
 
 갱신 로그는 `/home/ubuntu/bomi/logs/certbot-renew.log`에서 확인합니다.
 
-## Mosquitto 주의사항
+> ⚠️ **이 갱신은 Mosquitto에 반영되지 않습니다.** `renew-certificates.sh`는 `certbot renew`와
+> `nginx -s reload` 두 명령뿐입니다. 브로커의 인증서(`/mosquitto/certs/`)를 갱신하는 것은
+> `deploy-mqtt.sh`가 부르는 `mosquitto-cert-sync` 서비스뿐이므로, 갱신 후 MQTT 배포가 한 번도
+> 돌지 않으면 브로커는 만료된 인증서를 계속 씁니다. 절차는
+> [`../scripts/deploy/MQTT_DEPLOYMENT.md`](../scripts/deploy/MQTT_DEPLOYMENT.md) 7절에 있습니다.
 
-현재 Mosquitto 설정은 로컬 개발 편의를 위해 익명 접속을 허용합니다. 운영 환경에
-배포하기 전에 사용자 인증, ACL, TLS를 적용해야 합니다.
+### 6. 가디언웹 API의 Basic 인증 되살리기
+
+현재 `/api/v1/{guardian,memories,care-records,confirmation-requests,elders}` 다섯 접두어는
+**공개 도메인에 무인증**입니다. 임시 조치이며, `compose.prod.yml`·`bomi.conf`·
+`deploy-common.sh` 세 곳의 주석이 복구 절차로 이 절을 지목하고 있습니다.
+
+되살리려면 네 곳을 함께 되돌립니다.
+
+1. 인증 파일을 만듭니다 (다른 htpasswd와 같은 방식, 계정은 공유하지 않습니다).
+
+```bash
+docker run --rm -it -v /home/ubuntu/bomi/secrets:/secrets httpd:2.4-alpine \
+  htpasswd -cB /secrets/guardian.htpasswd <가디언 아이디>
+NGINX_GID="$(docker run --rm nginx:1.30.4-alpine id -g nginx)"
+sudo chown root:"$NGINX_GID" /home/ubuntu/bomi/secrets/guardian.htpasswd
+sudo chmod 640 /home/ubuntu/bomi/secrets/guardian.htpasswd
+```
+
+2. `production.env`에 `NGINX_GUARDIAN_HTPASSWD_FILE=/home/ubuntu/bomi/secrets/guardian.htpasswd`를 추가합니다.
+3. `compose.prod.yml`의 nginx 볼륨에서 `NGINX_GUARDIAN_HTPASSWD_FILE` 바인드 마운트 주석을 해제합니다.
+4. `nginx/conf.d/bomi.conf`의 가디언 `location` 안 `auth_basic` 두 줄과
+   `scripts/deploy/deploy-common.sh`의 `require_absolute_path NGINX_GUARDIAN_HTPASSWD_FILE`
+   주석을 해제합니다.
+
+**주의:** 보호자 웹(`frontend/src/services/http.ts`)은 인증 헤더를 보내지 않습니다.
+Basic 인증을 켜면 브라우저가 자격 증명을 물어보고, 그 전까지 대시보드가 전부 401이
+됩니다. 프론트 쪽 대응을 함께 계획한 뒤 켭니다.
+
+## Mosquitto — 로컬과 운영은 별개 설정입니다
+
+| | 로컬 개발 | 운영(EC2) |
+| --- | --- | --- |
+| 설정 파일 | `docker/mosquitto/config/mosquitto.conf` | `docker/mosquitto/production/mosquitto.conf` |
+| 띄우는 곳 | 루트 `../docker-compose.yml` | `compose.mqtt.prod.yml` (**별도 프로젝트 `bomi-mqtt`**) |
+| 익명 접속 | 허용 | **거부**(`allow_anonymous false`) |
+| 리스너 | 1883 평문 + 9001 websockets | 1883 내부 평문(호스트 비공개) + **8883 TLS** |
+| 인증 | 없음 | password_file + acl_file |
+
+운영 브로커의 배포·인증서·계정 생성 절차는
+[`../scripts/deploy/MQTT_DEPLOYMENT.md`](../scripts/deploy/MQTT_DEPLOYMENT.md)가
+담당합니다. 이 문서는 다루지 않습니다.
+
+> **현재 ACL은 시연을 위해 완화되어 있습니다.** 네 계정 모두 `bomi/v1/#` 에 readwrite
+> 권한을 가집니다. 최소 권한 원본은 `docker/mosquitto/production/acl` 파일 하단에
+> 주석으로 보존되어 있으며, 되돌릴 때 `bomi-jetson` 의 `robot/+/results`·`iot/+/events`
+> read를 반드시 포함해야 합니다(원본에서 빠져 있던 항목입니다).

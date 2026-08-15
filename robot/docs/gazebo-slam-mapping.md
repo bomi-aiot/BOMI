@@ -11,9 +11,10 @@ Gazebo 시뮬레이션에서 BOMI 차동구동 모델을 움직이며 LiDAR 스�
 - SLAM Toolbox
 - 지도와 LiDAR 스캔을 확인할 수 있는 RViz
 
-시뮬레이션 모델은 차동구동 로봇을 기준으로 합니다. 실제 차량의 바퀴 지름과
-좌우 바퀴 간 거리는 아직 측정하지 않았으므로, 이 모델의 치수가 실물과 일치하는
-것은 아닙니다.
+시뮬레이션 모델은 차동구동 로봇을 기준으로 합니다. 실물 치수는 그 뒤 측정됐지만
+(바퀴 1회전 거리 0.1929 m, 기하 트레드 0.257 m, 회전 변환용 유효 트레드 0.278 m —
+[`hardware-control.md`](hardware-control.md) `## 7`), 이 모델의 치수를 거기에
+맞춘 것은 아닙니다. 시뮬에서 잰 주행 특성을 실물 값으로 그대로 옮기지 마세요.
 
 ## 1. 시뮬레이션 의존성 설치
 
@@ -21,7 +22,7 @@ Gazebo 시뮬레이션에서 BOMI 차동구동 모델을 움직이며 LiDAR 스�
 실행합니다.
 
 ```bash
-cd /mnt/c/S15P11E102/robot/ros2_ws
+cd <저장소>/robot/ros2_ws
 source /opt/ros/humble/setup.bash
 rosdep install --from-paths src --ignore-src -r -y
 sudo apt install -y ros-humble-nav2-map-server
@@ -33,17 +34,20 @@ Gazebo와 RViz는 GUI 프로그램입니다. WSL2에서는 WSLg가 활성화된 
 ## 2. 워크스페이스 빌드
 
 ```bash
-cd /mnt/c/S15P11E102/robot/ros2_ws
+cd <저장소>/robot/ros2_ws
 source /opt/ros/humble/setup.bash
-colcon build --symlink-install
+colcon build --symlink-install --packages-up-to mapping core
 source install/setup.bash
 ```
+
+이 문서가 쓰는 것은 `mapping`(launch·설정)과 `core`(`keyboard_teleop`)뿐입니다.
+`mapping` 은 `core` 를 의존하지 않으므로 **둘 다 명시해야** 합니다.
 
 새 터미널을 열 때마다 ROS 2와 워크스페이스 환경을 다시 불러와야 합니다.
 
 ```bash
 source /opt/ros/humble/setup.bash
-source /mnt/c/S15P11E102/robot/ros2_ws/install/setup.bash
+source <저장소>/robot/ros2_ws/install/setup.bash
 ```
 
 ## 3. Gazebo, SLAM Toolbox, RViz 통합 실행
@@ -78,7 +82,7 @@ ros2 run core keyboard_teleop
 다음 명령을 실행합니다.
 
 ```bash
-cd /mnt/c/S15P11E102/robot/ros2_ws
+cd <저장소>/robot/ros2_ws
 ros2 run nav2_map_server map_saver_cli \
   -f src/mapping/maps/bomi_test_map
 ```
@@ -93,12 +97,15 @@ src/mapping/maps/bomi_test_map.yaml
 같은 이름의 지도가 이미 있으면 덮어쓰므로, 기존 지도를 보존하려면 다른
 파일 이름을 사용하세요.
 
+저장한 지도는 `bomi_navigation_sim.launch.py` 의 `map:=` 인자로 넘겨 주행에
+씁니다. 같은 Gazebo 월드에서 만든 지도여야 합니다.
+
 ## 주요 토픽과 TF
 
 | 이름 | 역할 |
 | --- | --- |
 | `/cmd_vel` | ROS 2에서 Gazebo 차동구동 플러그인으로 전달되는 속도 명령 |
-| `/scan` | Gazebo LiDAR의 `sensor_msgs/LaserScan` 데이터 |
+| `/scan` | Gazebo LiDAR의 `sensor_msgs/LaserScan` 데이터. 시뮬에서는 드라이버가 직접 내므로 `scan_sanitizer` 를 거치지 않습니다 — 실기 문서의 `/scan_raw` → 위생 → `/scan` 과 이름은 같아도 뜻이 다릅니다 |
 | `/odom` | 시뮬레이션 로봇의 오도메트리 |
 | `/tf` | `odom`, `base_link`, `lidar_link` 사이의 좌표 변환 |
 | `/clock` | Gazebo 시뮬레이션 시간 |

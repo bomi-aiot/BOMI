@@ -6,8 +6,8 @@
 
 ## 운영 배포
 
-`operator-console`은 `infra/compose.prod.yml`에 포함되며
-`hotfix/scenario-integration` 배포 시 Backend와 함께 이미지가 빌드되고 재시작된다.
+`operator-console`은 `infra/compose.prod.yml`에 포함되며 `main` 배포
+(`ci/Jenkinsfile.integration`) 시 Backend와 함께 이미지가 빌드되고 재시작된다.
 EC2 재부팅 뒤에도 `restart: unless-stopped` 정책으로 자동 시작된다.
 
 최초 자동 배포 전에 기존에 터미널이나 tmux에서 수동 실행한 Streamlit을 종료한다.
@@ -60,7 +60,11 @@ EC2 보안 그룹에 8501 포트를 공개하지 않는다.
 값 자체를 화면이나 로그에 출력하지 않는다.
 
 ```bash
-cd /home/ubuntu/bomi/data/jenkins/workspace/bomi-integration-production/backend/tools/operator_console
+# 저장소를 clone 한 자기 작업 트리에서 실행한다.
+# Jenkins 작업공간(/home/ubuntu/bomi/data/jenkins/workspace/...)에서는 실행하지 않는다 —
+# 그 안에 venv 를 만들면 다음 배포의 "작업 트리가 깨끗한가" 검사가 실패한다
+# (scripts/deploy/deploy-common.sh 의 initialize_deploy).
+cd <저장소>/backend/tools/operator_console
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -83,8 +87,24 @@ streamlit run app.py
 두 버튼을 한 번에 실행하지 않는다. MQTT `CANCEL` 발행과 실제 모터 정지 사이에는
 시간 차이가 있을 수 있다.
 
+`SAFE_STOP` 에는 자동 복구 경로가 없다. 재시작으로도 MQTT 로도 풀리지 않으며, 이 콘솔
+또는 `scripts/dev/reset-demo.sql` 이 유일한 출구다(루트 `CLAUDE.md` §3). 이 콘솔은
+"한 대·한 시나리오"용이고, 시연 리허설 사이의 일괄 초기화는 그 SQL 이 담당한다.
+
+`OPERATOR_SHARED_SECRET` 이 설정되지 않았으면 Backend 운영 API 가 503 을 돌려준다.
+콘솔 화면에는 "운영 API 실패"로만 보이므로, 원인을 먼저 여기서 의심한다.
+
 ## 테스트
 
 ```bash
 PYTHONPATH=. python3 -m unittest discover -s tests -v
 ```
+
+`test_api_client.py`(3케이스)는 운영 API 호출과 오류 변환을, `test_deployment.py`(3케이스)는
+**저장소의 인프라 파일 자체**를 검사한다 — `infra/compose.prod.yml`,
+`infra/nginx/conf.d/bomi.conf`, `.streamlit/config.toml`. 그래서 이 콘솔을 건드리지
+않았더라도 인프라 파일을 고치면 여기가 빨개질 수 있다. 그때는 인프라 변경이 의도한
+것인지 먼저 확인한다.
+
+`requirements.txt` 에는 streamlit 하나뿐이다. `api_client.py` 는 표준 라이브러리
+`urllib` 만 쓰므로 오프라인 EC2 에서도 설치가 가볍다.

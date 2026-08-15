@@ -3,6 +3,21 @@
 증상과 확인할 곳만 정리합니다. 원인과 설계 근거는 해당 파일의 주석에 있습니다.
 실행 방법은 [`../README.md`](../README.md)를 참고하세요.
 
+이 문서는 **시뮬레이션**(`bomi_navigation_sim.launch.py`,
+`nav2_patrol_sim.launch.py`) 기준이며 파라미터 파일은
+`core/config/nav2_safe_params.yaml` 입니다. 실물 로봇은 별도 파일
+`nav2_safe_params_real.yaml` 을 쓰고 값이 다릅니다(`robot_radius` 0.22 대 0.20,
+`failure_tolerance` 0.3 대 2.0, `max_vel_x` 0.26 대 0.10) — 실기 증상은
+[`entrance-waypoint-field-run.md`](entrance-waypoint-field-run.md) 의
+"증상별 대처"를 먼저 보세요.
+
+| 로그에서 본 것 | 볼 절 |
+| --- | --- |
+| `GridBased: failed to create plan` | 주행이 시작되지만 목표가 중단된다 |
+| `controller_server: Failed to make progress` | 목표 근처에서 제자리 회전만 한다 |
+| `doesn't exist or not a regular file` | 빌드가 실패한다 |
+| 로그 없이 로봇이 순간이동 | RViz에서 로봇이 순간이동한다 |
+
 ## 주행이 시작되지만 목표가 중단된다
 
 ```text
@@ -31,6 +46,12 @@ controller_server: Failed to make progress
 
 이 파일은 `nav2_patrol_sim.launch.py`와 공유하므로 값을 바꿀 때는
 [TurtleBot3 순찰 시뮬레이션](turtlebot3-nav2-sim.md) 동작도 확인해야 합니다.
+
+BOMI 의 동작 트리(`core/behavior_trees/nav_to_pose_safe.xml`)는 복구에
+`Spin` 을 쓰지 않습니다. 코스트맵이 로봇을 반경 0.20 m 원으로 보기 때문에
+제자리 회전이 탈출에 도움이 되지 않아서입니다. 대신 코스트맵 초기화 → 짧은
+후진 → 대기 순서로 복구합니다. "제자리 회전만 한다"를 볼 때 이 설계를 알고
+있어야 합니다.
 
 ## RViz에서 로봇이 순간이동한다
 
@@ -62,7 +83,7 @@ doesn't exist or not a regular file
 링크를 잡습니다. 생성물을 지우고 다시 빌드합니다.
 
 ```bash
-cd /mnt/c/S15P11E102/robot/ros2_ws
+cd <저장소>/robot/ros2_ws
 rm -rf build install log
 colcon build --symlink-install
 ```

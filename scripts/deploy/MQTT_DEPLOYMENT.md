@@ -1,8 +1,19 @@
 # MQTT Broker 운영 배포
 
-운영 Mosquitto는 Backend·Frontend와 다른 Compose 프로젝트(`bomi-mqtt`)로
-실행합니다. `be-main`에 변경이 들어오면 Backend와 MQTT Jenkins Job이 각각 담당
-경로를 확인하므로, Broker 설정만 바뀐 경우 Backend는 다시 배포되지 않습니다.
+운영 Mosquitto는 Backend·Frontend와 다른 Compose 프로젝트(`bomi-mqtt`)로 실행하며,
+환경 파일도 `mqtt.env`로 별개입니다.
+
+배포 경로는 두 가지입니다.
+
+| 경로 | 브랜치 | 변경 감지 |
+| --- | --- | --- |
+| `ci/Jenkinsfile.integration` — **시연 통합 기간의 실제 경로** | `main` | **없음(항상 배포)**. Mosquitto 배포는 멱등이고 HUP reload라 매번 돌려도 저렴하기 때문입니다 |
+| `ci/Jenkinsfile.mqtt` — 라인별 전략 복귀 후의 경로 | `be-main` | `has-changes.sh`로 MQTT 관련 경로만 감지 |
+
+이 문서의 1~4절(최초 구축)은 두 경로에 공통이고, 5절(Jenkins Job)은 후자 기준입니다.
+
+`bomi-mqtt-net` 네트워크는 이 Compose 프로젝트가 만들고 `infra/compose.prod.yml`이
+`external: true`로 붙습니다. MQTT를 내리면 Backend 쪽 compose가 네트워크를 찾지 못합니다.
 
 ## 1. EC2 저장소 동기화
 
@@ -32,9 +43,20 @@ openssl rand -hex 32
 nano /home/ubuntu/bomi/secrets/mqtt.env
 ```
 
-마지막 명령이 출력한 임의 문자열을 `MQTT_HEALTH_PASSWORD`에 기록합니다.
-`BOMI_DOMAIN`과 각 경로도 실제 EC2 값과 일치하는지 확인합니다. 실제 비밀번호와
+마지막 명령이 출력한 임의 문자열을 `MQTT_HEALTH_PASSWORD`에 기록합니다. 실제 비밀번호와
 `mqtt.env`는 Git에 커밋하지 않습니다.
+
+`compose.mqtt.prod.yml`은 아래 8개를 `:?`로 요구합니다 — 하나라도 비면 렌더링 단계에서
+실패합니다.
+
+| 변수 | 값 |
+| --- | --- |
+| `MQTT_HEALTH_USERNAME` / `MQTT_HEALTH_PASSWORD` | 헬스체크 계정 (`bomi-healthcheck`) |
+| `MQTT_PASSWORD_FILE` | `/home/ubuntu/bomi/secrets/mosquitto/passwords` |
+| `MQTT_DATA_DIR` / `MQTT_LOG_DIR` | `/home/ubuntu/bomi/data/mosquitto/{data,log}` |
+| `MQTT_CERT_DIR` | `/home/ubuntu/bomi/secrets/mosquitto/certs` |
+| `BOMI_DOMAIN` | `i15e102.p.ssafy.io` |
+| `CERTBOT_CONF_DIR` | `/home/ubuntu/bomi/data/certbot/conf` (`production.env`와 같은 값) |
 
 ## 3. MQTT 사용자 비밀번호 파일 생성
 
@@ -67,6 +89,12 @@ sudo chmod 600 "$MQTT_SECRET_DIR/passwords"
 비밀번호는 각 장치 또는 Backend의 별도 비밀 저장소에 전달하고 소스 코드에는 넣지
 않습니다.
 
+> **현재 ACL은 시연을 위해 완화되어 있습니다** — 네 계정 모두 `bomi/v1/#`에 readwrite
+> 권한을 가집니다. 최소 권한 원본은 같은 파일 하단에 주석으로 보존되어 있고, 되돌릴
+> 때는 원본에서 빠져 있던 `bomi-jetson`의 `robot/+/results`·`iot/+/events` read를
+> 반드시 포함해야 합니다. MQTT는 구독 거부를 클라이언트에 알리지 않으므로, 되돌리기
+> 전에 `on_subscribe`의 granted QoS 확인 로직을 넣어 두는 편이 안전합니다.
+
 ## 4. EC2 네트워크 설정
 
 AWS EC2 보안 그룹 인바운드 규칙에 `TCP 8883`을 추가합니다. 가능하면 Raspberry Pi와
@@ -84,6 +112,10 @@ docker compose \
 ```
 
 ## 5. Jenkins Job 생성
+
+> 이 절은 라인별 브랜치 전략 기준입니다. **시연 통합 기간에 실제로 도는 것은
+> `ci/Jenkinsfile.integration`(`main`)이며, 그쪽은 변경 감지 없이 매번 MQTT를 배포합니다.**
+> 아래 Job 설정 자체는 그대로 유효하고, 전략 복귀 후에 다시 주 경로가 됩니다.
 
 Jenkins에서 `bomi-mqtt-production` Pipeline Job을 새로 만들고 다음처럼 설정합니다.
 
@@ -125,16 +157,41 @@ BOMI_SOURCE_DIR="$PWD" scripts/deploy/verify-mqtt.sh
 ```
 
 정상 기준은 컨테이너 상태 `healthy`, 호스트의 8883 리스닝, 호스트 1883 미공개,
-유효한 인증서 출력, 마지막 smoke test 성공입니다. Smoke test는 익명 연결이
-거부되고 인증된 MQTTS 발행·구독이 실제로 오가는지 확인합니다.
+유효한 인증서 출력, 마지막 smoke test 성공입니다. Smoke test는 익명 연결이 거부되는지,
+그리고 TLS 8883으로 인증 구독·발행이 실제로 오가는지를 순서대로 확인합니다
+(`infra/compose.mqtt.prod.yml`의 `--profile tools` 서비스).
 
-## 7. 인증서 갱신
+## 7. 인증서 갱신 — **Mosquitto는 자동으로 반영되지 않습니다**
 
-기존 `renew-certificates.sh`와 cron을 그대로 사용합니다. 스크립트는 Certbot 갱신 후
-Nginx를 reload하고, Mosquitto가 실행 중이면 새 인증서를 전용 디렉터리로 복사한 뒤
-HUP 신호로 중단 없이 다시 읽게 합니다.
+`renew-certificates.sh`와 cron은 그대로 사용합니다. 다만 그 스크립트가 하는 일은
+`certbot renew`와 **Nginx reload 두 가지뿐**입니다. Mosquitto의 인증서
+(`/mosquitto/certs/`)는 건드리지 않습니다.
 
 ```bash
 cd /home/ubuntu/bomi/deploy/source
 scripts/deploy/renew-certificates.sh
 ```
+
+새 인증서를 브로커에 반영하는 것은 `mosquitto-cert-sync` 서비스이고, 그것을 부르는
+것은 `deploy-mqtt.sh`뿐입니다. 따라서 **인증서가 갱신된 뒤 MQTT 배포가 한 번도 돌지
+않으면, 브로커는 만료된 인증서를 계속 쓰다가 조용히 TLS 접속을 거부하게 됩니다.**
+
+갱신 후에는 다음 중 하나를 수행합니다.
+
+```bash
+# (a) MQTT 배포를 한 번 돌린다 — 인증서 동기화 + HUP reload 포함
+BOMI_SOURCE_DIR="$PWD" BOMI_RELEASE_BRANCH=main \
+  BOMI_MQTT_ENV_FILE=/home/ubuntu/bomi/secrets/mqtt.env \
+  scripts/deploy/deploy-mqtt.sh
+
+# (b) 만료일만 확인한다
+openssl s_client -connect i15e102.p.ssafy.io:8883 \
+  -servername i15e102.p.ssafy.io </dev/null 2>/dev/null \
+  | openssl x509 -noout -dates
+```
+
+> 이 갭을 없애려면 `renew-certificates.sh`에 cert-sync 호출과 브로커 HUP을 추가하는
+> 편이 낫습니다. 지금은 **운영 절차로 메우고 있다**는 것을 알고 씁니다.
+
+`deploy-mqtt.sh`는 HUP 뒤에 `sleep 1`만 둡니다. HUP 재적재 실패는 mosquitto가 죽지 않기
+때문에 컨테이너 health로 잡히지 않습니다 — 설정 오타는 로그로만 확인됩니다.

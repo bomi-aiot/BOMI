@@ -1,6 +1,15 @@
-# 자연스러운 대화 — 현재 구조 감사
+# 자연스러운 대화 — 현재 구조 감사 〔2026-08-06 동결 스냅샷〕
 
 작성일: 2026-08-06 · 기준: `ai-develop` @ `eadc3bf` (S15P11E102-341 머지 직후)
+
+> **이 문서의 지위 — 읽는 법.** 본문(아래 "읽기 전에" 결론과 §1 이하 전부)은
+> **2026-08-06 의 동결된 스냅샷**이며
+> 갱신하지 않는다. 그날 무엇이 있었고 무엇이 없었는지, 그리고 **왜 그렇게 판단했는지**를
+> 남기는 것이 이 문서의 일이다. 현재 상태는 §0 이 말한다 — 본문과 §0 이 어긋나면
+> **언제나 §0 이 맞다.** 본문의 file:line 은 감사 시점 기준이라 지금은 대부분
+> 이동해 있다. 좌표가 아니라 **문제 번호(A1·B1·C1…)** 를 인용하라 — 뒤의 두 문서와
+> `PROGRESS.md` 가 그 번호를 좌표계로 쓴다.
+
 조사 방법: 코드 전수 추적 (병렬 조사 4갈래 — 오디오·세션 / 그래프 파이프라인 / 기억·프로필·백엔드 / 테스트·관측성·문서). 모든 판정에 파일:라인 근거를 붙였고, 근거를 찾지 못한 것은 **미구현·발견못함**으로 표기했다.
 
 > **읽기 전에 — 이 감사의 가장 중요한 결론 두 가지.**
@@ -10,22 +19,23 @@
 
 ---
 
-## 0. 해소 현황 — 이 감사 이후 무엇이 바뀌었나 (2026-08-06 갱신)
+## 0. 해소 현황 — 이 감사 이후 무엇이 바뀌었나 (2026-08-06 작성 · 2026-08-15 갱신)
 
-이 문서의 본문은 `eadc3bf`(감사 시점) 기준 스냅샷이다. 이후 `ai/natural-conversation-wip`
-브랜치가 아래를 해소했다 — **본문에서 아래 항목을 만나면 이 표가 우선한다.**
+이 문서의 본문은 `eadc3bf`(감사 시점) 기준 스냅샷이다. 이후의 작업이 아래를 해소했다 —
+**본문에서 아래 항목을 만나면 이 표가 우선한다.** 당시 작업 브랜치
+`ai/natural-conversation-wip` 는 스쿼시되어 `main` 에 들어갔고 더는 존재하지 않는다.
 
 | 감사 항목 | 상태 | 근거 |
 | --- | --- | --- |
 | B1 `speaking` 미복원 (2턴째부터 바지인 오분류) | **해소** | `ingress.note_interaction` 핸들 생사 확인, `test_conversation_session.py` |
 | B2 `interrupted_remainder` 소비처 부재 | **해소** | `proactive_gate` 합류·소비, 동 테스트 |
 | §1.2 세션 FSM 부재 | **해소** — `SessionState` 5상태 + 순수 전이 함수, 라이브 루프 구동 | `conversation_control.py`, 세션 테스트 18건 |
-| A1 문맥 슬롯 부재 (지역) | **해소(지역 한정)** — `context_candidates` + 수명 규칙(만료·감쇠·정정·경계 리셋) | `graph/context_slots.py`, `test_context_slots.py` 16건, CLAUDE.md §30 |
+| A1 문맥 슬롯 부재 (지역) | **해소(지역 한정)** — `context_candidates` + 수명 규칙(만료·감쇠·정정·경계 리셋) | `graph/context_slots.py`, `test_context_slots.py` 16건, `임시보류_claude.md` §30 |
 | A2/D1 "거기" 참조가 조회에 안 닿음 | **해소(날씨 한정)** — 발화→활성 문맥 순 해석. 의료 지역 주입은 후속 | `context.py` 날씨 조회 |
-| A3 기억 삭제 부재 | **1단계 해소** — "기억하지 마" = 봉인+대기 행 삭제. 제출된 fact_candidate 취소는 **BE 엔드포인트 부재로 불가**(정직한 한계) | `ingress._honor_privacy_requests`, `extraction.forget_conversation`, `test_memory_privacy.py` |
+| A3 기억 삭제 부재 | **해소(2026-08-15 갱신)** — "기억하지 마" 는 ① T4 봉인 ② 로컬 추출 대기행 삭제 ③ **서버 취소 요청 큐잉** 세 가지를 한다. 배경 틱이 `POST /api/v1/robot/fact-candidates/cancel` 로 보내고, 실패해도 큐에 남는다. 서버는 멱등이다 | 로봇 `ingress._honor_privacy_requests`, `extraction.forget_conversation`, `localstore/cancellations.py`, `jobs/ticks._flush_cancel_requests`, `fact_client.cancel_conversation` / 서버 `RobotFactIntakeController.cancel`, `FactCandidateCancellationService` / 테스트 `test_memory_privacy.py:150-185`, `FactCandidateCancellationServiceTest` |
 | T4 봉인이 정서 턴 한정 | **해소** — 전 반응형 턴, 인텐트 분류 전 | 상동 |
 | C1 프로필 5필드 미사용 | **부분 해소** — `conversationPreferences`·`chronicPainArea` 프롬프트 반영. 나머지 3필드는 미착수 | `prompts/builder.py` |
-| A4 주소 부재 | **로봇 측 준비 완료** — `profile.address` 가 오면 즉시 기본 지역으로 동작. 계약 확장은 BE 티켓 | `context.py` 주소 폴백 |
+| A4 주소 부재 | **해소(2026-08-15 갱신)** — 백엔드 계약이 확장됐다(S15P11E102-347). `SeniorProfile.address` 가 `app_user.home_address`(V17)에서 채워지고, 로봇은 발화·세션 문맥이 모두 없을 때 이 값에서 도시명을 뽑아 조회한다. 어르신에게 주소가 입력돼 있어야 동작한다는 운영 조건만 남는다 | 서버 `ConversationContextResponse.SeniorProfile.address`, `ConversationContextService` / 로봇 `context.py` 주소 폴백 / 테스트 `test_memory_privacy.py:237` |
 | A7 종료 응답 부재 | **정정** — 감사가 절반 틀렸다. 작별 발화는 그래프로 처리된 뒤 종료되므로 그 응답이 곧 종료 응답이다(재생 완료 후 세션 닫음). 무응답 종료가 무언인 것은 설계(§14) | `bootstrap._run_graph_conversation` docstring |
 | J 세션 수명주기 테스트 0건 | **해소** — 시나리오 A·B·L·무응답 + FSM | `test_conversation_session.py` |
 | 시나리오 커버리지 (8종 중 1종) | A·B·C(로봇측)·D·E·H·K(로컬)·L 커버로 확대. F·G·I·J·M 은 잔여 | 신규 테스트 3파일 43건 |
@@ -33,16 +43,22 @@
 | (감사 이후) 의도 라우터 | **본문 §1.1·§2 의 "로컬 임베딩 라우터" 서술은 구버전** — 실측(기동 6.28s·약 732MB, 정확도 이득 없음) 근거로 SentenceTransformer 를 제거하고 키워드 결정 규칙으로 교체. 비교 평가는 `evals/router-evaluation.md` | 커밋 `d7ce99a` |
 | (감사 이후) BE 계약 | `retrieval`(요청별 실행 결과) 필드가 실제 계약으로 고정되어 로봇이 소비. BE 쪽은 `0436b71` 로 be-develop 머지 | 커밋 `666ae0d` |
 
-여전히 유효한 것: B3(에코 입력 미배선), B4(`audio_ctx`), B5(`proposal_meta`), B6·B8
-(B7 `availability` 미소비는 `26e9635` 로 해소 — 본문 B7 행 참고), K1·K2(원문 로깅 —
-행 번호는 감사 시점 기준, 결함 자체는 유효), K4(T2 동의 확인), A5b(이동 시간 도구),
-A6(구조화 이벤트 — 부분: CONTEXT_RESOLVED/T4_SEALED/MEMORY_FORGOTTEN/SESSION_* 로그
-라인은 생김), A8(T2 요약).
+여전히 유효한 것: B3(에코 입력 미배선), B4(`audio_ctx` writer 부재), B5(`proposal_meta`
+writer 부재), B8(Silero VAD), K1·K2(원문 로깅 — 행 번호는 감사 시점 기준, 결함 자체는
+유효), K4(T2 동의 확인), A5b(이동 시간 도구), A6(구조화 이벤트 — 부분:
+CONTEXT_RESOLVED/T4_SEALED/MEMORY_FORGOTTEN/SESSION_* 로그 라인은 생김), A8(T2 요약).
+B7 `availability` 미소비는 `26e9635` 로 해소됐다(본문 B7 행 참고).
 
-신규 통합 지점 (원격 be-develop 머지로 생김, 2026-08-06): BE `S15P11E102-335`(보미야
-호출 시나리오)가 로봇의 **웨이크워드 감지 MQTT 발행**을 기다린다 — 로봇은 현재 로컬
-감지만 하고 발행하지 않는다(전수 grep 0히트). `S15P11E102-337`(산책)은 RobotCommand
-타입을 확장했다. CLAUDE.md §24 미결 표에 등재.
+**B6 는 축소(2026-08-15 갱신)** — `memory_top_k` 는 `context_read` 가, `rest_state` 는
+침묵 사다리·트리아지가 읽는다. 소비처가 정말 없는 것은 `messages`(add_messages 채널)
+하나뿐이다.
+
+신규 통합 지점 (원격 be-develop 머지로 생김, 2026-08-06 / **2026-08-15 갱신**):
+BE `S15P11E102-335`(보미야 호출 시나리오)가 기다리던 로봇의 **웨이크워드 감지 MQTT
+발행은 구현됐다**(S15P11E102-349 — `bootstrap.py` 가 웨이크 직후 `publish_wake_word()`).
+`S15P11E102-337`(산책)은 RobotCommand 타입을 확장했으나 산책 시나리오 자체는 보류다.
+반대 방향(BE→AI `START_CONVERSATION`)도 이후 배선됐다 — 백엔드 명령은 능동 게이트가
+아니라 큐를 거쳐 메인 루프로 들어와 `trigger_type="backend_command"` 로 그래프를 탄다.
 
 ## 1. 현재 처리 흐름 (실제 코드 기준)
 
@@ -113,7 +129,7 @@ A6(구조화 이벤트 — 부분: CONTEXT_RESOLVED/T4_SEALED/MEMORY_FORGOTTEN/S
 | 감정 처리 | **부분** — `_EMOTIONAL_MARKERS` 8개 키워드 → `handle_emotional`(3갈래), T3 동의 지연·T4 봉인 구현(253/263) | `context.py:605-607`, `handlers.py:321-494`, `ticks.py:915-1010` | 감정 분류기 없음(종류·강도 판정 없음). T4 봉인 표지가 **정서 턴에서만** 검사됨 — companion 잡담 중 "우리끼리 얘긴데"는 봉인 안 되고 추출 큐로 들어감(`handlers.py:368`) | 중 |
 | 도구 실행 | **부분** — 날씨(기상청 REST)·의료(PostgreSQL+Gemini function calling) 실구현, 311이 그래프에 배선 | `weather/client.py`, `db/medical_repository.py`, `context.py:273-421` | 날씨 지역 = 발화 문자열 9개 도시 부분일치가 전부. 도시 없으면 조회 포기 → 실기에서 LLM이 기온을 지어냄(`PROGRESS.md:259`). 범용 실행 확인(confirm-before-execute) 정책 없음(의료 한정 확인 게이트만) | **최상** |
 | 기억 삭제 | **없음** — "기억하지 마" 처리 경로 전무. `operation: "CREATE"` 고정, 백엔드에도 삭제 엔드포인트 없음 | `fact_contract.py:76-87` (사유 주석 포함) | 시나리오 K 전면 미충족. 가장 가까운 것은 T4 봉인(사전 차단)뿐 | **상** |
-| 테스트 | **두꺼움+공백** — 45파일 566함수. 그래프 내부(트리아지·게이트·사다리·정서·계약)는 촘촘 | `tests/`, `pyproject.toml:60-71` | **세션 수명주기(웨이크→ack→지속→종료) 0건.** 요청 시나리오 유형 8종 중 7종 무커버. `test_weather_client.py:93-95`는 "도시 없으면 조회 안 함"을 오히려 정상으로 고정 | **상** |
+| 테스트 | **두꺼움+공백** — 감사 시점 45파일 566함수(현재 71파일 885함수·수집 1035건, §0 참고). 그래프 내부(트리아지·게이트·사다리·정서·계약)는 촘촘 | `tests/`, `pyproject.toml:60-71` | **세션 수명주기(웨이크→ack→지속→종료) 0건** — §0 에서 해소(현재 `test_conversation_session.py` 41건). 요청 시나리오 유형 8종 중 7종 무커버 — 현재 A·B·D·E·H·I·L 커버, F·G·J 잔여 | **상 → 해소** |
 | 관측성 | **부분** — turn_timer(단계별 지연 실측, 저하 연동)만 1급. 로그는 자유형 문장 | `turn_timer.py`, `main.py:42-98` | 구조화 이벤트(SESSION_STARTED 등) 없음. **로봇 최종 발화 전문이 `ai_chat.log`에 남음**(`output.py:262`), 어르신 발화 원문이 stdout으로 출력(`bootstrap.py:546`) — 원문 미기재 보증은 보호자 알림 payload에만 걸려 있음 | 중 |
 | 바지인 | **구현 후 의도적 비활성** — 취소·맞장구 판별·나머지 추출은 구현+테스트, 라이브 경로는 반이중 대기 | `ingress.py:99-121,321-373`, `audio/playback.py`, `bootstrap.py:470-510` | `speaking` 플래그 미복원 버그(아래 §3-B1), `interrupted_remainder` 소비처 부재, 에코 가드 입력 미배선 | **상** |
 
@@ -194,7 +210,7 @@ A3와 동일. 추가로 **지역 정정(시나리오 H)** 도 불가 — 정정�
 | 세션 지속·종료 (`_run_graph_conversation`, `is_farewell`) | 0건 |
 | 반이중 대기(`_wait_for_playback`) | 0건 |
 | `capture()` onset/침묵 판정 | 0건 (`test_audio_lifecycle.py`는 개폐만) |
-| 날씨 기본 지역 | 역방향 고정 — `test_weather_client.py:93-95`가 "도시 없으면 None"을 정상으로 못박음 |
+| 날씨 기본 지역 | 감사 시점: 역방향 고정 우려. **현재는 정정** — 그 테스트는 `extract_city` 순수 함수의 단위 테스트였다. 조회 정책은 `test_context_slots.py:305` 가 "발화에도 문맥에도 도시가 없으면 조회하지 않고 되묻는다"로 의도된 동작으로 고정하며, 그 위에 프로필 주소 폴백이 얹혔다 |
 | 시나리오 A~M 유형 | 8종 중 정서 우선(I) 1종만 커버 |
 
 ### K. 개인정보 로깅
@@ -254,4 +270,33 @@ A3와 동일. 추가로 **지역 정정(시나리오 H)** 도 불가 — 정정�
 - 우선순위와 의존관계 → [implementation-plan.md](implementation-plan.md)
 - 책임 분리와 목표 설계 → [target-architecture.md](target-architecture.md)
 
-핵심 방향만 미리 적으면: **P0는 "세션 만들기"가 아니라 "이미 있는 세션을 고치고(B1·B2) 테스트로 고정하기"이고, 최우선 신규 구현은 문맥 슬롯(ContextCandidate)과 조회 파라미터 연결이다.** 주소 기본값(시나리오 C·F)은 백엔드 계약 변경이 선행조건이므로 BE 라인 티켓으로 분리해야 한다.
+핵심 방향만 미리 적으면: **P0는 "세션 만들기"가 아니라 "이미 있는 세션을 고치고(B1·B2) 테스트로 고정하기"이고, 최우선 신규 구현은 문맥 슬롯(ContextCandidate)과 조회 파라미터 연결이다.** 주소 기본값(시나리오 C)은 백엔드 계약 변경이 선행조건이었고, 그 티켓은 S15P11E102-347 로 **완료됐다**(§0 A4). 시나리오 F(일정 목적지)는 `careRecords` 구조 협의가 남아 여전히 미착수다.
+
+### 이 세 문서와 주변 문서의 관계
+
+어느 문서가 현재를 말하고 어느 문서가 계획을 말하는지가 자주 헷갈린다. 화살표 방향이
+곧 "무엇이 무엇을 물려받는가"다.
+
+```mermaid
+flowchart LR
+    subgraph 동결["동결 스냅샷 (2026-08-06)"]
+        A["current-state-audit 본문<br/>§1~§6 · 문제 번호 A1~K4"]
+    end
+    subgraph 현재["살아 있는 문서"]
+        A0["current-state-audit §0<br/>해소 현황 — 본문보다 우선"]
+        P["implementation-plan<br/>우선순위 · Phase · 진행 현황"]
+        T["target-architecture<br/>책임 사상 · 상태 설계"]
+    end
+    C["임시보류_claude.md §30<br/>문맥 선택 우선순위 (런타임 규칙)"]
+    G["docs/carebot/PROGRESS.md<br/>이력 · 실측 수치"]
+
+    A -- "문제 번호를 물려준다" --> P
+    A -- "문제 번호를 물려준다" --> T
+    A0 -- "본문을 무효화한다" --> A
+    T -- "구현되면 규칙으로 승격" --> C
+    P -- "완료분 기록" --> G
+    G -. "수치 갱신" .-> P
+
+    classDef frozen fill:#eee,stroke:#999,stroke-dasharray: 4 3
+    class A frozen
+```

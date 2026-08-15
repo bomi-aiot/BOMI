@@ -93,8 +93,19 @@ rosdep update
 설치합니다.
 
 ```bash
-cd /mnt/c/S15P11E102/robot/ros2_ws
+cd <저장소>/robot/ros2_ws
 rosdep install --from-paths src --ignore-src -r -y
 ```
+
+`rosdep` 이 잡지 못하거나 별도로 필요한 패키지가 셋 있습니다.
+
+| 패키지 | 언제 필요한가 |
+| --- | --- |
+| `ros-humble-robot-localization` | Nav2 실기 launch 의 기본값 `use_ekf:=true` 가 요구합니다. 없으면 launch 가 즉시 죽습니다(`use_ekf:=false` 로 우회 가능) |
+| `ros-humble-nav2-map-server` | 지도를 저장·로드할 때. [`gazebo-slam-mapping.md`](gazebo-slam-mapping.md) 가 따로 설치시킵니다 |
+| `ydlidar_ros2_driver` | 실물 LiDAR. `rosdep` 으로 안 잡히는 외부 드라이버라 [`handheld-lidar-mapping.md`](handheld-lidar-mapping.md) 의 안내를 따릅니다 |
+
+이 문서는 x86 WSL 기준입니다. 실제 로봇인 젯슨(aarch64)은 GPU 용 torch 등에서
+별도 절차가 필요하며 [`demo-runbook.md`](demo-runbook.md) `## 3` 이 다룹니다.
 
 설치가 끝나면 [`../README.md`](../README.md)의 빌드 절차로 이어집니다.

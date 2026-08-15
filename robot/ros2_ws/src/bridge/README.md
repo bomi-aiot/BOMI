@@ -1,26 +1,33 @@
 # bridge
 
 백엔드 MQTT와 로봇 내부 동작을 잇는 통역 브릿지 패키지입니다. 백엔드가 발행하는
-로봇 명령(NAVIGATE/SPEAK/CANCEL)을 받아 실행하고, 그 결과와 상태를 다시 MQTT로
-백엔드에 발행합니다.
+로봇 명령 5종(`NAVIGATE` `SPEAK` `CANCEL` `FOLLOW_START` `FOLLOW_STOP`)을 받아
+실행하고, 그 결과를 다시 MQTT로 백엔드에 발행합니다.
 
-계약 근거: `docs/mqtt/topic-convention.md`, S15P11E102-146 (백엔드 `RobotCommand`/
-`HomecomingContract`/`ObservationContract`).
+계약 근거는 **`docs/mqtt/scenario-contract-v1.md`가 정본이고, 최종 권위는 백엔드
+파서 코드(`MqttInboundMessageParser.java`)**입니다. 파서가 문서보다 좁은 곳이
+있으므로 둘이 다르면 코드를 따릅니다(`bridge/contract.py` 첫머리 참고).
+`topic-convention.md`는 토픽 이름 규칙만 담당합니다.
 
 ## 구조
 
 ```text
 bridge/
 ├── bridge/
-│   ├── contract.py          # 토픽 규칙·명령 파싱/검증·결과/상태 envelope (순수 Python)
-│   ├── robot_driver.py      # 주행 실행 경계 RobotDriver + MockRobotDriver + 드라이버 선택
-│   ├── nav2_robot_driver.py # 실제 Nav2 주행 드라이버 (NavigateToPose 직접 호출)
-│   ├── waypoint_lookup.py   # 목적지 이름 → room_waypoints.yaml 좌표 변환 (순수 Python)
-│   ├── mqtt_bridge.py       # 브릿지 코어: 명령→driver→결과/상태 발행 (전송 무관)
-│   ├── mqtt_client.py       # paho-mqtt 러너: 코어를 실제 브로커에 연결
-│   └── mqtt_bridge_node.py  # ROS 2 노드 얇은 래퍼 (러너 구동)
-├── test/                    # 단위 테스트 + 실제 브로커 E2E
-└── docs/decisions/          # 설계 결정 기록
+│   ├── contract.py                  # 토픽 규칙·명령 파싱/검증·결과/상태 envelope (순수 Python)
+│   ├── mqtt_bridge.py               # 브릿지 코어: 명령→driver→결과 발행 (전송 무관)
+│   ├── mqtt_client.py               # paho-mqtt 러너: 코어를 실제 브로커에 연결
+│   ├── mqtt_bridge_node.py          # ROS 2 노드 래퍼 (파라미터 32개)
+│   ├── robot_driver.py              # 주행 실행 경계 RobotDriver + MockRobotDriver + 드라이버 선택
+│   ├── nav2_robot_driver.py         # 실제 Nav2 주행 (NavigateToPose / NavigateThroughPoses)
+│   ├── timed_drive_driver.py        # 지도 없이 정해진 시간만 직진 (Nav2 우회)
+│   ├── forward_test_robot_driver.py # 전용 토픽으로 저속 전진 (배선 확인)
+│   ├── waypoint_lookup.py           # 목적지 이름 → room_waypoints.yaml 좌표 (순수 Python)
+│   ├── zigzag.py                    # 현관 진입 지그재그 경유 좌표 생성 (순수 기하)
+│   └── approach.py                  # 거실 도착 후 사람 추종을 짧게 켜는 제어기
+├── launch/                          # mqtt_bridge.launch.py, backend_drive_test.launch.py
+├── test/                            # 단위 테스트 18파일 153개 + 실브로커 E2E
+└── docs/decisions/                  # 설계 결정 기록
 ```
 
 계층: `mqtt_bridge_node`(ROS 2) → `mqtt_client`(paho) → `mqtt_bridge`(코어) →
@@ -29,12 +36,56 @@ bridge/
 
 ## 흐름
 
-```text
-commands 구독 → 계약 파싱 → RobotDriver 실행 → results 발행 (scenarioId echo-back)
+```mermaid
+flowchart TD
+  A["commands 수신 (paho 스레드)"] --> B{"JSON 파싱 + 계약 검증"}
+  B -- 실패 --> B2["ID 복구 가능하면<br/>FAILED / INTERNAL_ERROR 회신"]
+  B -- 성공 --> C{"robotId 일치?"}
+  C -- 불일치 --> C2["로그만, 무시"]
+  C -- 일치 --> D{"commandId 중복?"}
+  D -- 중복 --> D2["조용히 버림 (회신 없음)"]
+  D -- 신규 --> E{"expiresAt 만료?"}
+  E -- 만료 --> E2["FAILED / COMMAND_EXPIRED 회신"]
+  E -- 유효 --> F{"type == CANCEL?"}
+  F -- 예 --> G["수신 스레드에서 즉시 driver.cancel()"]
+  F -- 아니오 --> H["워커 큐"]
+  H --> I{"실행 직전 만료 재검사"}
+  I -- 만료 --> E2
+  I -- 유효 --> J["driver 실행"]
+  J --> K["results 발행 (scenarioId·commandId echo-back)"]
+  K --> L{"NAVIGATE SUCCEEDED?"}
+  L -- 예 --> M["on_arrival 훅 (approach / nav_status)"]
 ```
 
-로봇 → 백엔드 토픽: 결과는 `bomi/v1/robot/{id}/results`, 상태는
-`bomi/v1/robot/{id}/status`. 인바운드/아웃바운드 모두 QoS 1, retain=false.
+만료 검사가 두 번 나오는 것은 실수가 아닙니다 — 큐에 넣기 전과 실행 직전에 한 번씩
+봅니다. 그리고 중복 검사가 만료 검사보다 **먼저**이므로, 만료된 명령을 같은
+`commandId` 로 재전송하면 회신조차 오지 않습니다. 재전송 정책을 세울 때 이 순서를
+전제로 삼으십시오.
+
+`CANCEL` 은 payload 를 읽지 않습니다. 계약 문서는 `{targetCommandId, reasonCode}`
+를 정의하지만 브릿지는 무조건 현재 진행 중인 목표를 취소하므로, 백엔드가 특정
+명령만 골라 취소할 수는 없습니다.
+
+로봇 → 백엔드 토픽: 결과는 `bomi/v1/robot/{id}/results`. 인바운드/아웃바운드
+모두 QoS 1, retain=false.
+
+> `bomi/v1/robot/{id}/status` 는 계약과 발행 함수(`publish_rest_state`,
+> `publish_navigation_status`)가 있지만 **운영 경로에서 부르는 곳이 없습니다.**
+> 지금 이 토픽으로 나가는 메시지는 없고, 호출자는 `test/test_status.py` 뿐입니다.
+> "이동 중" 표시는 MQTT 가 아니라 ROS 2 토픽 `/bomi/nav_status`
+> (`std_msgs/String`, `NAVIGATING`/`IDLE`)로 나가며 LCD(`bomi_display`)가
+> 그것을 구독합니다.
+
+결과 조합은 코드가 내는 그대로 아래와 같습니다.
+
+| 상황 | type | outcome | resultCode | reasonCode |
+| --- | --- | --- | --- | --- |
+| 도착 | NAVIGATION_RESULT | SUCCEEDED | ARRIVED | `null` |
+| 주행 실패 | NAVIGATION_RESULT | FAILED | NOT_ARRIVED | 드라이버 값 (없으면 INTERNAL_ERROR) |
+| 주행 취소 | NAVIGATION_RESULT | CANCELLED | NOT_ARRIVED | **SAFETY_STOP 고정** |
+| 계약 밖 target | NAVIGATION_RESULT | FAILED | NOT_ARRIVED | UNKNOWN_TARGET |
+| 만료 | (타입별) | FAILED | (타입별 부정형) | COMMAND_EXPIRED |
+| FOLLOW ACK | FOLLOW_RESULT | SUCCEEDED | STARTED / STOPPED | `null` |
 
 ## 개발 환경 (WSL)
 
@@ -53,6 +104,11 @@ cd /mnt/c/S15P11E102/robot/ros2_ws
 ```bash
 colcon build --packages-select core bridge --symlink-install
 ```
+
+`core`를 함께 빌드하는 것은 편의가 아니라 필수입니다. `package.xml`이
+`<depend>core</depend>`를 선언하고, 좌표 로더가 `core` 패키지의 share 디렉터리
+에서 `room_waypoints.yaml`을 찾습니다. `core`가 설치돼 있지 않으면 nav2
+드라이버의 주행이 전부 실패합니다.
 
 그리고 ROS 2를 쓰는 터미널마다 아래 두 줄을 먼저 실행합니다(새 터미널마다 반복).
 `install/setup.bash`는 위 빌드 이후에 생깁니다.
@@ -78,8 +134,16 @@ MQTT 테스트 도구는 한 번만 설치합니다(비밀번호 입력이 필�
 
 ```bash
 sudo apt install -y mosquitto mosquitto-clients   # 브로커 + mosquitto_pub/sub
-pip3 install paho-mqtt
+pip3 install 'paho-mqtt>=2.1,<3'
 ```
+
+> ⚠️ **bridge 는 paho-mqtt 2.x 가 필요합니다.** `mqtt_client.py`가
+> `CallbackAPIVersion.VERSION2`를 쓰므로 1.x 에서는 생성자부터 깨집니다.
+> 루트 `CLAUDE.md` §6 의 "`paho-mqtt>=1.6,<2` 통일"은 **`robot/ai_chat`** 쪽
+> 이야기입니다 — 두 프로세스가 서로 다른 메이저 버전을 요구하므로 같은
+> 인터프리터를 공유하지 않습니다(ai_chat 은 자체 가상환경).
+> `robot/scripts/preflight.sh`가 시스템 python3 과 ai_chat 가상환경의 버전을
+> 각각 확인합니다.
 
 ## 1. 단위 테스트 (병합 전 확인)
 
@@ -191,18 +255,57 @@ python3 -m bridge.mqtt_client
 
 - 기본값은 `mock`입니다. 잘못된 값이면 조용히 넘어가지 않고 노드 시작이 실패합니다.
 - `nav2`는 ROS 2 노드 실행 경로에서만 쓰이며, Nav2가 먼저 활성화돼 있어야 합니다.
-- 좌표는 `core/config/room_waypoints.yaml`을 단일 출처로 씁니다. `ENTRANCE`는
-  `entrance`로 매핑하고, `DEFAULT`는 위치 미확정이라 미지원(`FAILED`)입니다.
-- 도착 타임아웃은 `goal_timeout_seconds`(초, 기본 120)로 설정합니다.
+- 좌표는 `core/config/room_waypoints.yaml`을 단일 출처로 씁니다. 목적지 3개가
+  모두 매핑돼 있습니다.
+
+  | 백엔드 target | 웨이포인트 이름 | 비고 |
+  | --- | --- | --- |
+  | `ENTRANCE` | `entrance` | 현관 |
+  | `LIVING_ROOM` | `sofa` | 어르신이 앉는 소파 앞 |
+  | `DEFAULT` | `charging` | 대기 위치. **현재 `sofa`와 좌표가 완전히 같습니다** |
+
+  `sofa`와 `charging`이 같은 좌표인 것은 사고가 아닙니다 — `robot/scripts/bomi_map.sh`
+  가 매핑 단계에서 출발 좌표 하나로 두 이름을 함께 갱신합니다. 시연 대본에서
+  어르신이 소파에 앉으므로 "거실 도착"과 "대기 위치 복귀"가 같은 지점입니다.
+- 도착 타임아웃은 `goal_timeout_seconds`(초, 기본 120)로 설정합니다. 이 값은
+  액션 서버 대기·목표 접수·결과 대기 전체의 공통 마감시각입니다.
 
 설계 근거는 `docs/decisions/0001-nav2-driver-owns-action-client.md`를 참고하세요.
 
+### FOLLOW_START / FOLLOW_STOP (회전 탐색 배선)
+
+`FOLLOW_*`는 "실패만 돌려주는 스텁"이 아닙니다. ROS 2 노드 경로에서
+`search_enabled:=true`이면 `FOLLOW_START`가 `/wake_search/start`에
+`std_msgs/Bool(True)`를 발행하고, **회신은 훅 실행보다 먼저** 나갑니다
+(`SUCCEEDED` / `STARTED`). `FOLLOW_STOP`은 `False`를 발행하고 `STOPPED`로
+답합니다. 회신을 먼저 내는 이유는 백엔드의 FOLLOW ACK 타임아웃이 10초인데
+회전 탐색은 그보다 오래 걸릴 수 있기 때문입니다.
+
+`FAILED` / `UNCHANGED` / `INTERNAL_ERROR`가 나오는 경우는 훅이 없는 실행뿐입니다
+— 순수 paho 러너(`python3 -m bridge.mqtt_client`)이거나 `search_enabled=false`일 때.
+
+| 파라미터 | 기본값 | 의미 |
+| --- | --- | --- |
+| `search_enabled` | `false` | 킬 스위치 |
+| `search_start_topic` | `/wake_search/start` | 시작 신호를 보낼 토픽 |
+
+> ⚠️ **`mqtt_bridge.launch.py`로는 이 두 파라미터를 넘길 수 없습니다.** launch
+> 파일에 선언이 빠져 있습니다(노드가 선언하는 파라미터 32개 중 launch 인자로
+> 노출된 것이 30개). 회귀 테스트 `test/test_launch_exposes_node_parameters.py`
+> 가 바로 이 종류를 잡도록 만들어져 있고, 두 이름이 빠져 있으므로 그 테스트는
+> 현재 실패합니다. 켜는 경로는
+> `ros2 run bridge mqtt_bridge --ros-args -p search_enabled:=true` 이거나
+> `core/launch/bomi_wake_search.launch.py` 입니다.
+
 ### 도착 후 사람 접근 (선택, 킬 스위치 — CLAUDE.md §3a)
 
-보미야 호출로 거실 waypoint 에 도착한 뒤, 어르신 앞 약 0.5m 까지 마지막
-몇 걸음을 좁히는 기능입니다. 기본값은 **꺼짐**입니다 — V4 실기에서 처음
-검증되므로, 불안정하면 파라미터 하나로 "거실 좌표 도착까지"의 검증된
-동작으로 되돌릴 수 있어야 합니다.
+보미야 호출로 거실 waypoint 에 도착한 뒤, 어르신 앞까지 마지막 몇 걸음을
+좁히는 기능입니다. 어디서 멈출지는 `core/config/person_following.yaml` 의
+`person_stop_distance_m`(현재 **0.6m**)이 정하며, 이 값은 bridge 가 아니라
+`person_follower` 소관입니다(`bridge/approach.py` docstring 의 "약 0.5m" 는
+코드 기본값 시절의 표기라 배포값과 어긋납니다). 기본값은 **꺼짐**입니다 —
+V4 실기에서 처음 검증되므로, 불안정하면 파라미터 하나로 "거실 좌표 도착까지"의
+검증된 동작으로 되돌릴 수 있어야 합니다.
 
 | 파라미터 | 기본값 | 의미 |
 | --- | --- | --- |

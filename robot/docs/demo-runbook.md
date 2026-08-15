@@ -1,6 +1,12 @@
 # 시연 실행 순서
 
-젯슨에서 시연 3개 시나리오를 돌리는 방법과, 실기에서 실제로 겪은 함정들.
+젯슨에서 시연 시나리오를 돌리는 방법과, 실기에서 실제로 겪은 함정들.
+
+시연 범위는 네 개다 — 보미야 호출, 현관 인사, 복약 알림, 온습도 안부. 이 중
+현관·온습도는 §2 의 귀가 대본 한 줄로 함께 돌고, 보미야 호출은 별도 launch 로
+돌린다. 복약 알림은 로봇 쪽 실행이 따로 없다 — 백엔드 스케줄러가 시각을 보고
+`NAVIGATE(LIVING_ROOM)` 을 쏘므로, 시연 5분 전에 `care_record` 슬롯을 시드해
+두면 같은 스택에서 그대로 탄다.
 
 `.env`·가상환경·PulseAudio 설정은 저장소에 들어가지 않는다. 젯슨을 새로
 설치했거나 다른 체크아웃에서 돌린다면 **§3 을 먼저** 실행해야 한다.
@@ -14,35 +20,98 @@ EC2의 `production.env`에는 아래 값을 넣고 백엔드 컨테이너를 재
 최신 값은 귀가 추종 후 대화에서 사용한다.
 
 ```bash
+# EC2 에서
 WELLNESS_SCENARIO_ENABLED=false
 ```
 
 ```bash
+# 젯슨에서
 cd ~/S15P11E102
 export MQTT_PASSWORD=$(grep -m1 '^MQTT_PASSWORD=' robot/ai_chat/.env | cut -d= -f2-)
-export PYTHONPATH=/home/ssafy/S15P11E102/robot/ai_vision/src
 export AI_VISION_PYTHON=/home/ssafy/S15P11E102/robot/ai_vision/venv/bin/python
 export AI_CHAT_PYTHON=/home/ssafy/S15P11E102/robot/ai_chat/.venv/bin/python
 export LD_LIBRARY_PATH=/home/ssafy/S15P11E102/robot/ai_vision/venv/lib/python3.10/site-packages/nvidia/cu12/lib:/usr/local/cuda/lib64:/usr/lib/aarch64-linux-gnu
 ```
 
-세 줄이 왜 필요한가
+각 줄이 왜 필요한가
 
-| 변수 | 없으면 |
-|---|---|
-| `AI_CHAT_PYTHON` | ai_chat 가상환경이 `venv` 가 아니라 `.venv` 라 "가상환경이 없습니다"로 종료 |
-| `LD_LIBRARY_PATH` | GPU 용 torch 가 `libcudss.so.0` 를 못 찾아 ai_vision 이 즉시 죽고, 전체 스택이 함께 내려감 |
-| `AI_VISION_PYTHON` | 다른 체크아웃의 CPU 전용 venv 를 잡으면 추론이 0.04초 → 0.75초로 느려져 추종이 끊긴다 |
+| 변수 | 없으면 | 비고 |
+|---|---|---|
+| `MQTT_PASSWORD` | 브릿지와 ai_chat 이 브로커에 못 붙는다 | `demo-start.sh` 는 `.env` 에서 스스로 읽는다 |
+| `AI_CHAT_PYTHON` | `run-homecoming-voice.sh` 의 기본값이 `venv` 인데 젯슨은 `.venv` 라 "가상환경이 없습니다"로 종료 | `demo-start.sh` 는 `.venv` 를 먼저 찾아 자동으로 넣는다 |
+| `LD_LIBRARY_PATH` | GPU 용 torch 가 CUDA·aarch64 라이브러리를 못 찾는다 | `run-homecoming-follow.sh` 가 `nvidia/cu12/lib` 는 스스로 붙인다. 여기서 더하는 것은 `/usr/local/cuda/lib64` 와 `/usr/lib/aarch64-linux-gnu` 두 개다 |
+| `AI_VISION_PYTHON` | 셸에 다른 체크아웃 값이 남아 있으면 CPU 전용 venv 를 잡아 추론이 0.04초 → 0.75초가 되고 추종이 끊긴다 | 값이 없으면 스크립트가 같은 체크아웃에서 알아서 만든다 |
+
+> `PYTHONPATH` 는 **설정하지 않는다.** ai_vision 은 venv 에 설치된 패키지라
+> 필요 없고, 이 값은 ai_chat 프로세스까지 상속돼 의존성이 깨질 수 있다.
+> ROS 를 source 한 셸에서 ai_chat 을 직접 돌릴 일이 있으면
+> `env -u PYTHONPATH` 로 감싼다(`demo-start.sh` 가 그렇게 한다).
+
+실행 전 자가진단이 필요하면 `bash robot/scripts/preflight.sh` 를 먼저 돌린다 —
+USB 장치·워크스페이스 설치본·파이썬 환경·모델과 `.env`·UDP 포트 다섯 갈래를
+한 번에 본다.
 
 ---
 
 ## 2. 시나리오별 실행
 
+### 권장 — 원클릭 준비
+
+```bash
+bash robot/scripts/demo-start.sh     # 로봇을 출발점에 놓고 실행
+bash robot/scripts/demo-stop.sh      # 전부 내린다
+```
+
+`demo-start.sh` 는 9단계를 **보고가 아니라 실제 상태로** 확인한다. DB 의 남은
+시나리오와 로봇 mode 를 먼저 보고, 스피커·TTS 를 실제로 1회 합성해 보고,
+스택을 띄운 뒤 Nav2 lifecycle 을 노드에 직접 묻고, 초기 위치를 TF 로 확인하고,
+현관까지 경로를 한 번 계산해 본다. 종료 코드 0 이면 문을 열어도 된다.
+
+2026-08-09 실기에서 이 확인들을 손으로 하다 세 번 헛돌았다 — 스택이 뜨기 전에
+문을 열어 시나리오가 고착됐고, 로봇을 옮긴 뒤 초기 위치를 다시 안 잡아 엉뚱한
+곳으로 갔고, "Nav2 준비 완료"가 떴는데 map_server 와 amcl 이 inactive 였다.
+
+```mermaid
+flowchart TD
+    A["demo-start.sh"] --> B["1. DB: 남은 시나리오 · robot mode 확인"]
+    B --> C["2. 스피커 · TTS 실제 1회 합성"]
+    C --> D["3. demo-stop.sh 로 이전 스택 정리"]
+    D --> E["4. run-homecoming-follow.sh 기동"]
+    E --> F["5. 준비 대기 (최대 4분)"]
+    F --> G["6. Nav2 lifecycle 6개 노드에 직접 질의"]
+    G --> H["7. 초기 위치 설정 → TF map→base_link 확인<br/>→ 현관까지 경로 1회 계산"]
+    H --> I["8. LCD 상태 화면 시작"]
+    I --> J["9. MQTT 감시 시작"]
+    J --> K{"종료 코드"}
+    K -->|0| L["문을 열어도 된다"]
+    K -->|1| M["멈춘 단계의 이유가 출력된다"]
+
+    style L fill:#dcfce7,stroke:#16a34a
+    style M fill:#fee2e2,stroke:#dc2626
+```
+
+시연 직전 Typecast 가 죽어 TTS 점검(2단계)에서 막히면 `SKIP_SPEECH_CHECK=1` 로
+그 단계만 건너뛴다 — 로봇은 무음이 되지만 주행은 그대로 보여 줄 수 있다.
+
+**시연 사이에는 반드시 `demo-stop.sh` 로 내린다.** 안 내리면 `/dev/video*` 와
+시리얼 포트가 물린 채 남아 다음 실행이 조용히 실패한다.
+
+아래의 개별 스크립트는 **한 시나리오만 떼어 볼 때** 쓴다.
+
 ### 현관 출입 → 추종 → 온습도 → 복귀
 
 ```bash
-HOMECOMING_FOLLOW_SECONDS=10 bash robot/scripts/run-homecoming-follow.sh
+bash robot/scripts/run-homecoming-follow.sh
 ```
+
+`HOMECOMING_FOLLOW_SECONDS` 를 손으로 주지 않는다. 기본값 20초는 2026-08-10에
+정한 값이다 — 10초로 두면 어르신이 따라올 새도 없이 추종이 끝나고 온습도
+대화로 넘어가 버린다.
+
+이 대본이 도는 동안에는 "보미야"가 막힌다(`WAKE_BLOCK_DURING_HOMECOMING`,
+기본 300초). 현관으로 가는 사이에 웨이크워드가 잡히면 귀가 대본을 버리고 거실
+호출 시나리오가 새로 시작되기 때문이다. 시연 중 "보미야가 안 먹는다"는 대개
+고장이 아니라 이것이다.
 
 `[4/4] Nav2 준비 완료` 가 뜬 뒤 문을 연다. 인사에 **실제로 대답**해야 다음
 단계로 넘어간다(무응답 15초면 대화가 끝난다).
@@ -116,10 +185,18 @@ GB 쌓이니 `rm -rf ~/.cache/pip` 로 비운다 — 실제로 디스크가 99% 
 `~/.bomi_demo_state` 의 `MAP` 이 가리키는 지도 파일이 체크아웃에 있어야 한다.
 없으면 "지도 파일이 없습니다"로 즉시 종료한다.
 
+`~/.bomi_demo_state` 는 `bomi_map.sh` 가 매핑을 마칠 때 남기는 두 줄
+(`MAP=<지도이름>` 과 `START="x y yaw"`)이다. 젯슨 홈에만 있는 런타임 산출물이라
+재부팅이나 브랜치 전환으로 사라진다.
+
 ```bash
-cat ~/.bomi_demo_state          # MAP=bomi_real_19
-ls robot/ros2_ws/src/mapping/maps/bomi_real_19.yaml
+cat ~/.bomi_demo_state          # 예: MAP=bomi_real_30
+ls robot/ros2_ws/src/mapping/maps/$(sed -n 's/^MAP=//p' ~/.bomi_demo_state).yaml
 ```
+
+상태 파일이 없으면 `robot/scripts/demo_defaults.sh` 의 `MAP` 값이 폴백으로
+쓰인다. 재매핑한 지도로 시연한다면 그쪽도 같이 고친다 — 두 곳이 어긋나면
+"어제는 됐는데" 가 된다.
 
 ### `.env` 오디오 값
 
@@ -128,7 +205,7 @@ ls robot/ros2_ws/src/mapping/maps/bomi_real_19.yaml
 | 키 | 값 | 틀리면 |
 |---|---|---|
 | `AUDIO_SILENCE_THRESHOLD` | `150` | 300 이면 목소리를 무음으로 처리해 "말 안 함"으로 끝난다 |
-| `AUDIO_SILENCE_LIMIT_SECONDS` | `1.5` | 응답 판정이 느려진다 |
+| `AUDIO_SILENCE_LIMIT_SECONDS` | `.env.example` 은 `3`. 실기에서 응답 판정이 느리면 `1.5` 까지 내려 본다 | 크면 말이 끝난 뒤에도 계속 듣고 있다 |
 | `AUDIO_INPUT_DEVICE` | `reSpeaker` | 마이크가 안 잡힌다 |
 | `AUDIO_OUTPUT_DEVICE` | `pulse` | 장치 번호는 재부팅마다 바뀐다 |
 
@@ -138,7 +215,8 @@ ls robot/ros2_ws/src/mapping/maps/bomi_real_19.yaml
 
 | 증상 | 원인 | 조치 |
 |---|---|---|
-| 문을 열어도 로봇이 안 움직인다 | 이전 시나리오가 안 끝났거나 `SAFE_STOP` | 운영자 대시보드에서 강제 종료·해제 (`backend/tools/operator_console/README.md`) |
+| 문을 열어도 로봇이 안 움직인다 | 이전 시나리오가 안 끝났거나 `SAFE_STOP` | ① `bash robot/scripts/demo-start.sh` 1단계가 이 상태를 먼저 잡아 준다 ② 그래도 남으면 `scripts/dev/reset-demo.sql` 을 실행한다(리허설 사이마다 돌리면 `SAFE_STOP` 과 `ACTIVE_SCENARIO_EXISTS` 가 함께 풀린다) ③ 운영자 콘솔(`backend/tools/operator_console/README.md`)은 `OPERATOR_SHARED_SECRET` 이 설정돼 있을 때만 쓸 수 있다 |
+| 두 번째 실행부터 추종이 안 붙는다 | 이전 스택의 UDP 5005 수신 노드가 고아로 남았다 | `demo-stop.sh` 를 먼저 돌린다. `lib/cleanup.sh` 의 노드 패턴에 `vision_udp_bridge` 가 빠져 있어 이 노드는 자동 정리에서 새므로, 남아 있으면 손으로 죽인다 |
 | 말은 하는데 안 들린다 | 기본 출력이 HDMI | §3 스피커 |
 | 대답해도 "no speech within 15s" | `AUDIO_SILENCE_THRESHOLD` 가 높다 | §3 `.env` |
 | ai_vision 이 뜨자마자 죽는다 | `LD_LIBRARY_PATH` 없음, 또는 이전 실행이 카메라 점유 | §1 export / `fuser -k /dev/video0` |
@@ -147,8 +225,9 @@ ls robot/ros2_ws/src/mapping/maps/bomi_real_19.yaml
 
 ### 운영자 대시보드
 
-EC2 의 `127.0.0.1:8501` 에만 열려 있다. **운영자 PC 에서** 터널을 연다
-(EC2 안에서 실행하면 안 된다).
+두 갈래로 연다. 공개 경로는 HTTPS 의 `/operator-console/` 이며 Nginx Basic
+인증이 걸려 있다. 인증 정보가 없으면 EC2 의 `127.0.0.1:8501` 로 터널을 뚫는다
+— **운영자 PC 에서** 열어야 한다(EC2 안에서 실행하면 안 된다).
 
 ```bash
 ssh -N -L 8501:127.0.0.1:8501 <EC2 별칭>

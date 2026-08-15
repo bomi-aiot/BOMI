@@ -5,11 +5,17 @@ Docker Compose 환경이다. Zigbee2MQTT와 로컬 Mosquitto Broker를 함께 �
 
 ## 구성
 
-| 서비스 | 역할 | 기본 포트 |
-| --- | --- | --- |
-| `zigbee2mqtt` | Zigbee 센서 데이터를 MQTT 메시지로 변환하고 관리 UI 제공 | 8080 |
-| `zigbee-mqtt` | Zigbee2MQTT와 IoT 번역기가 사용하는 로컬 MQTT Broker | 1883 |
-| `bomi-iot-translator` | 센서 메시지를 BOMI MQTT 계약 이벤트로 변환 | 없음 |
+| Compose 서비스 | 컨테이너 이름 | 역할 | 기본 포트 |
+| --- | --- | --- | --- |
+| `zigbee2mqtt` | `zigbee2mqtt` | Zigbee 센서 데이터를 MQTT 메시지로 변환하고 관리 UI 제공 | 8080 |
+| `mqtt` | `zigbee-mqtt` | Zigbee2MQTT와 IoT 번역기가 사용하는 로컬 MQTT Broker | 1883 |
+| `translator` | `bomi-iot-translator` | 센서 메시지를 BOMI MQTT 계약 이벤트로 변환 | 없음 |
+
+`docker compose ...` 명령에는 **서비스** 이름을, `docker exec ...` 에는
+**컨테이너** 이름을 쓴다. 아래 예시들도 그렇게 나뉘어 있다.
+
+이미지 태그는 Zigbee2MQTT 만 `latest` 이고 Mosquitto 는 `eclipse-mosquitto:2` 로
+메이저를 고정했다. 재빌드 시점에 따라 Zigbee2MQTT 동작이 달라질 수 있다.
 
 확인된 센서 값은 다음과 같다.
 
@@ -35,6 +41,19 @@ mkdir -p mosquitto/config/conf.d
 cp mosquitto/bridge.example.conf mosquitto/config/conf.d/bridge.conf
 ```
 
+무엇을 왜 복사하는지는 아래와 같다.
+
+| 복사본 | 원본 | 무엇을 바꿔야 하나 |
+| --- | --- | --- |
+| `.env` | `.env.example` | `ZIGBEE_DEVICE_PATH` (필수, 기본값 없음) |
+| `data/configuration.yaml` | `data/configuration.example.yaml` | 대개 그대로 (Zigbee 채널 11, 어댑터 `zstack` — Sonoff ZBDongle-P 기준) |
+| `../translator/config/device.yaml` | `device.example.yaml` | `friendly_name`, `source_id` |
+| `mosquitto/config/conf.d/bridge.conf` | `mosquitto/bridge.example.conf` | `remote_password` |
+
+> `translator` 컨테이너는 `device.yaml` 이 없으면 **뜨지 않는다.** 읽기 전용
+> bind 를 `create_host_path: false` 로 걸어 두었기 때문이며, 첫 실행 실패의
+> 가장 흔한 원인이다.
+
 `.env`의 `ZIGBEE_DEVICE_PATH`를 앞에서 확인한 `/dev/serial/by-id/...` 경로로
 변경한다. `../translator/config/device.yaml`의 `friendly_name`은 Zigbee2MQTT에
 등록된 실제 센서 이름과 일치시킨다. `.env`, `data/configuration.yaml`, 번역기의
@@ -44,12 +63,15 @@ cp mosquitto/bridge.example.conf mosquitto/config/conf.d/bridge.conf
 `bomi-iot-gateway` 계정 비밀번호를 입력한다. 이 파일은 Git에서 제외되며
 Raspberry Pi에만 보관한다.
 
-서비스를 실행하기 전에 장치 경로, 설정 파일, Bridge 계정과 Git 제외 규칙을
-검사한다.
+서비스를 실행하기 전에 아래를 검사한다.
 
 ```bash
 ./scripts/check-config.sh
 ```
+
+이 스크립트가 보는 것은 넷이다 — 설정 파일 4개의 존재, `ZIGBEE_DEVICE_PATH` 가
+실제 경로인지, Bridge 계정이 채워졌는지, 그리고 **설정 파일들이 git-ignore
+대상인지**. 마지막 항목이 비밀정보 커밋을 막는 자리라 가장 중요하다.
 
 ## 실행 및 확인
 
@@ -85,6 +107,12 @@ docker exec -it zigbee-mqtt \
   mosquitto_sub -h localhost -t 'bomi/v1/iot/+/events' -v
 ```
 
+> 이 구독에는 **DHT11 온습도 이벤트(`AMBIENT_ENVIRONMENT_OBSERVED`)도 함께
+> 보인다.** DHT11 수집기는 이 Compose 안이 아니라 Pi 호스트 systemd 로 돌면서
+> 같은 로컬 브로커에 발행하기 때문이다(`bomi-iot-translator` 이미지에는 DHT11
+> 코드가 들어 있지 않다). 설정과 실행은 [`../README.md`](../README.md) 의
+> "DHT11 온습도 이벤트" 절을 따른다.
+
 ## EC2 MQTT Broker 전달
 
 로컬 Mosquitto Bridge는 Translator가 발행한 다음 토픽만 EC2 운영 Broker로
@@ -103,6 +131,9 @@ bomi/v1/iot/+/events
 | TLS | 사용, Let's Encrypt 서버 인증서 검증 |
 | Username | `bomi-iot-gateway` |
 | QoS | 1 |
+
+Bridge 는 `bridge_outgoing_retain false` 로 retain 을 막는다. 계약이 retain 을
+금지하므로 이 설정 자체가 계약 준수의 일부다.
 
 Bridge 연결 상태는 Mosquitto 로그에서 확인한다.
 
@@ -129,6 +160,12 @@ Mosquitto와 Translator가 실행 중이면 실제 센서 없이 닫힘 → 열�
 ```bash
 ./scripts/smoke-test.sh <door_friendly_name> <expected_source_id>
 ```
+
+> ⚠️ **`source_id` 는 아직 두 값이 공존한다.** 예시 설정과 이 스크립트는
+> `door_sensor` 를, 백엔드 정식 등록값은 `door-sensor-01` 을 쓴다. 백엔드가
+> 임시로 둘 다 받아 주고 있으나, 그 줄에는 "IoT 가 `door-sensor-01` 로
+> 되돌리면 지운다"는 메모가 붙어 있다. 새 Pi 를 설정한다면
+> **`door-sensor-01` 로 맞추는 편이 안전하다.**
 
 이 검사는 로컬 메시지 변환까지 확인한다. EC2 수신 여부는 Mosquitto Bridge 로그와
 Backend 로그에서 별도로 확인한다.

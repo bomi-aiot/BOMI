@@ -2,13 +2,17 @@
 
 작성일: 2026-08-06 · 전제: [current-state-audit.md](current-state-audit.md), [implementation-plan.md](implementation-plan.md)
 
-> **구현 반영 (2026-08-06):** §2 의 `context_candidates` 와 §3(ContextCandidate·수명 규칙·
-> 선택 우선순위)은 구현되어 CLAUDE.md §30 으로 승격됐다 — 이제 §30 이 권위다. §4 세션
-> FSM 도 구현됐다(`conversation_control.SessionState`). `session_state` 스냅샷 필드와
-> `pending_tool_action` 은 계획대로 **도입하지 않았다**(쓰는 곳이 생길 때 추가 — 미사용
-> 필드 금지 원칙). 감사 §0 해소 현황 참고.
+> **구현 반영 (2026-08-06 · 2026-08-15 갱신):** §2 의 `context_candidates` 와
+> §3(ContextCandidate·수명 규칙·선택 우선순위)은 구현되어 런타임 규칙으로 승격됐다 —
+> **권위는 `임시보류_claude.md` §30 이다**(2026-08-06 이후 루트 `CLAUDE.md` 는 통합
+> 스프린트 헌법 §0~§7 로 교체됐고, 대화 설계 헌법은 그 보관본으로 옮겨졌다. 이 문서가
+> 인용하는 §4·§8·§15·§16·§20·§24·§25·§26·§30 은 전부 보관본의 절 번호다).
+> §4 세션 FSM 도 구현됐다(`conversation_control.SessionState`, 5상태 9전이).
+> `session_state` 스냅샷 필드와 `pending_tool_action` 은 계획대로 **도입하지 않았다**
+> (쓰는 곳이 생길 때 추가 — 미사용 필드 금지 원칙). 아래 §2 코드 블록에서 두 필드는
+> **제안이었고 채택되지 않은 것**으로 읽어야 한다. 감사 §0 해소 현황 참고.
 
-설계 원칙: **새 서비스·새 프레임워크·새 테이블을 만들지 않는다.** 요청서의 책임 목록을 기존 모듈에 사상(mapping)하고, 없는 것만 기존 자리에 추가한다. 기존 그래프 구조(§6)·게이트(§7)·기억 경계(§8)·ERD 어휘(§4)는 그대로 유지된다.
+설계 원칙: **새 서비스·새 프레임워크·새 테이블을 만들지 않는다.** 요청서의 책임 목록을 기존 모듈에 사상(mapping)하고, 없는 것만 기존 자리에 추가한다. 기존 그래프 구조·게이트·기억 경계·ERD 어휘(`임시보류_claude.md` §6·§7·§8·§4)는 그대로 유지된다.
 
 ---
 
@@ -19,7 +23,7 @@
 | WakewordGate | `audio_io/wakeword.py` + `bootstrap.run_conversation_loop`의 블로킹 대기 | **기존 유지** (변경 없음, 테스트만 추가) |
 | ConversationSessionManager | `conversation_control.py`(규칙·전이 함수) + `bootstrap._run_graph_conversation`(구동) | **Phase 1에서 명시화** — 새 모듈 만들지 않음 |
 | ConversationState | LangGraph `ConvState`(`state.py`) 확장 | **기존 확장** — 아래 §2 |
-| ContextResolver | `graph/ingress.py`(후보 수명) + `graph/context.py`(조회 파라미터 해석) | **Phase 2 신규 로직, 기존 노드 안에** |
+| ContextResolver | `graph/context_slots.py`(수명 규칙·후보 선택, **순수 함수 모듈**) + 호출부 `graph/ingress.note_interaction`(매 턴 갱신)·`graph/context._lookup_weather_documents`(조회 지역 결정) | **구현 완료 — 단 이 설계의 "새 파일을 만들지 않는다" 원칙의 유일한 예외다.** 수명 규칙이 순수 함수(시계를 인자로 받음)여야 오디오·백엔드 없이 단독 테스트가 가능하고, 그 테스트가 "만료 없는 슬롯" 사고(감사 F)의 유일한 방어선이기 때문에 노드 안에 두지 않았다 |
 | UserProfileProvider | `backend_client/context_client.py` + `localstore/context_cache` | **기존 유지** — 미사용 필드 활용만 추가 |
 | MemoryService | `backend_client/` (문맥조립·fact_client) + `localstore/extraction` | **기존 유지** |
 | MemoryPolicy | `graph/build.py:_enqueue_extraction`의 스킵 조건 7종 + `policy.py` | **기존 유지** — 봉인 검사 범위만 확장(Phase 5) |
@@ -36,18 +40,27 @@
 
 ## 2. ConversationState — `ConvState` 확장안
 
-기존 41개 필드는 그대로 두고 다음만 추가한다 (`state.py`):
+기존 필드(설계 당시 41개, 현재 48개)는 그대로 두고 다음을 **제안했다** (`state.py`).
+네 항목 중 실제로 채택된 것은 `context_candidates` 와 `retrieval_status` 둘뿐이다:
 
 ```python
-# 추가 필드 (전부 total=False, 구 체크포인트와 호환되게 .get() + 기본값으로만 읽는다)
-session_state: str            # IDLE/LISTENING/PROCESSING/RESPONDING/ENDING — 관측용 스냅샷.
-                              # 권위는 bootstrap 루프. 그래프는 기록만 한다.
-context_candidates: list[ContextCandidate]   # 아래 §3. 유일한 신규 "문맥" 저장소.
-retrieval_status: RetrievalStatus            # 기능 가용성과 이번 요청의 실제 검색·폴백을 분리.
-                                              # 계약 고정(666ae0d + BE 0436b71 머지). 구버전
-                                              # 응답에는 필드가 없을 수 있고 그때는 '모름' 유지.
-pending_tool_action: dict | None             # 행동형 도구 확인 대기. 현재 도구는 읽기 전용이라
-                                             # Phase 6 전까지 항상 None.
+# 제안 필드 (전부 total=False, 구 체크포인트와 호환되게 .get() + 기본값으로만 읽는다)
+
+# [채택] 아래 §3. 유일한 신규 "문맥" 저장소. 현재 type 은 LOCATION 하나뿐이다.
+context_candidates: list[ContextCandidate]
+
+# [채택] 기능 가용성과 이번 요청의 실제 검색·폴백을 분리. 계약 고정(666ae0d + BE
+#        0436b71 머지). 구버전 응답에는 필드가 없을 수 있고 그때는 '모름' 유지.
+retrieval_status: RetrievalStatus
+
+# [미채택] IDLE/LISTENING/PROCESSING/RESPONDING/ENDING 관측용 스냅샷. 세션 권위는
+#          bootstrap 루프이고 그래프가 기록만 할 뿐이라, 읽는 곳이 생기기 전에는
+#          미사용 필드가 된다 — 넣지 않았다.
+# session_state: str
+
+# [미채택] 행동형 도구 확인 대기. 현재 도구(날씨·의료)는 전부 읽기 전용이라 쓰는
+#          곳이 없다. Phase 6 에서 행동형 도구가 생기면 그때 추가한다.
+# pending_tool_action: dict | None
 ```
 
 요청서의 `current_topic`/`current_location`/`current_people`/`current_event` 를 **개별 필드로 만들지 않는다.** 전부 `context_candidates`의 `type`으로 표현한다. 이유:
@@ -91,31 +104,68 @@ ContextCandidate = TypedDict("ContextCandidate", {
 2. 활성 SESSION 후보 (미만료·임계 이상)
 3. SCHEDULED_EVENT 후보           careRecords에서 파생 (Phase 3, BE 협의)
 4. (현재 체류지 — 신호원 없음: 미지원으로 명시. GPS·일정 외 체류 정보가 생기면 추가)
-5. STANDING 후보 = app_user 주소   BE 계약 확장 후 (Phase 3)
+5. 프로필 주소 (app_user.home_address)  BE 계약 확장 완료(S15P11E102-347).
+   단 **설계와 구현이 다르다**: `STANDING` 후보를 만들지 않고
+   `context._lookup_weather_documents` 가 `ctx.profile.address` 에서 도시명을
+   직접 뽑는다. `context_slots.PROFILE_DEFAULT` 상수는 로그 라벨로만 쓰이며
+   `new_candidate(source=PROFILE_DEFAULT)` 호출부는 아직 없다.
 6. 확인 질문                       후보 없음 → 현행 유지("어느 지역이요?")
 ```
 
-**안전 제한**: 건강·안전·금전 관련 실행은 confidence < 1.0(비명시) 후보로 수행하지 않는다. 의료 조회의 기존 확인 게이트(`medical_flow.py:246-297` — 부분 일치·자모 보정 시 되묻기)가 이 원칙의 선례이며 그대로 유지한다.
+**안전 제한**: 건강·안전·금전 관련 실행은 confidence < 1.0(비명시) 후보로 수행하지 않는다. 의료 조회가 이 원칙의 선례이며 그대로 유지한다 — `medical_flow` 는 두 겹으로 막는다. ① 모델이 넘긴 `region` 이 상대 표현("근처"·"여기"·"우리동네")이면 **버리고** `needs_location` 을 돌려준다(`RELATIVE_LOCATION_TERMS`). ② 시설·약품 이름이 부분 일치일 때는 그 이름으로 되묻는다. 즉 **의료 경로는 문맥 후보를 아직 소비하지 않으며, 그것이 현재로서는 의도된 보수성이다.**
 
 ---
 
 ## 4. 세션 상태 머신 (Phase 1)
 
-```text
-IDLE ── 웨이크워드 ──> LISTENING ── 발화 확정 ──> PROCESSING ── emit ──> RESPONDING
- ^                        │  onset 15s 초과                                  │ 재생 완료
- │                        v                                                  v
- └── ENDING <── 작별 문구 ┴──────────────────────────────── LISTENING (루프)
+```mermaid
+stateDiagram-v2
+    [*] --> IDLE
+    IDLE --> LISTENING: wake_detected
+    LISTENING --> PROCESSING: speech_captured
+    LISTENING --> LISTENING: stt_empty<br/>(되묻지 않고 재리슨)
+    LISTENING --> ENDING: no_speech<br/>(onset 15초 초과)
+    LISTENING --> ENDING: farewell<br/>(재생이 끝난 뒤 판정)
+    LISTENING --> ENDING: interrupted<br/>(Ctrl+C 등)
+    PROCESSING --> RESPONDING: turn_done
+    RESPONDING --> LISTENING: playback_done
+    ENDING --> IDLE: session_closed
 ```
+
+전이는 정확히 9개이고, 화살표 라벨이 `next_state()` 가 받는 **이벤트 이름 그대로**다
+(`conversation_control.py:74-84`). 정의되지 않은 전이는 `ValueError` 로 요란하게
+실패하지만, 라이브 루프에서는 `bootstrap._advance` 가 그것을 잡아 로그만 남기고
+세션을 유지한다 — **FSM 이 대화를 끊지 않는다**는 것이 이 설계의 조건이다.
 
 - 전이 함수는 `conversation_control.py`에 **순수 함수**로 둔다(오디오 없이 테스트 가능 — §15의 clock 주입과 같은 동기).
 - 권위는 여전히 `bootstrap` 루프다. enum은 루프의 위치를 이름으로 바꾼 것이지 새 제어 흐름이 아니다.
-- LangGraph 체크포인터에는 스냅샷(`session_state`)만 남긴다 — 관측·디버깅용. 세션 자체를 서버·체크포인트에 "복원"하지 않는다(재부팅 후 대화를 이어가는 것은 오히려 부자연스럽고, 웨이크워드 재요구가 옳다).
+- 설계 당시에는 LangGraph 체크포인터에 스냅샷(`session_state`)만 남길 생각이었으나, 읽는 곳이 없어 **그 필드는 넣지 않았다**(§2 참고). 바뀌지 않은 것은 그 다음 문장이다 — 세션 자체를 서버·체크포인트에 "복원"하지 않는다(재부팅 후 대화를 이어가는 것은 오히려 부자연스럽고, 웨이크워드 재요구가 옳다).
 - 감정 대화의 침묵(시나리오 M): 직전 인텐트가 emotional이면 LISTENING onset 타임아웃을 `policy.EMOTIONAL_IDLE_TIMEOUT_SEC`(신설 다이얼)로 연장.
 
 ---
 
 ## 5. 기억 분리 — 기존 구조 사상 (새 테이블 없음)
+
+네 범위가 서로 다른 저장소에 흩어져 있는 것이 이 설계에서 가장 이해하기 어려운 부분이다.
+파란색은 로봇이 쥐고 있는 것, 주황색은 서버가 권위를 가진 것이다.
+
+```mermaid
+flowchart LR
+    U["어르신 발화"] --> S["SESSION<br/>ConvState.context_candidates<br/>+ 서버 recentMessages"]
+    S -->|"세션 종료 시 소멸"| X((소멸))
+    S --> E["SHORT_TERM_EVENT<br/>conversation_summary<br/>care_record 관찰"]
+    S --> F["fact_candidate<br/>(추출 큐 경유)"]
+    F -->|"확인 후 승격"| L["LONG_TERM_PROFILE<br/>app_user · memory"]
+    F -->|"PERSONAL_RELATIONSHIP"| R["RELATIONSHIP_MEMORY<br/>memory"]
+    F -->|"SENSITIVE"| SS["SENSITIVE_MEMORY<br/>memory.visibility + T4 봉인"]
+    U -.->|"기억하지 마"| C["T4 봉인 + 대기행 삭제<br/>+ 서버 취소 요청"]
+    C -.-> F
+
+    classDef robot fill:#eef3ff,stroke:#4a6fd0
+    classDef server fill:#fff6e5,stroke:#d08a2a
+    class S,C robot
+    class E,F,L,R,SS server
+```
 
 | 요청서 범위 | 실제 자리 | 비고 |
 | --- | --- | --- |
@@ -156,7 +206,18 @@ IDLE ── 웨이크워드 ──> LISTENING ── 발화 확정 ──> PROCE
 
 ## 7. 관측 이벤트 (Phase 7)
 
-요청서 이벤트 목록 중 현재 대응물이 있는 것부터 구조화한다: `WAKEWORD_DETECTED`(wakeword.py 로그), `SESSION_STARTED/ENDED`(bootstrap), `CONTEXT_RESOLVED/OVERRIDDEN`(신규 — 후보 선택 지점), `PROFILE_DEFAULT_USED`, `MEMORY_*`(추출 큐), `TOOL_*`, `USER_INTERRUPTED`/`RESPONSE_CANCELLED`(ingress 바지인). 구현은 `logging` `extra=` + JSON 포맷터로 충분하며 새 인프라를 들이지 않는다. **원문 로깅 금지 원칙을 이때 K1(발화 전문 INFO 로그)·K2(stdout 원문)에도 소급 적용한다.**
+요청서 이벤트 목록 중 현재 대응물이 있는 것부터 구조화한다.
+
+**이미 평문 로그로 나가는 것 (2026-08-15 확인, 이름은 코드 그대로):**
+`SESSION_STARTED`·`SESSION_ENDED`(`bootstrap.py:756,844`),
+`CONTEXT_RESOLVED`(`graph/context.py:638` — 발화 외 근거로 지역을 정했을 때만),
+`T4_SEALED`·`MEMORY_FORGOTTEN`(`graph/ingress.py:313,321`, 서버 절반은 `ticks.py:1333`).
+즉 Phase 7 이 통째로 미착수인 것이 아니라 **이름은 이미 정착했고 형식만 남았다.**
+
+**남은 것:** `WAKEWORD_DETECTED`·`CONTEXT_OVERRIDDEN`·`PROFILE_DEFAULT_USED`·`TOOL_*`·
+`USER_INTERRUPTED`/`RESPONSE_CANCELLED` 추가, 그리고 전부를 `logging` `extra=` +
+JSON 포맷터로 구조화(현재 `extra=` 사용 **0건**). 새 인프라는 들이지 않는다.
+**원문 로깅 금지 원칙을 이때 K1(발화 전문 INFO 로그)·K2(stdout 원문)에도 소급 적용한다.**
 
 공통 메타데이터(요청서 목록 채택): `session_id`(세션 FSM이 부여— Phase 1의 부산물), `senior_id`(로컬 로그는 식별자 그대로, 외부 반출 시 비식별), `event_type`, `timestamp`(clock.py 경유), `source_module`, `context_type`/`confidence`(문맥 이벤트만), `latency`(turn_timer 연동), `result`. 발화 원문은 어떤 이벤트에도 싣지 않는다 — 보호자 알림 payload에 이미 걸려 있는 테스트 보증(`test_safety_triage.py:372`)을 로그 이벤트에도 같은 방식으로 고정한다.
 

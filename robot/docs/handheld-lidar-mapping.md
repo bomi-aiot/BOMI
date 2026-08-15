@@ -4,9 +4,13 @@
 Gazebo 시뮬레이션으로 지도를 만들 때는
 [`gazebo-slam-mapping.md`](gazebo-slam-mapping.md)를 참고하세요.
 
-바퀴 엔코더가 없는 현재 단계에서는 RF2O Laser Odometry가 연속된
-`/scan`의 변화를 이용해 `odom → base_link` 이동량을 추정합니다.
-SLAM Toolbox는 이 TF와 LaserScan을 받아 `map → odom`을 발행합니다.
+로봇 차체 없이 LiDAR만 들고 지도를 뜰 때 쓰는 방법입니다. 바퀴 엔코더가 없으니
+RF2O Laser Odometry가 연속된 `/scan`의 변화만으로 `odom → base_link` 이동량을
+추정하고, SLAM Toolbox는 이 TF와 LaserScan을 받아 `map → odom`을 발행합니다.
+
+로봇에 LiDAR를 얹고 주행하며 지도를 뜬다면 이 문서가 아니라
+[`robot-joystick-slam.md`](robot-joystick-slam.md)입니다 — 그쪽은 엔코더와
+자이로에서 만든 `/odom`을 쓰므로 결과가 훨씬 안정적입니다.
 
 ```text
 map → odom → base_link → laser_frame
@@ -14,6 +18,10 @@ map → odom → base_link → laser_frame
 ```
 
 이 구성은 실물 센서용이며 Gazebo의 `/odom`과 TF를 함께 실행하면 안 됩니다.
+같은 이유로 `pico_driver`(또는 `ekf_node`)와도 함께 띄우면 안 됩니다 — RF2O와
+그쪽이 모두 `odom → base_link`를 발행해 TF 트리가 두 갈래로 갈라집니다.
+증상(로봇이 순간이동하거나 떨림)이 원인과 멀어 찾기 어렵습니다.
+
 RF2O는 Adlink-ROS 공식 저장소의 ROS 2 Humble용 `humble-devel` 브랜치에서
 검증한 revision을 `rf2o.repos`로 가져옵니다. 외부 코드를 저장소에 복사하지
 않고 `vcs import`로 같은 소스를 반복해서 준비하기 위한 방식입니다.
@@ -21,7 +29,7 @@ RF2O는 Adlink-ROS 공식 저장소의 ROS 2 Humble용 `humble-devel` 브랜치�
 ## 1. RF2O와 ROS 의존성 준비
 
 ```bash
-cd /mnt/c/S15P11E102/robot/ros2_ws
+cd <저장소>/robot/ros2_ws
 source /opt/ros/humble/setup.bash
 
 sudo apt update
@@ -39,7 +47,7 @@ rosdep install --from-paths src --ignore-src -r -y
 ## 2. 빌드와 환경 적용
 
 ```bash
-cd /mnt/c/S15P11E102/robot/ros2_ws
+cd <저장소>/robot/ros2_ws
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install \
   --packages-up-to mapping rf2o_laser_odometry
@@ -50,7 +58,7 @@ source install/setup.bash
 
 ```bash
 source /opt/ros/humble/setup.bash
-source /mnt/c/S15P11E102/robot/ros2_ws/install/setup.bash
+source <저장소>/robot/ros2_ws/install/setup.bash
 ```
 
 ## 3. LiDAR 연결과 통합 실행
@@ -98,6 +106,11 @@ ros2 launch mapping mapping_real.launch.py include_lidar:=false
 선택합니다. 기본 RF2O 처리 주기는 공식 Humble launch와 같은 20 Hz입니다.
 실측이 필요할 때만 `rf2o_frequency:=<Hz>`로 변경합니다.
 
+이 경로에서는 드라이버가 `/scan`을 직접 냅니다. 실기 주행 매핑
+([`robot-joystick-slam.md`](robot-joystick-slam.md))은 `/scan_raw` →
+`scan_sanitizer` → `/scan` 을 거치므로, 두 문서를 이어 읽을 때 같은 토픽 이름이
+다른 것을 가리킨다는 점에 주의합니다.
+
 ## 4. 토픽과 TF 검증
 
 ```bash
@@ -141,12 +154,17 @@ RViz에서는 다음 항목을 확인합니다.
 - 손이나 몸으로 LiDAR의 수평 측정 면을 가리지 않습니다.
 - 최종 지도는 실제 로봇에 센서를 장착한 상태에서도 다시 검증합니다.
 
+마지막 항목이 특히 중요합니다. 지도는 **LiDAR 높이의 단면**이라, 손으로 든
+높이와 로봇 장착 높이(현재 0.466 m)가 다르면 같은 방이라도 실루엣이 달라집니다.
+낮은 높이에서는 소파 하단과 의자 다리가, 높은 높이에서는 좌석과 좌탁 상판이
+찍힙니다. 둘은 서로 매칭되지 않아 AMCL이 조용히 위치를 놓칩니다.
+
 ## 6. 지도 저장과 파일 확인
 
 기존 `bomi_test_map`을 덮어쓰지 않도록 새 이름을 사용합니다.
 
 ```bash
-cd /mnt/c/S15P11E102/robot/ros2_ws
+cd <저장소>/robot/ros2_ws
 ros2 run nav2_map_server map_saver_cli \
   -f src/mapping/maps/bomi_handheld_01
 

@@ -2,15 +2,25 @@
 
 | Pipeline | 대상 브랜치 | 동작 |
 | --- | --- | --- |
-| `Jenkinsfile.integration` | `hotfix/scenario-integration` | **시연 기간 한정.** MQTT Broker·Backend·Frontend를 배포 |
+| `Jenkinsfile.integration` | `main` | **현재 유일한 EC2 자동 배포 경로.** MQTT Broker·Backend·Frontend를 순서대로 배포 |
 | `Jenkinsfile.backend` | `be-main` | Backend만 EC2에 배포 |
 | `Jenkinsfile.mqtt` | `be-main` | MQTT 관련 경로가 바뀐 경우에만 Mosquitto 재배포 |
 | `Jenkinsfile.frontend` | `fe-main` | Frontend만 EC2에 배포 |
 | `Jenkinsfile.ai` | `ai-main` | 빌드·테스트 검증만 수행 |
 | `Jenkinsfile.robot` | `robot-main` | 빌드 검증만 수행 |
+| 루트 `Jenkinsfile` | (브랜치 검증 없음) | **레거시.** `deploy-production.sh` 호출. 새 Job을 이것으로 만들지 않습니다 |
 
-각 Jenkins Job의 SCM Branch Specifier와 GitLab push trigger branch filter를 같은 main
-브랜치로 지정합니다. `develop` 및 기능 브랜치는 운영 Job에서 허용하지 않습니다.
+각 Jenkins Job의 SCM Branch Specifier와 GitLab push trigger branch filter는 **위 표의
+대상 브랜치와 정확히 같게** 지정합니다. 예를 들어 Backend Job은 Specifier `*/be-main`,
+filter `be-main`이고, 통합 Job은 `*/main`과 `main`입니다.
+
+`Jenkinsfile`의 `BOMI_RELEASE_BRANCH`와 Job의 Branch Specifier가 어긋나면
+`HEAD is not the latest origin/<branch> commit`으로 배포가 즉시 중단됩니다 —
+**둘은 항상 같이 바꿉니다.** `<라인>-develop`과 기능 브랜치는 운영 Job에서 허용하지
+않습니다.
+
+루트 `Jenkinsfile`은 `verify_release_commit`·`require_absolute_path`·`reload_nginx_config`를
+전부 건너뜁니다. 저장소에 살아 있는 파이프라인은 이 표의 7개가 전부입니다.
 
 AI 프로젝트는 `robot/ai_chat/`에 있습니다. 디렉터리가 없을 때 AI Job은 보류가 아니라
 **실패**로 표시합니다. AI·Robot 배포 대상 장치가 준비되기 전까지 두 Pipeline은 원격
@@ -21,9 +31,25 @@ AI 프로젝트는 `robot/ai_chat/`에 있습니다. 디렉터리가 없을 때 
 
 ## 시연 스프린트 한정 — 통합 Pipeline
 
-시연 기간에는 브랜치 전략을 접고 모든 도메인을 `hotfix/scenario-integration` 하나로
-모읍니다. 이 기간의 EC2 배포는 `Jenkinsfile.integration` **하나만** 담당합니다.
-담당 범위는 MQTT Broker, Backend, Frontend입니다.
+시연 통합 기간에는 라인별 브랜치 전략을 접고 모든 도메인을 `main` 하나로 모읍니다.
+(2026-08-12 커밋 `ed08b300` 이전에는 통합 지점이 `hotfix/scenario-integration`이었습니다.)
+이 기간의 EC2 배포는 `Jenkinsfile.integration` **하나만** 담당하며, 범위는 MQTT Broker,
+Backend, Frontend입니다.
+
+배포 순서와 각 단계에서 실패했을 때 운영이 어떤 상태인지는 다음과 같습니다.
+
+```mermaid
+flowchart TD
+  A["Checkout main"] --> B["Validate<br/>(읽기 전용)"]
+  B --> C["Build Backend + 도구 3종<br/>선행 게이트"]
+  C --> D["Deploy MQTT Broker<br/>ACL HUP reload"]
+  D --> E["Deploy Backend"]
+  E --> F["Build Frontend<br/>선행 게이트"]
+  F --> G["Deploy Frontend"]
+  C -.실패.-> X1["운영 무손상"]
+  D -.실패.-> X2["Backend 미배포"]
+  F -.실패.-> X3["MQTT·Backend 배포 완료<br/>production.env 무손상"]
+```
 
 Job을 하나로 합친 이유는 Jenkins의 Job 트리거가 "브랜치" 단위지 "경로" 단위가 아니기
 때문입니다. `Jenkinsfile.backend`와 `Jenkinsfile.frontend`를 둘 다 같은 브랜치에 걸면
@@ -83,8 +109,10 @@ MQTT 전제조건은 `Validate`에서 끝까지 확인합니다. `Deploy MQTT`�
 `getElementById('landing-main')`으로 포커스를 옮기고, `fe-main`의 `LandingPage.tsx`가
 `<main id="landing-main" tabIndex={-1}>`을 렌더합니다.
 
-검증: `tsc --noEmit`(TypeScript 7.0.2, strict) 0 에러, `vite build` 성공(60 모듈,
-three.js는 `BomiHeroScene` 청크로 lazy 분리).
+검증(2026-08-07 시점): `tsc --noEmit` strict 0 에러, `vite build` 성공(60 모듈,
+three.js는 `BomiHeroScene` 청크로 lazy 분리). TypeScript 버전은
+`frontend/package.json`이 `"latest"`로 지정하므로 고정되어 있지 않습니다 —
+재현 가능한 빌드는 `package-lock.json`에만 의존합니다.
 
 **순서를 맨 뒤로 둡니다.** Frontend 게이트를 앞에 두면 프론트가 깨질 때 지금 정상
 동작하는 Backend·MQTT 배포까지 같이 막힙니다. 맨 뒤면 프론트가 깨져도 그 둘은 이미
@@ -113,15 +141,24 @@ set_env_value BACKEND_IMAGE_TAG  →  compose up -d postgres  →  compose build
 ### Jenkins Job 설정
 
 - Script Path: `ci/Jenkinsfile.integration`
-- Branch Specifier: `*/hotfix/scenario-integration`
+- Branch Specifier: `*/main`
 - Refspec: **기본값 유지** (`+refs/heads/*:refs/remotes/origin/*`)
-  `deploy-common.sh`의 `verify_release_commit`가
-  `refs/remotes/origin/hotfix/scenario-integration`을 읽으므로, refspec이 특정 브랜치로
-  좁혀져 있으면 그 ref가 만들어지지 않아 실패합니다.
-- GitLab push trigger branch filter: `hotfix/scenario-integration`
+  `deploy-common.sh`의 `verify_release_commit`가 `refs/remotes/origin/main`을 읽으므로,
+  refspec이 특정 브랜치로 좁혀져 있으면 그 ref가 만들어지지 않아 실패합니다.
+- GitLab push trigger branch filter: `main`
 
 `Jenkinsfile.integration`의 `BOMI_RELEASE_BRANCH`와 Job의 Branch Specifier가 서로 다르면
 `HEAD is not the latest origin/<branch> commit`으로 배포가 중단됩니다. 둘은 항상 같이 바꿉니다.
+
+알아두면 좋은 규약이 몇 가지 더 있습니다.
+
+- `has-changes.sh`의 종료 코드는 일반 셸 관례와 다릅니다. `0` = 배포 필요, `1` = 생략,
+  그 외 = 오류입니다. "성공/실패"로 옮겨 적으면 뜻이 뒤집힙니다.
+- `Jenkinsfile.mqtt`의 Validate는 실제 시크릿이 아니라 `infra/mqtt.env.example`로
+  compose 스키마만 검사합니다.
+- `Jenkinsfile.integration`은 `git rev-parse --short=12 HEAD`를 이미지 태그로 씁니다.
+  롤백할 때 필요한 값입니다.
+- timeout은 integration 50분, backend·frontend·mqtt·ai 15분, robot 20분, 루트 20분입니다.
 
 ### 시연 후 원복
 

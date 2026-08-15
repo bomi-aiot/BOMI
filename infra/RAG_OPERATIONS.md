@@ -8,6 +8,10 @@
 ## 1. 운영 계약
 
 - 기본값은 `EMBEDDING_ENABLED=false`, `EMBEDDING_SYNC_ENABLED=false`다.
+- Qdrant 접속은 컨테이너 내부 고정값이다 — `QDRANT_HOST=qdrant`, `QDRANT_GRPC_PORT=6334`,
+  `QDRANT_USE_TLS=false`. 호스트에 포트를 공개하지 않는다.
+- 문서 코퍼스는 `DOCUMENT_CORPUS_ENABLED=true`, 리소스는
+  `classpath:rag/welfare-corpus.json`(JAR 번들)이다.
 - 문서 코퍼스는 애플리케이션에 번들되어 있으며 기본 활성화다. 외부 네트워크나
   임베딩 API를 호출하지 않는다.
 - 대화 중 의미 검색은 PostgreSQL에서 사용자·수명주기·검증·가시성 필터를 먼저
@@ -72,7 +76,8 @@ canary query 호출 상한 = 후보가 있는 canary 문맥 요청 수
 바이너리·스토리지·로그를 커밋하지 않는다.
 
 ```powershell
-$qdrantDir = Resolve-Path .\tmp\qdrant-1.18.3-codex
+# 저장소 밖에 풉니다. 저장소 안(tmp/ 등)에 두면 정리 대상 잔여물로 남습니다.
+$qdrantDir = Resolve-Path "$env:TEMP\qdrant-1.18.3"
 Start-Process -FilePath "$qdrantDir\qdrant.exe" `
   -WorkingDirectory $qdrantDir -WindowStyle Hidden
 Invoke-RestMethod http://127.0.0.1:6333/collections
@@ -92,7 +97,9 @@ Set-Location backend
 ```
 
 성공 기준은 Qdrant 어댑터·초기화 9건과 교차 모듈 RAG E2E 1건이 모두 `passed`이고
-`skipped/aborted`가 0건인 것이다. 교차 E2E는 복지 문서 프롬프트, 대화 저장, 사실 후보,
+`skipped/aborted`가 0건인 것이다. (2026-08-06 기준 건수이며, 테스트가 늘면 이 숫자도
+함께 고친다. 숫자보다 중요한 것은 `skipped/aborted`가 0이라는 조건이다 — 건너뛴
+테스트를 통과로 읽는 것이 이 절이 막으려는 실패다.) 교차 E2E는 복지 문서 프롬프트, 대화 저장, 사실 후보,
 메모리 생성, Qdrant 재색인, 다음 턴 회상을 검증한다. 종료 후 실행한 Qdrant 프로세스와
 임시 스토리지는 정확한 경로·PID를 확인한 뒤 정리한다.
 

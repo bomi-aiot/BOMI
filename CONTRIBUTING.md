@@ -3,9 +3,13 @@
 이 문서는 BOMI 프로젝트에 참여하는 모든 팀원이 동일한 방식으로 Git과 GitLab을 사용하기 위한 협업 규칙입니다. 모든 팀원은 작업 전에 이 문서를 읽고 아래 절차를 따릅니다.
 
 > **권위 관계.** 이 문서는 Git 사용법(브랜치 만들기, 커밋, MR)을 다룹니다. 대화 런타임의
-> 설계·타이밍·안전 로직은 `CLAUDE.md`가 권위를 갖고, 브랜치·git 상태·작업 규칙(커밋 위생,
-> 완료 조건, 티켓 서식)은 `CLAUDE.md` §25~§29가 이 문서보다 우선합니다. 이 문서와 §25~§29가
-> 어긋나면 §25~§29를 따르고 이 문서를 고칩니다.
+> 설계·타이밍·안전 로직과 작업 규칙의 원본은 **`임시보류_claude.md`**(통합 스프린트 동안
+> 보관 중인 구 `CLAUDE.md`)에 있습니다. 브랜치·git 상태·작업 규칙(커밋 위생, 완료 조건,
+> 티켓 서식)은 그 문서 §25~§29가 이 문서보다 우선합니다. 이 문서와 §25~§29가 어긋나면
+> §25~§29를 따르고 이 문서를 고칩니다.
+>
+> 현재 루트 `CLAUDE.md`는 시연 통합 스프린트 계약(§0~§7)이며, 스프린트가 끝나면 구
+> 문서가 복귀합니다. 그때 이 문단의 파일 이름을 되돌립니다.
 
 ## 1. 핵심 규칙 요약
 
@@ -24,14 +28,26 @@
 
 ## 2. 브랜치 구조
 
-라인마다 독립된 `develop`/`main` 쌍을 가집니다(`CLAUDE.md` §25가 원본입니다).
+라인마다 독립된 `develop`/`main` 쌍을 가집니다(`임시보류_claude.md` §25가 원본입니다).
 
-```text
-main
-├── ai-main     ← ai-develop     ← (ai 라인 작업 브랜치)
-├── be-main     ← be-develop     ← (be 라인 작업 브랜치)
-├── fe-main     ← fe-develop     ← (fe 라인 작업 브랜치)
-└── robot-main  ← robot-develop  ← (robot 라인 작업 브랜치)
+```mermaid
+flowchart RL
+  subgraph ai[AI 라인]
+    A1["작업 브랜치"] --> A2["ai-develop"] --> A3["ai-main"]
+  end
+  subgraph be[BE 라인]
+    B1["작업 브랜치"] --> B2["be-develop"] --> B3["be-main"]
+  end
+  subgraph fe[FE 라인]
+    F1["작업 브랜치"] --> F2["fe-develop"] --> F3["fe-main"]
+  end
+  subgraph robot[ROBOT 라인]
+    R1["작업 브랜치"] --> R2["robot-develop"] --> R3["robot-main"]
+  end
+  A3 --> M["main"]
+  B3 --> M
+  F3 --> M
+  R3 --> M
 ```
 
 ### `main`
@@ -160,7 +176,7 @@ git check-ignore -v .env
 - 관련 라인(ai/be/fe/robot)
 
 동일한 기능을 두 명이 중복 개발하지 않도록 담당자를 지정한 뒤 시작합니다. 티켓 서식은
-`CLAUDE.md` §27과 `.claude/skills/jira-safe-edit/`를 따릅니다.
+`임시보류_claude.md` §27과 `.claude/skills/jira-safe-edit/`를 따릅니다.
 
 ### 4.2 최신 `<라인>-develop` 반영
 
@@ -231,7 +247,7 @@ git diff --cached
 
 ### 5.2 커밋 메시지
 
-형식(`CLAUDE.md` §27):
+형식(`임시보류_claude.md` §27):
 
 ```text
 [영역](카테고리) S15P11E102-<n> 제목 — 부제
@@ -251,6 +267,11 @@ git commit -m "[ROBOT](jobs) S15P11E102-208 현관 하트비트 워치를 추가
 
 `type: 요약` 형식(`feat:`, `fix:` 등)은 이 저장소에서 쓰지 않습니다. 커밋 하나에는 가능한
 한 하나의 논리적인 변경만 포함합니다.
+
+**시연 통합 기간에는 한 커밋이 한 라인의 경로만 건드립니다.** `robot/ai_chat/**` ·
+`ros2_ws/**` · `iot/**` · `backend/**` 를 한 커밋에 섞지 않습니다. 시연이 끝난 뒤 라인별
+브랜치로 `git cherry-pick <해시>` 하나만으로 환류할 수 있게 만드는 규칙이며, 근거는 루트
+[`CLAUDE.md`](CLAUDE.md) §0에 있습니다.
 
 ### 5.3 브랜치 Push
 
@@ -294,14 +315,34 @@ source: S15P11E102-295-ai-기여문서정합
 `main`에는 라인 작업 브랜치를 직접 병합하지 않습니다. 시연 또는 배포 버전을 만들 때만
 `<라인>-develop → <라인>-main`, 이어서 `<라인>-main → main` MR을 생성합니다.
 
+### 병합이 곧 배포입니다
+
+병합 대상 브랜치에 따라 Jenkins가 EC2를 실제로 건드립니다. 이 사실을 모르고 병합하면
+운영 서버가 예고 없이 바뀝니다.
+
+| 병합 대상 | 실행되는 Pipeline | 운영 EC2 영향 |
+| --- | --- | --- |
+| `main` | `ci/Jenkinsfile.integration` | **MQTT 브로커·Backend·Frontend가 순서대로 재배포됩니다** |
+| `be-main` | `ci/Jenkinsfile.backend`, `ci/Jenkinsfile.mqtt` | Backend 재배포, MQTT 관련 경로가 바뀐 경우 브로커 재배포 |
+| `fe-main` | `ci/Jenkinsfile.frontend` | Frontend 재배포 |
+| `ai-main` / `robot-main` | `ci/Jenkinsfile.ai` / `ci/Jenkinsfile.robot` | 없음 — 빌드·테스트 검증만 하고 배포는 하지 않습니다 |
+
+자세한 내용은 [`ci/README.md`](ci/README.md)를 봅니다. 젯슨과 라즈베리파이는 어떤
+Pipeline도 배포하지 않으며, 해당 기계에서 브랜치를 직접 checkout해 실행합니다.
+
+
 ### 6.1 MR 작성 항목
 
 `.github/PULL_REQUEST_TEMPLATE.md`와 `.github/ISSUE_TEMPLATE/feature.md`는 **GitHub 전용
-템플릿이라 이 저장소가 쓰는 GitLab에서는 렌더링되지 않는 죽은 파일입니다.** GitLab은
-`.gitlab/merge_request_templates/`를 읽는데, 이 디렉터리는 아직 없습니다. 이 문서 작성
-시점 기준으로 실제 이전 여부(`.gitlab/` 신설)는 이 티켓 범위 밖이며 별도로 판단합니다.
+템플릿이라 이 저장소가 쓰는 GitLab에서는 렌더링되지 않는 죽은 파일입니다.** GitLab이
+실제로 읽는 것은 `.gitlab/merge_request_templates/Default.md`이며, MR을 새로 만들면
+이 템플릿이 자동으로 채워집니다.
 
-지금 MR 본문은 **`.claude/skills/mr-body/` 스킬이 정하는 6개 절**을 존댓말로 작성합니다.
+템플릿의 절 구성은 아래 6개와 같지만, **테스트 절의 `- [ ] 로컬 테스트 완료` 체크박스는
+그대로 두지 말고 실제 명령 출력의 숫자로 바꿔 씁니다.** 체크박스는 무엇을 확인했는지
+알려주지 않기 때문입니다.
+
+MR 본문은 **`.claude/skills/mr-body/` 스킬이 정하는 6개 절**을 존댓말로 작성합니다.
 
 - 📌 작업 내용
 - 🔍 주요 변경 사항
@@ -338,8 +379,8 @@ source: S15P11E102-295-ai-기여문서정합
 - 실행 또는 테스트 방법이 명확한가
 - 기존 기능에 부작용이 없는가
 - 민감정보가 포함되지 않았는가
-- 코드와 문서가 함께 갱신되었는가(AI 라인은 `docs/carebot/PROGRESS.md` 포함, `CLAUDE.md`
-  §22a)
+- 코드와 문서가 함께 갱신되었는가(AI 라인은 `docs/carebot/PROGRESS.md` 포함,
+  `임시보류_claude.md` §22a)
 - 아직 구현되지 않은 부분이 명시되었는가 — "구현됨"과 "검증됨"을 구분했는가
 
 ## 8. 병합 후 정리
@@ -391,11 +432,16 @@ venv/Scripts/pytest.exe -q -m "not integration and not manual"
 ```
 
 `integration`과 `manual`은 하드웨어·자격증명·외부 API가 필요해 제외합니다 — 마이크가 없는
-노트북이 push 를 막아서는 안 되기 때문입니다(`CLAUDE.md` §26). **이 두 줄은 참고용 명령이
+노트북이 push 를 막아서는 안 되기 때문입니다(`임시보류_claude.md` §26). **이 두 줄은 참고용 명령이
 아니라 실제로 강제됩니다.** `robot/ai_chat/`의 파이썬을 건드린 브랜치를 push 하면
 `.claude/hooks/pre-push-gate.sh`가 같은 두 명령을 자동으로 돌리고, 하나라도 빨가면 push
 자체를 거부합니다(exit 2). 게이트를 우회하려고 `--no-verify`를 쓰지 않습니다 —
 빨간 게이트로 push 하는 것은 이 저장소에서 절대 금지 사항입니다(§13).
+
+훅은 두 개입니다. `.claude/hooks/pre-push-gate.sh`가 push 직전의 마지막 관문이고,
+`.claude/hooks/ruff-touched-file.sh`는 파이썬 파일을 고친 **직후에** 그 파일 하나에만
+ruff를 돌려 알려줍니다. 편집과 검사 사이의 시간 간격을 없애는 것이 목적이며, push를
+막지는 않습니다.
 
 ### Backend
 
@@ -403,6 +449,15 @@ venv/Scripts/pytest.exe -q -m "not integration and not manual"
 cd backend
 .\gradlew.bat test
 ```
+
+백엔드 테스트는 세 태스크로 나뉘어 있고, 기본 `test`는 나머지 둘을 제외합니다
+(`backend/build.gradle` 상단 주석에 이유가 있습니다).
+
+| 태스크 | 무엇을 도는가 | 전제 |
+| --- | --- | --- |
+| `test` | 단위 테스트만 | 외부 의존 없음, 무료 |
+| `integrationTest` | Qdrant 연동 | Qdrant 필요, 무료(결정적 대역 임베딩) |
+| `billedTest` | 실제 임베딩 API 호출 | **과금됩니다.** 돌릴 사람이 명시적으로 켭니다 |
 
 DB가 없는 로컬 환경에서는 Health Controller 단위 테스트 또는 DB 자동설정을 제외한 실행
 결과를 MR에 기록합니다. 제공 서버 연동이 필요한 테스트는 실행 여부와 미실행 사유를
@@ -412,9 +467,14 @@ DB가 없는 로컬 환경에서는 Health Controller 단위 테스트 또는 DB
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run build
 ```
+
+`npm run build`는 `tsc --noEmit && vite build`이므로 타입 검사가 먼저 돕니다
+(`frontend/package.json`). 타입만 빠르게 보려면 `npm run typecheck`를 씁니다.
+**프론트에는 자동 테스트가 없습니다** — 검증 수단은 타입 검사와 빌드뿐이므로, MR에는
+직접 확인한 화면과 조작 경로를 적습니다.
 
 ### Robot(ROS2) / IoT
 
@@ -423,7 +483,7 @@ npm run build
 - 사용한 ROS 2, Python, 장치 환경을 MR에 기록합니다.
 
 테스트할 수 없는 기능은 성공한 것처럼 작성하지 않고, 미검증 사유와 후속 검증 계획을
-기록합니다. "Logic verified, hardware unverified"가 정직한 표현입니다(`CLAUDE.md` §22a).
+기록합니다. "Logic verified, hardware unverified"가 정직한 표현입니다(`임시보류_claude.md` §22a).
 
 ## 11. 민감정보 관리
 
@@ -446,8 +506,12 @@ SSH Private Key
 .env.example
 frontend/.env.example
 backend/.env.example
-robot/config/*.example.yaml
-iot/config/*.example.yaml
+infra/production.env.example
+infra/mqtt.env.example
+robot/config/robot.example.yaml
+iot/raspberry-pi/translator/config/device.example.yaml
+iot/raspberry-pi/translator/config/dht11.env.example
+iot/raspberry-pi/zigbee2mqtt/.env.example
 ```
 
 실제 비밀값을 Push했다면 파일 삭제만으로 해결되지 않습니다. 즉시 팀에 알리고 해당

@@ -1,4 +1,99 @@
-# 비전 기반 사용자 추종 및 실제 LiDAR 안전 정지 실행 방법
+# core — BOMI 로봇의 ROS 2 주행·추종·탐색 패키지
+
+로봇이 "움직이는" 일은 전부 이 패키지에 있다. 바퀴를 도는 시리얼 드라이버부터
+사람을 따라가는 상태기계, "보미야" 호출 후 제자리에서 사람을 찾는 회전 탐색,
+Nav2 웨이포인트 주행까지가 여기 소속이다. MQTT·백엔드 계약은 `bridge` 패키지,
+카메라 추론은 `robot/ai_vision`, 대화는 `robot/ai_chat` 이 맡는다.
+
+> ⚠️ **패키지 루트에 죽은 사본이 있다.** 2026-08-12 복구 머지(`4e7e990c`)로
+> `src/core/` 직하에 `core/core/`·`core/config/` 와 **바이트 동일한 파일 29개**
+> (py 19 + yaml 9 + `.gitignore`)가 들어왔다. 빌드·설치되는 것은 `setup.py` 의
+> `find_packages()` 가 찾는 `core/core/` 와 `data_files` 가 설치하는
+> `core/config/` 뿐이다.
+> **고칠 파일은 언제나 `core/core/…` 와 `core/config/…` 다.**
+> `src/core/person_follower.py`(루트 사본)를 고치면 아무 일도 일어나지 않는다.
+> `git grep` 결과가 두 벌로 보이는 이유도 이것이다.
+
+## 이 패키지에 무엇이 있나
+
+`setup.py` 의 `console_scripts` 에 등록된 실행 파일 12개다.
+
+| 실행 이름(`ros2 run core …`) | 하는 일 |
+| --- | --- |
+| `pico_driver` | `/cmd_vel` → Pico H 시리얼(`V <좌> <우>`), 텔레메트리 → `/odom`·`/imu`·TF |
+| `person_follower` | 비전 JSON + LiDAR → 추종 속도. LiDAR 안전 정지 내장 |
+| `wake_search` | "보미야" 후 제자리 회전으로 사람 찾기 |
+| `person_search_patrol` | Nav2 웨이포인트를 돌며 사람 찾기 |
+| `nav2_waypoint_patrol` | `room_waypoints.yaml` 전체 순찰 |
+| `goto_waypoint` | 지정한 한 지점만 주행하고 종료(도착 0 / 실패 1) |
+| `vision_udp_bridge` | UDP:5005 → `/vision/follow_result` 중계 |
+| `scan_sanitizer` | 손상된 `LaserScan` 을 버리고 성한 것만 재발행 |
+| `joy_cmd_filter` | 조이스틱 중립 구간에서 발행을 멈춰 twist_mux 자리를 비움 |
+| `keyboard_teleop` | 터미널 키 입력 → `/cmd_vel` |
+| `status_publisher` / `mock_motor_driver` | 하드웨어 없는 확인용 스텁 |
+
+진입점 없는 순수 모듈: `search_policy` `follow_state_machine`
+`person_following_controller` `person_search_state_machine` `pico_protocol`
+`waypoint_route`. ROS 없이 단위 테스트된다.
+
+## 노드 사이 배선
+
+```mermaid
+flowchart LR
+  cam["카메라<br/>bomi_vision.udp_main"] -- "UDP :5005<br/>{status, command, track_id}" --> vub["vision_udp_bridge"]
+  vub -- "/vision/follow_result" --> pf["person_follower"]
+  vub -- "/vision/follow_result" --> ws["wake_search"]
+  lidar["YDLIDAR X4-PRO"] -- "/scan_raw" --> ss["scan_sanitizer"]
+  ss -- "/scan" --> pf
+  chat["ai_chat"] -- "UDP :5006<br/>{type: wake, azimuth_deg}" --> ws
+  ws -- "/person_following/enable (Bool)" --> pf
+  pf -- "/person_following/status (JSON)" --> ws
+  ws -- "/cmd_vel_search (prio 90)" --> mux["twist_mux"]
+  pf -- "/cmd_vel_follow (prio 85)" --> mux
+  joy["조이스틱"] -- "/cmd_vel_joy (prio 100)" --> mux
+  mux -- "/cmd_vel" --> pico["pico_driver → Pico H"]
+```
+
+## 속도 명령 우선순위 — 안전에 직결된다
+
+`/cmd_vel` 은 하나뿐이라 `twist_mux` 가 중재한다(`config/twist_mux.yaml`).
+숫자가 큰 쪽이 이기고, `timeout`(모두 0.5초) 안에 새 메시지가 오지 않으면 그
+입력은 자리를 비운다 — 명령원은 "안 보내는 것"만으로 양보한다.
+
+| 우선순위 | 입력 | 토픽 |
+| --- | --- | --- |
+| 100 | 조이스틱 (사람의 수동 개입) | `/cmd_vel_joy` |
+| 90 | `wake_search` 회전 탐색 | `/cmd_vel_search` |
+| 85 | `person_follower` 사람 추종 | `/cmd_vel_follow` |
+| 75 | 백엔드 배선 확인용 저속 전진 | `/cmd_vel_backend_test` |
+| 50 | 키보드 주행 | `/cmd_vel_keyboard` |
+
+> ⚠️ 탐색(90)이 추종(85)보다 위이므로 **탐색 회전 중에는 추종기의 LiDAR
+> 긴급 정지가 이기지 않는다.** 이 순서는 2026-08-09 실기 사고(아직 사람을 못
+> 찾은 추종기가 정지 0을 계속 내보내 탐색 회전을 덮었다)를 고치며 의도적으로
+> 정한 것이고, 맞바꾼 대가를 `config/twist_mux.yaml` 주석이 기록하고 있다.
+
+## 목적지 웨이포인트
+
+`config/room_waypoints.yaml` 에 등록된 이름은 `sofa`·`charging`·`entrance`
+셋뿐이고, **`sofa` 와 `charging` 의 좌표는 완전히 같다**(x=-0.0754, y=1.2050,
+yaw=0.2072). 시연 대본에서 어르신이 소파에 앉으므로 "거실 도착"(`LIVING_ROOM`)과
+"대기 위치 복귀"(`DEFAULT`)가 같은 지점이며, `robot/scripts/bomi_map.sh` 가
+매핑할 때 출발 좌표 하나로 두 이름을 함께 갱신한다. 백엔드 목적지 이름
+(`ENTRANCE`/`LIVING_ROOM`/`DEFAULT`)과의 대응은 `bridge/waypoint_lookup.py` 가
+갖는다.
+
+---
+
+## 검증 절차서 — 비전 기반 사용자 추종과 실제 LiDAR 안전 정지 (2026-08-03 기록)
+
+아래는 WSL2 + Gazebo 로봇 + 노트북 카메라 + 실물 X4 Pro LiDAR 조합으로
+`person_follower` 를 확인했던 17단계 절차다. 실기에서 실제로 쓰인 기록이라
+그대로 남긴다. 다만 **그때의 세계**를 전제한다는 점을 먼저 밝힌다 — 지금 실기
+경로는 LiDAR 가 `/scan_raw` 로 내고 `scan_sanitizer` 가 성한 스캔만 `/scan` 으로
+다시 내는 구조이고(`/scan_real` 을 기본값으로 쓰는 곳은
+`launch/person_search_patrol.launch.py` 하나뿐이다), 실행 진입점도
+`bomi_wake_search.launch.py` 한 줄로 바뀌었다.
 
 실제 노트북 카메라의 사람 추적 결과와 실제 X4 Pro LiDAR 거리 정보를 이용해
 Gazebo 로봇의 전진, 좌회전, 우회전, 정지를 확인한다.
@@ -34,15 +129,12 @@ Gazebo 로봇의 전진, 좌회전, 우회전, 정지를 확인한다.
 - `usbipd-win`
 - Gazebo 및 `ros_gz` 패키지
 
-로컬에서 별도로 생성하는 파일은 아래 하나다.
+로컬에서 따로 만들어야 하는 파일은 **없다.** 예전에는 카메라 AI 송신기를
+`bomi_ai_udp_live.py` 라는 이름으로 손수 만들었지만, 지금은 같은 일을 하는
+코드가 저장소에 있다(§8 참고).
 
 > 문서의 `Windows사용자이름`은 각 팀원의 실제 Windows 계정명으로 바꾼다.
 > `본인_BUSID`도 `usbipd list`에서 확인한 값으로 바꾼다.
-
-```text
-C:\Users\Windows사용자이름\Desktop\bomi_local_test\
-└── bomi_ai_udp_live.py
-```
 
 `vision_udp_bridge.py`를 로컬에 따로 만들지 않는다.
 
@@ -61,7 +153,12 @@ temporarily_lost
 multiple_pending
 multiple_persons
 single_recovery
+invalid
 ```
+
+목록에 없는 문자열이 오면 `person_follower` 는 그것을 `invalid` 로 강등해
+정지 취급한다(`core/core/follow_state_machine.py` 의 `_convert_status`). 즉
+오타 난 status 는 무시되는 것이 아니라 **멈춤**으로 해석된다.
 
 ### 사용되는 명령값
 
@@ -74,12 +171,18 @@ move_forward
 
 ### 비전 JSON 필드
 
+`person_follower` 가 읽는 필드는 셋뿐이다(`core/core/person_follower.py` 의
+`_parse_vision_payload`).
+
 ```text
-status   : AI 사람 추적 상태
-command  : 추종 명령
+status   : AI 사람 추적 상태 (필수, 빈 문자열 불가)
+command  : 추종 명령 (필수, 빈 문자열 불가)
 track_id : 추적 대상 ID. 대상이 명확하지 않으면 null
-reason   : 상태 또는 명령이 결정된 이유
 ```
+
+비전 쪽은 `reason`(판단 이유)도 함께 보내지만 로봇은 **읽지 않는다.** 사람이
+로그를 볼 때만 쓰는 필드이므로, 여기에 값을 넣어 로봇 동작을 바꾸려는 시도는
+조용히 무시된다.
 
 ---
 
@@ -94,41 +197,27 @@ cd ~/Desktop/bomi-robot
 git fetch origin
 ```
 
-#### MR 검토 중인 경우
+#### 현재 (2026-08-06 이후)
+
+로봇 라인은 `main` 에 통합됐다. 별도 브랜치로 옮길 필요가 없다.
 
 ```bash
-git switch robot/feat/S15P11E102-165-person-following
-git status
-```
-
-로컬 브랜치가 없으면:
-
-```bash
-git switch --track origin/robot/feat/S15P11E102-165-person-following
-```
-
-정상 예시:
-
-```text
-On branch robot/feat/S15P11E102-165-person-following
-nothing to commit, working tree clean
-```
-
-#### 기능이 `robot-develop`에 머지된 이후
-
-```bash
-git switch robot-develop
-git pull origin robot-develop
+git switch main
+git pull
 git status
 ```
 
 정상 예시:
 
 ```text
-On branch robot-develop
-Your branch is up to date with 'origin/robot-develop'.
+On branch main
+Your branch is up to date with 'origin/main'.
 nothing to commit, working tree clean
 ```
+
+> 이 절은 원래 `robot/feat/S15P11E102-165-person-following` 과 `robot-develop`
+> 로 옮기라고 안내했다. 두 브랜치는 2026-08-06 통합으로 `main` 에 들어갔으므로,
+> 옛 안내를 그대로 따르면 없는 브랜치를 찾거나 낡은 코드를 받는다.
 
 ### 2-2. Robot 코드 빌드
 
@@ -527,176 +616,27 @@ Gazebo 가상 LiDAR → /scan
 
 ---
 
-## 8. 로컬 카메라 AI 실행 파일 생성
+## 8. 로컬 카메라 AI 실행
 
-아래 명령은 최초 생성할 때 실행한다. README의 생성 코드가 변경됐거나 기존 파일이 구형이면 다시 실행한다.
-
-> `cat >` 명령은 기존 `bomi_ai_udp_live.py`가 있어도 최신 내용으로 덮어쓴다.
+예전에는 이 절에서 `bomi_ai_udp_live.py` 를 `cat >` 로 155줄 만들어 썼다.
+지금은 같은 일을 하는 코드가 저장소에 있으므로 그대로 쓴다 —
+`robot/ai_vision/src/bomi_vision/udp_main.py` 다. 인라인 사본에는 없던 주 대상
+선별(`--select-primary-person`)과 창 없는 실행(`--no-window`)까지 갖는다.
+문서 안에 코드 사본을 두면 두 벌이 반드시 갈라지므로 사본은 지웠다.
 
 [Git Bash]
 
 ```bash
-mkdir -p ~/Desktop/bomi_local_test
-```
-
-### 8-1. `bomi_ai_udp_live.py` 생성
-
-```bash
-cat > ~/Desktop/bomi_local_test/bomi_ai_udp_live.py <<'PY'
-#!/usr/bin/env python3
-
-import json
-import os
-import socket
-
-from bomi_vision.adapters.opencv import (
-    OpenCVCamera,
-    OpenCVDebugView,
-)
-from bomi_vision.adapters.tracking import (
-    UltralyticsByteTracker,
-)
-from bomi_vision.follow import FollowCommandGenerator
-from bomi_vision.main import build_parser
-from bomi_vision.tracking import UserTrackingService
-
-
-UDP_HOST = os.environ.get("BOMI_WSL_IP", "")
-UDP_PORT = int(
-    os.environ.get(
-        "BOMI_VISION_UDP_PORT",
-        "5005",
-    )
-)
-
-
-def main() -> int:
-    args = build_parser().parse_args()
-
-    if not UDP_HOST:
-        raise SystemExit(
-            "BOMI_WSL_IP 환경 변수를 설정하세요."
-        )
-
-    tracker = UltralyticsByteTracker(
-        args.model,
-        args.confidence,
-        args.tracker,
-    )
-
-    tracking_service = UserTrackingService(
-        lost_tolerance_frames=(
-            args.lost_tolerance_frames
-        ),
-        multiple_confirm_frames=(
-            args.multiple_confirm_frames
-        ),
-        single_recovery_frames=(
-            args.single_recovery_frames
-        ),
-    )
-
-    follow_command_generator = FollowCommandGenerator(
-        args.horizontal_dead_zone,
-        args.forward_threshold,
-    )
-
-    camera = OpenCVCamera(args.camera)
-    view = OpenCVDebugView()
-
-    udp_socket = socket.socket(
-        socket.AF_INET,
-        socket.SOCK_DGRAM,
-    )
-
-    previous_payload = None
-
-    print(
-        "AI 결과 UDP 송신 시작: "
-        f"{UDP_HOST}:{UDP_PORT}"
-    )
-
-    try:
-        while True:
-            frame = camera.read()
-            tracked_people = tracker.track(frame)
-
-            frame_height, frame_width = frame.shape[:2]
-
-            tracking_result = tracking_service.update(
-                tracked_people,
-                frame_width=frame_width,
-                frame_height=frame_height,
-            )
-
-            follow_result = (
-                follow_command_generator.generate(
-                    tracking_result
-                )
-            )
-
-            payload = {
-                "status": (
-                    tracking_result.status.value
-                ),
-                "command": (
-                    follow_result.command.value
-                ),
-                "track_id": follow_result.track_id,
-                "reason": follow_result.reason,
-            }
-
-            message = json.dumps(
-                payload,
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ).encode("utf-8")
-
-            udp_socket.sendto(
-                message,
-                (UDP_HOST, UDP_PORT),
-            )
-
-            if payload != previous_payload:
-                print(payload)
-                previous_payload = payload
-
-            if not view.show(
-                frame,
-                tracked_people,
-                tracking_result,
-                follow_result,
-            ):
-                break
-
-    finally:
-        udp_socket.close()
-        camera.release()
-        view.close()
-
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-PY
-```
-
-### 8-2. 생성 및 문법 확인
-
-```bash
-ls -l ~/Desktop/bomi_local_test/bomi_ai_udp_live.py
-
 cd ~/Desktop/bomi-ai-run/robot/ai_vision
 source venv/Scripts/activate
 
-python -m py_compile \
-  ~/Desktop/bomi_local_test/bomi_ai_udp_live.py
-
-python ~/Desktop/bomi_local_test/bomi_ai_udp_live.py --help
+export BOMI_ROBOT_HOST=$(wsl.exe hostname -I | tr -d '\r' | awk '{print $1}')
+python -m bomi_vision.udp_main --select-primary-person
 ```
 
-두 명령에서 오류가 없고 `--help` 사용법이 출력되면, 문법·import·현재 AI 인자 호환까지 정상이다.
+`--host`(환경변수 `BOMI_ROBOT_HOST` 로도 준다)는 UDP 수신측(WSL) 주소이고,
+`--port` 기본값은 5005다. 화면 없이 돌리려면 `--no-window` 를 붙인다. 수신측
+스키마·포트는 `core` 의 `vision_udp_bridge` 와 일치한다.
 
 ---
 
@@ -797,7 +737,8 @@ echo "WSL IP = $BOMI_WSL_IP"
 실행:
 
 ```bash
-python ~/Desktop/bomi_local_test/bomi_ai_udp_live.py \
+python -m bomi_vision.udp_main \
+  --select-primary-person \
   --model yolo11n.pt \
   --camera 0 \
   --confidence 0.5
@@ -806,7 +747,8 @@ python ~/Desktop/bomi_local_test/bomi_ai_udp_live.py \
 카메라가 열리지 않으면 종료 후 카메라 번호를 바꾼다.
 
 ```bash
-python ~/Desktop/bomi_local_test/bomi_ai_udp_live.py \
+python -m bomi_vision.udp_main \
+  --select-primary-person \
   --model yolo11n.pt \
   --camera 1 \
   --confidence 0.5
@@ -1016,11 +958,17 @@ PYTHONPATH=$PWD/src/core:$PYTHONPATH python3 -m pytest \
   -v
 ```
 
-검증 당시 정상 결과:
+검증 당시 정상 결과(2026-08-15 실측):
 
 ```text
-42 passed
+60 passed
 ```
+
+세 파일의 내역은 `test_follow_state_machine.py` 15개,
+`test_person_following_controller.py` 23개, `test_person_follower.py` 22개다.
+패키지 전체(`colcon test --packages-select core`)는 테스트 파일 20개에
+205개다. 42는 2026-08-03 시점의 값이라 지금 그대로 두면 정상 결과를 실패로
+읽게 된다.
 
 추가로 ROS2 패키지 테스트를 실행할 수 있다.
 
@@ -1055,7 +1003,7 @@ colcon test-result \
 7. ros2 run core vision_udp_bridge 실행
 8. person_follower를 scan_topic=/scan_real로 실행
 9. Git Bash에서 WSL IP 설정
-10. bomi_ai_udp_live.py 실행
+10. python -m bomi_vision.udp_main 실행
 11. /vision/follow_result와 /cmd_vel 확인
 12. 한 명, 두 명, 복구, LiDAR 장애물 정지 확인
 ```
@@ -1087,7 +1035,7 @@ Attached → Shared
 [ ] core vision_udp_bridge 실행 파일 확인
 [ ] AI worktree 최신 상태 확인
 [ ] AI 가상환경 실행
-[ ] bomi_local_test/bomi_ai_udp_live.py 생성
+[ ] ai_vision 가상환경에서 bomi_vision.udp_main 실행 가능
 [ ] X4 Pro가 WSL에 연결됨
 [ ] /dev/ttyUSB0 존재
 [ ] Gazebo와 bomi_robot 정상 실행
@@ -1105,7 +1053,7 @@ Attached → Shared
 [ ] single_recovery 동안 정지 확인
 [ ] 같은 Track ID 확인 후 약 1초 뒤 추종 재개
 [ ] AI가 move_forward여도 실제 LiDAR 장애물에서 정지
-[ ] core pytest 42개 통과
+[ ] core pytest 60개 통과 (세 파일 기준)
 [ ] 필요 시 colcon test 추가 확인
 ```
 
@@ -1136,7 +1084,8 @@ Attached → Shared
 - 실제 X4 Pro `/scan_real` 약 11 Hz 발행
 - 실제 LiDAR 장애물 감지 시 AI 직진 명령보다 안전 정지 우선
 - Gazebo 로봇 이동
-- 관련 pytest 42개 통과
+- 관련 pytest 통과 (당시 42개. 2026-08-15 재측정에서는 60개이며, 테스트가
+  늘어난 것이지 실패가 생긴 것이 아니다)
 
 이번 검증에 포함하지 않은 항목:
 
@@ -1144,1893 +1093,16 @@ Attached → Shared
 - 카메라 AI 프로세스 강제 종료 시 타임아웃 정지
 - LiDAR 노드 강제 종료 시 타임아웃 정지
 
-# ROS2 Ubuntu 설치 및 조이스틱 연결 설치방법
-
-관리자 파워셀
-wsl --install -d Ubuntu-22.04
-
-재부팅
-
-Ubuntu 다운로드 후 사용할 사용자 이름과 비번 작성(영문)
-
-일반 파워셀
-wsl.exe -l -v 로 버전 확인
-
-NAME            STATE           VERSION
-Ubuntu-22.04    Running         2
-가 나오면 정상
-
-Ubuntu 열고
-sudo apt update
-(이후 비밀번호 작성)
-
- ROS2 설치 위해서
-Ubuntu 창에 작성
-sudo apt install -y locales software-properties-common curl
-
-이후
-sudo locale-gen en_US en_US.UTF-8
-
-sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
-작성
-
-export LANG=en_US.UTF-8
-
-locale
-
-화면에서 이거 아래 내용 보이면 성공
-LANG=en_US.UTF-8
-LC_ALL=en_US.UTF-8
-
-이후
-sudo add-apt-repository universe
-작성후 엔터 치기
-
-sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
-
-
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
-
-sudo apt update
-
-ROS 2 Humble 설치
-
-sudo apt install -y ros-humble-desktop
-
-echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
-
-source ~/.bashrc
-
-ros2 --help
-
-터틀심과 프로젝드 빌드 도구 설치
-sudo apt install -y ros-humble-turtlesim python3-colcon-common-extensions
-
-거부기 나오는지 확인
-ros2 run turtlesim turtlesim_node
-
-
-코드로 움직이는지 확인
-코드 있는곳 까지 이동
-
-패키지 설정
-sudo apt install -y ros-humble-joy ros-humble-teleop-twist-joy
-
-설치후 코드 빌드
-colcon build --symlink-install
-
-ros2 launch core joystick_teleop.launch.py --show-args
-
-응답 이렇게 나오면 됨.
-Arguments (pass arguments as '<name>:=<value>'):
-
-    'cmd_vel_topic':
-        조이스틱 속도 명령을 보낼 토픽
-        (default: '/cmd_vel')
-
-
-조이스틱 연결
-USB 연결하기
-
-관리자 파워셀
-winget install --interactive --exact dorssel.usbipd-win
-usbipd list
-usbipd bind --busid 1-3 --force
-usbipd list(Shared 확인)
-재부팅
-
-
-
-
-============================================================
-Xbox 360 조이스틱 연결부터 최종 작동 확인까지
-============================================================
-
-※ 아래 단계는 위의 ROS2 Humble, TurtleSim, colcon 설치가 끝난 뒤 진행하기.
-※ 명령어 위에 표시된 창 꼭 확인하기.
-   - [관리자 PowerShell] : Windows에서 관리자 권한으로 실행한 PowerShell
-   - [일반 PowerShell]   : Windows에서 일반 실행한 PowerShell
-   - [Ubuntu]           : Ubuntu 22.04(WSL) 창
-※ BUSID는 노트북마다 다름. 예시의 1-3을 무조건 쓰지 말고,
-   반드시 본인 usbipd list 결과에 나온 Xbox 장치 BUSID 사용하기.
-
-
-------------------------------------------------------------
-1. Xbox 컨트롤러와 USB 리시버 준비
-------------------------------------------------------------
-
-1) Xbox 360 무선 컨트롤러라면 USB 무선 리시버를 노트북에 꽂기.
-2) 컨트롤러 전원 켜기.
-3) 리시버와 컨트롤러의 연결 버튼을 눌러 페어링하기.
-
-정상:
-- 컨트롤러의 초록색 불이 한 위치에 고정되면 정상.
-- Windows의 장치 관리자 또는 usbipd list에
-  Xbox 360 Controller, Xbox 360 Wireless Receiver 등 Xbox 장치가 보이면 정상.
-
-정상이 아닐 때:
-- 불이 계속 회전하면 아직 컨트롤러와 리시버가 페어링되지 않은 거야.
-- USB를 뽑았다가 다른 USB 포트에 다시 꽂기.
-- 배터리를 확인하고 다시 페어링하기.
-- 장치 관리자에 노란 느낌표가 있다면 해당 장치를 제거하지 말고
-  먼저 Windows 업데이트와 선택적 드라이버 업데이트를 확인하기.
-
-
-------------------------------------------------------------
-2. WSL 버전과 업데이트 확인
-------------------------------------------------------------
-
-[일반 PowerShell]
-
-wsl.exe -l -v
-
-정상 예시:
-
-NAME            STATE           VERSION
-Ubuntu-22.04    Running         2
-
-정상이 아닐 때:
-
-1) VERSION이 1이면 아래 명령을 실행하기.
-
-wsl --set-version Ubuntu-22.04 2
-
-2) Ubuntu-22.04가 목록에 없으면 위쪽의 WSL 설치 단계부터 다시 확인하기.
-
-3) WSL을 최신 상태로 업데이트하기.
-
-wsl --update
-
-업데이트 후 필요하면 WSL을 종료하고 다시 실행하기.
-
-wsl --shutdown
-
-그다음 Ubuntu 22.04를 다시 열기.
-
-
-------------------------------------------------------------
-3. usbipd-win 설치 확인
-------------------------------------------------------------
-
-[관리자 PowerShell]
-
-usbipd --version
-
-정상:
-- 버전 번호가 나오면 정상.
-
-명령어를 찾을 수 없다고 나오면 설치하기.
-
-winget install --interactive --exact dorssel.usbipd-win
-
-설치 도중 Microsoft Store 약관 동의가 나오면 Y를 입력하고 Enter를 누르기.
-
-설치가 끝나면:
-1) 현재 PowerShell 창을 완전히 닫기.
-2) PowerShell을 다시 관리자 권한으로 열기.
-3) 다시 확인하기.
-
-usbipd --version
-
-그래도 명령어를 찾지 못하면 아래 경로로 직접 실행해 확인하기.
-
-& "C:\Program Files\usbipd-win\usbipd.exe" --version
-
-
-------------------------------------------------------------
-4. Xbox 장치의 BUSID 확인
-------------------------------------------------------------
-
-[관리자 PowerShell]
-
-usbipd list
-
-정상 예시:
-
-BUSID  VID:PID    DEVICE                 STATE
-1-3    ....:....  Xbox 360 Controller   Not shared
-
-여기서 Xbox 장치가 있는 행의 BUSID를 적어두기.
-이후 설명에서는 예시로 1-3을 사용하지만 실제로는 본인의 번호를 넣기.
-
-Xbox 장치가 아예 안 보일 때:
-1) 리시버를 뽑았다가 다시 꽂기.
-2) 다른 USB 포트에 꽂기.
-3) 컨트롤러 전원 켜기.
-4) 다시 실행하기.
-
-usbipd list
-
-5) 그래도 없으면 Windows 장치 관리자에서 Xbox 장치가 보이는지 확인하기.
-   Windows에서도 안 보이면 ROS나 WSL 문제가 아니라 USB·리시버·Windows
-   드라이버 문제부터 해결해야 함.
-
-
-------------------------------------------------------------
-5. Xbox USB 장치를 WSL과 공유(bind)
-------------------------------------------------------------
-
-※ 이 단계는 관리자 PowerShell에서 실행해야 함.
-
-[관리자 PowerShell]
-
-usbipd bind --busid 1-3
-
-정상:
-- 오류 없이 명령이 끝나면 정상.
-- 아래 명령으로 확인했을 때 STATE가 Shared로 바뀌면 정상.
-
-usbipd list
-
-정상 예시:
-
-1-3  Xbox 360 Controller  Shared
-
-일반 bind에서 장치 드라이버 충돌 경고가 나오고 --force를 사용하라고 할 때만:
-
-usbipd bind --busid 1-3 --force
-
-그다음 다시 확인하기.
-
-usbipd list
-
-정상 예시:
-
-1-3  Xbox 360 Controller  Shared (forced)
-
-주의:
-- --force는 일반 bind가 실패하고 화면에서 요구할 때만 사용하기.
-- 재부팅이 필요하다는 문구가 나오면 컴퓨터를 재부팅하기.
-- Shared는 공유 준비가 끝난 상태이고, 아직 WSL에 연결된 상태는 아님.
-
-
-------------------------------------------------------------
-6. Xbox USB 장치를 WSL에 연결(attach)
-------------------------------------------------------------
-
-1) Ubuntu 22.04 창을 먼저 열어 두기.
-2) PowerShell에서 attach를 실행하기.
-
-[일반 PowerShell 또는 관리자 PowerShell]
-
-usbipd attach --wsl --busid 1-3
-
-정상:
-- 오류 없이 완료되거나 Successfully attached와 비슷한 내용이 나오면 정상.
-- usbipd list에서 STATE가 Attached로 표시됨.
-
-usbipd list
-
-중요:
-- attach된 동안 해당 USB 장치는 Windows에서 사용이 안 될 수도 있음.
-- 컴퓨터를 재부팅하거나 리시버를 뽑으면 attach가 풀릴 수 있음.
-- 다음에 사용할 때는 bind를 매번 다시 할 필요는 없지만,
-  attach는 다시 실행해야 할 수 있음.
-
-
-------------------------------------------------------------
-7. attach가 실패할 때 해결
-------------------------------------------------------------
-
-A. "There are no WSL 2 distributions running"이 나올 때
-
-1) Ubuntu 22.04를 먼저 실행하기.
-2) Ubuntu 입력창이 보이는 상태에서 다시 실행하기.
-
-usbipd attach --wsl --busid 1-3
-
-
-B. "device is in an error state"가 나올 때
-
-[관리자 PowerShell]
-
-usbipd unbind --busid 1-3
-
-1) Xbox USB 리시버를 노트북에서 뽑기.
-2) 5초 정도 기다리기.
-3) 다시 꽂기.
-4) BUSID가 바뀌었을 수 있으므로 다시 확인하기.
-
-usbipd list
-
-5) 새로 확인한 BUSID로 다시 공유하기.
-
-usbipd bind --busid 새_BUSID --force
-
-6) Ubuntu를 열어 둔 상태에서 다시 연결하기.
-
-usbipd attach --wsl --busid 새_BUSID
-
-
-C. "Device is already attached"가 나올 때
-
-이미 연결된 상태일 수 있음. Ubuntu에서 lsusb 확인 단계로 넘어가기.
-
-
-D. "No device found for busid"가 나올 때
-
-리시버를 다시 꽂으면서 BUSID가 바뀐 거야.
-
-usbipd list
-
-새 BUSID를 확인하고 명령어의 번호를 바꿔 다시 실행하기.
-
-
-E. 계속 실패할 때 WSL 초기화
-
-[일반 PowerShell]
-
-wsl --shutdown
-wsl --update
-
-Ubuntu를 다시 연 뒤 attach를 다시 실행하기.
-
-usbipd attach --wsl --busid 본인_BUSID
-
-
-------------------------------------------------------------
-8. Ubuntu에서 USB 장치 자체가 넘어왔는지 확인
-------------------------------------------------------------
-
-[Ubuntu]
-
-먼저 USB 목록 확인 프로그램을 설치하기.
-
-sudo apt update
-sudo apt install -y usbutils
-
-확인:
-
-lsusb
-
-정상:
-- Xbox, Microsoft, Xbox 360 Wireless Receiver와 관련된 행이 보이면 정상.
-
-정상이 아닐 때:
-- PowerShell에서 usbipd list를 다시 확인하기.
-- STATE가 Shared뿐이면 attach가 아직 안 된 거야.
-- STATE가 Attached인지 확인하고 attach 단계부터 다시 진행하기.
-
-중요:
-- lsusb에 보인다는 것은 USB가 WSL까지 전달됐다는 뜻임.
-- 이것만으로 아직 조이스틱 입력 장치가 생성됐다고 확정할 수는 없음.
-
-
-------------------------------------------------------------
-9. xpad 커널 드라이버 확인
-------------------------------------------------------------
-
-xpad는 일반 앱이 아니라 Xbox 컨트롤러용 리눅스 커널 드라이버다.
-무조건 별도 프로그램을 설치하는 것이 아니라 먼저 현재 WSL에 있는지 확인하기.
-
-[Ubuntu]
-
-sudo modprobe xpad
-
-정상:
-- 아무 문구 없이 입력창으로 돌아오면 정상.
-
-드라이버가 올라왔는지 확인:
-
-lsmod | grep xpad
-
-정상 예시:
-
-xpad ...
-
-정상이 아닐 때:
-
-A. modprobe: FATAL: Module xpad not found가 나올 때
-
-1) Windows PowerShell에서 WSL을 업데이트하기.
-
-[일반 PowerShell]
-
-wsl --update
-wsl --shutdown
-
-2) Ubuntu를 다시 열고 USB를 다시 attach하기.
-3) Ubuntu에서 다시 실행하기.
-
-sudo modprobe xpad
-
-B. 업데이트 후에도 xpad 모듈이 없을 때
-
-아래 도구를 설치하기.
-
-[Ubuntu]
-
-sudo apt update
-sudo apt install -y git dkms build-essential linux-headers-generic joystick
-
-그다음 xpad 드라이버 설치가 필요함.
-단, 팀에서 사용한 xpad 설치 저장소 또는 스크립트가 정해져 있다면
-반드시 같은 저장소와 버전을 사용하기. 임의의 Xbox One용 xone/xpadneo
-드라이버를 Xbox 360 리시버에 설치하면 맞지 않을 수 있음.
-
-※ 이 경우에는 화면의 uname -r 결과와 modprobe 오류를 확인한 후
-   팀에서 검증한 xpad 설치 방법을 적용하는 것이 안전하다.
-
-uname -r
-sudo modprobe xpad
-
-
-------------------------------------------------------------
-10. /dev/input 장치 확인
-------------------------------------------------------------
-
-[Ubuntu]
-
-ls -l /dev/input/
-
-정상:
-- event0, event1 등의 장치가 보이면 정상.
-- 조이스틱 드라이버까지 정상이라면 js0도 보일 수 있음.
-
-조이스틱 장치만 확인:
-
-ls -l /dev/input/js* 2>/dev/null
-
-정상 예시:
-
-/dev/input/js0
-
-아무것도 안 나올 때:
-
-1) lsusb에 Xbox 장치가 보이는지 다시 확인하기.
-2) xpad가 올라왔는지 확인하기.
-
-lsmod | grep xpad
-
-3) 최근 커널 메시지에서 Xbox 또는 xpad 오류를 확인하기.
-
-sudo dmesg | tail -n 50
-
-4) /dev/input/event 장치라도 생겼는지 확인하기.
-
-ls -l /dev/input/event* 2>/dev/null
-
-판단:
-- lsusb에도 없음 → usbipd attach 문제
-- lsusb에는 있음, xpad 없음 → xpad 드라이버 문제
-- xpad 있음, js0 없음 → 드라이버 인식 또는 권한 문제
-- js0 있음 → 다음 입력 테스트로 다음 단계로 넘어가기.
-
-
-------------------------------------------------------------
-11. jstest 설치 및 실제 버튼·스틱 입력 확인
-------------------------------------------------------------
-
-[Ubuntu]
-
-sudo apt install -y joystick
-
-실행:
-
-jstest /dev/input/js0
-
-정상:
-- Axes와 Buttons 숫자가 화면에 나오면 정상.
-- 스틱을 움직이면 축 숫자가 변하면 정상.
-- 버튼을 누르면 off가 on으로 바뀌거나 값이 변하면 정상.
-
-종료:
-
-Ctrl + C
-
-"No such file or directory"가 나오면:
-- /dev/input/js0가 아직 생기지 않은 거야.
-- 8~10단계로 돌아가 lsusb, xpad, js0 순서로 다시 확인하기.
-
-"Permission denied"가 나오면 임시로 확인:
-
-sudo jstest /dev/input/js0
-
-sudo에서는 되는데 일반 jstest에서는 안 될 때:
-
-sudo usermod -aG input $USER
-
-그다음 Ubuntu 창을 모두 닫고 다시 열기.
-그래도 권한이 반영되지 않으면 Windows PowerShell에서:
-
-wsl --shutdown
-
-Ubuntu를 다시 열고 USB attach부터 다시 진행하기.
-
-
-------------------------------------------------------------
-12. ROS2 joy_node 설치 확인
-------------------------------------------------------------
-
-[Ubuntu]
-
-sudo apt install -y ros-humble-joy ros-humble-teleop-twist-joy
-
-설치 확인:
-
-ros2 pkg executables joy
-
-정상:
-- joy joy_node와 비슷한 실행 파일이 나오면 정상.
-
-아무것도 나오지 않거나 package not found가 나오면:
-
-source /opt/ros/humble/setup.bash
-
-다시 확인:
-
-ros2 pkg executables joy
-
-그래도 없으면 다시 설치하기.
-
-sudo apt update
-sudo apt install -y ros-humble-joy ros-humble-teleop-twist-joy
-
-
-------------------------------------------------------------
-13. joy_node만 실행해서 ROS2 조이스틱 데이터 확인
-------------------------------------------------------------
-
-※ jstest가 정상인 것을 확인한 뒤 진행하기.
-
-[Ubuntu 창 1]
-
-source /opt/ros/humble/setup.bash
-ros2 run joy joy_node --ros-args -p device_id:=0
-
-정상:
-- 창이 계속 실행 중인 상태가 됨.
-- 오류 없이 조이스틱 입력을 기다리기.
-
-"Couldn't open joystick /dev/input/js0"가 나오면:
-- js0가 없거나 권한이 없는 거야.
-- jstest 단계부터 다시 확인하기.
-
-[Ubuntu 창 2]
-
-source /opt/ros/humble/setup.bash
-ros2 topic list
-
-정상:
-- /joy 토픽이 보이면 정상.
-
-실제 데이터 확인:
-
-ros2 topic echo /joy
-
-정상:
-- 스틱이나 버튼을 누를 때 axes와 buttons 값이 계속 출력됨.
-
-아무것도 출력되지 않을 때:
-- 컨트롤러 전원이 켜져 있는지 확인하기.
-- jstest가 정상인지 다시 확인하기.
-- Ubuntu 창 1의 joy_node 오류 내용을 확인하기.
-
-테스트 종료:
-- 각 Ubuntu 창에서 Ctrl + C
-
-
-------------------------------------------------------------
-14. 프로젝트 브랜치와 코드 위치 확인
-------------------------------------------------------------
-
-※ Git 브랜치 변경은 Git Bash에서 진행해도 되고 Ubuntu에서 진행해도 됨.
-※ Git Bash와 Ubuntu가 같은 S15P11E102 폴더를 보고 있으면
-   한쪽에서 브랜치를 바꾼 결과가 다른 쪽에도 바로 반영됨.
-
-[Git Bash 또는 Ubuntu]
-
-프로젝트 최상위 폴더로 이동한 뒤:
-
-git status
-git branch --show-current
-
-정상:
-- working tree clean
-- 현재 사용할 조이스틱 브랜치 이름이 나오면 정상.
-
-사용할 브랜치 예시:
-
-robot/feat/S15P11E102-55-joystick-control
-
-다른 브랜치라면:
-
-git switch robot/feat/S15P11E102-55-joystick-control
-
-브랜치가 없다고 나오면:
-
-git fetch origin
-git switch --track origin/robot/feat/S15P11E102-55-joystick-control
-
-주의:
-- git status에 수정 파일이 있으면 임의로 삭제하거나 브랜치를 바꾸지 않기.
-- 본인 작업인지 확인한 뒤 커밋 또는 stash 여부를 결정하기.
-
-
-------------------------------------------------------------
-15. ROS2 작업공간으로 이동 및 빌드
-------------------------------------------------------------
-
-[Ubuntu]
-
-각자의 실제 경로에 맞춰 ros2_ws로 이동하기.
-예시는 Windows 바탕화면에 프로젝트가 있는 경우다.
-
-cd "/mnt/c/Users/Windows사용자이름/Desktop/보미 로봇/S15P11E102/robot/ros2_ws"
-
-현재 위치 확인:
-
-pwd
-ls
-
-정상:
-- 경로 마지막이 /robot/ros2_ws
-- ls 결과에 src가 보이면 정상.
-
-패키지 확인:
-
-ls src
-
-정상:
-- core가 보이면 정상.
-
-빌드:
-
-colcon build --symlink-install
-
-정상 예시:
-
-Finished <<< core
-Summary: 1 package finished
-
-colcon 명령을 찾지 못하면:
-
-sudo apt install -y python3-colcon-common-extensions
-
-package 오류가 나오면:
-
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install
-
-
-------------------------------------------------------------
-16. 빌드 결과 적용 및 launch 파일 확인
-------------------------------------------------------------
-
-[Ubuntu]
-
-ros2_ws 위치에서:
-
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-launch 파일 확인:
-
-ros2 launch core joystick_teleop.launch.py --show-args
-
-정상 예시:
-
-Arguments (pass arguments as '<name>:=<value>'):
-
-    'cmd_vel_topic':
-        조이스틱 속도 명령을 보낼 토픽
-        (default: '/cmd_vel')
-
-"Package 'core' not found"가 나오면:
-- ros2_ws 위치가 맞는지 확인하기.
-- 빌드가 성공했는지 확인하기.
-- source install/setup.bash를 실행했는지 확인하기.
-
-"file ... was not found"가 나오면:
-- 현재 브랜치에 launch 파일이 있는지 확인하기.
-- 다시 colcon build --symlink-install을 실행하기.
-
-
-------------------------------------------------------------
-17. 프로젝트 조이스틱 launch 실행
-------------------------------------------------------------
-
-[Ubuntu 창 1]
-
-ros2_ws로 이동:
-
-cd "/mnt/c/Users/Windows사용자이름/Desktop/보미 로봇/S15P11E102/robot/ros2_ws"
-
-환경 적용:
-
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-실행:
-
-ros2 launch core joystick_teleop.launch.py
-
-정상:
-- joy_node와 teleop_node가 실행됨.
-- 창이 입력 대기 상태로 돌아오지 않고 계속 실행됨.
-- /joy와 /cmd_vel 관련 노드·토픽이 생성됨.
-
-joy_node에서 /dev/input/js0 오류가 나면:
-- 프로젝트 코드 문제가 아니라 장치 연결 문제임.
-- jstest /dev/input/js0부터 다시 확인하기.
-
-
-------------------------------------------------------------
-18. /joy와 /cmd_vel 토픽 확인
-------------------------------------------------------------
-
-[Ubuntu 창 2]
-
-source /opt/ros/humble/setup.bash
-
-프로젝트 환경도 적용:
-
-cd "/mnt/c/Users/Windows사용자이름/Desktop/보미 로봇/S15P11E102/robot/ros2_ws"
-source install/setup.bash
-
-토픽 목록:
-
-ros2 topic list
-
-정상:
-- /joy
-- /cmd_vel
-
-조이스틱 원본 데이터 확인:
-
-ros2 topic echo /joy
-
-스틱이나 버튼을 움직일 때 axes, buttons 값이 변하면 정상이다.
-Ctrl + C로 종료하기.
-
-속도 명령 확인:
-
-ros2 topic echo /cmd_vel
-
-정상:
-- 조이스틱을 움직이면 linear.x 또는 angular.z 값이 변하면 정상.
-- 스틱을 놓으면 0.0 값이 나오면 정상.
-
-/joy는 변하지만 /cmd_vel이 변하지 않을 때:
-- teleop_twist_joy 설정의 축 번호가 컨트롤러와 맞지 않을 수 있음.
-- enable 버튼 설정이 켜져 있는지 YAML을 확인하기.
-- require_enable_button: false 또는 사용 중인 enable 버튼 설정을 확인하기.
-- launch 실행 창의 오류를 확인하기.
-
-/cmd_vel 토픽 자체가 없을 때:
-- teleop_node가 실행되지 않았을 수 있음.
-- launch 실행 창에서 package 또는 YAML 오류를 확인하기.
-
-
-------------------------------------------------------------
-19. TurtleSim을 네 조이스틱 코드로 움직이기
-------------------------------------------------------------
-
-프로젝트 launch의 기본 출력이 /cmd_vel이고 TurtleSim은
-/turtle1/cmd_vel을 구독하므로 토픽을 맞춰야 함.
-
-[Ubuntu 창 1: TurtleSim]
-
-source /opt/ros/humble/setup.bash
-ros2 run turtlesim turtlesim_node
-
-정상:
-- 파란 창에 거북이가 나타나면 정상.
-
-[Ubuntu 창 2: 프로젝트 조이스틱 launch]
-
-cd "/mnt/c/Users/Windows사용자이름/Desktop/보미 로봇/S15P11E102/robot/ros2_ws"
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-TurtleSim 토픽으로 실행:
-
-ros2 launch core joystick_teleop.launch.py cmd_vel_topic:=/turtle1/cmd_vel
-
-정상:
-- 조이스틱을 움직이면 거북이가 이동하거나 회전하면 정상.
-- 스틱을 놓으면 거북이가 멈춘다.
-
-안 움직일 때 확인:
-
-[Ubuntu 창 3]
-
-source /opt/ros/humble/setup.bash
-ros2 topic echo /turtle1/cmd_vel
-
-판단:
-- 값이 변함 + 거북이 안 움직임 → TurtleSim 창/토픽 상태 확인
-- 값이 안 변함 + /joy는 변함 → teleop 설정 또는 remapping 문제
-- /joy도 안 변함 → 장치, xpad, joy_node 문제
-
-토픽 연결 관계 확인:
-
-ros2 topic info /turtle1/cmd_vel -v
-
-정상:
-- Publisher에 teleop 관련 노드가 보이면 정상.
-- Subscriber에 turtlesim 노드가 보이면 정상.
-
-
-------------------------------------------------------------
-20. mock_motor_driver로 코드 확인
-------------------------------------------------------------
-
-실제 하드웨어 없이 /cmd_vel 명령이 모터 드라이버 노드까지 전달되는지
-확인할 때 사용하기.
-
-[Ubuntu 창 1]
-
-cd "/mnt/c/Users/Windows사용자이름/Desktop/보미 로봇/S15P11E102/robot/ros2_ws"
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 launch core joystick_teleop.launch.py
-
-[Ubuntu 창 2]
-
-cd "/mnt/c/Users/Windows사용자이름/Desktop/보미 로봇/S15P11E102/robot/ros2_ws"
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 run core mock_motor_driver
-
-정상:
-- 조이스틱을 움직일 때 mock_motor_driver 창에
-  linear.x, angular.z 등의 속도 값이 출력됨.
-
-실행 파일을 찾을 수 없으면:
-
-ros2 pkg executables core
-
-목록에 실제 등록된 실행 파일 이름을 확인하기.
-mock_motor_driver가 목록에 없다면 setup.py의 console_scripts 등록과
-빌드 결과를 확인해야 함.
-
-
-------------------------------------------------------------
-21. 다음 날 다시 사용할 때의 짧은 실행 순서
-------------------------------------------------------------
-
-이미 설치와 bind가 끝난 노트북에서는 매번 전체 설치를 반복하지 않기.
-
-1) Xbox USB 리시버 연결
-2) 컨트롤러 전원 켜기 및 페어링 확인
-3) Ubuntu 22.04 창 먼저 열기
-4) PowerShell에서 BUSID 확인
-
-usbipd list
-
-5) STATE가 Shared이면 attach
-
-usbipd attach --wsl --busid 본인_BUSID
-
-6) Ubuntu에서 장치 확인
-
-lsusb
-ls -l /dev/input/js* 2>/dev/null
-jstest /dev/input/js0
-
-7) ros2_ws로 이동 후 환경 적용
-
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-8) 프로젝트 실행
-
-ros2 launch core joystick_teleop.launch.py
-
-
-------------------------------------------------------------
-22. 작업 종료 후 안전하게 연결 해제
-------------------------------------------------------------
-
-실행 중인 ROS2 명령은 각 Ubuntu 창에서:
-
-Ctrl + C
-
-USB를 WSL에서 분리:
-
-[PowerShell]
-
-usbipd detach --busid 본인_BUSID
-
-정상:
-- usbipd list에서 Attached가 Shared로 바뀌면 정상.
-
-공유 설정까지 완전히 해제해야 할 때만:
-
-[관리자 PowerShell]
-
-usbipd unbind --busid 본인_BUSID
-
-주의:
-- 일반적인 작업 종료에서는 detach만 하면 됨.
-- unbind까지 하면 다음 사용 시 관리자 PowerShell에서 bind를 다시 해야 함.
-
-
-------------------------------------------------------------
-23. 최종 성공 체크리스트
-------------------------------------------------------------
-
-[ ] wsl.exe -l -v에서 Ubuntu-22.04가 VERSION 2
-[ ] usbipd --version에서 버전 출력
-[ ] usbipd list에 Xbox 장치 표시
-[ ] Xbox 장치 STATE가 Attached
-[ ] Ubuntu의 lsusb에 Xbox 또는 Microsoft 장치 표시
-[ ] sudo modprobe xpad 성공
-[ ] /dev/input/js0 생성
-[ ] jstest에서 스틱과 버튼 값 변화
-[ ] ros2 topic echo /joy에서 값 변화
-[ ] ros2 topic echo /cmd_vel 또는 /turtle1/cmd_vel에서 값 변화
-[ ] 조이스틱으로 TurtleSim 거북이 이동
-[ ] mock_motor_driver에 속도 명령 출력
-
-위 항목이 전부 확인되면
-Xbox 컨트롤러 → Windows → WSL → xpad → /dev/input/js0
-→ ROS2 joy_node → teleop_twist_joy → /cmd_vel
-전체 연결이 정상적으로 완료
-
-
-# ROS2 Ubuntu 설치 및 조이스틱 연결 설치방법
-
-관리자 파워셀
-wsl --install -d Ubuntu-22.04
-
-재부팅
-
-Ubuntu 다운로드 후 사용할 사용자 이름과 비번 작성(영문)
-
-일반 파워셀
-wsl.exe -l -v 로 버전 확인
-
-NAME            STATE           VERSION
-Ubuntu-22.04    Running         2
-가 나오면 정상
-
-Ubuntu 열고
-sudo apt update
-(이후 비밀번호 작성)
-
- ROS2 설치 위해서
-Ubuntu 창에 작성
-sudo apt install -y locales software-properties-common curl
-
-이후
-sudo locale-gen en_US en_US.UTF-8
-
-sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
-작성
-
-export LANG=en_US.UTF-8
-
-locale
-
-화면에서 이거 아래 내용 보이면 성공
-LANG=en_US.UTF-8
-LC_ALL=en_US.UTF-8
-
-이후
-sudo add-apt-repository universe
-작성후 엔터 치기
-
-sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
-
-
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
-
-sudo apt update
-
-ROS 2 Humble 설치
-
-sudo apt install -y ros-humble-desktop
-
-echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
-
-source ~/.bashrc
-
-ros2 --help
-
-터틀심과 프로젝드 빌드 도구 설치
-sudo apt install -y ros-humble-turtlesim python3-colcon-common-extensions
-
-거부기 나오는지 확인
-ros2 run turtlesim turtlesim_node
-
-
-코드로 움직이는지 확인
-코드 있는곳 까지 이동
-
-패키지 설정
-sudo apt install -y ros-humble-joy ros-humble-teleop-twist-joy
-
-설치후 코드 빌드
-colcon build --symlink-install
-
-ros2 launch core joystick_teleop.launch.py --show-args
-
-응답 이렇게 나오면 됨.
-Arguments (pass arguments as '<name>:=<value>'):
-
-    'cmd_vel_topic':
-        조이스틱 속도 명령을 보낼 토픽
-        (default: '/cmd_vel')
-
-
-조이스틱 연결
-USB 연결하기
-
-관리자 파워셀
-winget install --interactive --exact dorssel.usbipd-win
-usbipd list
-usbipd bind --busid 1-3 --force
-usbipd list(Shared 확인)
-재부팅
-
-
-
-
-============================================================
-Xbox 360 조이스틱 연결부터 최종 작동 확인까지
-============================================================
-
-※ 아래 단계는 위의 ROS2 Humble, TurtleSim, colcon 설치가 끝난 뒤 진행하기.
-※ 명령어 위에 표시된 창 꼭 확인하기.
-   - [관리자 PowerShell] : Windows에서 관리자 권한으로 실행한 PowerShell
-   - [일반 PowerShell]   : Windows에서 일반 실행한 PowerShell
-   - [Ubuntu]           : Ubuntu 22.04(WSL) 창
-※ BUSID는 노트북마다 다름. 예시의 1-3을 무조건 쓰지 말고,
-   반드시 본인 usbipd list 결과에 나온 Xbox 장치 BUSID 사용하기.
-
-
-------------------------------------------------------------
-1. Xbox 컨트롤러와 USB 리시버 준비
-------------------------------------------------------------
-
-1) Xbox 360 무선 컨트롤러라면 USB 무선 리시버를 노트북에 꽂기.
-2) 컨트롤러 전원 켜기.
-3) 리시버와 컨트롤러의 연결 버튼을 눌러 페어링하기.
-
-정상:
-- 컨트롤러의 초록색 불이 한 위치에 고정되면 정상.
-- Windows의 장치 관리자 또는 usbipd list에
-  Xbox 360 Controller, Xbox 360 Wireless Receiver 등 Xbox 장치가 보이면 정상.
-
-정상이 아닐 때:
-- 불이 계속 회전하면 아직 컨트롤러와 리시버가 페어링되지 않은 거야.
-- USB를 뽑았다가 다른 USB 포트에 다시 꽂기.
-- 배터리를 확인하고 다시 페어링하기.
-- 장치 관리자에 노란 느낌표가 있다면 해당 장치를 제거하지 말고
-  먼저 Windows 업데이트와 선택적 드라이버 업데이트를 확인하기.
-
-
-------------------------------------------------------------
-2. WSL 버전과 업데이트 확인
-------------------------------------------------------------
-
-[일반 PowerShell]
-
-wsl.exe -l -v
-
-정상 예시:
-
-NAME            STATE           VERSION
-Ubuntu-22.04    Running         2
-
-정상이 아닐 때:
-
-1) VERSION이 1이면 아래 명령을 실행하기.
-
-wsl --set-version Ubuntu-22.04 2
-
-2) Ubuntu-22.04가 목록에 없으면 위쪽의 WSL 설치 단계부터 다시 확인하기.
-
-3) WSL을 최신 상태로 업데이트하기.
-
-wsl --update
-
-업데이트 후 필요하면 WSL을 종료하고 다시 실행하기.
-
-wsl --shutdown
-
-그다음 Ubuntu 22.04를 다시 열기.
-
-
-------------------------------------------------------------
-3. usbipd-win 설치 확인
-------------------------------------------------------------
-
-[관리자 PowerShell]
-
-usbipd --version
-
-정상:
-- 버전 번호가 나오면 정상.
-
-명령어를 찾을 수 없다고 나오면 설치하기.
-
-winget install --interactive --exact dorssel.usbipd-win
-
-설치 도중 Microsoft Store 약관 동의가 나오면 Y를 입력하고 Enter를 누르기.
-
-설치가 끝나면:
-1) 현재 PowerShell 창을 완전히 닫기.
-2) PowerShell을 다시 관리자 권한으로 열기.
-3) 다시 확인하기.
-
-usbipd --version
-
-그래도 명령어를 찾지 못하면 아래 경로로 직접 실행해 확인하기.
-
-& "C:\Program Files\usbipd-win\usbipd.exe" --version
-
-
-------------------------------------------------------------
-4. Xbox 장치의 BUSID 확인
-------------------------------------------------------------
-
-[관리자 PowerShell]
-
-usbipd list
-
-정상 예시:
-
-BUSID  VID:PID    DEVICE                 STATE
-1-3    ....:....  Xbox 360 Controller   Not shared
-
-여기서 Xbox 장치가 있는 행의 BUSID를 적어두기.
-이후 설명에서는 예시로 1-3을 사용하지만 실제로는 본인의 번호를 넣기.
-
-Xbox 장치가 아예 안 보일 때:
-1) 리시버를 뽑았다가 다시 꽂기.
-2) 다른 USB 포트에 꽂기.
-3) 컨트롤러 전원 켜기.
-4) 다시 실행하기.
-
-usbipd list
-
-5) 그래도 없으면 Windows 장치 관리자에서 Xbox 장치가 보이는지 확인하기.
-   Windows에서도 안 보이면 ROS나 WSL 문제가 아니라 USB·리시버·Windows
-   드라이버 문제부터 해결해야 함.
-
-
-------------------------------------------------------------
-5. Xbox USB 장치를 WSL과 공유(bind)
-------------------------------------------------------------
-
-※ 이 단계는 관리자 PowerShell에서 실행해야 함.
-
-[관리자 PowerShell]
-
-usbipd bind --busid 1-3
-
-정상:
-- 오류 없이 명령이 끝나면 정상.
-- 아래 명령으로 확인했을 때 STATE가 Shared로 바뀌면 정상.
-
-usbipd list
-
-정상 예시:
-
-1-3  Xbox 360 Controller  Shared
-
-일반 bind에서 장치 드라이버 충돌 경고가 나오고 --force를 사용하라고 할 때만:
-
-usbipd bind --busid 1-3 --force
-
-그다음 다시 확인하기.
-
-usbipd list
-
-정상 예시:
-
-1-3  Xbox 360 Controller  Shared (forced)
-
-주의:
-- --force는 일반 bind가 실패하고 화면에서 요구할 때만 사용하기.
-- 재부팅이 필요하다는 문구가 나오면 컴퓨터를 재부팅하기.
-- Shared는 공유 준비가 끝난 상태이고, 아직 WSL에 연결된 상태는 아님.
-
-
-------------------------------------------------------------
-6. Xbox USB 장치를 WSL에 연결(attach)
-------------------------------------------------------------
-
-1) Ubuntu 22.04 창을 먼저 열어 두기.
-2) PowerShell에서 attach를 실행하기.
-
-[일반 PowerShell 또는 관리자 PowerShell]
-
-usbipd attach --wsl --busid 1-3
-
-정상:
-- 오류 없이 완료되거나 Successfully attached와 비슷한 내용이 나오면 정상.
-- usbipd list에서 STATE가 Attached로 표시됨.
-
-usbipd list
-
-중요:
-- attach된 동안 해당 USB 장치는 Windows에서 사용이 안 될 수도 있음.
-- 컴퓨터를 재부팅하거나 리시버를 뽑으면 attach가 풀릴 수 있음.
-- 다음에 사용할 때는 bind를 매번 다시 할 필요는 없지만,
-  attach는 다시 실행해야 할 수 있음.
-
-
-------------------------------------------------------------
-7. attach가 실패할 때 해결
-------------------------------------------------------------
-
-A. "There are no WSL 2 distributions running"이 나올 때
-
-1) Ubuntu 22.04를 먼저 실행하기.
-2) Ubuntu 입력창이 보이는 상태에서 다시 실행하기.
-
-usbipd attach --wsl --busid 1-3
-
-
-B. "device is in an error state"가 나올 때
-
-[관리자 PowerShell]
-
-usbipd unbind --busid 1-3
-
-1) Xbox USB 리시버를 노트북에서 뽑기.
-2) 5초 정도 기다리기.
-3) 다시 꽂기.
-4) BUSID가 바뀌었을 수 있으므로 다시 확인하기.
-
-usbipd list
-
-5) 새로 확인한 BUSID로 다시 공유하기.
-
-usbipd bind --busid 새_BUSID --force
-
-6) Ubuntu를 열어 둔 상태에서 다시 연결하기.
-
-usbipd attach --wsl --busid 새_BUSID
-
-
-C. "Device is already attached"가 나올 때
-
-이미 연결된 상태일 수 있음. Ubuntu에서 lsusb 확인 단계로 넘어가기.
-
-
-D. "No device found for busid"가 나올 때
-
-리시버를 다시 꽂으면서 BUSID가 바뀐 거야.
-
-usbipd list
-
-새 BUSID를 확인하고 명령어의 번호를 바꿔 다시 실행하기.
-
-
-E. 계속 실패할 때 WSL 초기화
-
-[일반 PowerShell]
-
-wsl --shutdown
-wsl --update
-
-Ubuntu를 다시 연 뒤 attach를 다시 실행하기.
-
-usbipd attach --wsl --busid 본인_BUSID
-
-
-------------------------------------------------------------
-8. Ubuntu에서 USB 장치 자체가 넘어왔는지 확인
-------------------------------------------------------------
-
-[Ubuntu]
-
-먼저 USB 목록 확인 프로그램을 설치하기.
-
-sudo apt update
-sudo apt install -y usbutils
-
-확인:
-
-lsusb
-
-정상:
-- Xbox, Microsoft, Xbox 360 Wireless Receiver와 관련된 행이 보이면 정상.
-
-정상이 아닐 때:
-- PowerShell에서 usbipd list를 다시 확인하기.
-- STATE가 Shared뿐이면 attach가 아직 안 된 거야.
-- STATE가 Attached인지 확인하고 attach 단계부터 다시 진행하기.
-
-중요:
-- lsusb에 보인다는 것은 USB가 WSL까지 전달됐다는 뜻임.
-- 이것만으로 아직 조이스틱 입력 장치가 생성됐다고 확정할 수는 없음.
-
-
-------------------------------------------------------------
-9. xpad 커널 드라이버 확인
-------------------------------------------------------------
-
-xpad는 일반 앱이 아니라 Xbox 컨트롤러용 리눅스 커널 드라이버다.
-무조건 별도 프로그램을 설치하는 것이 아니라 먼저 현재 WSL에 있는지 확인하기.
-
-[Ubuntu]
-
-sudo modprobe xpad
-
-정상:
-- 아무 문구 없이 입력창으로 돌아오면 정상.
-
-드라이버가 올라왔는지 확인:
-
-lsmod | grep xpad
-
-정상 예시:
-
-xpad ...
-
-정상이 아닐 때:
-
-A. modprobe: FATAL: Module xpad not found가 나올 때
-
-1) Windows PowerShell에서 WSL을 업데이트하기.
-
-[일반 PowerShell]
-
-wsl --update
-wsl --shutdown
-
-2) Ubuntu를 다시 열고 USB를 다시 attach하기.
-3) Ubuntu에서 다시 실행하기.
-
-sudo modprobe xpad
-
-B. 업데이트 후에도 xpad 모듈이 없을 때
-
-아래 도구를 설치하기.
-
-[Ubuntu]
-
-sudo apt update
-sudo apt install -y git dkms build-essential linux-headers-generic joystick
-
-그다음 xpad 드라이버 설치가 필요함.
-단, 팀에서 사용한 xpad 설치 저장소 또는 스크립트가 정해져 있다면
-반드시 같은 저장소와 버전을 사용하기. 임의의 Xbox One용 xone/xpadneo
-드라이버를 Xbox 360 리시버에 설치하면 맞지 않을 수 있음.
-
-※ 이 경우에는 화면의 uname -r 결과와 modprobe 오류를 확인한 후
-   팀에서 검증한 xpad 설치 방법을 적용하는 것이 안전하다.
-
-uname -r
-sudo modprobe xpad
-
-
-------------------------------------------------------------
-10. /dev/input 장치 확인
-------------------------------------------------------------
-
-[Ubuntu]
-
-ls -l /dev/input/
-
-정상:
-- event0, event1 등의 장치가 보이면 정상.
-- 조이스틱 드라이버까지 정상이라면 js0도 보일 수 있음.
-
-조이스틱 장치만 확인:
-
-ls -l /dev/input/js* 2>/dev/null
-
-정상 예시:
-
-/dev/input/js0
-
-아무것도 안 나올 때:
-
-1) lsusb에 Xbox 장치가 보이는지 다시 확인하기.
-2) xpad가 올라왔는지 확인하기.
-
-lsmod | grep xpad
-
-3) 최근 커널 메시지에서 Xbox 또는 xpad 오류를 확인하기.
-
-sudo dmesg | tail -n 50
-
-4) /dev/input/event 장치라도 생겼는지 확인하기.
-
-ls -l /dev/input/event* 2>/dev/null
-
-판단:
-- lsusb에도 없음 → usbipd attach 문제
-- lsusb에는 있음, xpad 없음 → xpad 드라이버 문제
-- xpad 있음, js0 없음 → 드라이버 인식 또는 권한 문제
-- js0 있음 → 다음 입력 테스트로 다음 단계로 넘어가기.
-
-
-------------------------------------------------------------
-11. jstest 설치 및 실제 버튼·스틱 입력 확인
-------------------------------------------------------------
-
-[Ubuntu]
-
-sudo apt install -y joystick
-
-실행:
-
-jstest /dev/input/js0
-
-정상:
-- Axes와 Buttons 숫자가 화면에 나오면 정상.
-- 스틱을 움직이면 축 숫자가 변하면 정상.
-- 버튼을 누르면 off가 on으로 바뀌거나 값이 변하면 정상.
-
-종료:
-
-Ctrl + C
-
-"No such file or directory"가 나오면:
-- /dev/input/js0가 아직 생기지 않은 거야.
-- 8~10단계로 돌아가 lsusb, xpad, js0 순서로 다시 확인하기.
-
-"Permission denied"가 나오면 임시로 확인:
-
-sudo jstest /dev/input/js0
-
-sudo에서는 되는데 일반 jstest에서는 안 될 때:
-
-sudo usermod -aG input $USER
-
-그다음 Ubuntu 창을 모두 닫고 다시 열기.
-그래도 권한이 반영되지 않으면 Windows PowerShell에서:
-
-wsl --shutdown
-
-Ubuntu를 다시 열고 USB attach부터 다시 진행하기.
-
-
-------------------------------------------------------------
-12. ROS2 joy_node 설치 확인
-------------------------------------------------------------
-
-[Ubuntu]
-
-sudo apt install -y ros-humble-joy ros-humble-teleop-twist-joy
-
-설치 확인:
-
-ros2 pkg executables joy
-
-정상:
-- joy joy_node와 비슷한 실행 파일이 나오면 정상.
-
-아무것도 나오지 않거나 package not found가 나오면:
-
-source /opt/ros/humble/setup.bash
-
-다시 확인:
-
-ros2 pkg executables joy
-
-그래도 없으면 다시 설치하기.
-
-sudo apt update
-sudo apt install -y ros-humble-joy ros-humble-teleop-twist-joy
-
-
-------------------------------------------------------------
-13. joy_node만 실행해서 ROS2 조이스틱 데이터 확인
-------------------------------------------------------------
-
-※ jstest가 정상인 것을 확인한 뒤 진행하기.
-
-[Ubuntu 창 1]
-
-source /opt/ros/humble/setup.bash
-ros2 run joy joy_node --ros-args -p device_id:=0
-
-정상:
-- 창이 계속 실행 중인 상태가 됨.
-- 오류 없이 조이스틱 입력을 기다리기.
-
-"Couldn't open joystick /dev/input/js0"가 나오면:
-- js0가 없거나 권한이 없는 거야.
-- jstest 단계부터 다시 확인하기.
-
-[Ubuntu 창 2]
-
-source /opt/ros/humble/setup.bash
-ros2 topic list
-
-정상:
-- /joy 토픽이 보이면 정상.
-
-실제 데이터 확인:
-
-ros2 topic echo /joy
-
-정상:
-- 스틱이나 버튼을 누를 때 axes와 buttons 값이 계속 출력됨.
-
-아무것도 출력되지 않을 때:
-- 컨트롤러 전원이 켜져 있는지 확인하기.
-- jstest가 정상인지 다시 확인하기.
-- Ubuntu 창 1의 joy_node 오류 내용을 확인하기.
-
-테스트 종료:
-- 각 Ubuntu 창에서 Ctrl + C
-
-
-------------------------------------------------------------
-14. 프로젝트 브랜치와 코드 위치 확인
-------------------------------------------------------------
-
-※ Git 브랜치 변경은 Git Bash에서 진행해도 되고 Ubuntu에서 진행해도 됨.
-※ Git Bash와 Ubuntu가 같은 S15P11E102 폴더를 보고 있으면
-   한쪽에서 브랜치를 바꾼 결과가 다른 쪽에도 바로 반영됨.
-
-[Git Bash 또는 Ubuntu]
-
-프로젝트 최상위 폴더로 이동한 뒤:
-
-git status
-git branch --show-current
-
-정상:
-- working tree clean
-- 현재 사용할 조이스틱 브랜치 이름이 나오면 정상.
-
-사용할 브랜치 예시:
-
-robot/feat/S15P11E102-55-joystick-control
-
-다른 브랜치라면:
-
-git switch robot/feat/S15P11E102-55-joystick-control
-
-브랜치가 없다고 나오면:
-
-git fetch origin
-git switch --track origin/robot/feat/S15P11E102-55-joystick-control
-
-주의:
-- git status에 수정 파일이 있으면 임의로 삭제하거나 브랜치를 바꾸지 않기.
-- 본인 작업인지 확인한 뒤 커밋 또는 stash 여부를 결정하기.
-
-
-------------------------------------------------------------
-15. ROS2 작업공간으로 이동 및 빌드
-------------------------------------------------------------
-
-[Ubuntu]
-
-각자의 실제 경로에 맞춰 ros2_ws로 이동하기.
-예시는 Windows 바탕화면에 프로젝트가 있는 경우다.
-
-cd "/mnt/c/Users/Windows사용자이름/Desktop/보미 로봇/S15P11E102/robot/ros2_ws"
-
-현재 위치 확인:
-
-pwd
-ls
-
-정상:
-- 경로 마지막이 /robot/ros2_ws
-- ls 결과에 src가 보이면 정상.
-
-패키지 확인:
-
-ls src
-
-정상:
-- core가 보이면 정상.
-
-빌드:
-
-colcon build --symlink-install
-
-정상 예시:
-
-Finished <<< core
-Summary: 1 package finished
-
-colcon 명령을 찾지 못하면:
-
-sudo apt install -y python3-colcon-common-extensions
-
-package 오류가 나오면:
-
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install
-
-
-------------------------------------------------------------
-16. 빌드 결과 적용 및 launch 파일 확인
-------------------------------------------------------------
-
-[Ubuntu]
-
-ros2_ws 위치에서:
-
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-launch 파일 확인:
-
-ros2 launch core joystick_teleop.launch.py --show-args
-
-정상 예시:
-
-Arguments (pass arguments as '<name>:=<value>'):
-
-    'cmd_vel_topic':
-        조이스틱 속도 명령을 보낼 토픽
-        (default: '/cmd_vel')
-
-"Package 'core' not found"가 나오면:
-- ros2_ws 위치가 맞는지 확인하기.
-- 빌드가 성공했는지 확인하기.
-- source install/setup.bash를 실행했는지 확인하기.
-
-"file ... was not found"가 나오면:
-- 현재 브랜치에 launch 파일이 있는지 확인하기.
-- 다시 colcon build --symlink-install을 실행하기.
-
-
-------------------------------------------------------------
-17. 프로젝트 조이스틱 launch 실행
-------------------------------------------------------------
-
-[Ubuntu 창 1]
-
-ros2_ws로 이동:
-
-cd "/mnt/c/Users/Windows사용자이름/Desktop/보미 로봇/S15P11E102/robot/ros2_ws"
-
-환경 적용:
-
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-실행:
-
-ros2 launch core joystick_teleop.launch.py
-
-정상:
-- joy_node와 teleop_node가 실행됨.
-- 창이 입력 대기 상태로 돌아오지 않고 계속 실행됨.
-- /joy와 /cmd_vel 관련 노드·토픽이 생성됨.
-
-joy_node에서 /dev/input/js0 오류가 나면:
-- 프로젝트 코드 문제가 아니라 장치 연결 문제임.
-- jstest /dev/input/js0부터 다시 확인하기.
-
-
-------------------------------------------------------------
-18. /joy와 /cmd_vel 토픽 확인
-------------------------------------------------------------
-
-[Ubuntu 창 2]
-
-source /opt/ros/humble/setup.bash
-
-프로젝트 환경도 적용:
-
-cd "/mnt/c/Users/Windows사용자이름/Desktop/보미 로봇/S15P11E102/robot/ros2_ws"
-source install/setup.bash
-
-토픽 목록:
-
-ros2 topic list
-
-정상:
-- /joy
-- /cmd_vel
-
-조이스틱 원본 데이터 확인:
-
-ros2 topic echo /joy
-
-스틱이나 버튼을 움직일 때 axes, buttons 값이 변하면 정상이다.
-Ctrl + C로 종료하기.
-
-속도 명령 확인:
-
-ros2 topic echo /cmd_vel
-
-정상:
-- 조이스틱을 움직이면 linear.x 또는 angular.z 값이 변하면 정상.
-- 스틱을 놓으면 0.0 값이 나오면 정상.
-
-/joy는 변하지만 /cmd_vel이 변하지 않을 때:
-- teleop_twist_joy 설정의 축 번호가 컨트롤러와 맞지 않을 수 있음.
-- enable 버튼 설정이 켜져 있는지 YAML을 확인하기.
-- require_enable_button: false 또는 사용 중인 enable 버튼 설정을 확인하기.
-- launch 실행 창의 오류를 확인하기.
-
-/cmd_vel 토픽 자체가 없을 때:
-- teleop_node가 실행되지 않았을 수 있음.
-- launch 실행 창에서 package 또는 YAML 오류를 확인하기.
-
-
-------------------------------------------------------------
-19. TurtleSim을 네 조이스틱 코드로 움직이기
-------------------------------------------------------------
-
-프로젝트 launch의 기본 출력이 /cmd_vel이고 TurtleSim은
-/turtle1/cmd_vel을 구독하므로 토픽을 맞춰야 함.
-
-[Ubuntu 창 1: TurtleSim]
-
-source /opt/ros/humble/setup.bash
-ros2 run turtlesim turtlesim_node
-
-정상:
-- 파란 창에 거북이가 나타나면 정상.
-
-[Ubuntu 창 2: 프로젝트 조이스틱 launch]
-
-cd "/mnt/c/Users/Windows사용자이름/Desktop/보미 로봇/S15P11E102/robot/ros2_ws"
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-TurtleSim 토픽으로 실행:
-
-ros2 launch core joystick_teleop.launch.py cmd_vel_topic:=/turtle1/cmd_vel
-
-정상:
-- 조이스틱을 움직이면 거북이가 이동하거나 회전하면 정상.
-- 스틱을 놓으면 거북이가 멈춘다.
-
-안 움직일 때 확인:
-
-[Ubuntu 창 3]
-
-source /opt/ros/humble/setup.bash
-ros2 topic echo /turtle1/cmd_vel
-
-판단:
-- 값이 변함 + 거북이 안 움직임 → TurtleSim 창/토픽 상태 확인
-- 값이 안 변함 + /joy는 변함 → teleop 설정 또는 remapping 문제
-- /joy도 안 변함 → 장치, xpad, joy_node 문제
-
-토픽 연결 관계 확인:
-
-ros2 topic info /turtle1/cmd_vel -v
-
-정상:
-- Publisher에 teleop 관련 노드가 보이면 정상.
-- Subscriber에 turtlesim 노드가 보이면 정상.
-
-
-------------------------------------------------------------
-20. mock_motor_driver로 코드 확인
-------------------------------------------------------------
-
-실제 하드웨어 없이 /cmd_vel 명령이 모터 드라이버 노드까지 전달되는지
-확인할 때 사용하기.
-
-[Ubuntu 창 1]
-
-cd "/mnt/c/Users/Windows사용자이름/Desktop/보미 로봇/S15P11E102/robot/ros2_ws"
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 launch core joystick_teleop.launch.py
-
-[Ubuntu 창 2]
-
-cd "/mnt/c/Users/Windows사용자이름/Desktop/보미 로봇/S15P11E102/robot/ros2_ws"
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-ros2 run core mock_motor_driver
-
-정상:
-- 조이스틱을 움직일 때 mock_motor_driver 창에
-  linear.x, angular.z 등의 속도 값이 출력됨.
-
-실행 파일을 찾을 수 없으면:
-
-ros2 pkg executables core
-
-목록에 실제 등록된 실행 파일 이름을 확인하기.
-mock_motor_driver가 목록에 없다면 setup.py의 console_scripts 등록과
-빌드 결과를 확인해야 함.
-
-
-------------------------------------------------------------
-21. 다음 날 다시 사용할 때의 짧은 실행 순서
-------------------------------------------------------------
-
-이미 설치와 bind가 끝난 노트북에서는 매번 전체 설치를 반복하지 않기.
-
-1) Xbox USB 리시버 연결
-2) 컨트롤러 전원 켜기 및 페어링 확인
-3) Ubuntu 22.04 창 먼저 열기
-4) PowerShell에서 BUSID 확인
-
-usbipd list
-
-5) STATE가 Shared이면 attach
-
-usbipd attach --wsl --busid 본인_BUSID
-
-6) Ubuntu에서 장치 확인
-
-lsusb
-ls -l /dev/input/js* 2>/dev/null
-jstest /dev/input/js0
-
-7) ros2_ws로 이동 후 환경 적용
-
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-
-8) 프로젝트 실행
-
-ros2 launch core joystick_teleop.launch.py
-
-
-------------------------------------------------------------
-22. 작업 종료 후 안전하게 연결 해제
-------------------------------------------------------------
-
-실행 중인 ROS2 명령은 각 Ubuntu 창에서:
-
-Ctrl + C
-
-USB를 WSL에서 분리:
-
-[PowerShell]
-
-usbipd detach --busid 본인_BUSID
-
-정상:
-- usbipd list에서 Attached가 Shared로 바뀌면 정상.
-
-공유 설정까지 완전히 해제해야 할 때만:
-
-[관리자 PowerShell]
-
-usbipd unbind --busid 본인_BUSID
-
-주의:
-- 일반적인 작업 종료에서는 detach만 하면 됨.
-- unbind까지 하면 다음 사용 시 관리자 PowerShell에서 bind를 다시 해야 함.
-
-
-------------------------------------------------------------
-23. 최종 성공 체크리스트
-------------------------------------------------------------
-
-[ ] wsl.exe -l -v에서 Ubuntu-22.04가 VERSION 2
-[ ] usbipd --version에서 버전 출력
-[ ] usbipd list에 Xbox 장치 표시
-[ ] Xbox 장치 STATE가 Attached
-[ ] Ubuntu의 lsusb에 Xbox 또는 Microsoft 장치 표시
-[ ] sudo modprobe xpad 성공
-[ ] /dev/input/js0 생성
-[ ] jstest에서 스틱과 버튼 값 변화
-[ ] ros2 topic echo /joy에서 값 변화
-[ ] ros2 topic echo /cmd_vel 또는 /turtle1/cmd_vel에서 값 변화
-[ ] 조이스틱으로 TurtleSim 거북이 이동
-[ ] mock_motor_driver에 속도 명령 출력
-
-위 항목이 전부 확인되면
-Xbox 컨트롤러 → Windows → WSL → xpad → /dev/input/js0
-→ ROS2 joy_node → teleop_twist_joy → /cmd_vel
-전체 연결이 정상적으로 완료
+---
+
+## 관련 문서
+
+- ROS 2 Humble 최초 설치 — [`robot/docs/ros2-humble-setup.md`](../../../docs/ros2-humble-setup.md)
+- 조이스틱 연결과 `/cmd_vel` 확인 — [`robot/docs/turtlesim-teleop.md`](../../../docs/turtlesim-teleop.md)
+- 실물 조이스틱 구동 + SLAM 지도 생성 — [`robot/docs/robot-joystick-slam.md`](../../../docs/robot-joystick-slam.md)
+- Pico 시리얼 프로토콜 — [`robot/docs/pico-serial-protocol.md`](../../../docs/pico-serial-protocol.md)
+
+> 이 자리에는 원래 "ROS2 Ubuntu 설치 및 조이스틱 연결 설치방법"이 **두 벌**
+> (1889줄) 실려 있었다. 마지막 3줄을 뺀 나머지가 서로 바이트 동일한 사본이었고,
+> 같은 내용을 위 문서들이 이미 관리하고 있어 삭제했다. 설치 절차를 찾아 이 파일에
+> 왔다면 위 링크로 간다.

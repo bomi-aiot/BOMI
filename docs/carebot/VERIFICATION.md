@@ -5,20 +5,20 @@
 
 ## 0. 준비
 
-> ⚠️ **백엔드 명령은 `be-develop` 체크아웃에서만 유효합니다.** 이 저장소는 라인마다
-> 다른 소스를 갖습니다(CLAUDE.md §25). `ai-develop`(이 문서가 있는 라인)의 `backend/`
-> 는 `HealthController` 하나만 있는 껍데기라서, `ai-develop` 체크아웃에서
-> `./gradlew test` 를 돌리면 `BUILD SUCCESSFUL` 이 나오지만 **실제로는 아무것도 검증하지
-> 않습니다.** 이 문서에서 **[be-develop]** 표시가 붙은 절은 `be-develop` 워크트리에서
-> 실행하십시오.
+> ✅ **2026-08-06 이후 한 트리에서 전부 돌립니다.** 예전에는 라인마다 소스가 달라서
+> `ai-develop` 의 `backend/` 가 `HealthController` 하나뿐인 껍데기였고, 그때는
+> `./gradlew test` 가 `BUILD SUCCESSFUL` 을 내면서도 아무것도 검증하지 않았습니다.
+> 지금은 네 라인이 `main` 에 통합돼 백엔드 소스가 전부 있으므로, 아래 명령은
+> **체크아웃 구분 없이 그대로 유효합니다.** (이 문서에 있던 표시는
+> 그래서 전부 걷어냈습니다.)
 
 ```bash
-# 로봇 (Python) — ai-develop
+# 로봇 (Python)
 cd robot/ai_chat
 python -m venv venv && ./venv/Scripts/activate    # Windows
 pip install -e ".[dev]"
 
-# 백엔드 (Java 17) — [be-develop] 에서만
+# 백엔드 (Java 17)
 cd backend
 ./gradlew --version
 ```
@@ -27,17 +27,16 @@ cd backend
 
 ---
 
-## 0. 실기로 점검할 때는 별도 문서가 있습니다
+## 0-2. 마이크·스피커를 쓰는 점검은 도구가 따로 있습니다
 
-마이크·스피커를 쓰는 점검은 문서 세 개를 함께 씁니다. 이 문서(VERIFICATION.md)는 "무엇을 실행하고 무엇을 성공으로 볼지"를 영역별로 적은 참조서입니다.
+이 문서는 "무엇을 실행하고 무엇을 성공으로 볼지"를 영역별로 적은 참조서입니다. 실제 장치를
+쓰는 점검에는 아래 셋을 함께 씁니다.
 
-| 문서 | 성격 |
+| 도구 | 성격 |
 |---|---|
-| [`FIELD-TEST-233.md`](FIELD-TEST-233.md) | **읽기 전용 본문.** 0~11절을 순서대로 따라갑니다 |
-| [`FIELD-TEST-233-RESULT.md`](FIELD-TEST-233-RESULT.md) | **적는 곳.** 스텝별 빈칸. 이것만 커밋에 남습니다 |
-| [`TRACE-MAP.md`](TRACE-MAP.md) | 발화·함수·DB·API·조절값 대조표. 예상과 실제가 다를 때 폅니다 |
-
-거기에 상태 확인 도구가 하나 붙습니다. 발화 하나가 로컬 저장소의 무엇을 바꿨는지 보여줍니다.
+| [`TRACE-MAP.md`](TRACE-MAP.md) | 어떤 말이 어떤 함수를 지나 DB·API 어디에 쓰이는지. **관찰한 것과 예상이 다를 때** 폅니다 |
+| `robot/ai_chat/tests/manual/probe.py` | 발화 하나가 로컬 저장소의 무엇을 바꿨는지 보여주는 상태 도구 |
+| [`../hardware/audio-echo-bargein-verification.md`](../hardware/audio-echo-bargein-verification.md) | 에코 억제·barge-in 실측 절차. 스피커→마이크 누출을 재야 정해지는 두 임계치 |
 
 ```bash
 cd robot/ai_chat
@@ -45,7 +44,11 @@ cd robot/ai_chat
 ./venv/Scripts/python.exe tests/manual/probe.py --diff    # 말한 뒤
 ```
 
-특히 본문의 **3절(에코)을 먼저** 하십시오. 건너뛰면 이후 모든 게이트 버그 리포트가 실제로는 에코입니다.
+**에코 절차를 먼저 하십시오.** 건너뛰면 이후 모든 게이트 버그 리포트가 실제로는 에코입니다.
+
+> 233 실기 점검의 본문·결과지 두 문서는 2026-08-12 커밋 `4e7e990c` 에서 삭제됐고
+> **복원하지 않기로 했습니다**(2026-08-15). 점검 결과를 적을 곳은 `PROGRESS.md` 의
+> 실기 검증 열입니다.
 
 ## 1. 가장 빠른 전체 점검 (2분)
 
@@ -53,8 +56,7 @@ cd robot/ai_chat
 cd robot/ai_chat && python -m pytest -m "not integration and not manual" -q && python -m ruff check src tests
 ```
 
-**[be-develop]** 에서만 의미가 있습니다 — `ai-develop` 의 `backend/` 는 껍데기라
-`BUILD SUCCESSFUL` 이 나와도 아무것도 검증한 것이 아닙니다(§0).
+백엔드도 같은 트리에서 돌립니다. 첫 실행은 PostgreSQL 바이너리를 내려받느라 1~2분 걸립니다.
 
 ```bash
 cd backend && ./gradlew test
@@ -62,8 +64,9 @@ cd backend && ./gradlew test
 
 | 결과 | 판정 |
 |---|---|
-| 로봇 `655 passed` + `All checks passed` (2026-08-06 실측, 341 반영) | ✅ |
-| **[be-develop]** 백엔드 `BUILD SUCCESSFUL` | ✅ |
+| 로봇 `1035 passed` (2026-08-15 실측) | ✅ |
+| 로봇 `All checks passed` | ✅ — 다만 **2026-08-15 현재 `ruff` 가 2건 실패합니다** (`UP035`, `bootstrap.py`·`entrance_cheer.py` 의 `from typing import Callable`). 고치기 전까지는 이 두 건만 나오는지 확인하고 넘어갑니다 |
+| 백엔드 `BUILD SUCCESSFUL` | ✅ |
 | 하나라도 실패 | ❌ — 아래에서 어느 영역인지 좁힌다 |
 
 > 숫자는 티켓이 진행되며 늘어납니다. **줄어들면 누가 테스트를 지운 것**이므로 확인하십시오.
@@ -76,7 +79,7 @@ cd backend && ./gradlew test
 cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py tests/test_t3_consent.py -q
 ```
 
-`23 passed` (`test_emotional_handler.py`, 2026-08-06 실측) 여야 합니다. 특히 다음이 이 티켓의 핵심입니다.
+`48 passed` 여야 합니다 (정서 23 + T3 동의 25, 2026-08-15 실측 — 위 명령이 두 파일을 함께 돌립니다). 특히 다음이 이 티켓의 핵심입니다.
 
 | 테스트 | 무엇이 깨지면 잡히는가 |
 |---|---|
@@ -86,7 +89,7 @@ cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py tests/test_
 
 > **253 이 이 흐름을 즉시-큐잉에서 누적-문턱으로 바꿨습니다** — `test_t3_consent.py` 가
 > 그 변경의 완료 조건을 검증합니다("외로워" 세 번 이상 + 상위 동의 + 자연스러운 창).
-> 자세한 것은 [`FIELD-TEST-233.md` §5-4](FIELD-TEST-233.md#5-4-외로워--이-제품의-1번-문제).
+> 문턱값은 `policy.py` 의 `T3_CONSENT_SIGNAL_THRESHOLD`(3) 와 지연 45분입니다.
 
 **실기에서 확인할 것**(233): 마이크에 "외로워"라고 말하고 대답이 나오는지, 그 대답에
 가족·공유 이야기가 **한 번 말한 정도로는** 섞이지 않는지. **세 번 이상** 말했을 때
@@ -101,7 +104,7 @@ cd robot/ai_chat && python -m pytest tests/test_emotional_handler.py tests/test_
 cd robot/ai_chat && python -m pytest tests/test_conversation_session.py tests/test_context_slots.py tests/test_memory_privacy.py -q
 ```
 
-`43 passed` 여야 합니다 (18+16+9, 2026-08-06 실측). 파일별로 이것이 깨지면:
+`73 passed` 여야 합니다 (세션 41 + 문맥슬롯 18 + 기억 프라이버시 14, 2026-08-15 실측). 파일별로 이것이 깨지면:
 
 | 파일 | 무엇이 깨진 것인가 |
 |---|---|
@@ -119,7 +122,7 @@ cd robot/ai_chat && python -m pytest tests/test_conversation_session.py tests/te
 cd robot/ai_chat && python -m pytest tests/test_naturalness_replay.py tests/test_degradation.py -q
 ```
 
-`54 passed` 여야 합니다 (2026-08-06 실측 — 341 이 자연스러움 회귀에 케이스를 추가했습니다).
+`54 passed` 여야 합니다 (2026-08-15 재확인 — 341 이 자연스러움 회귀에 케이스를 추가했습니다).
 
 시나리오는 [`tests/scenarios/naturalness_v1.json`](../../robot/ai_chat/tests/scenarios/naturalness_v1.json) 에 있습니다. **파이썬을 몰라도 케이스를 추가할 수 있습니다** — `turns` 에 어르신 발화를 넣고 `expect` 에 확인할 것을 적으면 됩니다. 파일 안에 쓸 수 있는 키 목록이 있습니다.
 
@@ -169,10 +172,10 @@ cd robot/ai_chat && python -m pytest tests/test_clock.py -v
 시계 규칙이 지켜지는지 직접 확인:
 
 ```bash
-cd robot/ai_chat && grep -rn "time.time()" src
+cd robot/ai_chat && grep -rn --include=*.py "time.time()" src
 ```
 
-**성공**: `clock.py` 의 줄만 나온다
+**성공**: `clock.py` 의 줄만 나온다 (`--include=*.py` 를 빼면 `__pycache__` 의 `.pyc` 가 함께 잡혀 실패처럼 보입니다)
 **실패**: 다른 파일이 나오면 그 파일은 압축 시계를 무시하므로, 시연에서 그 부분만 실시간으로 흐릅니다
 
 ---
@@ -239,7 +242,7 @@ rm -rf robot/ai_chat/var/demo
 
 ---
 
-### 2.3 백엔드 스키마 — 빈 DB 에서 마이그레이션이 도는가 (201) **[be-develop]**
+### 2.3 백엔드 스키마 — 빈 DB 에서 마이그레이션이 도는가 (201)
 
 ```bash
 cd backend && ./gradlew test --tests "com.ssafy.bomi.migration.FlywayMigrationValidationTest"
@@ -257,7 +260,7 @@ cd backend && ./gradlew test --tests "com.ssafy.bomi.migration.FlywayMigrationVa
 
 ---
 
-### 2.4 문맥 조립 API — 6종이 다 오는가 (203) **[be-develop]**
+### 2.4 문맥 조립 API — 6종이 다 오는가 (203)
 
 ```bash
 cd backend && ./gradlew test --tests "com.ssafy.bomi.context.ConversationContextServiceTest"
@@ -287,11 +290,11 @@ curl -X POST http://localhost:8080/api/v1/seniors/{어르신UUID}/conversation-c
   "relevantSummaries": [ ... ],
   "memories": [ { "content": "...", "score": 0.42 } ],
   "careRecords": [ ... ],
-  "availability": { "semanticSearch": false, "documentCorpus": false, "notes": [...] },
+  "availability": { "semanticSearch": false, "documentCorpus": true, "notes": [...] },
   "retrieval": {
     "semanticRequested": true,
     "semanticUsed": false,
-    "fallbackReason": "embedding_disabled",
+    "fallbackReason": "semantic_unavailable",
     "hitCount": 0,
     "latencyMs": 7
   }
@@ -395,7 +398,7 @@ cd robot/ai_chat && python -m pytest tests/test_echo_and_bargein.py -v
 cd robot/ai_chat && python -m pytest tests/test_door_occupancy.py -v
 ```
 
-44건입니다. **성공/실패의 기준은 "재실 상태가 어떤 값이 되는가"** 입니다. 직접 확인하려면 압축 시계로 돌립니다.
+46건입니다 (2026-08-15 실측). **성공/실패의 기준은 "재실 상태가 어떤 값이 되는가"** 입니다. 직접 확인하려면 압축 시계로 돌립니다.
 
 ```python
 # 문이 열렸다. 로봇은 방향을 모른다.
@@ -451,7 +454,7 @@ occ.apply_backend_occupancy("senior-1", "AWAY", observed_at=<외출 시각>)
 cd robot/ai_chat && python -m pytest tests/test_contract_dialogue.py -v
 ```
 
-아래는 **[be-develop]** 에서만 돌릴 수 있습니다:
+아래는 에서만 돌릴 수 있습니다:
 
 ```bash
 cd backend && ./gradlew test --tests "*RobotOnboarding*" --tests "*RobotClarification*"

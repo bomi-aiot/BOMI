@@ -11,7 +11,7 @@ BOMI 모델로 자율주행을 확인할 때는 [`../README.md`](../README.md)�
 처음 실행할 때 의존성을 설치하고 `core`를 빌드합니다.
 
 ```bash
-cd /mnt/c/S15P11E102/robot/ros2_ws
+cd <저장소>/robot/ros2_ws
 source /opt/ros/humble/setup.bash
 rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install --packages-select core
@@ -40,6 +40,9 @@ Nav2 bt_navigator 활성화 완료
 목표 전송: sofa
 ```
 
+마지막 줄의 `sofa` 는 waypoint 파일의 **첫 지점 이름**입니다. `waypoint_file:=`
+로 다른 파일을 주면 그 파일의 첫 이름이 찍힙니다.
+
 그다음 두 번째 WSL 터미널을 열고 RViz만 별도로 실행합니다.
 RViz에도 Gazebo와 같은 시뮬레이션 시간을 적용해야 지도와 TF가
 표시됩니다. `LP_NUM_THREADS`와 `nice`는 소프트웨어 렌더링이
@@ -47,7 +50,7 @@ RViz에도 Gazebo와 같은 시뮬레이션 시간을 적용해야 지도와 TF�
 
 ```bash
 source /opt/ros/humble/setup.bash
-source /mnt/c/S15P11E102/robot/ros2_ws/install/setup.bash
+source <저장소>/robot/ros2_ws/install/setup.bash
 
 LIBGL_ALWAYS_SOFTWARE=1 \
 GALLIUM_DRIVER=llvmpipe \
@@ -95,7 +98,7 @@ Nav2가 활성화된 뒤에만 첫 목표를 전송하므로 첫 목표 전송�
 
 ```bash
 source /opt/ros/humble/setup.bash
-source /mnt/c/S15P11E102/robot/ros2_ws/install/setup.bash
+source <저장소>/robot/ros2_ws/install/setup.bash
 ```
 
 ## 사용자 지도와 월드 지정

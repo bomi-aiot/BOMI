@@ -5,15 +5,29 @@
 | 항목 | 값 |
 |---|---|
 | 상태 | **FINAL** |
-| 계약 버전 | `1.0.0` |
+| 계약 버전 | `1.1.0` |
 | 확정일 | `2026-08-04` |
+| 최종 개정일 | `2026-08-16` |
 | 적용 범위 | 온습도 안부, 복약 알림, 호출, 산책, 현관 인사 |
 
 이 문서는 위 5개 시나리오에서 Backend, Robot, AI가 주고받는 MQTT 메시지의 최종 기준이다.
 
-기존의 `scenario-contract-draft.md`, `backend-robot-contract.md`, `backend-robot-contract-explained.md`, `topic-convention.md`, AsyncAPI 문서 또는 현재 구현이 이 문서와 충돌하면 **이 문서를 우선한다**. 충돌하지 않는 기존 공통 규칙은 계속 사용할 수 있다.
+[`backend-robot-contract-explained.md`](./backend-robot-contract-explained.md), [`topic-convention.md`](./topic-convention.md), AsyncAPI 문서 또는 현재 구현이 이 문서와 충돌하면 **이 문서를 우선한다**. 충돌하지 않는 기존 공통 규칙은 계속 사용할 수 있다.
+
+> 이 문서가 대체했던 `backend-robot-contract.md`(백엔드 가정값 초안)는 2026-08-16 문서
+> 최신화에서 삭제됐습니다. 그 문서에만 있던 유효한 내용(`DOOR_OPENED` 트리거, deviceId
+> 규약)은 이 문서 §3·§4.1 과 `topic-convention.md` 로 이관했습니다.
 
 계약을 바꿔야 한다면 구현을 먼저 암묵적으로 바꾸지 않는다. 이 문서의 버전과 변경 내용을 먼저 합의한 뒤 각 컴포넌트를 함께 변경한다.
+
+### 1.1 개정 이력
+
+| 버전 | 무엇이 바뀌었나 | 왜 바뀌었나 | 누가 영향을 받나 |
+|---|---|---|---|
+| `1.0.0` (2026-08-04) | 최초 확정 | 5개 시나리오의 메시지 의미를 한 곳에 못 박기 위해 | 전 파트 |
+| `1.1.0` (2026-08-16) | 호출 시나리오의 명령을 `NAVIGATE(LIVING_ROOM)`에서 `FOLLOW_START`로 정정, `reasonCode` 목록을 결과 타입별로 분리, 현관 인사 종료 경로의 두 갈래 명시, 상태 전이도를 실제 상태머신으로 교체, `START_CONVERSATION` 만료를 10초로 정정, 필드 화이트리스트·`robotId` ID 공간·IoT 이벤트 5종·센서 등록 요건 신설 | 위 §1 의 "구현을 먼저 바꾸지 않는다" 원칙이 이미 깨져 있었다. 08-04 확정 이후 구현이 앞서 나갔고 문서가 따라가지 않아, 이 문서를 읽고 구현한 외부 파트가 **말없이 폐기되는 메시지**를 만들고 있었다 | Robot Bridge, AI, 대시보드 구현자 |
+
+이 개정은 계약의 *의미*를 새로 정하지 않았다. 이미 코드에 있던 사실을 문서가 따라잡은 것이다. 그래서 minor 버전만 올린다.
 
 ---
 
@@ -23,17 +37,17 @@
 
 - 모든 메시지는 UTF-8 JSON이다.
 - 필드 이름은 `lowerCamelCase`, 타입과 코드 값은 `UPPER_SNAKE_CASE`를 사용한다.
-- MQTT 전송은 **QoS 1**, **retain=false**를 사용한다.
+- MQTT 전송은 **QoS 1**, **retain=false**를 사용한다. Backend는 수신 QoS가 설정값(`bomi.mqtt.qos`, 기본 1)과 정확히 같지 않으면 파서에 닿기도 전에 메시지를 버린다. QoS 0으로 보내면 조용히 사라진다는 뜻이다. retained 메시지도 같다.
 - QoS 1에서는 중복 전달이 정상적으로 발생할 수 있다. 수신자는 식별자로 중복을 제거해야 한다.
 - 시간은 ISO 8601 offset datetime 문자열을 사용한다. 예: `2026-08-04T10:30:00+09:00`.
 
 ### 2.2 대화와 음성의 소유권
 
-- `SPEAK`는 Robot에게 문장 하나를 재생하라고 지시하는 **단방향 발화 명령**이다. 사용자의 응답을 듣거나 대화를 이어 가지는 않지만, Robot은 명령 수행 결과인 `SPEAK_RESULT`를 보낸다.
+- `SPEAK`는 Robot에게 문장 하나를 재생하라고 지시하는 **단방향 발화 명령**이다. 사용자의 응답을 듣거나 대화를 이어 가지는 않지만, Robot은 명령 수행 결과인 `SPEAK_RESULT`를 보낸다. **다만 현재 Backend는 `SPEAK`를 어디서도 발행하지 않는다** — 명령 타입은 계약에 남아 있으나 발행 경로가 없고, `SPEAK_RESULT` 수신 핸들러도 없다. 로봇이 말하는 모든 문장은 `START_CONVERSATION`을 통해 AI가 말한다.
 - 사용자의 응답을 들어야 하는 기능은 AI에게 `START_CONVERSATION`을 보낸다.
 - `START_CONVERSATION`을 받은 AI가 첫 문장을 말하고, 음성을 듣고, 후속 턴을 진행하고, 종료 이벤트를 보낸다.
 - 따라서 5대 시나리오 중 대화가 필요한 안부, 복약 확인, 현관 인사는 `START_CONVERSATION`을 사용한다. 고정 안내만 필요하면 `SPEAK`를 사용한다.
-- 호출은 예외다. AI가 웨이크 워드를 감지하는 즉시 자체적으로 말하고 듣기 시작한다. Backend는 호출 대화를 다시 시작하지 않고 Robot의 `NAVIGATE(LIVING_ROOM)`만 관리한다.
+- 호출은 예외다. AI가 웨이크 워드를 감지하는 즉시 자체적으로 말하고 듣기 시작한다. Backend는 호출 대화를 다시 시작하지 않고 Robot에게 `FOLLOW_START`를 한 번 보내 탐색을 시작시키는 일만 한다. 로봇은 소리가 난 방향으로 제자리에서 돌아 사람을 찾고 스스로 다가간다 — 거실의 고정 좌표로 주행하지 않는다.
 
 ### 2.3 식별자 생성 책임
 
@@ -56,7 +70,9 @@
 | Backend → Robot | 이동, 발화, 취소, 따라가기 명령 | `bomi/v1/robot/{robotId}/commands` |
 | Backend → AI | 대화 시작 명령 | `bomi/v1/ai/{robotId}/commands` |
 
-토픽의 `{sourceId}` 또는 `{robotId}`와 본문의 같은 필드는 반드시 일치해야 한다. 일치하지 않으면 수신자는 메시지를 거부한다.
+토픽의 `{sourceId}` 또는 `{robotId}`와 본문의 같은 필드는 반드시 일치해야 한다. 일치하지 않으면 수신자는 메시지를 거부한다. 두 값 모두 `[A-Za-z0-9._-]` 1~64자만 쓴다.
+
+**`robotId`는 로봇의 `deviceId`다** — `robot.device_id` 컬럼의 값이며 예시의 `robot-001`, 실기의 `bomi-AA001`이 그 공간이다. REST 온보딩에서 쓰는 `robot.id` UUID와는 **다른 값**이고, 둘을 섞으면 Backend가 로봇을 찾지 못해 메시지가 버려진다. `scenarioId`·`conversationId`만 UUID이며 canonical 36자 형식만 통과한다(`1-1-1-1-1` 같은 축약형은 거부).
 
 `CONVERSATION_STARTED`와 `CONVERSATION_ENDED`는 AI가 발행하더라도 별도 AI 이벤트 토픽을 만들지 않고 `bomi/v1/robot/{robotId}/events`로 보낸다. 이 토픽은 해당 로봇에서 관찰된 사용자 상호작용 이벤트를 모으는 경계로 본다.
 
@@ -88,6 +104,17 @@ IoT, Robot, AI가 Backend로 보내는 이벤트의 공통 형태는 다음과 �
 - IoT 이벤트는 `sourceId`를 사용하고 `robotId`는 사용하지 않는다.
 - Robot/AI 이벤트는 `robotId`를 사용하고 `sourceId`는 사용하지 않는다.
 - 연관 ID인 `scenarioId`, `conversationId`, `commandId`는 값이 존재하는 경우 모두 **최상위 필드**에 둔다. `payload` 안에 중복해서 넣지 않는다.
+- 아래 네 타입은 봉투와 `payload` 모두 **필드 화이트리스트**로 검사한다. 목록에 없는 필드가 하나라도 있으면 메시지 전체가 거부된다. 나머지 타입에는 화이트리스트가 없어 모르는 필드가 있어도 통과한다.
+
+  | 타입 | 봉투 허용 필드 | `payload` 허용 필드 |
+  |---|---|---|
+  | `WAKE_WORD_DETECTED` | `eventId`, `robotId`, `type`, `occurredAt`, `payload` | `keyword`(필수, ≤20자), `confidence`(선택, 0~1) |
+  | `WALK_REQUESTED` | 위 + `conversationId` | `action`, `source` |
+  | `NAVIGATION_RESULT`(v1) | 위 + `scenarioId`, `commandId` | `outcome`, `resultCode`, `reasonCode`, `location`, `message` |
+  | `FOLLOW_RESULT` | 위 + `scenarioId`, `commandId` | `outcome`, `resultCode`, `reasonCode`, `message` |
+
+- `WAKE_WORD_DETECTED`에 `scenarioId`·`conversationId`·`commandId`를 넣으면 **거부**된다. 이 이벤트는 시나리오가 만들어지기 전의 최초 트리거이기 때문이다. 감지 방향 같은 부가 정보도 payload 화이트리스트 때문에 실을 수 없다 — 그런 값은 로봇 내부 채널로 보낸다.
+- 반대로 `CONVERSATION_STARTED`와 `CONVERSATION_ENDED`에는 화이트리스트가 없다. 아래에 적은 형식은 *최소* 형식이며, 여분 필드가 있어도 파서를 통과한다. 그래도 계약대로만 보내는 편이 낫다 — 여유분에 기대어 만든 필드는 다음 개정에서 화이트리스트가 붙는 순간 조용히 죽는다.
 - 아직 Backend가 시나리오를 만들기 전의 최초 트리거에는 `scenarioId`와 `commandId`가 없다. 이미 진행 중인 대화에서 나온 요청이라면 기존 `conversationId`는 포함할 수 있다.
 - `CONVERSATION_STARTED`에는 `scenarioId`, `conversationId`, `commandId`가 모두 필요하다. 여기서 `commandId`는 대화를 시작한 `START_CONVERSATION` 명령의 ID이다.
 - `CONVERSATION_ENDED`에는 `scenarioId`, `conversationId`가 필요하다. 최소 형식에서는 `commandId`를 넣지 않는다.
@@ -106,6 +133,18 @@ IoT 이벤트 예시는 다음과 같다.
 }
 ```
 
+IoT 이벤트로 Backend가 받는 `type`은 다섯 개다.
+
+| `type` | 발행 주체 | Backend 처리 |
+|---|---|---|
+| `DOOR_OPENED` | 도어 센서(SNZB-04P) | 현관 인사 시나리오 시작 |
+| `DOOR_CLOSED` | 도어 센서 | 수신 후 디버그 로그만. 방향 정보가 없어 상태를 바꾸지 않는다 |
+| `MOTION_DETECTED` | 현관 PIR(SNZB-03P) | 방향 판정기에 투입만 한다. 이 타입 단독으로는 시나리오를 시작하지 않으며, 방향 판정 자체가 `bomi.entrance.direction-resolution-enabled` 기본 `false`라 현재 배포에서는 돌지 않는다 |
+| `AMBIENT_ENVIRONMENT_OBSERVED` | DHT11 수집기 | 관측 기록 + 임계 판정 후 온습도 안부 시나리오 |
+| `PRESENCE_DETECTED` | (없음) | 초기 계약의 방향 판정 이벤트. 허용 목록에만 남아 있고 **수신 핸들러가 없어 아무 일도 하지 않는다**. IoT 전환이 끝나면 제거한다 |
+
+허용 목록 밖의 `type`은 계약 위반으로 폐기된다. 그래서 `DOOR_CLOSED`처럼 Backend가 아무것도 하지 않는 타입도 목록에는 있어야 한다.
+
 ### 4.2 명령
 
 Backend가 Robot 또는 AI로 보내는 명령의 공통 형태는 다음과 같다.
@@ -118,7 +157,7 @@ Backend가 Robot 또는 AI로 보내는 명령의 공통 형태는 다음과 같
   "robotId": "robot-001",
   "type": "START_CONVERSATION",
   "occurredAt": "2026-08-04T10:30:05+09:00",
-  "expiresAt": "2026-08-04T10:31:05+09:00",
+  "expiresAt": "2026-08-04T10:30:15+09:00",
   "payload": {
     "seniorId": "34fb4e45-65aa-4c64-8474-92931f825e86",
     "intent": "WELLNESS_CHECK",
@@ -154,7 +193,7 @@ Robot 명령 토픽은 `bomi/v1/robot/{robotId}/commands`이다.
 |---|---|---|
 | `NAVIGATE` | `{ "target": "..." }` | 사전에 합의한 위치로 이동 |
 | `SPEAK` | `{ "text": "..." }` | 문장 하나를 재생하고 `SPEAK_RESULT`로 수행 결과 보고 |
-| `CANCEL` | `{ "targetCommandId": "...", "reasonCode": "..." }` | 실행 중인 특정 Robot 명령 취소 |
+| `CANCEL` | `{ "targetCommandId": "...", "reasonCode": "..." }` | 실행 중인 Robot 명령 취소. Backend는 두 필드를 반드시 채워 보내지만, 현재 Robot Bridge는 payload를 읽지 않고 **진행 중인 목표를 무조건** 취소한다 |
 | `FOLLOW_START` | `{}` | 사람 따라가기 시작 |
 | `FOLLOW_STOP` | `{}` | 사람 따라가기 중지 |
 
@@ -222,7 +261,7 @@ AI 명령 토픽은 `bomi/v1/ai/{robotId}/commands`이며, v1의 AI 명령은 `S
   "robotId": "robot-001",
   "type": "START_CONVERSATION",
   "occurredAt": "2026-08-04T10:30:05+09:00",
-  "expiresAt": "2026-08-04T10:31:05+09:00",
+  "expiresAt": "2026-08-04T10:30:15+09:00",
   "payload": {
     "seniorId": "34fb4e45-65aa-4c64-8474-92931f825e86",
     "intent": "WELLNESS_CHECK",
@@ -235,7 +274,16 @@ AI 명령 토픽은 `bomi/v1/ai/{robotId}/commands`이며, v1의 AI 명령은 `S
 }
 ```
 
-`payload`의 네 필드는 모두 필수이다.
+`payload`의 네 필드는 모두 필수이다. `expiresAt`은 **`occurredAt + 10초`**다 — 예시의 넉넉해 보이는 간격에 속으면 안 된다. AI는 10초 안에 `CONVERSATION_STARTED`를 돌려보내야 하며, 늦으면 Backend가 `AI_START_TIMEOUT`으로 대화를 접고 로봇을 기본 위치로 돌린다. 대화 자체의 상한은 5분이다.
+
+| 값 | 기본 | 설정 키 |
+|---|---|---|
+| `START_CONVERSATION`의 `expiresAt` | 10초 | `bomi.ai-conversation.start-timeout` |
+| 대화 최대 지속 | 5분 | `bomi.ai-conversation.max-duration` |
+| `NAVIGATE`·`FOLLOW_START`의 `expiresAt`(대화형·호출) | 2분 | 코드 상수 |
+| `FOLLOW_START`/`FOLLOW_STOP`의 `expiresAt`(산책) | 10초 | `bomi.walk.follow-start-ack-timeout`·`follow-stop-ack-timeout` |
+| 산책 최대 지속 | 2시간 | `bomi.walk.max-duration` |
+| 시나리오 전체 워치독(산책 제외) | 10분 | `bomi.scenario-timeout.active-timeout` |
 
 | 필드 | 설명 |
 |---|---|
@@ -319,6 +367,8 @@ AI는 명령을 수신하면 다음 순서를 책임진다.
 
 Robot은 모든 Robot 명령의 타입별 결과 이벤트를 `bomi/v1/robot/{robotId}/results`로 보낸다.
 
+> **legacy 형식은 새로 쓰지 않는다.** `payload`에 `scenarioId`와 `status`를 담던 v1 이전 형식을 Backend 파서가 아직 통과시키지만, 수신 핸들러가 경고 로그를 남기고 `commandId` 대조를 건너뛴다. v1 필드와 legacy 필드를 한 메시지에 섞으면 거부된다. Robot Bridge는 이미 v1만 발행한다.
+
 ```json
 {
   "eventId": "evt-nav-result-001",
@@ -357,23 +407,23 @@ Robot은 모든 Robot 명령의 타입별 결과 이벤트를 `bomi/v1/robot/{ro
 | 원래 명령 | 결과 이벤트 `type` | 허용 `resultCode` |
 |---|---|---|
 | `NAVIGATE` | `NAVIGATION_RESULT` | `ARRIVED`, `NOT_ARRIVED` |
-| `SPEAK` | `SPEAK_RESULT` | `SPOKEN`, `NOT_SPOKEN` |
-| `CANCEL` | `CANCEL_RESULT` | `TARGET_CANCELLED`, `TARGET_UNCHANGED` |
+| `SPEAK` | `SPEAK_RESULT` | `SPOKEN`, `NOT_SPOKEN` — **Backend에 수신 핸들러가 없어 현재는 로그만 남고 버려진다** |
+| `CANCEL` | `CANCEL_RESULT` | `TARGET_CANCELLED`, `TARGET_UNCHANGED` — **Backend에 수신 핸들러가 없어 현재는 로그만 남고 버려진다** |
 | `FOLLOW_START`, `FOLLOW_STOP` | `FOLLOW_RESULT` | `STARTED`, `STOPPED`, `UNCHANGED` |
 
-대표 `reasonCode`는 다음과 같다. 필요한 코드는 구현 전에 이 문서에 추가한다.
+`reasonCode`는 결과 타입마다 허용 집합이 다르다. **집합 밖의 값을 보내면 Backend는 메시지를 통째로 폐기하며 오류를 되돌려주지 않는다.** 아래가 Backend 파서가 실제로 받는 전부다.
 
-- `UNKNOWN_TARGET`
-- `PATH_BLOCKED`
-- `LOCALIZATION_LOST`
-- `COMMAND_EXPIRED`
-- `EXECUTION_TIMEOUT`
-- `TARGET_NOT_FOUND`
-- `NOT_CANCELLABLE`
-- `PERSON_LOST`
-- `TTS_UNAVAILABLE`
-- `SAFETY_STOP`
-- `INTERNAL_ERROR`
+| 결과 타입 | 허용 `reasonCode` |
+|---|---|
+| `NAVIGATION_RESULT` | `COMMAND_EXPIRED`, `UNKNOWN_TARGET`, `PATH_BLOCKED`, `LOCALIZATION_LOST`, `EXECUTION_TIMEOUT`, `SAFETY_STOP`, `INTERNAL_ERROR` (7개) |
+| `FOLLOW_RESULT` | `PERSON_LOST`, `COMMAND_EXPIRED`, `EXECUTION_TIMEOUT`, `SAFETY_STOP`, `INTERNAL_ERROR` (5개) |
+| `SPEAK_RESULT`, `CANCEL_RESULT` | 전용 검증이 없다(위 표의 핸들러 부재 참고) |
+
+두 집합은 서로 포함 관계가 아니다. `PATH_BLOCKED`·`UNKNOWN_TARGET`·`LOCALIZATION_LOST`는 `FOLLOW_RESULT`에서 거부되고, `PERSON_LOST`는 `NAVIGATION_RESULT`에서 거부된다. 새 코드가 필요하면 이 문서와 `MqttInboundMessageParser`의 집합을 함께 바꾼다.
+
+이 문서의 1.0.0 판이 한 목록으로 묶어 두었던 `TARGET_NOT_FOUND`·`NOT_CANCELLABLE`·`TTS_UNAVAILABLE`은 위 두 집합에 **없다**. `NAVIGATION_RESULT`나 `FOLLOW_RESULT`에 실어 보내면 메시지가 통째로 거부된다. AsyncAPI 스펙은 이 셋을 `CANCEL_RESULT`·`SPEAK_RESULT`용으로 남겨 두고 있으나, 그 두 타입은 위 표대로 Backend가 소비하지 않는다.
+
+`outcome`과 `resultCode`를 굳이 둘로 나눈 이유도 여기에 있다. `outcome`은 타입과 무관하게 "이 명령이 어떻게 끝났는가"를 말하는 **공통 종결 어휘**여서 시나리오 상태 기계와 대시보드가 타입을 몰라도 읽을 수 있고, `resultCode`는 그 종결이 **그 명령에게 무슨 뜻인지**(도착했는가 / 탐색을 시작했는가)를 말한다. 하나로 합치면 새 명령 타입이 생길 때마다 공통 어휘가 오염되고, 대시보드가 타입별 분기를 떠안게 된다.
 
 실패한 이동의 예시는 다음과 같다.
 
@@ -413,6 +463,8 @@ Robot은 모든 Robot 명령의 타입별 결과 이벤트를 `bomi/v1/robot/{ro
 
 명령 하나에는 최종 결과가 하나만 있어야 한다. 최종 결과를 재전송할 때는 같은 `eventId`를 유지한다.
 
+다만 Backend의 `eventId` 중복 제거는 **프로세스 메모리 안에서 10분 동안만** 유효하다. 재시작하면 사라지고 인스턴스끼리 공유되지 않으므로, 10분 뒤 도착한 같은 `eventId`는 새 메시지로 처리된다. 영구 멱등이 필요한 곳(호출 트리거, 산책 요청, 복약 슬롯)은 별도의 DB 영수증 테이블로 따로 보장한다.
+
 Robot이 사람 놓침 등으로 따라가기를 자체 종료하더라도, `FOLLOW_RESULT.commandId`에는 활성 `FOLLOW_START`의 `commandId`를 사용한다.
 
 ---
@@ -421,13 +473,13 @@ Robot이 사람 놓침 등으로 따라가기를 자체 종료하더라도, `FOL
 
 | 우선순위 | 시나리오 | 시작 조건 | Backend의 핵심 동작 | 종료 기준 |
 |---:|---|---|---|---|
-| 1 | 현관 인사 | `DOOR_OPENED` | `NAVIGATE(ENTRANCE)` 후 `START_CONVERSATION` | 대화 종료 후 `NAVIGATE(DEFAULT)` |
+| 1 | 현관 인사 | `DOOR_OPENED` | `NAVIGATE(ENTRANCE)` 후 `START_CONVERSATION` | `CONVERSATION_ENDED.reasonCode=HOMECOMING_FOLLOW_COMPLETED`면 `NAVIGATE(DEFAULT)` 후 완료, 그 밖에는 `FOLLOW_START`(§8.5 참고) |
 | 2 | 온습도 안부 | `AMBIENT_ENVIRONMENT_OBSERVED`와 정책 조건 충족 | `NAVIGATE(LIVING_ROOM)` 후 `START_CONVERSATION` | 대화 종료 후 기본 위치 복귀 |
 | 3 | 복약 알림 | Backend 스케줄러가 복약 예정 시각 감지 | `NAVIGATE(LIVING_ROOM)` 후 `START_CONVERSATION` | 대화 종료 또는 알림 처리 종료 |
-| 4 | 호출 | AI가 감지한 `WAKE_WORD_DETECTED` | `NAVIGATE(LIVING_ROOM)`만 수행 | `NAVIGATION_RESULT(ARRIVED)` 수신 시 완료 |
+| 4 | 호출 | AI가 감지한 `WAKE_WORD_DETECTED` | `FOLLOW_START`만 수행 | `FOLLOW_RESULT(SUCCEEDED, STARTED)` 수신 시 완료 |
 | 5 | 산책 | `WALK_REQUESTED` | `FOLLOW_START`, 종료 요청 시 `FOLLOW_STOP` | `FOLLOW_RESULT(STOPPED)` |
 
-위 표의 번호는 최초 도입 우선순위이다. 산책 MQTT 계약과 Backend 기능은 현재 v1 기준으로 구현되어 있다.
+위 표의 번호는 최초 도입 우선순위이다. 산책 MQTT 계약과 Backend 기능은 현재 v1 기준으로 구현되어 있다. 다만 로봇 쪽에서 `FOLLOW_START`가 연결된 대상은 사람 추종이 아니라 **회전 탐색 노드**(`/wake_search/start`)이며, 그것도 브릿지 파라미터 `search_enabled`(기본 꺼짐)를 켠 실행에서만 `SUCCEEDED/STARTED`로 ACK 한다. 꺼진 채로 명령을 받으면 `FAILED/UNCHANGED/INTERNAL_ERROR`로 회신한다 — 조용히 성공을 흉내 내지는 않는다.
 
 공통 원칙은 다음과 같다.
 
@@ -439,7 +491,32 @@ Robot이 사람 놓침 등으로 따라가기를 자체 종료하더라도, `FOL
 6. Backend는 대화 시작과 종료 이벤트를 대시보드용 상태와 이력에 반영한다.
 7. 필요하면 `NAVIGATE(DEFAULT)`로 복귀한다.
 
-호출은 위 공통 흐름의 5~7번을 적용하지 않는다. AI가 이미 자체 대화를 진행하고 있으므로 Backend 시나리오는 거실 이동 결과까지만 관리한다.
+호출은 위 공통 흐름의 4~7번을 적용하지 않는다. `NAVIGATE`도 `START_CONVERSATION`도 보내지 않는다. AI가 이미 자체 대화를 진행하고 있으므로 Backend 시나리오는 `FOLLOW_START`의 ACK 하나까지만 관리한다.
+
+빠지는 단계는 시나리오마다 다르므로 한 표로 모아 둔다.
+
+| 시나리오 | 1 트리거 | 2 정책 | 3 scenarioId | 4 NAVIGATE | 5 대화 | 6 이벤트 저장 | 7 복귀 |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+| 현관 인사 | O | O | O | O | O | O | 조건부 |
+| 온습도 안부 | O | O | O | O | O | O | O |
+| 복약 알림 | 스케줄러 | O | O | O | O | O | O |
+| 호출 | O | O | O | **FOLLOW_START** | X | X | X |
+| 산책 | O | O | O | **FOLLOW_START** | X | O | X |
+
+그리고 다섯 시나리오 전부에 걸리는 함정이 둘 있다. 계약을 정확히 지켰는데도 아무 일이 일어나지 않는다면 대개 이 둘 중 하나다.
+
+**센서 `sourceId`는 Backend 설정에 등록돼 있어야 한다.** 봉투가 아무리 정확해도 등록되지 않은 `sourceId`는 파서를 통과한 뒤 "어느 어르신의 센서인지" 몰라 경고 로그와 함께 버려진다. 시나리오가 시작되지 않을 때 가장 먼저 볼 곳이다.
+
+| 설정 키 | 대상 | 현재 등록값 |
+|---|---|---|
+| `bomi.homecoming.sensor-to-senior` | 현관 도어·PIR | `door-sensor-01`, `pir`, `door_sensor`(임시 — IoT가 `door-sensor-01`로 돌아오면 제거) |
+| `bomi.observation.ambient-sensor-to-senior` | 온습도 | `ambient-sensor-01` |
+
+**활성 시나리오는 어르신당 하나뿐이고, 막히면 전부 막힌다.** Backend는 타입과 무관하게 활성 시나리오가 하나라도 있으면 그 어르신의 새 시나리오를 거절한다(로봇이 한 대이므로). 그래서 어떤 시나리오가 중간 상태에 갇히면 이후 모든 트리거가 조용히 거절된다.
+
+최후 안전망은 `bomi.scenario-timeout.active-timeout`(기본 10분)이다. `updatedAt`이 이 시간을 넘긴 활성 시나리오는 자동으로 `TIMED_OUT` 처리된다. 산책만 예외로, 전용 워치독(ACK 10초 / 최대 2시간)이 따로 본다 — `FOLLOWING`은 정상적으로 10분을 넘길 수 있기 때문이다.
+
+`TIMED_OUT`을 포함해 `COMPLETED`가 아닌 모든 종료는 로봇을 `SAFE_STOP`으로 만들고, 그 상태에서는 이동 시나리오가 전부 차단된다. **자동 복구 경로는 없다** — 재시작으로도, MQTT로도 풀리지 않는다.
 
 ### 8.1 온습도 안부
 
@@ -472,7 +549,7 @@ Robot이 사람 놓침 등으로 따라가기를 자체 종료하더라도, `FOL
   "robotId": "robot-001",
   "type": "START_CONVERSATION",
   "occurredAt": "2026-08-04T14:00:10+09:00",
-  "expiresAt": "2026-08-04T14:01:10+09:00",
+  "expiresAt": "2026-08-04T14:00:20+09:00",
   "payload": {
     "seniorId": "34fb4e45-65aa-4c64-8474-92931f825e86",
     "intent": "WELLNESS_CHECK",
@@ -485,6 +562,8 @@ Robot이 사람 놓침 등으로 따라가기를 자체 종료하더라도, `FOL
   }
 }
 ```
+
+임계 판정은 Backend가 한다 — 센서는 측정값만 보낸다. 규칙은 **온도 30.0℃ 이상 또는 습도 80.0% 이상**이며, **등호를 포함**하고 둘 중 하나만 넘어도 발동한다. 완료 후 같은 어르신에게는 30분의 쿨다운이 걸린다(`bomi.wellness.temperature-threshold-c`·`humidity-threshold-percent`·`cooldown-minutes`). 값이 없는 필드(`null`)는 비교에 참여하지 않으므로, `temperatureC`·`humidityPercent`라는 정확한 키 이름으로 보내지 않으면 이벤트는 도착해도 임계 판정에서 조용히 빠진다.
 
 ### 8.2 복약 알림
 
@@ -504,7 +583,7 @@ Robot이 사람 놓침 등으로 따라가기를 자체 종료하더라도, `FOL
   "robotId": "robot-001",
   "type": "START_CONVERSATION",
   "occurredAt": "2026-08-04T09:00:08+09:00",
-  "expiresAt": "2026-08-04T09:01:08+09:00",
+  "expiresAt": "2026-08-04T09:00:18+09:00",
   "payload": {
     "seniorId": "34fb4e45-65aa-4c64-8474-92931f825e86",
     "intent": "MEDICATION_REMINDER",
@@ -536,23 +615,42 @@ AI는 웨이크 워드를 감지하면 즉시 자체 대화를 시작하고, 동
 }
 ```
 
-Backend는 `scenarioId`를 만들고 Robot에 다음 `NAVIGATE(LIVING_ROOM)`만 보낸다.
+`payload.keyword`는 필수이며 20자 이하다. `confidence`는 선택이고 0~1 사이 숫자여야 한다. 이 두 필드 말고는 아무것도 실을 수 없다 — 감지 방향처럼 payload에 담고 싶은 값이 생겨도 계약을 늘리지 말고 로봇 내부 채널을 쓴다.
+
+Backend는 `scenarioId`를 만들고 Robot에 다음 `FOLLOW_START`만 보낸다. payload는 빈 객체다 — 소리가 난 방향은 이 계약을 타지 않고 로봇 내부(UDP)로 전달된다.
 
 ```json
 {
-  "commandId": "cmd-nav-wake-001",
+  "commandId": "cmd-follow-wake-001",
   "scenarioId": "d4d60e42-09ea-4f23-b3be-09021ba24b7d",
   "robotId": "robot-001",
-  "type": "NAVIGATE",
+  "type": "FOLLOW_START",
   "occurredAt": "2026-08-04T10:30:01+09:00",
-  "expiresAt": "2026-08-04T10:31:01+09:00",
-  "payload": {
-    "target": "LIVING_ROOM"
-  }
+  "expiresAt": "2026-08-04T10:32:01+09:00",
+  "payload": {}
 }
 ```
 
-Backend는 호출용 `START_CONVERSATION`을 보내거나 `conversationId`를 만들지 않는다. `NAVIGATION_RESULT`의 `outcome=SUCCEEDED`, `resultCode=ARRIVED`를 받으면 호출 시나리오를 완료한다. 이동 실패, 취소, 시간 초과는 해당 결과로 시나리오를 종료한다. AI의 자체 대화 종료는 이 Backend 시나리오의 완료 조건이 아니다.
+Backend는 호출용 `START_CONVERSATION`을 보내거나 `conversationId`를 만들지 않는다. `FOLLOW_RESULT`의 `outcome=SUCCEEDED`, `resultCode=STARTED`를 받으면 호출 시나리오를 완료한다. 이 ACK는 "탐색을 시작했다"는 뜻이지 "사람을 찾았다"는 뜻이 아니다 — 사람을 찾는 일은 로봇 내부에서 끝나고 Backend는 관여하지 않는다. 실패, 취소, 시간 초과는 해당 결과로 시나리오를 종료하며 이때 로봇은 `SAFE_STOP`으로 잠긴다. AI의 자체 대화 종료는 이 Backend 시나리오의 완료 조건이 아니다.
+
+이 시나리오는 "왜 이동 명령이 아닌가"가 핵심이라 흐름을 그림으로 둔다.
+
+```mermaid
+sequenceDiagram
+    participant S as 어르신
+    participant AI as AI (ai_chat)
+    participant BE as Backend
+    participant RB as Robot Bridge
+    S->>AI: "보미야"
+    AI-->>S: 짧은 첫 응답 (자체 대화 시작)
+    AI->>BE: WAKE_WORD_DETECTED {keyword, confidence?}
+    Note over AI,BE: 상관관계 ID를 넣으면 거부된다
+    BE->>RB: FOLLOW_START (payload {}, expiresAt +2분)
+    Note over AI,RB: 소리 방향은 MQTT가 아니라<br/>로봇 내부 UDP로 전달
+    RB-->>BE: FOLLOW_RESULT {SUCCEEDED, STARTED}
+    Note over BE: 시나리오 COMPLETED<br/>("찾았다"가 아니라 "탐색 시작"의 ACK)
+    RB->>S: 회전 탐색 → 카메라로 접근
+```
 
 원본 음성이나 전체 STT 문장을 트리거에 실을 필요는 없다. AI가 웨이크 워드 감지를 확정한 이벤트만 보낸다.
 
@@ -617,7 +715,7 @@ Backend는 `scenarioId`를 만들고 `NAVIGATE(ENTRANCE)`를 보낸다. 도착�
   "robotId": "robot-001",
   "type": "START_CONVERSATION",
   "occurredAt": "2026-08-04T18:10:08+09:00",
-  "expiresAt": "2026-08-04T18:11:08+09:00",
+  "expiresAt": "2026-08-04T18:10:18+09:00",
   "payload": {
     "seniorId": "34fb4e45-65aa-4c64-8474-92931f825e86",
     "intent": "HOMECOMING_GREETING",
@@ -630,7 +728,14 @@ Backend는 `scenarioId`를 만들고 `NAVIGATE(ENTRANCE)`를 보낸다. 도착�
 }
 ```
 
-`CONVERSATION_ENDED`를 받으면 Backend는 필요에 따라 `NAVIGATE(DEFAULT)`를 보내고 시나리오를 종료한다.
+`CONVERSATION_ENDED`를 받은 뒤의 경로는 `payload.reasonCode` 하나로 갈린다.
+
+- `HOMECOMING_FOLLOW_COMPLETED` — 인사와 배웅이 모두 끝났다는 뜻이다. Backend는 `NAVIGATE(DEFAULT)`를 보내고, 도착하면 시나리오를 `COMPLETED`로 끝낸다.
+- 그 밖의 모든 값(`null` 포함) — 어르신이 아직 현관에 있다고 보고 Backend는 `FOLLOW_START`를 보낸다. 시나리오는 `FOLLOWING`으로 들어간다.
+
+**`FOLLOWING`에서 `COMPLETED`로 가는 전이는 현관 인사 상태표에 없다.** 즉 AI가 `HOMECOMING_FOLLOW_COMPLETED`를 끝내 보내지 않으면 시나리오는 `FOLLOWING`에 머물다 `bomi.scenario-timeout.active-timeout`(기본 10분)에 걸려 `TIMED_OUT`이 되고 로봇은 `SAFE_STOP`으로 잠긴다. 다음 시나리오가 전부 막히므로, 현관 인사를 구현하는 AI는 이 reasonCode를 반드시 보내야 한다.
+
+이 시나리오만 종료 경로가 두 갈래다. 온습도 안부와 복약 알림은 `reasonCode`와 무관하게 항상 `NAVIGATE(DEFAULT)`로 복귀한다.
 
 ---
 
@@ -663,10 +768,35 @@ care_record 일정 도래
 
 대시보드는 MQTT를 직접 해석해 업무 상태를 만들기보다 Backend가 저장한 상태를 조회하는 것을 기준으로 한다. Backend는 적어도 다음 상태 전이를 기록할 수 있어야 한다.
 
-```text
-TRIGGERED → NAVIGATING → CONVERSING → COMPLETED
-                    ↘ FAILED / CANCELLED / TIMED_OUT
+Backend의 시나리오 상태는 14개이고, **시나리오 타입에 따라 서로 다른 전이표 세 개**를 쓴다. 대시보드는 아래 상태 이름을 그대로 쓴다.
+
+**(A) 대화형** — 현관 인사·온습도 안부·복약 알림
+
+```mermaid
+stateDiagram-v2
+    [*] --> RECEIVED
+    RECEIVED --> MOVING_TO_ENTRANCE
+    MOVING_TO_ENTRANCE --> CHECKING_INTERACTION
+    CHECKING_INTERACTION --> CONVERSING
+    CHECKING_INTERACTION --> RETURN_DECISION: 대화 시작 실패
+    CONVERSING --> RETURN_DECISION
+    RETURN_DECISION --> RETURNING_TO_DEFAULT
+    RETURN_DECISION --> STARTING_FOLLOW: 현관 인사 기본 경로
+    STARTING_FOLLOW --> FOLLOWING
+    RETURNING_TO_DEFAULT --> COMPLETED
+    COMPLETED --> [*]
 ```
+
+**(B) 호출** — `RECEIVED → NAVIGATING → COMPLETED`
+
+**(C) 산책** — `RECEIVED → STARTING_FOLLOW → FOLLOWING → STOPPING_FOLLOW → COMPLETED`
+(`STARTING_FOLLOW`와 `FOLLOWING`에서 바로 `COMPLETED`로 갈 수도 있다)
+
+세 표 모두, 활성 상태라면 어디서든 `FAILED`·`CANCELLED`·`TIMED_OUT`으로 빠질 수 있다.
+`COMPLETED`로 들어가는 문은 표마다 하나뿐이다 — (A)는 `RETURNING_TO_DEFAULT`,
+(B)는 `NAVIGATING`, (C)는 `STOPPING_FOLLOW`·`FOLLOWING`·`STARTING_FOLLOW`.
+
+`TRIGGERED`라는 상태는 없다. 그리고 대화형 시나리오는 `NAVIGATING`에 진입조차 하지 않는다 — 현관·거실로 가는 이동은 `MOVING_TO_ENTRANCE`가 맡는다. 대시보드가 없는 상태를 기다리는 사고가 여기서 났다.
 
 이력 레코드에는 `scenarioId`, `conversationId`, 시나리오 종류, 어르신, 로봇, 트리거 시각, 현재 상태, 종료 결과, 원인 코드를 연결한다. 이렇게 해야 대시보드와 MQTT 로그가 같은 사건을 가리킬 수 있다.
 
@@ -674,17 +804,17 @@ TRIGGERED → NAVIGATING → CONVERSING → COMPLETED
 
 ## 10. 구현 정렬 현황과 남은 통합 과제
 
-Backend의 다섯 시나리오와 v1 envelope 구현은 정렬되어 있다. 아래 표의 남은 항목은 확정된 시나리오 의미를 바꾸는 작업이 아니라, 외부 Robot Bridge·AI 구현이 이 계약을 실제로 생산·소비하는지 확인하는 통합 과제다.
+아래 표는 **2026-08-16 기준 스냅샷**이다. 계약의 일부가 아니라 통합 진행 상황을 적어 둔 것이므로, 계약 의미를 판단할 때는 §2~§8만 본다. 표의 "남은 통합 과제"는 시나리오 의미를 바꾸는 작업이 아니라 외부 Robot Bridge·AI 구현이 이 계약을 실제로 생산·소비하는지 확인하는 일이다.
 
 | 영역 | Backend 현재 상태 | 남은 통합 과제 |
 |---|---|---|
-| 계약 문서 | 이 문서와 AsyncAPI를 최종 v1 기준으로 사용한다. draft와 legacy envelope는 폐기됐다. | Robot·AI 보조 문서와 배포 설정도 v1을 가리키는지 지속 확인 |
+| 계약 문서 | 이 문서와 AsyncAPI를 최종 v1 기준으로 사용한다. 이전 draft 문서는 이 문서에 흡수돼 삭제됐다. legacy envelope는 새로 쓰지 않지만 파서에는 아직 남아 있다(§7). | Robot·AI 보조 문서와 배포 설정도 v1을 가리키는지 지속 확인. legacy `NAVIGATION_RESULT` 분기 제거 시점 판단 |
 | 수신 이벤트 타입 | `WAKE_WORD_DETECTED`, `WALK_REQUESTED`, `FOLLOW_RESULT`, `CONVERSATION_STARTED`를 포함한 v1 파서·타입별 검증이 구현됐다. | 외부 생산자가 최상위 상관관계 ID와 타입별 payload를 그대로 발행하는지 E2E 확인 |
 | Robot 명령 타입 | `NAVIGATE`, `SPEAK`, `CANCEL`, `FOLLOW_START`, `FOLLOW_STOP` 발행과 QoS 1, retain=false가 구현됐다. | 최종 Robot Bridge의 명령 역직렬화, `commandId` 멱등성, `expiresAt` 거절을 실물 없이 계약 테스트로 교차검증 |
 | AI 명령·대화 연결 | `bomi/v1/ai/{robotId}/commands`, `START_CONVERSATION`, conversation 저장과 command 상관관계가 구현됐다. | 실제 AI가 같은 `scenarioId`, `conversationId`, `commandId`를 보존해 시작·종료 이벤트를 반환하는지 확인 |
 | 대화 시작·종료 | `CONVERSATION_STARTED`와 `CONVERSATION_ENDED`의 최상위 연관 ID 및 outcome 처리가 구현됐다. | 외부 AI의 legacy payload 의존 제거와 네 가지 종료 outcome E2E 확인 |
 | 이동·추종 Robot 결과 | `NAVIGATION_RESULT`와 `FOLLOW_RESULT`의 v1 `outcome`, 타입별 `resultCode`, `reasonCode`와 최상위 `scenarioId`·`commandId` 검증·routing이 구현됐다. | 최종 Robot Bridge가 legacy `status`나 payload 내부 ID가 아닌 v1 결과만 발행하도록 정렬 |
-| 호출 | `WAKE_WORD_CALL` 전용 입력·orchestrator·결과 routing과 영속 receipt가 구현됐다. Backend는 `NAVIGATE(LIVING_ROOM)`만 발행하고 `ARRIVED`에서 즉시 완료한다. | AI의 자체 대화와 Robot 이동을 함께 관찰하는 통합 확인. 호출에는 `START_CONVERSATION`, `conversationId`, `NAVIGATE(DEFAULT)`를 추가하지 않음 |
+| 호출 | `WAKE_WORD_CALL` 전용 입력·orchestrator·결과 routing과 영속 receipt가 구현됐다. Backend는 `FOLLOW_START`만 발행하고 `FOLLOW_RESULT(SUCCEEDED, STARTED)`에서 즉시 완료한다. | 로봇의 회전 탐색·접근이 실제로 사람 앞에서 멈추는지는 **실기 확인 항목**이다(코드는 있으나 아직 실기 미검증). 호출에는 `START_CONVERSATION`, `conversationId`, `NAVIGATE`를 추가하지 않음 |
 | 산책 | Voice MQTT와 Guardian REST가 같은 `WalkOrchestrator`를 사용하며 START·STOP command 상관관계, timeout, 영속 요청 receipt가 구현됐다. | 최종 Robot Bridge의 `FOLLOW_START`·`FOLLOW_STOP` 및 `FOLLOW_RESULT` v1 상호운용 확인 |
 | 복약 스케줄러 | 복약 슬롯 조회, 시나리오 시작, 이동과 대화 명령 연결이 구현됐다. | 다중 Backend 인스턴스에서 같은 슬롯을 원자적으로 선점하는 DB 불변식은 별도 과제 |
 | 개인 일정 | `fact_candidate` 후보와 `care_record` 물질화 흐름은 스케줄러 입력과 아직 완전히 연결되지 않았다. | `CONFIRMED` 후 `care_record`로 `MATERIALIZED`된 기록만 scheduler 입력으로 연결 |
@@ -707,4 +837,16 @@ Backend의 다섯 시나리오와 v1 envelope 구현은 정렬되어 있다. 아
 
 유효하지 않은 메시지는 부분적으로 추측해 실행하지 않는다. 원인을 구조화 로그와 운영 지표에 남기고, 이미 처리한 ID라면 부작용 없이 무시한다.
 
+**계약을 어긴 메시지에 대해 송신자에게는 아무 응답도 가지 않는다.** Backend는 경고 로그를 남긴 뒤 브로커에 ack 하고 끝낸다 — 오류 이벤트를 되돌려 보내지 않는다. 그래서 "응답이 없으니 아직 처리 중이겠지"라는 추측은 항상 틀린다. 보낸 메시지에 아무 반응이 없다면 브로커 로그가 아니라 **Backend의 `Discarding invalid MQTT message` 경고**를 먼저 찾는다.
+
 이 문서에 없는 새 타입이나 새 enum 값은 v1 수신자가 임의로 해석하지 않는다.
+
+---
+
+## 12. 실기에서 확인된 것 (append-only)
+
+계약 본문을 고치기 전에 **사실을 먼저 쌓는 자리**다. 실기에서 무언가 깨지면 여기에 날짜와 함께 적고, 계약 의미가 바뀌어야 한다면 그 다음에 §2~§8을 고치면서 §1.1 개정 이력에 옮긴다. 이 절이 없던 시절에는 이런 기록이 SUPERSEDED 딱지가 붙은 초안 문서에 고여 정본보다 최신인 사실이 아무도 안 읽는 곳에 남는 사고가 났다. 항목은 지우지 않고 계속 덧붙인다.
+
+**2026-08-04 — 문/PIR 실센서 합동 테스트.** 봉투는 정확한데 시나리오가 시작되지 않는 경우가 세 갈래로 갈렸다. ① IoT가 실제로 보내는 `MOTION_DETECTED`·`DOOR_CLOSED`가 허용 목록에 없어 계약 위반으로 폐기되고 있었다. ② `sourceId`가 Backend 설정에 등록되지 않아 파서를 통과한 뒤 버려지고 있었다. ③ 시나리오가 중간 상태에 갇히면 그 어르신의 이후 모든 트리거가 조용히 거절됐다. 세 건 모두 §4.1과 §8에 계약으로 편입했고, ③의 안전망으로 활성 시나리오 워치독이 들어왔다.
+
+**2026-08-16 — 문서와 구현의 표류 점검.** 08-04 확정 이후 구현이 문서를 앞질러 간 지점을 코드 대조로 찾아 §1.1 개정 이력의 v1.1.0 항목으로 반영했다. 가장 큰 것은 호출 시나리오가 `NAVIGATE(LIVING_ROOM)`에서 `FOLLOW_START`로 바뀐 사실이다. 이 절이 있었다면 그 사실이 여기 먼저 쌓였을 것이다.

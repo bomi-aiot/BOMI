@@ -2,24 +2,37 @@
 
 작성일: 2026-08-06 · 전제: [current-state-audit.md](current-state-audit.md)
 
-> **진행 현황 (2026-08-06, `ai/natural-conversation-wip`)**
+> **진행 현황 (2026-08-06 작성 · 2026-08-15 갱신)** — 당시 작업 브랜치
+> `ai/natural-conversation-wip` 는 스쿼시되어 `main` 에 들어갔고 더는 존재하지 않는다.
 >
 > | 항목 | 상태 |
 > | --- | --- |
-> | P0-1(speaking 수명)·P0-2(세션 FSM)·P0-3(세션 테스트)·P0-5(remainder 재큐) | **구현·검증 완료** |
+> | P0-1(speaking 수명)·P0-2(세션 FSM)·P0-3(세션 테스트)·P0-5(remainder 재큐) | **구현·검증 완료(로직)** |
 > | P0-4(종료 응답) | **계획 정정으로 종결** — 작별 발화에 대한 그래프 응답이 곧 종료 응답임을 확인(감사 §0). 별도 인사 미추가 |
-> | P1-A1~A4, A6(날씨 한정) | **구현·검증 완료** (`context_slots` + 시나리오 B·D·E·H 테스트) |
-> | P1-A5(주소 기본값) | **AI측 완료** — `profile.address` 폴백 구현. **BE 계약 확장 대기** |
+> | P1-A1~A4, A6(날씨 한정) | **구현·검증 완료(로직)** (`context_slots` + 시나리오 B·D·E·H 테스트) |
+> | P1-A5(주소 기본값) | **구현·검증 완료(로직) (2026-08-15)** — BE 계약이 확장됐다(S15P11E102-347: `SeniorProfile.address` ← `app_user.home_address`, V17). 로봇 폴백과 테스트(`test_memory_privacy.py:237`)가 이어져 **시나리오 C 가 동작한다.** 남은 것은 코드가 아니라 운영 — 어르신 주소가 실제로 등록돼 있어야 하고, 도시명은 `weather.client.CITY_GRID` 의 9개만 인식한다 |
 > | P1-A7(일정 목적지)·P1-A8(이동 시간) | 미착수 (A7: careRecords 구조 협의, A8: 신규 API 결정 필요) |
-> | P1-B1(삭제) 1단계 | **구현·검증 완료** — 봉인+대기 행 삭제. 2단계(서버 취소)는 BE 엔드포인트 대기 |
+> | P1-B1(삭제) | **1·2단계 모두 완료(로직) (2026-08-15)** — 1단계 봉인+로컬 대기행 삭제, 2단계 서버 취소(`POST /api/v1/robot/fact-candidates/cancel`, S15P11E102-348). 로봇은 취소 요청을 로컬 큐에 넣고 배경 틱이 보내며, 실패해도 큐에 남는다. 서버는 멱등 |
 > | P1-B3(프로필 필드) | **일부 완료** — 2/5 필드. B2·B4·B5 미착수 |
 > | P1-C, P2, P3 | 미착수 (C1 은 기왕 구현돼 있었음 — 리플레이 확장만 잔여) |
-> | 검증 | 712 passed + ruff clean (2026-08-06 실측). **실기(젯슨) 전부 미실시** |
+> | 검증 | **1035 passed + ruff clean (2026-08-15 실측)** — `cd robot/ai_chat && venv/Scripts/python.exe -m pytest -q -m "not integration and not manual"`. 이 문서가 인용하던 712 는 2026-08-06 값이다. **실기(젯슨) 검증은 여전히 전부 미실시** — 아래 계획의 "구현·검증 완료"는 전부 *로직* 검증이며 하드웨어 검증이 아니다 |
+>
+> **남은 블로커 (2026-08-15 기준)**
+>
+> | 막힌 것 | 무엇에 막혔나 |
+> | --- | --- |
+> | P1-B2 기억 정정 | 백엔드 `fact_candidate` 의 `UPDATE`/`supersedes` 경로 — **이 계획에 남은 유일한 BE 블로커**다. 로봇은 `operation: "CREATE"` 고정(`fact_contract.py:398`) |
+> | P1-B5 사건 연속성 / P2-1 후속 확인 | 의미 검색 운영 미결 — `bomi.embedding.enabled` 기본 `false` |
+> | P1-A8 이동 시간 | 신규 외부 API(경로·소요시간) 도입 승인 — 팀 결정 필요 |
+> | P1-A7 일정 목적지 | `careRecords.details` 자유형 구조 협의 |
+> | Phase 6(감정 침묵 타임아웃·리플레이 확장) | 미착수. `policy.EMOTIONAL_IDLE_TIMEOUT_SEC` 다이얼 자체가 아직 없다 |
+> | 실기(젯슨) 전 항목 | 하드웨어 일정 |
+
 우선순위 산식: **사용자 경험 영향도 × 선행조건 여부 × 안전·개인정보 중요도 × 기존 구조 결합도 ÷ (구현 비용 × 회귀 위험)**
 
 ## 0. 기본안에서 바꾼 것과 이유
 
-요청서의 기본 우선순위(P0 = 웨이크워드 차단·세션 시작·재요구 방지·종료)를 **그대로 쓰지 않는다.** 감사 결과 그 항목들은 이미 구현되어 동작하기 때문이다 (`bootstrap.py:342-510`). 같은 이름의 P0를 다시 계획하면 이 저장소가 두 번 겪은 사고("이미 머지된 것을 다시 계획", CLAUDE.md §25)를 반복하게 된다.
+요청서의 기본 우선순위(P0 = 웨이크워드 차단·세션 시작·재요구 방지·종료)를 **그대로 쓰지 않는다.** 감사 결과 그 항목들은 이미 구현되어 동작하기 때문이다 (작성 당시 `bootstrap.py:342-510`, 2026-08-15 현재 세션 루프는 `bootstrap.py:754-848`). 같은 이름의 P0를 다시 계획하면 이 저장소가 두 번 겪은 사고("이미 머지된 것을 다시 계획", `임시보류_claude.md` §25)를 반복하게 된다.
 
 따라서 P0의 실체를 다음으로 교체한다:
 
@@ -55,7 +68,7 @@
 | P1-A2 | 지역 문맥 추출·유지 | A1/D1 | P1-A1 | 발화에서 `extract_city` 히트 시 LOCATION 후보 등록(source=USER_EXPLICIT, confidence=1.0). 이후 날씨·의료 조회가 "현재 발화 → 활성 후보" 순으로 지역 결정 (`context.py:368-421` 수정) | 중 | 시나리오 D("제주도 가" → "날씨는?" → "거기 음식은?") 통합 테스트 |
 | P1-A3 | 주제 전환 시 지역 감쇠 | F | P1-A2 | 인텐트·화제 전환 감지 시(우선 규칙: 조회 무관 발화 N턴 or 화제 표지) LOCATION 후보 confidence 감쇠, 임계 미만이면 기본값 복귀. 다이얼은 `policy.py` | 중 — 과잉 유지 ↔ 과잉 폐기 균형 | 시나리오 E(분리수거 질문 → 기본 주소) 테스트 |
 | P1-A4 | 지역 정정 | I | P1-A2 | "대전 말고 대구" 패턴 → 기존 LOCATION 후보 교체 + 이전 값 비활성. 규칙 우선, 애매하면 확인 질문 | 낮음 | 시나리오 H 테스트 |
-| P1-A5 | `app_user` 주소 기본값 (AI측) | A4/G | **BE 계약에 주소 필드 추가(별도 BE 티켓)** | 프로필에 `address`(또는 격자 좌표)가 오면 SOURCE=PROFILE_DEFAULT·최하위 우선순위 후보로 상시 등록. 없으면 현행(되묻기) 유지 — **지어내기 금지 유지** | 낮음(AI측) | 시나리오 C. BE 미반영 동안은 "되묻기" 경로 테스트로 고정 |
+| P1-A5 | `app_user` 주소 기본값 | A4/G | ~~BE 계약에 주소 필드 추가~~ **해소(S15P11E102-347)** | 프로필 `address` 문자열에서 도시명을 추출해 최후 폴백으로 사용. 없으면 현행(되묻기) 유지 — **지어내기 금지 유지.** 구현은 `context_slots` 의 후보가 아니라 `_lookup_weather_documents` 안의 직접 폴백이다(주의: `new_candidate(source=PROFILE_DEFAULT)` 호출부는 아직 없고, 상수는 로그 라벨로만 쓰인다. 그 자리의 코드 주석도 아직 "계약에 address 가 없다"는 옛 상태를 말한다) | 낮음 | **완료(로직)** — 되묻기 경로 `test_context_slots.py:305`, 주소 폴백 `test_memory_privacy.py:237` |
 | P1-A6 | 참조 복원 1단계 (조회 파라미터 한정) | A2/D1 | P1-A2 | "거기/근처"가 조회 표지와 함께 오면 활성 LOCATION 후보로 해석(현재는 명시적 폐기 — `medical_flow.py:199-206`). 문장 수준 복원은 계속 LLM+`recentMessages`에 맡김(전면 코레퍼런스 구현 금지) | 중 | 시나리오 D 마지막 턴, G 일부 |
 | P1-A7 | 일정 목적지 우선 | A5 | P1-A1, careRecords 구조 파악(BE 협의) | `ctx.careRecords`에서 목적지 있는 일정을 EVENT/LOCATION 후보로 등록(scope=SCHEDULED_EVENT) | 중 — careRecords details 형식이 자유형 | 시나리오 F. details에 목적지가 없으면 "미지원" 명시 |
 | P1-A8 | 이동 시간 조회 (시나리오 G 후반) | A5b — 도구 자체가 없음 | P1-A7 + **신규 외부 API 결정(미결 — §24 방식으로 팀 결정 필요)** | "거기까지 얼마나 걸려?"는 EVENT 후보(정형외과+예약시각)까지는 P1-A6·A7로 해석 가능하나, 소요시간 답변은 경로 API(예: 카카오모빌리티/TMAP) 신규 도입이 선행. **API 미결 동안 G 후반("몇 시에 나가야 해?")은 미지원으로 명시하고, "거기" 해석까지만 구현** | 높음 — 신규 서비스 도입은 §28 위반 소지, 반드시 승인 후 | G 전반(참조 해석) 테스트 + 후반은 API 결정 후 |
@@ -64,7 +77,7 @@
 
 | 우선순위 | 기능 | 현재 상태 | 선행조건 | 구현 범위 | 위험 | 검증 방법 |
 | --- | --- | --- | --- | --- | --- | --- |
-| P1-B1 | 기억 삭제·봉인 발화 처리 | A3 — 전무 | 없음(로봇측 1단계는 로컬로 가능) | 1단계: "기억하지 마" 표지 → 해당 대화 T4 봉인 확장(현재 정서 턴 한정 `handlers.py:368` → 전 인텐트로) + 추출 큐에서 해당 대화 행 삭제. 2단계: 이미 제출된 fact_candidate 취소는 **BE 엔드포인트 필요(별도 BE 티켓)** | 중 | 시나리오 K 후반. 봉인 후 추출 큐에 안 들어감을 고정 |
+| P1-B1 | 기억 삭제·봉인 발화 처리 | A3 — 전무 | 없음 | 1단계: "기억하지 마" 표지 → 해당 대화 T4 봉인(전 인텐트, 인텐트 분류 **전**) + 추출 대기행 삭제. 2단계: 제출분 취소를 로컬 큐(`fact_cancel_request`)에 넣고 배경 틱이 `POST /api/v1/robot/fact-candidates/cancel` 로 전송 | 중 | **완료(로직)** — 시나리오 K. 봉인 후 추출 큐 미유입 + 취소 큐잉·전송·실패 보존을 `test_memory_privacy.py` 가 고정 |
 | P1-B2 | 기억 정정 | A3 | BE의 fact_candidate UPDATE 경로 협의 | 로봇은 `operation: "CREATE"` 고정을 유지하되(사유: `fact_contract.py:76-77`), 모순 발화 감지 시 새 후보에 `supersedes` 힌트 첨부는 BE 계약 확장 후 | 중 | 시나리오 K 전반 — BE 반영 전은 "새 후보 생성"까지만 검증 |
 | P1-B3 | 미사용 프로필 5필드 활용 | C1 | 없음 | `conversationPreferences` 프롬프트 반영, `wakeTime`/`sleepTime` → quiet hours 보조, `preferredHospital` → 의료 조회 기본값 | 낮음 | 프롬프트 빌더 단위 테스트 |
 | P1-B4 | `availability` 소비 | **완료 — 계약 고정(666ae0d, BE `0436b71` 머지됨)** | (해소) | 기능 가용성(`availability`)과 요청별 실행 결과(`retrieval`, 문서 실행 필드 포함)를 분리 소비. 구버전 백엔드·캐시가 필드를 안 주면 `false`로 지어내지 않고 '모름' 유지. 문서 출처·버전·청크·인용도 프롬프트까지 보존 | 낮음 | 그래프 E2E + 빌더 테스트 + BE 브랜치 교차 E2E(`cross_module_rag_driver.py`) |
@@ -93,33 +106,76 @@
 
 ## 2. 의존 관계
 
-```text
-P0-2 세션 FSM ──→ P0-3 세션 테스트 ──→ (이후 모든 세션 관련 변경의 안전망)
-   └──→ P1-C3 감정 침묵 타임아웃
-P0-1 speaking 수명 ──→ P0-5 remainder 재큐
-P1-A1 ContextCandidate ──→ P1-A2 지역 ──→ P1-A3 감쇠 ──→ P1-A4 정정
-                       │              └─→ P1-A6 참조 복원(조회 한정)
-                       └──→ P1-A7 일정 목적지, P1-C4 도구 확인
-[BE 티켓] 프로필 주소 필드 ──→ P1-A5 기본 주소
-[BE 티켓] fact_candidate 취소/UPDATE ──→ P1-B1 2단계, P1-B2
-[운영 미결] EMBEDDING_ENABLED + API 키 ──→ P1-B5, P2-1
+초록은 뚫린 길, 빨강은 아직 막힌 길이다 (2026-08-15 기준).
+
+```mermaid
+flowchart LR
+    P02["P0-2 세션 FSM"] --> P03["P0-3 세션 테스트"]
+    P02 --> PC3["P1-C3 감정 침묵 타임아웃"]
+    P01["P0-1 speaking 수명"] --> P05["P0-5 remainder 재큐"]
+    A1["P1-A1 ContextCandidate"] --> A2["P1-A2 지역"]
+    A2 --> A3["P1-A3 감쇠"] --> A4["P1-A4 정정"]
+    A2 --> A6["P1-A6 참조 복원(조회 한정)"]
+    A1 --> A7["P1-A7 일정 목적지"]
+    A1 --> C4["P1-C4 도구 확인"]
+    A7 --> A8["P1-A8 이동 시간"]
+
+    BE347["BE S15P11E102-347<br/>프로필 주소 필드 · 완료"] --> A5["P1-A5 기본 주소"]
+    BE348["BE S15P11E102-348<br/>취소 엔드포인트 · 완료"] --> B1["P1-B1 삭제 1·2단계"]
+    BEUPD["BE fact_candidate UPDATE<br/>미착수 — 남은 유일한 BE 블로커"] --> B2["P1-B2 기억 정정"]
+    EMB["운영 미결<br/>bomi.embedding.enabled = false"] --> B5["P1-B5 사건 연속성"]
+    EMB --> P21["P2-1 후속 확인"]
+    API["신규 경로 API 결정<br/>미승인"] --> A8
+
+    classDef done fill:#e6f4ea,stroke:#34a853
+    classDef blocked fill:#fce8e6,stroke:#d93025
+    class P01,P02,P03,P05,A1,A2,A3,A4,A6,A5,B1,BE347,BE348 done
+    class BEUPD,EMB,API,B2,B5,P21,A8,A7,PC3,C4 blocked
 ```
 
-**라인 경계 (CLAUDE.md §25):** 백엔드 계약 변경(주소 필드, fact_candidate 취소 엔드포인트, careRecords 목적지 구조화)은 be-develop 소유다. 이 라인에서 구현하지 않고 티켓으로 발행한다. AI 쪽은 "필드가 오면 쓰고, 없으면 현행 유지"로 하위호환을 지킨다.
+**라인 경계 (`임시보류_claude.md` §25):** 백엔드 계약 변경은 be-develop 소유다. 이 라인에서 구현하지 않고 티켓으로 발행한다. AI 쪽은 "필드가 오면 쓰고, 없으면 현행 유지"로 하위호환을 지킨다 — 이 규율이 실제로 값을 했다. 주소 필드(347)와 취소 엔드포인트(348)가 나중에 도착했을 때 **AI 쪽은 한 줄도 고치지 않았고 기능이 곧바로 켜졌다.** 남은 백엔드 항목은 `fact_candidate` UPDATE/`supersedes` 와 `careRecords` 목적지 구조화 둘이다.
 
 ---
 
 ## 3. Phase 구획 (요청서 7단계를 실상에 맞게 재배치)
 
-| Phase | 내용 | 대응 |
-| --- | --- | --- |
-| **Phase 1** | 세션 고정 — P0-1~P0-5 | 요청서 Phase 1과 동일 취지, 단 신규 구현이 아니라 수정+고정 |
-| Phase 2 | ContextCandidate + 지역 문맥 — P1-A1~A4, A6 | 요청서 Phase 2 |
-| Phase 3 | 프로필 연결 — P1-A5(AI측), P1-B3, P1-B4 (+BE 티켓 발행은 Phase 2 중 선행) | 요청서 Phase 3 |
-| Phase 4 | 단기 사건·후속 확인 — P1-B5, P2-1 | 요청서 Phase 4 |
-| Phase 5 | 정정·삭제 — P1-B1, P1-B2 | 요청서 Phase 5 |
-| Phase 6 | 응답 정책 검증 확장 — P1-C1~C4 | 요청서 Phase 6 |
-| Phase 7 | 관계 고도화 + 관측성 — P2·P3 | 요청서 Phase 7 |
+| Phase | 내용 | 상태 (2026-08-15) | 대응 |
+| --- | --- | --- | --- |
+| **Phase 1** | 세션 고정 — P0-1~P0-5 | **완료**(로직) — `SessionState` 5상태 + `test_conversation_session.py` | 요청서 Phase 1과 동일 취지, 단 신규 구현이 아니라 수정+고정 |
+| Phase 2 | ContextCandidate + 지역 문맥 — P1-A1~A4, A6 | **완료**(지역 한정) — `graph/context_slots.py`. 후보 type 은 `LOCATION` 하나뿐 | 요청서 Phase 2 |
+| Phase 3 | 프로필 연결 — P1-A5, P1-B3, P1-B4 | **부분** — A5 완료, B4 완료, B3 는 2/5 필드 | 요청서 Phase 3 |
+| Phase 4 | 단기 사건·후속 확인 — P1-B5, P2-1 | 미착수 — 의미 검색 운영 미결에 막힘 | 요청서 Phase 4 |
+| Phase 5 | 정정·삭제 — P1-B1, P1-B2 | **부분** — B1 완료(1·2단계), B2 는 BE UPDATE 대기 | 요청서 Phase 5 |
+| Phase 6 | 응답 정책 검증 확장 — P1-C1~C4 | 미착수 | 요청서 Phase 6 |
+| Phase 7 | 관계 고도화 + 관측성 — P2·P3 | 미착수 — 단 이벤트 5종(`SESSION_STARTED`·`SESSION_ENDED`·`CONTEXT_RESOLVED`·`T4_SEALED`·`MEMORY_FORGOTTEN`)이 평문 로그로 선반영됨. `extra=` 구조화는 0건 | 요청서 Phase 7 |
+
+여기서 "완료"는 **전부 로직 검증 완료**를 뜻한다. 실기(젯슨) 검증은 어느 Phase도 받지
+않았다. 무엇이 무엇을 막고 있는지는 아래 그림이 표보다 빠르다.
+
+```mermaid
+flowchart TD
+    subgraph 완료
+        F1["Phase 1<br/>세션 고정"]
+        F2["Phase 2<br/>지역 문맥"]
+    end
+    subgraph 부분
+        F3["Phase 3<br/>프로필 연결<br/>(B3 3필드 잔여)"]
+        F5["Phase 5<br/>정정·삭제<br/>(B2 잔여)"]
+    end
+    subgraph 미착수
+        F4["Phase 4<br/>사건 연속성"]
+        F6["Phase 6<br/>응답 정책 검증"]
+        F7["Phase 7<br/>관측성"]
+    end
+    F1 --> F2 --> F3
+    F1 --> F6
+    F3 --> F4
+    F2 --> F5
+    F4 --> F7
+
+    EMB(["bomi.embedding.enabled = false"]) -.막는다.-> F4
+    UPD(["BE fact_candidate UPDATE 미구현"]) -.막는다.-> F5
+```
 
 각 Phase는 요청서의 9단계 절차(변경 파일 설명 → 최소 설계 → 구현 → 단위 테스트 → 시나리오 테스트 → 실행 → 수정 → 보고 → 다음 Phase 영향 기록)를 따르고, 완료 시 `docs/carebot/PROGRESS.md`를 같은 푸시에서 갱신한다(§22a).
 
@@ -146,7 +202,7 @@ venv/Scripts/ruff.exe check src tests
 venv/Scripts/pytest.exe -q -m "not integration and not manual"
 ```
 
-- 기존 655개(PROGRESS 주장) 전부 통과 유지 + 신규 세션 테스트. 숫자 감소 금지(`VERIFICATION.md:69` — 단 기준선 633은 스테일이므로 실측으로 갱신).
+- 기존 테스트 전부 통과 유지 + 신규 테스트. **숫자 감소 금지**([`docs/carebot/VERIFICATION.md`](../carebot/VERIFICATION.md)). 기준선은 문서에 박지 말고 매번 실측한다 — 이 문서가 인용한 633·655·712 가 전부 차례로 낡았고, 2026-08-15 실측은 1035다.
 - 하드웨어 의존 검증(웨이크워드 실감지, 반이중 체감, 에코)은 **UNVERIFIED로 명시**하고 `tests/manual/` + `docs/hardware/audio-echo-bargein-verification.md` 절차에 위임.
 
 ### 회귀 위험과 대응
