@@ -12,7 +12,11 @@ BOMI는 1인 가구와 돌봄이 필요한 사용자의 일상을 지원하는 *
   - [왜 만들었나](#왜-만들었나)
   - [시연 시나리오 네 가지](#시연-시나리오-네-가지)
   - [시연 영상](#시연-영상)
+    - [보미야 호출](#보미야-호출)
     - [현관 인사](#현관-인사)
+    - [복약 알림](#복약-알림)
+    - [온습도 알림](#온습도-알림)
+    - [사용자 따라다니기](#사용자-따라다니기)
   - [시스템 구성](#시스템-구성)
     - [하드웨어](#하드웨어)
   - [기술 스택](#기술-스택)
@@ -97,8 +101,23 @@ flowchart LR
 시나리오가 실패해 로봇이 잠겼을 때(SAFE_STOP) 푸는 절차는 [운영자 시나리오 취소](<docs/scenario/운영자 시나리오 취소.md>)입니다.
 
 ## 시연 영상
+> 🔊 음성이 포함되어 있습니다.
+
+### 보미야 호출
+https://github.com/user-attachments/assets/70dae8e7-7df1-4af9-909a-50f85d4beb19
+
 ### 현관 인사
 https://github.com/user-attachments/assets/b3370b72-ec84-431c-820e-700f7dc8fc24
+
+### 복약 알림
+https://github.com/user-attachments/assets/449c477d-8919-4814-a0ce-ebe6b529e5bb
+
+### 온습도 알림
+https://github.com/user-attachments/assets/5b62d9d2-2dd6-44cf-b145-3ad0d61a088a
+
+### 사용자 따라다니기
+https://github.com/user-attachments/assets/15367ec8-7c80-41e5-96aa-a899e60192fe
+
 
 ## 시스템 구성
 
