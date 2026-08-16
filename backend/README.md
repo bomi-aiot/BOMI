@@ -14,7 +14,7 @@ Java 17 / Spring Boot / Gradle 기반 중앙 백엔드입니다.
 MQTT는 구독·발행 양방향 모두 구현되어 있습니다. IoT·로봇 이벤트를 받는 인바운드
 (`mqtt/inbound/`)와 로봇 이동 명령·AI 대화 명령을 내보내는 아웃바운드(`mqtt/outbound/`)가
 Spring Integration 위에 올라가 있고, 메시지 형식의 최종 기준은
-[`docs/mqtt/scenario-contract-v1.md`](../docs/mqtt/scenario-contract-v1.md)입니다.
+[`docs/mqtt/시나리오 계약 v1.md`](<../docs/mqtt/시나리오 계약 v1.md>)입니다.
 로컬에서 MQTT를 끄고 싶으면 `MQTT_ENABLED=false`로 둡니다(루트 `.env.example` 기본값).
 
 Flyway 마이그레이션은 애플리케이션이 뜰 때 자동으로 적용됩니다. 빈 PostgreSQL에

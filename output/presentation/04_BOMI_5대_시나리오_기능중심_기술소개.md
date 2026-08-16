@@ -521,7 +521,7 @@ flowchart LR
 ### 공통 시나리오 계약
 
 ```text
-C:/BOMI/docs/mqtt/scenario-contract-v1.md
+C:/BOMI/docs/mqtt/시나리오 계약 v1.md
 C:/BOMI/backend/src/main/java/com/ssafy/bomi/scenario/domain/ScenarioType.java
 C:/BOMI/backend/src/main/java/com/ssafy/bomi/scenario/application/ScenarioStartGuard.java
 ```

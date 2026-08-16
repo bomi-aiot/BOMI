@@ -395,5 +395,5 @@ htpasswd -c /home/ubuntu/bomi/secrets/waypoint-editor.htpasswd <username>
 | RAG·임베딩·Qdrant 운영 | `infra/RAG_OPERATIONS.md` |
 | 인프라 운영 | `infra/README.md` |
 | MQTT 배포 | `scripts/deploy/MQTT_DEPLOYMENT.md` |
-| MQTT 토픽 규약 | `docs/mqtt/topic-convention.md` |
+| MQTT 토픽 규약 | `docs/mqtt/토픽 규약.md` |
 | IoT 게이트웨이 | `iot/raspberry-pi/README.md` |

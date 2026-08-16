@@ -243,4 +243,4 @@ grep -iE 'sk-|api[_-]?key|secret' exec/bomi-dump-*.sql | head
 | `infra/docker/postgres/init/001-enable-vector.sql` | 컨테이너 최초 기동 시 pgvector 활성화 |
 | `docs/database/mvp-erd.md` | ERD |
 | `docs/database/column-definition/BOMI_컬럼정의서.xlsx` | 컬럼 정의서 |
-| `docs/database/flyway-guide.md` | Flyway 운영 가이드 |
+| `docs/database/Flyway 가이드.md` | Flyway 운영 가이드 |

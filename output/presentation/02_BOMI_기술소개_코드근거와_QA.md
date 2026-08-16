@@ -302,7 +302,7 @@ origin/fe-develop:frontend/src/state/BomiContext.tsx
 
 | 영역 | 저장소에 남은 기록 | 이번 분석에서 실행했는가 | 발표 표기 |
 |---|---|---|---|
-| AI Chat | `docs/carebot/VERIFICATION.md`에 `633 passed + All checks passed` 체크 기준 | 아니오 | 발표 직전 재실행 후에만 `자동 테스트 633개` |
+| AI Chat | `docs/carebot/검증 절차.md`에 `633 passed + All checks passed` 체크 기준 | 아니오 | 발표 직전 재실행 후에만 `자동 테스트 633개` |
 | AI Vision | 완료 문서에 `171개 단위·통합 테스트`, mypy 17파일 기록 | 아니오 | 최신 코드 재실행 후에만 사용 |
 | Backend | Test class 74개, `@Test` 460개 정적 집계 | 아니오 | `460개 통과` 금지 |
 | Robot person following | README에 `42 passed`와 실센서→Gazebo 검증 기록 | 아니오 | `문서상 42 passed 기록`, 가능하면 재실행 |

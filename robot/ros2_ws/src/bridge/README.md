@@ -4,10 +4,10 @@
 로봇 명령 5종(`NAVIGATE` `SPEAK` `CANCEL` `FOLLOW_START` `FOLLOW_STOP`)을 받아
 실행하고, 그 결과를 다시 MQTT로 백엔드에 발행합니다.
 
-계약 근거는 **`docs/mqtt/scenario-contract-v1.md`가 정본이고, 최종 권위는 백엔드
+계약 근거는 **`docs/mqtt/시나리오 계약 v1.md`가 정본이고, 최종 권위는 백엔드
 파서 코드(`MqttInboundMessageParser.java`)**입니다. 파서가 문서보다 좁은 곳이
 있으므로 둘이 다르면 코드를 따릅니다(`bridge/contract.py` 첫머리 참고).
-`topic-convention.md`는 토픽 이름 규칙만 담당합니다.
+`토픽 규약.md`는 토픽 이름 규칙만 담당합니다.
 
 ## 구조
 

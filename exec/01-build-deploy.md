@@ -527,7 +527,7 @@ qdrant   (healthy) ─┘                                                     �
 - pgvector 확장은 컨테이너 최초 초기화 시 `infra/docker/postgres/init/001-enable-vector.sql`이
   `CREATE EXTENSION`을 수행합니다. **덤프 복원 시에는 이 스크립트가 실행되지 않으므로
   복원 전에 확장을 먼저 생성해야 합니다.**
-- 가이드: `docs/database/flyway-guide.md`
+- 가이드: `docs/database/Flyway 가이드.md`
 
 ### 4.5 과금 API 기본 OFF 정책
 
@@ -616,7 +616,7 @@ docker compose --env-file /home/ubuntu/bomi/secrets/production.env \
 | ERD | `docs/database/mvp-erd.md` |
 | 컬럼 정의서 | `docs/database/column-definition/BOMI_컬럼정의서.xlsx` |
 | 스냅샷 CSV | `docs/database/column-definition/snapshots/` (tables, columns, constraints, indexes, code-values, jsonb-fields, vector-fields, interface-mappings) |
-| Flyway 가이드 | `docs/database/flyway-guide.md` |
+| Flyway 가이드 | `docs/database/Flyway 가이드.md` |
 
 ---
 
@@ -696,7 +696,7 @@ python iot/raspberry-pi/translator/main.py
 | Jenkins 설정 | `infra/jenkins/README.md` |
 | Frontend 배포 | `infra/FRONTEND.md` |
 | API 명세 | `docs/api/README.md` |
-| MQTT 토픽 규약 | `docs/mqtt/topic-convention.md` |
-| 시스템 개요 | `docs/architecture/system-overview.md` |
+| MQTT 토픽 규약 | `docs/mqtt/토픽 규약.md` |
+| 시스템 개요 | `docs/architecture/시스템 개요.md` |
 | 로봇 셋업 | `robot/README.md`, `robot/docs/ros2-humble-setup.md` |
 | IoT 게이트웨이 | `iot/raspberry-pi/README.md` |

@@ -4,9 +4,9 @@ Raspberry Pi에서 동작하는 IoT 게이트웨이 구성 영역이다. 현재�
 브로커로 발행한 센서 메시지를 백엔드 계약 형식
 (`bomi/v1/iot/{sourceId}/events`)으로 변환·재발행하는 번역기를 포함한다.
 
-발행하는 메시지의 계약은 `docs/mqtt/scenario-contract-v1.md` 가 정본이고,
+발행하는 메시지의 계약은 `docs/mqtt/시나리오 계약 v1.md` 가 정본이고,
 최종 권위는 백엔드 파서 코드(`MqttInboundMessageParser.java`)다. 토픽 이름
-규칙은 `docs/mqtt/topic-convention.md` 를 따른다.
+규칙은 `docs/mqtt/토픽 규약.md` 를 따른다.
 
 ## 현재 구성
 
@@ -55,7 +55,7 @@ DHT11 코드가 들어 있지 않고, 번역기 컨테이너는 브로커를 `mq
 내부 네트워크 주소와 Zigbee 장치 식별자를 제거했습니다.
 
 <p align="center">
-  <img src="../../docs/assets/zigbee2mqtt-dashboard.png" width="900" alt="현관 도어 센서와 PIR 센서가 연결된 Zigbee2MQTT 대시보드">
+  <img src="../../docs/assets/Zigbee2MQTT 대시보드.png" width="900" alt="현관 도어 센서와 PIR 센서가 연결된 Zigbee2MQTT 대시보드">
 </p>
 
 ## 매핑 규칙 (MVP)

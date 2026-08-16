@@ -44,9 +44,9 @@ MQTT 는 REST 가 아니므로 Swagger 에 넣지 않습니다. OpenAPI 3.x 에�
 
 5개 시나리오의 토픽이나 메시지 필드를 바꾸면 **반드시 세 파일을 함께** 고칩니다.
 
-1. `../docs/mqtt/scenario-contract-v1.md` — 메시지 의미의 최종 기준
+1. `../docs/mqtt/시나리오 계약 v1.md` — 메시지 의미의 최종 기준
 2. `src/main/resources/static/openapi/bomi-mqtt.asyncapi.yaml` — 기계가 읽는 스펙
-3. `../docs/mqtt/topic-convention.md` — 공통 토픽·봉투 규칙
+3. `../docs/mqtt/토픽 규약.md` — 공통 토픽·봉투 규칙
 
 `AsyncApiDocumentationTest`는 토픽 누락, 내부 참조, 핵심 메시지 예시 존재 여부를
 검사합니다. 필드나 enum의 의미 변경은 세 파일을 함께 리뷰해야 합니다.

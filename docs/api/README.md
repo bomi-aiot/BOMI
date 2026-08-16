@@ -2,7 +2,7 @@
 
 ## 1. 목적
 
-BOMI의 서비스 간 계약을 한 진입점에서 열람하기 위한 안내입니다. REST의 기계 판독 계약은 OpenAPI로, MQTT의 기계 판독 스펙은 AsyncAPI로 관리하며 두 문서는 서로 링크로 오갈 수 있습니다. 다만 5개 시나리오 메시지의 최종 기준은 [`../mqtt/scenario-contract-v1.md`](../mqtt/scenario-contract-v1.md)이며, AsyncAPI나 설명 문서와 충돌하면 시나리오 계약 v1을 우선합니다.
+BOMI의 서비스 간 계약을 한 진입점에서 열람하기 위한 안내입니다. REST의 기계 판독 계약은 OpenAPI로, MQTT의 기계 판독 스펙은 AsyncAPI로 관리하며 두 문서는 서로 링크로 오갈 수 있습니다. 다만 5개 시나리오 메시지의 최종 기준은 [`../mqtt/시나리오 계약 v1.md`](<../mqtt/시나리오 계약 v1.md>)이며, AsyncAPI나 설명 문서와 충돌하면 시나리오 계약 v1을 우선합니다.
 
 OpenAPI와 AsyncAPI의 브라우저 렌더링용 스펙 파일은 Spring Boot 정적 리소스 디렉터리에서 각각 한 벌만 관리합니다. 이는 동일 스펙의 YAML·JSON 사본을 이중 관리하지 않는다는 뜻이며, 시나리오 메시지 의미의 계약 우선순위는 위 기준을 따릅니다.
 
@@ -148,7 +148,7 @@ flowchart TD
 | `POST /api/v1/operator/robots/{deviceId}/active-scenario-cancellations` | 끝나지 않는 시나리오를 강제 종료 | → `SAFE_STOP` | 주행 중이면 `CANCEL` 발행 |
 | `POST /api/v1/operator/robots/{deviceId}/mode-recoveries` | 안전 확인 뒤 정상 복귀 | → `IDLE` | 발행하지 않음 |
 
-절차의 자세한 내용은 [`../scenario/operator-navigation-cancellation.md`](../scenario/operator-navigation-cancellation.md)에 있습니다.
+절차의 자세한 내용은 [`../scenario/운영자 시나리오 취소.md`](<../scenario/운영자 시나리오 취소.md>)에 있습니다.
 
 #### mode 복구 API 상세
 
@@ -185,13 +185,13 @@ Content-Type: application/json
 | AI Vision 인식 요청 | OpenAPI (수기) | Spring Boot → AI Vision | [`vision-ai.openapi.yaml`](../../backend/src/main/resources/static/openapi/vision-ai.openapi.yaml) |
 | AI Vision 결과 Callback | OpenAPI (수기) | AI Vision → Spring Boot | [`vision-callback.openapi.yaml`](../../backend/src/main/resources/static/openapi/vision-callback.openapi.yaml) |
 | 대화·음성 생성 | OpenAPI (수기) | Spring Boot·Robot → 대화·음성 AI | [`voice-ai.openapi.yaml`](../../backend/src/main/resources/static/openapi/voice-ai.openapi.yaml) |
-| MQTT 메시지 계약 | AsyncAPI (수기) | IoT·Robot·AI ↔ Spring Boot | 기계 판독: [`bomi-mqtt.asyncapi.yaml`](../../backend/src/main/resources/static/openapi/bomi-mqtt.asyncapi.yaml), 의미 기준: [`scenario-contract-v1.md`](../mqtt/scenario-contract-v1.md) |
+| MQTT 메시지 계약 | AsyncAPI (수기) | IoT·Robot·AI ↔ Spring Boot | 기계 판독: [`bomi-mqtt.asyncapi.yaml`](../../backend/src/main/resources/static/openapi/bomi-mqtt.asyncapi.yaml), 의미 기준: [`시나리오 계약 v1.md`](<../mqtt/시나리오 계약 v1.md>) |
 
 관련 문서:
 
-- 5개 시나리오 메시지 최종 계약: [`../mqtt/scenario-contract-v1.md`](../mqtt/scenario-contract-v1.md)
-- MQTT 공통 토픽·봉투 규칙: [`../mqtt/topic-convention.md`](../mqtt/topic-convention.md)
-- 시나리오: [`../scenario/homecoming-welcome.md`](../scenario/homecoming-welcome.md)
+- 5개 시나리오 메시지 최종 계약: [`../mqtt/시나리오 계약 v1.md`](<../mqtt/시나리오 계약 v1.md>)
+- MQTT 공통 토픽·봉투 규칙: [`../mqtt/토픽 규약.md`](<../mqtt/토픽 규약.md>)
+- 시나리오: [`../scenario/귀가 환영 시나리오.md`](<../scenario/귀가 환영 시나리오.md>)
 
 ## 5. 네이밍 규칙
 
@@ -310,12 +310,12 @@ AsyncAPI 명세에는 토픽 주소, 발행자·구독자, 메시지별 필드�
 
 계약을 변경할 때는 다음 순서를 따릅니다.
 
-1. 5개 시나리오 메시지를 바꾼다면 [`../mqtt/scenario-contract-v1.md`](../mqtt/scenario-contract-v1.md)를 먼저 수정합니다.
+1. 5개 시나리오 메시지를 바꾼다면 [`../mqtt/시나리오 계약 v1.md`](<../mqtt/시나리오 계약 v1.md>)를 먼저 수정합니다.
 2. 시나리오 상태와 호출·전달 방향에 미치는 영향을 확인합니다.
 3. `backend/src/main/resources/static/openapi/`의 기계 판독 스펙을 수정합니다.
 4. 요청·응답 예시와 오류 응답을 함께 수정합니다.
 5. MQTT와 REST에서 사용하는 `eventId`, `scenarioId`, `requestId`, `commandId`, `robotId`의 생성 주체와 의미가 일치하는지 확인합니다.
-6. MQTT 계약을 바꿨다면 `scenario-contract-v1.md`, `bomi-mqtt.asyncapi.yaml`, `docs/mqtt/topic-convention.md`를 **함께** 고칩니다. `AsyncApiDocumentationTest.everyDocumentedTopicExistsInTheMarkdownContract` 는 AsyncAPI 토픽이 최종 시나리오 계약에 빠지지 않았는지 검사합니다.
+6. MQTT 계약을 바꿨다면 `시나리오 계약 v1.md`, `bomi-mqtt.asyncapi.yaml`, `docs/mqtt/토픽 규약.md`를 **함께** 고칩니다. `AsyncApiDocumentationTest.everyDocumentedTopicExistsInTheMarkdownContract` 는 AsyncAPI 토픽이 최종 시나리오 계약에 빠지지 않았는지 검사합니다.
 7. `./gradlew test --tests "com.ssafy.bomi.docs.*"` 로 문서 검사를 통과하는지 확인합니다.
 8. Robot·AI·Backend 담당자에게 계약 변경 리뷰를 요청합니다.
 
@@ -329,7 +329,7 @@ MQTT 계약은 Swagger UI에서 볼 수 없습니다. OpenAPI 3.x는 HTTP 전용
 
 뷰어는 외부 라이브러리를 쓰지 않는 순수 HTML·CSS·JS입니다. 운영 Nginx의 CSP가 `script-src 'self'`이므로 CDN 렌더러는 차단되고, 번들을 저장소에 넣을 Node 빌드 단계도 없기 때문입니다.
 
-AsyncAPI 뷰어가 렌더링하는 기계 판독 스펙의 원본은 YAML 하나이며, 브라우저가 읽을 JSON은 `AsyncApiSpecController`가 같은 파일을 변환해 내려줍니다. JSON 사본을 따로 커밋하면 두 파일을 맞춰야 하므로 그렇게 하지 않았습니다. 이 단일 원본 원칙은 YAML·JSON 표현에 관한 것이며, 5개 시나리오 메시지 의미의 최종 기준은 [`../mqtt/scenario-contract-v1.md`](../mqtt/scenario-contract-v1.md)입니다.
+AsyncAPI 뷰어가 렌더링하는 기계 판독 스펙의 원본은 YAML 하나이며, 브라우저가 읽을 JSON은 `AsyncApiSpecController`가 같은 파일을 변환해 내려줍니다. JSON 사본을 따로 커밋하면 두 파일을 맞춰야 하므로 그렇게 하지 않았습니다. 이 단일 원본 원칙은 YAML·JSON 표현에 관한 것이며, 5개 시나리오 메시지 의미의 최종 기준은 [`../mqtt/시나리오 계약 v1.md`](<../mqtt/시나리오 계약 v1.md>)입니다.
 
 ## 11. 배포 노출 정책
 

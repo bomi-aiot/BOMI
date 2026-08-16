@@ -121,7 +121,7 @@ flowchart TD
 파싱·중복 제거·만료 확인과 `CONVERSATION_STARTED` 발행까지는 paho 콜백 스레드에서
 끝내고, 실제 대화 진행만 메인 루프로 넘긴다 — **마이크는 한 스레드만 쥘 수 있기
 때문이다.** 계약 전문은 저장소 루트 `CLAUDE.md` §2와
-[`docs/mqtt/scenario-contract-v1.md`](../../docs/mqtt/scenario-contract-v1.md)에 있다.
+[`docs/mqtt/시나리오 계약 v1.md`](<../../docs/mqtt/시나리오 계약 v1.md>)에 있다.
 
 MQTT 관련 코드(`door/mqtt.py`, `robot_events.py`, `ai_commands.py`,
 `navigation_watch.py`)는 **paho 1.x 콜백 규약**으로 쓰였다(`pyproject.toml`의
@@ -183,7 +183,7 @@ models/        웨이크워드 모델(bomiya.onnx)
 [`임시보류_claude.md`](../../임시보류_claude.md)이다. 루트
 [`CLAUDE.md`](../../CLAUDE.md)는 현재 시연 통합 스프린트 계약으로 바뀌어 있고,
 MQTT 계약과 실기 함정은 그쪽이 정본이다. 한글 설계 근거는
-[`docs/design/care-bot-design.md`](../../docs/design/care-bot-design.md)에 있다.
+[`docs/design/돌봄봇 설계.md`](<../../docs/design/돌봄봇 설계.md>)에 있다.
 
 ### config.py 와 policy.py 를 합치지 않는다
 
@@ -586,7 +586,7 @@ outbox)는 이 목록에 일부러 없다 — 그것은 절대 저하시키지 �
 **이 값들을 실측하기 전에 능동 발화(206)를 실기에서 테스트하지 마십시오.** 에코를 안
 잡은 상태에서는 모든 버그 리포트가 실제로는 에코이고, 게이트 버그로 오진하게 됩니다.
 
-남은 항목 전체: [`docs/hardware/audio-echo-bargein-verification.md`](../../docs/hardware/audio-echo-bargein-verification.md)
+남은 항목 전체: [`docs/hardware/오디오 에코 바지인 검증.md`](<../../docs/hardware/오디오 에코 바지인 검증.md>)
 
 ### 지금 라이브에서 도는 것 — 반이중 대기
 

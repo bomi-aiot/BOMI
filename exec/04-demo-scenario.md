@@ -347,9 +347,9 @@ curl -X POST \
 | 빌드·배포 | `exec/01-build-deploy.md` |
 | 외부 서비스 | `exec/02-external-services.md` |
 | DB 덤프 | `exec/03-database-dump.md` |
-| **5대 시나리오 MQTT 계약 v1 (최종 기준)** | `docs/mqtt/scenario-contract-v1.md` |
-| 귀가 환영 시나리오 상세 | `docs/scenario/homecoming-welcome.md` |
-| Robot·IoT 통합 가이드 | `docs/scenario/integration-guide.md` |
-| 운영자 내비게이션 취소 | `docs/scenario/operator-navigation-cancellation.md` |
-| MQTT 토픽 규약 | `docs/mqtt/topic-convention.md` |
-| 로컬 E2E 리포트 | `docs/scenario/local-e2e-report.md` |
+| **5대 시나리오 MQTT 계약 v1 (최종 기준)** | `docs/mqtt/시나리오 계약 v1.md` |
+| 귀가 환영 시나리오 상세 | `docs/scenario/귀가 환영 시나리오.md` |
+| Robot·IoT 통합 가이드 | `docs/scenario/실기 통합 가이드.md` |
+| 운영자 내비게이션 취소 | `docs/scenario/운영자 시나리오 취소.md` |
+| MQTT 토픽 규약 | `docs/mqtt/토픽 규약.md` |
+| 로컬 E2E 리포트 | `docs/scenario/로컬 E2E 검증 보고.md` |

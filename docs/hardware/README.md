@@ -9,7 +9,7 @@ BOMI의 현재 프로토타입은 Jetson Orin Nano, Raspberry Pi Pico, MDD10A �
 모터 구동 전원과 Jetson 전원은 서로 다른 경로를 사용합니다. Jetson은 USB 직렬 통신으로 Pico에 명령을 전달하고, Pico는 MDD10A를 제어하며 각 바퀴의 엔코더 값을 수집합니다.
 
 <p align="center">
-  <img src="../assets/motor-pico-jetson-wiring.png" width="900" alt="모터 전원, MDD10A, Raspberry Pi Pico, 엔코더와 Jetson Orin Nano의 전체 연결 구조도">
+  <img src="../assets/모터 피코 젯슨 배선.png" width="900" alt="모터 전원, MDD10A, Raspberry Pi Pico, 엔코더와 Jetson Orin Nano의 전체 연결 구조도">
 </p>
 
 위 사진과 아래 그림은 같은 구성을 다르게 보여줍니다. 사진은 실제 배선 모습이고, 아래 그림은 전원 계통(노란색)과 데이터 계통(파란색)이 어디서 갈라지는지를 정리한 것입니다.
@@ -82,7 +82,7 @@ flowchart TD
 Jetson 전원은 4S LiPo 배터리 출력을 DFR0946 DC-DC 컨버터로 19V에 맞춘 뒤 5.5×2.5mm DC 플러그로 공급합니다.
 
 <p align="center">
-  <img src="../assets/jetson-power-wiring.png" width="900" alt="4S LiPo 배터리, 퓨즈, DFR0946 DC-DC 컨버터와 Jetson Orin Nano 전원 연결 구조도">
+  <img src="../assets/젯슨 전원 배선.png" width="900" alt="4S LiPo 배터리, 퓨즈, DFR0946 DC-DC 컨버터와 Jetson Orin Nano 전원 연결 구조도">
 </p>
 
 ### 전원 작업 주의사항
@@ -112,7 +112,7 @@ LiDAR 장착 위치는 지도 작성과 자율주행이 같은 값을 써야 합
 IMU는 I2C로 Pico에 연결합니다. 아래 핀맵은 Pico H의 USB 포트가 위쪽을 향한 상태를 기준으로 합니다.
 
 <p align="center">
-  <img src="../assets/imu-pico-wiring.png" width="650" alt="Pico H의 전원, I2C와 인터럽트 핀을 표시한 IMU 연결 구조도">
+  <img src="../assets/IMU 피코 배선.png" width="650" alt="Pico H의 전원, I2C와 인터럽트 핀을 표시한 IMU 연결 구조도">
 </p>
 
 | IMU 신호 | Pico H 연결 |
@@ -128,7 +128,7 @@ IMU는 I2C로 Pico에 연결합니다. 아래 핀맵은 Pico H의 USB 포트가 
 사용 중인 IMU 모듈의 실물 모습입니다.
 
 <p align="center">
-  <img src="../assets/imu-module.png" width="480" alt="BOMI 프로토타입에서 사용하는 IMU 센서 모듈">
+  <img src="../assets/IMU 모듈.png" width="480" alt="BOMI 프로토타입에서 사용하는 IMU 센서 모듈">
 </p>
 
 ## 센서 및 돌봄 기능 기준
@@ -145,4 +145,4 @@ IMU는 I2C로 Pico에 연결합니다. 아래 핀맵은 Pico H의 USB 포트가 
 
 - [Robot 실행 및 하드웨어 제어](../../robot/README.md)
 - [IoT 장치 구성](../../iot/README.md)
-- [오디오 에코·Barge-in 검증](audio-echo-bargein-verification.md)
+- [오디오 에코·Barge-in 검증](<오디오 에코 바지인 검증.md>)

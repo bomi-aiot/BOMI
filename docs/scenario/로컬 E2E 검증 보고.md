@@ -2,8 +2,8 @@
 
 > **이 문서는 2026-08-03 시점의 검증 기록이며 현행 계약의 정답지가 아니다.**
 > 그때 무엇을 확인했는지 남기기 위해 보존한다. 현행 실물 연동은
-> [`integration-guide.md`](./integration-guide.md)와
-> [`scenario-contract-v1.md`](../mqtt/scenario-contract-v1.md)를 따른다.
+> [`실기 통합 가이드.md`](<./실기 통합 가이드.md>)와
+> [`시나리오 계약 v1.md`](<../mqtt/시나리오 계약 v1.md>)를 따른다.
 > 실물 Robot Bridge 와 `robot-sim` 을 같은 `robotId` 로 동시에 실행하지 않는다.
 
 ### 이 기록 이후 바뀐 것 (읽기 전에)
@@ -43,7 +43,7 @@ sequenceDiagram
 
 ⑤(현관)도 같은 흐름이며 트리거가 `DOOR_OPENED`, 목적지가 `ENTRANCE`, 발화가 귀가 인사라는 점만 다르다.
 (2026-08-03 시점 기준. 지금은 대화 종료 후 경로가 갈렸다 —
-[`homecoming-welcome.md`](./homecoming-welcome.md) 의 복귀 분기 경고를 참고한다.)
+[`귀가 환영 시나리오.md`](<./귀가 환영 시나리오.md>) 의 복귀 분기 경고를 참고한다.)
 
 ## 2. 실제 로그 (발췌)
 

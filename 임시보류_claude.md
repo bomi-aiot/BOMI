@@ -8,12 +8,12 @@ touches. §21 (comment standard) applies to every line of code you write here.
 **Authority:** for the *database*, `docs/database/mvp-erd.md` wins — it is the implementation
 contract and the backend enforces it. For the *conversation runtime* (when to speak, how to speak,
 safety timing, graph structure), this file wins. Long-form Korean rationale for the runtime lives in
-`docs/design/care-bot-design.md`.
+`docs/design/돌봄봇 설계.md`.
 
 For the **natural-conversation work stream (2026-08)**, `docs/natural-conversation/` is the plan of
-record: `current-state-audit.md` (what actually exists, file:line evidence — including where this
-file's own descriptions had gone stale), `implementation-plan.md` (P0–P3 priorities, Phase 1–7), and
-`target-architecture.md` (context slots, session FSM, responsibility mapping). When this file and
+record: `현재 구조 감사.md` (what actually exists, file:line evidence — including where this
+file's own descriptions had gone stale), `구현 계획.md` (P0–P3 priorities, Phase 1–7), and
+`목표 구조.md` (context slots, session FSM, responsibility mapping). When this file and
 the audit disagree about *current* runtime behaviour, the audit is newer — fix whichever is wrong in
 the same commit that resolves the difference.
 
@@ -210,7 +210,7 @@ offline robot has shallower memory; do not accept a mute one (§18).
 
 ### Transport
 
-MQTT, per `docs/mqtt/topic-convention.md`. The broker runs **on the server** (`bomi-mosquitto`,
+MQTT, per `docs/mqtt/토픽 규약.md`. The broker runs **on the server** (`bomi-mosquitto`,
 TLS on 8883) and the chain is:
 
 ```
@@ -830,7 +830,7 @@ already finished — so a turn after normal playback is no longer misclassified 
 `proactive_gate` merges `interrupted_remainder` back into the proposal competition at its original
 priority, so a cut-off remainder is actually respoken. The "sync-bug-prone spot" warning stands:
 the handle, not the checkpointed state, is the authority on progress. Evidence:
-`docs/natural-conversation/current-state-audit.md` §0. Re-enabling true barge-in still requires
+`docs/natural-conversation/현재 구조 감사.md` §0. Re-enabling true barge-in still requires
 §13.1 (echo on the capture side) first.
 
 ---
@@ -1088,7 +1088,7 @@ S15P11E102/
 │   │                                   mvp-erd.md does not exist on this line, §24)
 │   ├── architecture/, scenario/, mqtt/, api/, hardware/
 │   ├── natural-conversation/       <- 2026-08 work stream: audit -> plan -> target architecture
-│   └── design/care-bot-design.md   <- long-form runtime rationale (Korean)
+│   └── design/돌봄봇 설계.md   <- long-form runtime rationale (Korean)
 │
 ├── backend/                        <- Spring Boot, Flyway, the ERD, guardian API. On this
 │                                       (ai-develop) line this is a shell (HealthController
@@ -1301,7 +1301,7 @@ broken. Resist it.
 > **Status (2026-08-06):** steps 0–7 are all built and wired (232) — logic green (`712 passed`
 > measured on `ai/natural-conversation-wip`), hardware largely unverified (233 본검사 미실시).
 > This list is now history, not a to-do. Ongoing conversation work follows the phases in
-> `docs/natural-conversation/implementation-plan.md`; Phases 1·2·3·5(1단계) are implemented and
+> `docs/natural-conversation/구현 계획.md`; Phases 1·2·3·5(1단계) are implemented and
 > regression-locked, with field verification still pending.
 
 ---
@@ -1314,12 +1314,12 @@ truthful is part of finishing a ticket — not paperwork afterwards.
 
 | Document | Answers |
 | --- | --- |
-| [`PROGRESS.md`](docs/carebot/PROGRESS.md) | What failed, what is unverified, what deviated from the plan, what is going well |
-| [`VERIFICATION.md`](docs/carebot/VERIFICATION.md) | What to run, and what counts as success or failure |
-| [`READING-ORDER.md`](docs/carebot/READING-ORDER.md) | Which files to read, in what order, and what to look for |
-| [`CONCEPTS.md`](docs/carebot/CONCEPTS.md) | Vocabulary, and why each design decision was made |
+| [`진행 상황.md`](<docs/carebot/진행 상황.md>) | What failed, what is unverified, what deviated from the plan, what is going well |
+| [`검증 절차.md`](<docs/carebot/검증 절차.md>) | What to run, and what counts as success or failure |
+| [`코드 읽는 순서.md`](<docs/carebot/코드 읽는 순서.md>) | Which files to read, in what order, and what to look for |
+| [`개념과 설계 판단.md`](<docs/carebot/개념과 설계 판단.md>) | Vocabulary, and why each design decision was made |
 
-**When to update `PROGRESS.md`:**
+**When to update `진행 상황.md`:**
 
 - **Every ticket push** — move the row, fill in the completion-condition results.
 - **Whenever a decision changes** — record it in §3 (deviations) with the reason, even if it looks
@@ -1328,8 +1328,8 @@ truthful is part of finishing a ticket — not paperwork afterwards.
 - **Whenever something that was failing starts passing** — removing a stale warning matters as much
   as adding a real one.
 
-**When to update the other three:** `VERIFICATION.md` when a new way to check something exists, or
-when success criteria change. `READING-ORDER.md` and `CONCEPTS.md` when a new module lands or a
+**When to update the other three:** `검증 절차.md` when a new way to check something exists, or
+when success criteria change. `코드 읽는 순서.md` and `개념과 설계 판단.md` when a new module lands or a
 design judgement is made that a reader would otherwise have to reverse-engineer.
 
 **The rule that makes these documents worth reading:** never describe something as done when it is
@@ -1382,7 +1382,7 @@ and writing it that way is what lets someone else trust the parts that *are* fin
 | Daily activity metrics: `care_record` type or dedicated table | Affects the T2 summary query (§19). |
 | Occupancy: boolean vs person count | Depends on sensor accuracy; drives visitor handling (§11). |
 | Direction timing window for the two-sensor derivation | How long after a door-open an inside motion still counts as an entry. Empirical (§11). |
-| MQTT payload for door direction and heartbeat interval | The deployed `DOOR_OPENED` event carries no direction yet. Align with `docs/mqtt/topic-convention.md` (§11). |
+| MQTT payload for door direction and heartbeat interval | The deployed `DOOR_OPENED` event carries no direction yet. Align with `docs/mqtt/토픽 규약.md` (§11). |
 | Guardian channel implementation | Web app / push / SMS. Interface fixed, implementation open. |
 | Robot navigation to the door | Deferrable; the greeting must not depend on it (§11). Backend already commands `target: ENTRANCE`. |
 | Anticipatory move on predicted return | Optional. Detection-based greeting first (§11). |
@@ -1392,10 +1392,10 @@ and writing it that way is what lets someone else trust the parts that *are* fin
 | Battery runtime under continuous operation | Measure; it constrains tick frequency (§18). |
 | Cognitive-stimulation content (quizzes, games) | Not designed yet. |
 | Reference document corpus for welfare-program RAG | Source and chunking not decided (§8). |
-| Weather default region — the profile contract has no address | "오늘 날씨 어때" cannot resolve a city; the robot re-asks (and field test 233 saw the LLM invent temperatures instead). Needs a BE contract change to `SeniorProfile` before the robot can default to the senior's home region. See `docs/natural-conversation/implementation-plan.md` P1-A5. |
+| Weather default region — the profile contract has no address | "오늘 날씨 어때" cannot resolve a city; the robot re-asks (and field test 233 saw the LLM invent temperatures instead). Needs a BE contract change to `SeniorProfile` before the robot can default to the senior's home region. See `docs/natural-conversation/구현 계획.md` P1-A5. |
 | Travel-time lookup (route API) | "거기까지 얼마나 걸려?" has no tool at all — adopting a route/duration API is a new-service decision (§28: propose first). P1-A8. |
 | Server-side `fact_candidate` cancel endpoint | Step 2 of the forget flow (§8): the robot can only drop *pending* extraction rows; an already-submitted candidate needs a BE cancel/deactivate endpoint. **A BE ticket has not been filed yet** — file it before promising deletion to the senior. |
-| Robot-side wakeword MQTT publish | BE `S15P11E102-335` (`WakeWordDetectedHandler`, merged to be-develop) expects the robot to publish wakeword detections; the robot currently detects locally and publishes nothing. Decide the topic/payload with `docs/mqtt/topic-convention.md` and wire it, or the 보미야-호출 scenario never fires. |
+| Robot-side wakeword MQTT publish | BE `S15P11E102-335` (`WakeWordDetectedHandler`, merged to be-develop) expects the robot to publish wakeword detections; the robot currently detects locally and publishes nothing. Decide the topic/payload with `docs/mqtt/토픽 규약.md` and wire it, or the 보미야-호출 scenario never fires. |
 
 ---
 
@@ -1484,7 +1484,7 @@ implementation was thrown away.
 - **MR bodies follow the team's six-section template** (`mr-body` skill). The
   「테스트 내용」 section carries real numbers (`504 passed in 14.38s`), never "로컬 테스트 완료".
 - **Verify the MR link resolves before sharing it**: `git ls-remote --heads origin <branch>`.
-- **Update `docs/carebot/PROGRESS.md` in the same push** (§22a). This is part of finishing,
+- **Update `docs/carebot/진행 상황.md` in the same push** (§22a). This is part of finishing,
   not paperwork afterwards.
 - **Never describe something as done when it is only implemented.** "Logic verified, hardware
   unverified" is the honest shape of most of this work. Mark anything you did not actually

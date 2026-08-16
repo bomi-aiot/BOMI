@@ -527,10 +527,10 @@
 
 - 레퍼런스: C:/Users/SSAFY/Downloads/자율PJT_해피너스_최종발표피피티자료.pdf
 - 서비스 개요: C:/BOMI/README.md
-- 시스템 역할 분리: C:/BOMI/docs/architecture/system-overview.md
-- 5대 시나리오: C:/BOMI/docs/mqtt/scenario-contract-v1.md
-- 귀가 시나리오: C:/BOMI/docs/scenario/homecoming-welcome.md
-- 로컬 E2E 검증: C:/BOMI/docs/scenario/local-e2e-report.md
+- 시스템 역할 분리: C:/BOMI/docs/architecture/시스템 개요.md
+- 5대 시나리오: C:/BOMI/docs/mqtt/시나리오 계약 v1.md
+- 귀가 시나리오: C:/BOMI/docs/scenario/귀가 환영 시나리오.md
+- 로컬 E2E 검증: C:/BOMI/docs/scenario/로컬 E2E 검증 보고.md
 - 데이터·기억 설계: C:/BOMI/docs/database/mvp-erd.md
 - 보호자 화면 기획: C:/BOMI/output/pdf/BOMI_보호자_웹대시보드_화면기획서.pdf
 - 핵심 구현 근거: ConversationContextService, FactRiskPolicy, ScenarioStartGuard, DashboardService, DailySummaryService, GuardianAlertService

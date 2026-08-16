@@ -229,7 +229,7 @@ git diff
 
 ```bash
 git add robot/ai_chat/src/bomi_ai_chat/graph/gate.py
-git add docs/carebot/PROGRESS.md
+git add docs/carebot/진행 상황.md
 ```
 
 전체 파일을 추가해야 할 때만 다음 명령을 사용합니다.
@@ -379,7 +379,7 @@ MR 본문은 **`.claude/skills/mr-body/` 스킬이 정하는 6개 절**을 존�
 - 실행 또는 테스트 방법이 명확한가
 - 기존 기능에 부작용이 없는가
 - 민감정보가 포함되지 않았는가
-- 코드와 문서가 함께 갱신되었는가(AI 라인은 `docs/carebot/PROGRESS.md` 포함,
+- 코드와 문서가 함께 갱신되었는가(AI 라인은 `docs/carebot/진행 상황.md` 포함,
   `임시보류_claude.md` §22a)
 - 아직 구현되지 않은 부분이 명시되었는가 — "구현됨"과 "검증됨"을 구분했는가
 

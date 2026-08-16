@@ -23,7 +23,7 @@ BOMI는 1인 가구와 돌봄이 필요한 사용자의 일상을 지원하는 *
 
 | 외형 없는 내부 구조 | 외형 적용 모습 |
 | :---: | :---: |
-| <img src="docs/assets/bomi-robot-internal.png" width="600" alt="LiDAR, 카메라, Jetson, 모터 구동부가 보이는 BOMI 내부 구조"> | <img src="docs/assets/bomi-robot-exterior.png" width="420" alt="분홍색 캐릭터 외형을 적용한 BOMI 돌봄 로봇"> |
+| <img src="docs/assets/보미 로봇 내부.png" width="600" alt="LiDAR, 카메라, Jetson, 모터 구동부가 보이는 BOMI 내부 구조"> | <img src="docs/assets/보미 로봇 외형.png" width="420" alt="분홍색 캐릭터 외형을 적용한 BOMI 돌봄 로봇"> |
 
 외형 내부는 전원·구동, 연산·I/O, 카메라·마이크, LiDAR의 4단 구조로 구성되며, 외형을 적용한 상태에서도 상단 LiDAR와 전면 카메라가 주변 환경과 사용자를 인식합니다.
 
@@ -54,6 +54,13 @@ BOMI는 1인 가구와 돌봄이 필요한 사용자의 일상을 지원하는 *
 위험 발화)을 보호자에게 알리는 **이상 징후 알림**, 그리고 귀가·대화·돌봄 기록을 보여 주는
 **보호자 대시보드**(1초 폴링 기반 준실시간)입니다.
 
+현관 인사 시나리오의 전체 구조입니다. 센서 감지부터 로봇 이동과 음성 응답까지 하나의
+시나리오로 관리됩니다.
+
+<p align="center">
+  <img src="docs/assets/귀가 시나리오.png" width="760" alt="현관 센서 감지부터 로봇 이동과 AI 음성 응답까지 이어지는 BOMI 귀가 시나리오 구조도">
+</p>
+
 대표로 현관 인사의 흐름입니다. 이동과 대화는 동시에 진행되지 않습니다 — 로봇이 현관에
 **도착한 뒤에야** 백엔드가 대화 시작을 명령합니다. (출발 순간의 환호 한마디만 예외입니다.)
 
@@ -71,13 +78,17 @@ flowchart LR
     RET --> DONE["기록 후 COMPLETED"]:::done
 ```
 
-메시지 단위의 정확한 시퀀스는 [아키텍처 장표 모음](docs/architecture/architecture-diagrams.md)의 C2에 있습니다.
+메시지 단위의 정확한 시퀀스는 [아키텍처 장표 모음](<docs/architecture/아키텍처 다이어그램.md>)의 C2에 있습니다.
 
 ## 시스템 구성
 
 기계는 셋입니다. 라즈베리파이가 센서 이벤트를 올리고, EC2의 백엔드가 시나리오를 만들어
 명령을 내리고, 젯슨 위의 로봇 프로세스들이 그 명령을 수행해 결과를 회신합니다. 모든
 기계 간 통신은 MQTT 브로커 하나를 지나고, 보호자 대시보드만 REST 폴링을 씁니다.
+
+<p align="center">
+  <img src="docs/assets/보미 시스템 구조.png" width="760" alt="스마트홈 센서, Raspberry Pi, EC2, Jetson 로봇으로 구성된 BOMI 전체 시스템 구조도">
+</p>
 
 ```mermaid
 flowchart LR
@@ -123,7 +134,7 @@ flowchart LR
 > 실시간 스트리밍(WebSocket) 자리는 백엔드 문서(`/asyncapi/websocket/`)에 미리 잡아 두었으나
 > 아직 구현체가 없습니다. 현재 대시보드의 "실시간"은 폴링입니다.
 
-자세한 구성은 [시스템 아키텍처 문서](docs/architecture/system-overview.md)를 참고하세요.
+자세한 구성은 [시스템 아키텍처 문서](<docs/architecture/시스템 개요.md>)를 참고하세요.
 
 ### 하드웨어
 
@@ -145,7 +156,7 @@ flowchart LR
 
 ## 구현 및 검증 현황
 
-> 2026-08-16 기준. 세부 검증 상태의 단일 출처는 [docs/carebot/PROGRESS.md](docs/carebot/PROGRESS.md)입니다.
+> 2026-08-16 기준. 세부 검증 상태의 단일 출처는 [docs/carebot/진행 상황.md](<docs/carebot/진행 상황.md>)입니다.
 
 | 항목 | 상태 |
 | --- | --- |
@@ -217,7 +228,7 @@ npm run dev
 
 **성공 신호**: `http://localhost:5173` 에서 보호자 대시보드가 열립니다.
 
-> 막히면 [시나리오 통합 가이드](docs/scenario/integration-guide.md)와 각 라인 README를
+> 막히면 [시나리오 통합 가이드](<docs/scenario/실기 통합 가이드.md>)와 각 라인 README를
 > 먼저 확인하세요. 시연·포팅 절차는 [exec/](exec/01-build-deploy.md)에 단계별로 있습니다.
 
 ## 저장소 구조
@@ -240,11 +251,11 @@ Backend·Frontend·MQTT 브로커만 해당됩니다. 젯슨과 라즈베리파�
 
 ## 문서
 
-- [시스템 아키텍처](docs/architecture/system-overview.md) · [아키텍처 장표 모음](docs/architecture/architecture-diagrams.md)
+- [시스템 아키텍처](<docs/architecture/시스템 개요.md>) · [아키텍처 장표 모음](<docs/architecture/아키텍처 다이어그램.md>)
 - [API·메시지 계약](docs/api/README.md)
 - [데이터베이스](docs/database/README.md)
-- [MQTT 시나리오 계약 v1](docs/mqtt/scenario-contract-v1.md) · [토픽·봉투 공통 규칙](docs/mqtt/topic-convention.md)
-- [시나리오 통합 가이드](docs/scenario/integration-guide.md) · [로컬 E2E 검증 보고서](docs/scenario/local-e2e-report.md)
+- [MQTT 시나리오 계약 v1](<docs/mqtt/시나리오 계약 v1.md>) · [토픽·봉투 공통 규칙](<docs/mqtt/토픽 규약.md>)
+- [시나리오 통합 가이드](<docs/scenario/실기 통합 가이드.md>) · [로컬 E2E 검증 보고서](<docs/scenario/로컬 E2E 검증 보고.md>)
 - [하드웨어 구성](docs/hardware/README.md)
 - [빌드·배포·시연 절차 (exec/)](exec/01-build-deploy.md)
 - 라인별 안내: [Frontend](frontend/README.md) · [Backend](backend/README.md) · [Robot](robot/README.md) · [IoT](iot/README.md)
