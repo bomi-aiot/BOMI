@@ -2,9 +2,15 @@
 
 > 일상을 기억하고, 먼저 살피고, 필요한 순간 곁으로 이동하는 AIoT 돌봄 로봇
 
-<p align="center">
-  <img src="docs/assets/bomi-robot-exterior.png" width="500" alt="분홍색 캐릭터 외형을 적용한 BOMI 돌봄 로봇 실물">
-</p>
+BOMI는 1인 가구와 돌봄이 필요한 사용자의 일상을 지원하는 **AIoT 기반 개인 맞춤형 돌봄 로봇**입니다. 주거 공간의 센서와 이동형 로봇, 대화형 AI, 보호자 대시보드를 연결해 사용자의 상태를 살피고 일상 기록과 이상 징후를 보호자에게 전달합니다.
+
+## 로봇 외형
+
+| 외형 없는 내부 구조 | 외형 적용 모습 |
+| :---: | :---: |
+| <img src="docs/assets/bomi-robot-internal.png" width="600" alt="LiDAR, 카메라, Jetson, 모터 구동부가 보이는 BOMI 내부 구조"> | <img src="docs/assets/bomi-robot-exterior.png" width="420" alt="분홍색 캐릭터 외형을 적용한 BOMI 돌봄 로봇"> |
+
+외형 내부는 전원·구동, 연산·I/O, 카메라·마이크, LiDAR의 4단 구조로 구성되며, 외형을 적용한 상태에서도 상단 LiDAR와 전면 카메라가 주변 환경과 사용자를 인식합니다.
 
 ## 왜 만들었나
 
@@ -106,13 +112,8 @@ flowchart LR
 
 ### 하드웨어
 
-| 외형 없는 내부 구조 |
-| :---: |
-| <img src="docs/assets/bomi-robot-internal.png" width="600" alt="LiDAR, 카메라, Jetson, 모터 구동부가 보이는 BOMI 내부 구조"> |
-
-내부는 전원·구동, 연산·I/O, 카메라·마이크, LiDAR의 4단 구조입니다. 외형을 적용한 상태에서도
-상단 LiDAR와 전면 카메라가 주변 환경과 사용자를 인식합니다. 배선과 부품 상세는
-[하드웨어 문서](docs/hardware/README.md)에 있습니다.
+내부 구조 사진과 4단 구성은 문서 상단의 [로봇 외형](#로봇-외형)에 있습니다.
+배선과 부품 상세는 [하드웨어 문서](docs/hardware/README.md)를 참고하세요.
 
 ## 기술 스택
 
