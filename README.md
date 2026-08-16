@@ -8,6 +8,7 @@ BOMI는 1인 가구와 돌봄이 필요한 사용자의 일상을 지원하는 *
 
 - [BOMI](#bomi)
   - [목차](#목차)
+  - [웹 페이지 화면](#웹-페이지-화면)
   - [로봇 외형](#로봇-외형)
   - [왜 만들었나](#왜-만들었나)
   - [시연 시나리오 네 가지](#시연-시나리오-네-가지)
@@ -17,6 +18,7 @@ BOMI는 1인 가구와 돌봄이 필요한 사용자의 일상을 지원하는 *
     - [복약 알림](#복약-알림)
     - [온습도 알림](#온습도-알림)
     - [사용자 따라다니기](#사용자-따라다니기)
+    - [응급 상황 발생 시 보호자 알림](#응급-상황-발생-시-보호자-알림)
   - [시스템 구성](#시스템-구성)
     - [하드웨어](#하드웨어)
   - [기술 스택](#기술-스택)
@@ -32,6 +34,15 @@ BOMI는 1인 가구와 돌봄이 필요한 사용자의 일상을 지원하는 *
   - [협업 규칙](#협업-규칙)
   - [보안](#보안)
   - [이용 조건](#이용-조건)
+
+## 웹 페이지 화면
+<img width="1300" height="906" alt="Image" src="https://github.com/user-attachments/assets/294e53c3-7643-4c71-96bc-85c538ecf5e0" />
+
+<img width="1300" height="546" alt="Image" src="https://github.com/user-attachments/assets/b1f36a12-81bf-4c78-96fb-e6b3c8cf0aed" />
+
+<img width="1300" height="629" alt="Image" src="https://github.com/user-attachments/assets/3f0939c0-007d-4fc4-9302-fa4ae95093f6" />
+
+<img width="1300" height="642" alt="Image" src="https://github.com/user-attachments/assets/367a71ac-aa71-4e4c-a724-db22f61faa1e" />
 
 ## 로봇 외형
 
@@ -106,19 +117,35 @@ flowchart LR
 ### 보미야 호출
 https://github.com/user-attachments/assets/70dae8e7-7df1-4af9-909a-50f85d4beb19
 
+"보미야" 하고 부르면 소리가 나는 곳으로 이동합니다.
+
 ### 현관 인사
 https://github.com/user-attachments/assets/b3370b72-ec84-431c-820e-700f7dc8fc24
 
+현관문이 열리면 이를 감지하고, 먼저 마중 나갑니다.
+  
 ### 복약 알림
 https://github.com/user-attachments/assets/449c477d-8919-4814-a0ce-ebe6b529e5bb
+
+복약 시간을 기억하고 챙겨 드립니다.
 
 ### 온습도 알림
 https://github.com/user-attachments/assets/5b62d9d2-2dd6-44cf-b145-3ad0d61a088a
 
+환경을 살피고 먼저 안부를 묻습니다.
+
 ### 사용자 따라다니기
 https://github.com/user-attachments/assets/15367ec8-7c80-41e5-96aa-a899e60192fe
 
+어르신의 걸음에 맞춰 함께 이동합니다.
 
+### 응급 상황 발생 시 보호자 알림
+https://github.com/user-attachments/assets/a54a09e6-0212-4bef-98c5-98af125e09f9
+
+<img width="1300" height="1446" alt="Image" src="https://github.com/user-attachments/assets/2acac68b-442d-43b1-b0fe-b74bbd74da5e" />
+
+응급 상황을 감지하면 보호자에게 알림을 전송합니다.
+  
 ## 시스템 구성
 
 기계는 셋입니다. 라즈베리파이가 센서 이벤트를 올리고, EC2의 백엔드가 시나리오를 만들어
