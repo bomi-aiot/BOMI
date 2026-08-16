@@ -104,6 +104,7 @@ REST 채널은 호출 주체마다 인증 방식이 다릅니다. 로봇 채널�
 
 | 알고 싶은 것 | 문서 |
 |---|---|
+| 전 구간을 그림으로 한 번에 보고 싶다 | [`architecture-diagrams.md`](architecture-diagrams.md) — Miro 장표 12장 (전경·배포·MQTT·시나리오 시퀀스) |
 | 시나리오가 어떤 메시지로 흘러가는가 | [`docs/mqtt/scenario-contract-v1.md`](../mqtt/scenario-contract-v1.md) |
 | 어떤 데이터를 누가 소유하는가 | [`docs/database/mvp-erd.md`](../database/mvp-erd.md) |
 | 대화 런타임이 어떻게 만들어졌는가 | [`docs/carebot/READING-ORDER.md`](../carebot/READING-ORDER.md) |

@@ -232,7 +232,7 @@ Backend·Frontend·MQTT 브로커만 해당됩니다. 젯슨과 라즈베리파�
 
 ## 문서
 
-- [시스템 아키텍처](docs/architecture/system-overview.md)
+- [시스템 아키텍처](docs/architecture/system-overview.md) · [아키텍처 장표 모음](docs/architecture/architecture-diagrams.md)
 - [API·메시지 계약](docs/api/README.md)
 - [데이터베이스](docs/database/README.md)
 - [MQTT 시나리오 계약 v1](docs/mqtt/scenario-contract-v1.md) · [토픽·봉투 공통 규칙](docs/mqtt/topic-convention.md)
