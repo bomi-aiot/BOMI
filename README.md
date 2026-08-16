@@ -57,9 +57,9 @@ BOMI는 1인 가구와 돌봄이 필요한 사용자의 일상을 지원하는 *
 현관 인사 시나리오의 전체 구조입니다. 센서 감지부터 로봇 이동과 음성 응답까지 하나의
 시나리오로 관리됩니다.
 
-<p align="center">
-  <img src="docs/assets/귀가 시나리오.png" width="760" alt="현관 센서 감지부터 로봇 이동과 AI 음성 응답까지 이어지는 BOMI 귀가 시나리오 구조도">
-</p>
+| 귀가 시나리오 한눈 요약 |
+| :---: |
+| <img src="docs/assets/귀가 시나리오.png" width="420" alt="현관 센서 감지부터 로봇 이동과 AI 음성 응답까지 이어지는 BOMI 귀가 시나리오 구조도"> |
 
 대표로 현관 인사의 흐름입니다. 이동과 대화는 동시에 진행되지 않습니다 — 로봇이 현관에
 **도착한 뒤에야** 백엔드가 대화 시작을 명령합니다. (출발 순간의 환호 한마디만 예외입니다.)
@@ -86,9 +86,9 @@ flowchart LR
 명령을 내리고, 젯슨 위의 로봇 프로세스들이 그 명령을 수행해 결과를 회신합니다. 모든
 기계 간 통신은 MQTT 브로커 하나를 지나고, 보호자 대시보드만 REST 폴링을 씁니다.
 
-<p align="center">
-  <img src="docs/assets/보미 시스템 구조.png" width="760" alt="스마트홈 센서, Raspberry Pi, EC2, Jetson 로봇으로 구성된 BOMI 전체 시스템 구조도">
-</p>
+| 전체 시스템 한눈 요약 |
+| :---: |
+| <img src="docs/assets/보미 시스템 구조.png" width="420" alt="스마트홈 센서, Raspberry Pi, EC2, Jetson 로봇으로 구성된 BOMI 전체 시스템 구조도"> |
 
 ```mermaid
 flowchart LR
