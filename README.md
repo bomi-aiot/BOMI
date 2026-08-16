@@ -34,6 +34,9 @@ BOMI는 1인 가구와 돌봄이 필요한 사용자의 일상을 지원하는 *
 합니다. BOMI는 반대로 움직입니다 — 현관·온습도 센서가 생활의 신호를 올리면 로봇이
 **필요한 자리로 이동해 말을 걸고**, 그 대화와 하루의 기록을 보호자 대시보드로 전달합니다.
 
+이 문제의식이 제품 방향으로 굳어진 과정은 [돌봄봇 설계](<docs/design/돌봄봇 설계.md>)에,
+침묵 사다리·T1~T4 같은 핵심 용어와 판단 근거는 [개념과 설계 판단](<docs/carebot/개념과 설계 판단.md>)에 있습니다.
+
 <!-- 시연 영상 업로드 후 아래 형식으로 추가합니다.
 [![BOMI 시연 영상](https://img.youtube.com/vi/VIDEO_ID/maxresdefault.jpg)](https://youtu.be/VIDEO_ID)
 -->
@@ -78,7 +81,10 @@ flowchart LR
     RET --> DONE["기록 후 COMPLETED"]:::done
 ```
 
-메시지 단위의 정확한 시퀀스는 [아키텍처 장표 모음](<docs/architecture/아키텍처 다이어그램.md>)의 C2에 있습니다.
+메시지 단위의 정확한 시퀀스는 [아키텍처 장표 모음](<docs/architecture/아키텍처 다이어그램.md>)의 C2에,
+현관 인사의 실패 규칙 10개는 [귀가 환영 시나리오](<docs/scenario/귀가 환영 시나리오.md>)에 있습니다.
+네 시나리오가 공유하는 메시지 규칙의 최종 기준은 [시나리오 계약 v1](<docs/mqtt/시나리오 계약 v1.md>)이고,
+시나리오가 실패해 로봇이 잠겼을 때(SAFE_STOP) 푸는 절차는 [운영자 시나리오 취소](<docs/scenario/운영자 시나리오 취소.md>)입니다.
 
 ## 시스템 구성
 
@@ -134,7 +140,9 @@ flowchart LR
 > 실시간 스트리밍(WebSocket) 자리는 백엔드 문서(`/asyncapi/websocket/`)에 미리 잡아 두었으나
 > 아직 구현체가 없습니다. 현재 대시보드의 "실시간"은 폴링입니다.
 
-자세한 구성은 [시스템 아키텍처 문서](<docs/architecture/시스템 개요.md>)를 참고하세요.
+자세한 구성은 [시스템 개요](<docs/architecture/시스템 개요.md>)에서 이어지고, 배포·MQTT·내부 구조까지
+장표 12장으로 보려면 [아키텍처 다이어그램](<docs/architecture/아키텍처 다이어그램.md>)을 여세요.
+MQTT가 처음이라면 [MQTT 계약 쉽게 이해하기](<docs/mqtt/MQTT 계약 쉽게 이해하기.md>)부터 읽는 편이 빠릅니다.
 
 ### 하드웨어
 
@@ -154,6 +162,10 @@ flowchart LR
 | Hardware | Jetson Orin Nano, YDLIDAR, Camera, IMU, RP2040 Pico |
 | Infra | Docker Compose, Jenkins, Nginx |
 
+테이블 19개의 의미는 [MVP 데이터 모델](docs/database/mvp-erd.md), 스키마를 바꾸는 절차와
+실제 겪은 사고는 [Flyway 가이드](<docs/database/Flyway 가이드.md>), 의미 검색이 실제로 무엇을
+하는지의 코드 판정은 [RAG 런타임 감사](<docs/architecture/RAG 런타임 감사.md>)에 있습니다.
+
 ## 구현 및 검증 현황
 
 > 2026-08-16 기준. 세부 검증 상태의 단일 출처는 [docs/carebot/진행 상황.md](<docs/carebot/진행 상황.md>)입니다.
@@ -169,6 +181,10 @@ flowchart LR
 
 > 로컬 E2E 검증에서는 실제 센서와 로봇을 계약이 동일한 대역으로 교체했습니다.
 > "구현됨"과 "실기에서 검증됨"은 이 저장소에서 구분해 기록합니다.
+
+직접 돌려보고 판정하려면 [검증 절차](<docs/carebot/검증 절차.md>)의 명령을 그대로 쓰면 되고,
+당시 로컬 E2E의 원 기록은 [로컬 E2E 검증 보고](<docs/scenario/로컬 E2E 검증 보고.md>)에,
+실기에서만 정해지는 오디오 임계치의 측정 항목은 [오디오 에코 바지인 검증](<docs/hardware/오디오 에코 바지인 검증.md>)에 있습니다.
 
 ## 빠른 시작
 
@@ -251,14 +267,18 @@ Backend·Frontend·MQTT 브로커만 해당됩니다. 젯슨과 라즈베리파�
 
 ## 문서
 
-- [시스템 아키텍처](<docs/architecture/시스템 개요.md>) · [아키텍처 장표 모음](<docs/architecture/아키텍처 다이어그램.md>)
-- [API·메시지 계약](docs/api/README.md)
-- [데이터베이스](docs/database/README.md)
-- [MQTT 시나리오 계약 v1](<docs/mqtt/시나리오 계약 v1.md>) · [토픽·봉투 공통 규칙](<docs/mqtt/토픽 규약.md>)
-- [시나리오 통합 가이드](<docs/scenario/실기 통합 가이드.md>) · [로컬 E2E 검증 보고서](<docs/scenario/로컬 E2E 검증 보고.md>)
-- [하드웨어 구성](docs/hardware/README.md)
-- [빌드·배포·시연 절차 (exec/)](exec/01-build-deploy.md)
-- 라인별 안내: [Frontend](frontend/README.md) · [Backend](backend/README.md) · [Robot](robot/README.md) · [IoT](iot/README.md)
+전체 문서의 안내와 읽기 경로는 **[docs 문서 안내](docs/README.md)** 한 곳에 모았습니다.
+자주 찾는 진입점만 추리면:
+
+| 궁금한 것 | 문서 |
+| --- | --- |
+| 전체 구조를 그림으로 | [시스템 개요](<docs/architecture/시스템 개요.md>) · [아키텍처 다이어그램](<docs/architecture/아키텍처 다이어그램.md>) |
+| 메시지·API 계약 | [시나리오 계약 v1](<docs/mqtt/시나리오 계약 v1.md>) · [토픽 규약](<docs/mqtt/토픽 규약.md>) · [API·메시지 계약](docs/api/README.md) |
+| 데이터 모델 | [MVP 데이터 모델](docs/database/mvp-erd.md) · [데이터베이스](docs/database/README.md) |
+| 대화 런타임 이해 | [코드 읽는 순서](<docs/carebot/코드 읽는 순서.md>) · [개념과 설계 판단](<docs/carebot/개념과 설계 판단.md>) · [현재 구조 감사](<docs/natural-conversation/현재 구조 감사.md>) |
+| 지금 어디까지 됐나 | [진행 상황](<docs/carebot/진행 상황.md>) · [구현 계획](<docs/natural-conversation/구현 계획.md>) |
+| 실기·시연 절차 | [실기 통합 가이드](<docs/scenario/실기 통합 가이드.md>) · [하드웨어 구성](docs/hardware/README.md) · [exec/](exec/01-build-deploy.md) |
+| 라인별 안내 | [Frontend](frontend/README.md) · [Backend](backend/README.md) · [Robot](robot/README.md) · [IoT](iot/README.md) |
 
 운영 배포에는 브라우저에서 여는 도구 세 가지가 함께 올라가며, 셋 다 Nginx Basic 인증 뒤에
 있습니다 — 운영자 콘솔 `/operator-console/`, DB 뷰어 `/db-viewer/`, 웨이포인트 편집기
