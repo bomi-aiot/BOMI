@@ -188,9 +188,9 @@ https://github.com/user-attachments/assets/a54a09e6-0212-4bef-98c5-98af125e09f9
 기계 간 통신은 MQTT 브로커 하나를 경유하고, 보호자 대시보드만 REST 폴링을 사용합니다.
 
 ```mermaid
-flowchart LR
+flowchart TB
     accTitle: 돌봄 로봇 전체 시스템 구조
-    accDescr: 스마트홈 센서, Raspberry Pi, EC2, Jetson Robot, 구동 하드웨어로 이어지는 전체 구조. 원본 인포그래픽과 동일한 구성입니다.
+    accDescr: 윗줄은 스마트홈 센서에서 EC2까지, 아랫줄은 Jetson에서 구동 하드웨어까지 왼쪽에서 오른쪽으로 흐르며, 두 줄은 MQTT Command / Event 화살표로 이어집니다.
     classDef sensor fill:#f8d3af,stroke:#9b4a07
     classDef pi fill:#fff6b6,stroke:#af7e02
     classDef ec2 fill:#c6dcff,stroke:#305bab
@@ -198,60 +198,62 @@ flowchart LR
     classDef pico fill:#c3faf5,stroke:#187574
     classDef pdrv fill:#dedaff,stroke:#6631d7
     classDef hw fill:#ffd8f4,stroke:#af3fb9
-    style S1 fill:#fdf3e7,stroke:#9b4a07
-    style S2 fill:#fffbe2,stroke:#af7e02
-    style S4 fill:#f0f7e2,stroke:#608520
-    style PICO fill:#e4fbf8,stroke:#187574
 
-    subgraph S1["1. 스마트홈 센서"]
-        DOOR["Door"]:::sensor
-        PIR["PIR"]:::sensor
-        TH["온습도"]:::sensor
-    end
-
-    subgraph S2["2. Raspberry Pi"]
-        Z2M["Zigbee2MQTT"]:::pi
-        LM["Local Mosquitto :1883"]:::pi
-        TR["Translator"]:::pi
-        MB["Mosquitto Bridge"]:::pi
-    end
-
-    EM["3. EC2 Mosquitto :8883"]:::ec2
-    BE["Backend"]:::ec2
-    JR["Jetson AI Chat / Robot"]:::jetson
-
-    subgraph S4["4. Jetson"]
-        subgraph ROS["ROS 2"]
-            NAV["Nav2"]:::jetson --> CMD["/cmd_vel"]:::jetson
+    subgraph R1[" "]
+        direction LR
+        subgraph S1["1. 스마트홈 센서"]
+            DOOR["Door"]:::sensor
+            PIR["PIR"]:::sensor
+            TH["온습도"]:::sensor
         end
-        subgraph CHAT["AI Chat"]
-            STT["STT / LLM"]:::jetson --> TTS["TTS"]:::jetson
+        subgraph S2["2. Raspberry Pi"]
+            Z2M["Zigbee2MQTT"]:::pi
+            LM["Local Mosquitto :1883"]:::pi
+            TR["Translator"]:::pi
+            MB["Mosquitto Bridge"]:::pi
         end
-        subgraph VIS["Vision"]
-            YOLO["YOLO"]:::jetson --> BT["ByteTrack"]:::jetson
-        end
+        EM["3. EC2 Mosquitto :8883"]:::ec2
+        BE["Backend"]:::ec2
+        JR["Jetson AI Chat / Robot"]:::jetson
+
+        DOOR --> S2
+        PIR --> S2
+        TH --> S2
+        S2 -->|"MQTT over TLS"| EM
+        EM --> BE
+        EM --> JR
     end
 
-    PD["pico_driver"]:::pdrv
+    subgraph R2[" "]
+        direction LR
+        subgraph S4["4. Jetson"]
+            subgraph ROS["ROS 2"]
+                NAV["Nav2"]:::jetson --> CMD["/cmd_vel"]:::jetson
+            end
+            subgraph CHAT["AI Chat"]
+                STT["STT / LLM"]:::jetson --> TTS["TTS"]:::jetson
+            end
+            subgraph VIS["Vision"]
+                YOLO["YOLO"]:::jetson --> BT["ByteTrack"]:::jetson
+            end
+        end
+        PD["pico_driver"]:::pdrv
+        subgraph PICO["Pico"]
+            ENC["Encoder"]:::pico ---|"PI 제어"| IMU["IMU"]:::pico
+        end
+        MDD["MDD10A"]:::hw
+        MOT["4개 Motor"]:::hw
 
-    subgraph PICO["Pico"]
-        ENC["Encoder"]:::pico ---|"PI 제어"| IMU["IMU"]:::pico
+        CMD --> PD
+        PD -->|"USB Serial"| PICO
+        PICO -->|"PWM / DIR"| MDD
+        MDD --> MOT
     end
 
-    MDD["MDD10A"]:::hw
-    MOT["4개 Motor"]:::hw
+    JR ==>|"MQTT Command / Event"| S4
 
-    DOOR --> S2
-    PIR --> S2
-    TH --> S2
-    S2 -->|"MQTT over TLS"| EM
-    EM --> BE
-    EM --> JR
-    JR -->|"MQTT Command / Event"| S4
-    CMD --> PD
-    PD -->|"USB Serial"| PICO
-    PICO -->|"PWM / DIR"| MDD
-    MDD --> MOT
+    style R1 fill:transparent,stroke:transparent
+    style R2 fill:transparent,stroke:transparent
 ```
 
 - **MQTT**: 센서·로봇 이벤트와 명령·결과. 기계 간 통신의 단일 통로입니다.
