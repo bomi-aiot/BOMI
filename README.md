@@ -64,26 +64,54 @@ https://github.com/user-attachments/assets/b3370b72-ec84-431c-820e-700f7dc8fc24
 
 현관문이 열리면 이를 감지하고, 먼저 마중 나갑니다.
 
-| 귀가 시나리오 한눈 요약 |
-| :---: |
-| <img src="docs/assets/귀가 시나리오.png" width="420" alt="현관 센서 감지부터 로봇 이동과 AI 음성 응답까지 이어지는 BOMI 귀가 시나리오 구조도"> |
-
-아래는 현관 인사의 처리 순서입니다. 이동과 대화는 순차로 진행됩니다. 로봇이 현관에 도착한
-뒤 백엔드가 대화 시작을 명령하며, 출발 시점의 안내 발화 한 건만 예외입니다.
-
 ```mermaid
-flowchart LR
-    accTitle: 귀가 시나리오 흐름
-    accDescr: 문 열림 이벤트가 백엔드에 도착하면 로봇이 현관으로 이동하고, 도착 결과를 받은 백엔드가 대화 시작을 명령해 귀가 인사가 오간 뒤 기본 위치로 복귀합니다.
-    classDef step fill:#fff6b6,stroke:#af7e02
-    classDef done fill:#adf0c7,stroke:#087429
-    DO["문 열림<br/>(현관 센서)"]:::step --> BE["백엔드<br/>귀가 시나리오 시작"]:::step
-    BE -->|"NAVIGATE ENTRANCE"| MV["로봇, 현관으로 이동"]:::step
-    MV -->|"ARRIVED"| ST["START_CONVERSATION"]:::step
-    ST --> TALK["귀가 인사 대화<br/>(최대 5분)"]:::step
-    TALK --> RET["기본 위치 복귀"]:::step
-    RET --> DONE["기록 후 COMPLETED"]:::done
+flowchart TB
+    accTitle: 귀가 시나리오 — 센서부터 로봇 이동·음성 응답까지
+    accDescr: 문 열림 이벤트 하나가 이동 흐름 15단계와 대화 흐름 5단계로 갈라져 전체 시스템을 지나는 구조. 원본 인포그래픽과 동일한 구성입니다.
+    classDef door fill:#ffffff,stroke:#2b6cb8
+    classDef move fill:#eef4fd,stroke:#2b6cb8
+    classDef chat fill:#eaf6ec,stroke:#2f8a4c
+    classDef badge fill:#c6dcff,stroke:#305bab
+
+    DO["문 열림"]:::door
+
+    subgraph MOVE["🤖 이동 흐름"]
+        direction TB
+        M1["1. 문 열림"]:::move --> M2["2. DOOR_OPENED"]:::move
+        M2 --> M3["3. Pi Translator"]:::move --> M4["4. Pi Mosquitto"]:::move
+        M4 --> M5["5. Bridge"]:::move --> M6["6. EC2 Mosquitto"]:::move
+        M6 --> M7["7. Backend"]:::move --> M8["8. NAVIGATE(ENTRANCE)"]:::move
+        M8 --> M9["9. Jetson"]:::move --> M10["10. Nav2"]:::move
+        M10 --> M11["11. /cmd_vel"]:::move --> M12["12. Pico"]:::move
+        M12 --> M13["13. MDD10A"]:::move --> M14["14. Motor"]:::move
+        M14 --> M15["15. 현관 이동"]:::move
+    end
+
+    subgraph TALK["💬 대화 흐름"]
+        direction TB
+        C1["1. DOOR_OPENED"]:::chat --> C2["2. Jetson AI Chat"]:::chat
+        C2 --> C3["3. 귀가 대화 시나리오"]:::chat
+        C3 --> C4["4. STT / Gemini / TTS"]:::chat --> C5["5. Speaker"]:::chat
+    end
+
+    BADGE(("동시에<br/>진행")):::badge
+
+    DO --> MOVE
+    DO --> TALK
+    MOVE -.- BADGE -.- TALK
+
+    style MOVE fill:#f7fafd,stroke:#2b6cb8
+    style TALK fill:#f4faf5,stroke:#2f8a4c
 ```
+
+**핵심 이해 포인트**
+
+1. 센서 이벤트가 MQTT를 통해 서버와 로봇으로 전달됨
+2. 로봇은 Nav2 경로 계획을 통해 현관으로 이동함
+3. 동시에 AI Chat이 귀가 음성 응답을 수행함
+
+> 그림의 "동시에 진행"은 출발 시점의 안내 발화에 해당합니다. 귀가 인사 본대화는
+> 로봇이 현관에 도착한 뒤 백엔드의 `START_CONVERSATION` 명령으로 시작됩니다.
 
 메시지 단위의 정확한 시퀀스는 [아키텍처 장표 모음](<docs/architecture/아키텍처 다이어그램.md>)의 C2에,
 현관 인사의 실패 규칙 10개는 [귀가 환영 시나리오](<docs/scenario/귀가 환영 시나리오.md>)에 있습니다.
