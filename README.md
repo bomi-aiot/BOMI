@@ -144,13 +144,17 @@ https://github.com/user-attachments/assets/a54a09e6-0212-4bef-98c5-98af125e09f9
 flowchart LR
     accTitle: 돌봄 로봇 전체 시스템 구조
     accDescr: 스마트홈 센서, Raspberry Pi, EC2, Jetson Robot, 구동 하드웨어로 이어지는 전체 구조. 원본 인포그래픽과 동일한 구성입니다.
-    classDef sensor fill:#e8f1fd,stroke:#2b6cb8
-    classDef pi fill:#eaf6ec,stroke:#2f8a4c
-    classDef ec2 fill:#e8f1fd,stroke:#2b6cb8
-    classDef jetson fill:#eaf6ec,stroke:#2f8a4c
-    classDef pico fill:#e6f4f2,stroke:#1f7a6d
-    classDef pdrv fill:#f1ecfa,stroke:#6b46c1
-    classDef hw fill:#e8f1fd,stroke:#2b6cb8
+    classDef sensor fill:#f8d3af,stroke:#9b4a07
+    classDef pi fill:#fff6b6,stroke:#af7e02
+    classDef ec2 fill:#c6dcff,stroke:#305bab
+    classDef jetson fill:#dbfaad,stroke:#608520
+    classDef pico fill:#c3faf5,stroke:#187574
+    classDef pdrv fill:#dedaff,stroke:#6631d7
+    classDef hw fill:#ffd8f4,stroke:#af3fb9
+    style S1 fill:#fdf3e7,stroke:#9b4a07
+    style S2 fill:#fffbe2,stroke:#af7e02
+    style S4 fill:#f0f7e2,stroke:#608520
+    style PICO fill:#e4fbf8,stroke:#187574
 
     subgraph S1["1. 스마트홈 센서"]
         DOOR["Door"]:::sensor
