@@ -72,8 +72,10 @@ flowchart TB
     classDef move fill:#eef4fd,stroke:#2b6cb8
     classDef chat fill:#eaf6ec,stroke:#2f8a4c
     classDef badge fill:#c6dcff,stroke:#305bab
+    classDef invis fill:transparent,stroke:transparent,color:transparent
 
     DO["문 열림"]:::door
+    SP["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"]:::invis
 
     subgraph MOVE["🤖 이동 흐름"]
         direction LR
@@ -106,6 +108,7 @@ flowchart TB
 
     DO --> MOVE
     DO --> TALK
+    SP ~~~ MOVE
     MOVE ~~~ TALK
 
     style MOVE fill:#f7fafd,stroke:#2b6cb8
