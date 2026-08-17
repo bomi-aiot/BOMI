@@ -15,18 +15,23 @@ CSV 를 직접 고치지 마십시오 — 다음 내보내기에서 덮어씁니
 
 ```mermaid
 flowchart LR
-    FW["Flyway V*.sql<br/>진짜 스키마"]
-    XL["BOMI_컬럼정의서.xlsx<br/>의미·주의·예시"]
-    CSV["snapshots/*.csv<br/>리뷰용 사본"]
-    ERD["mvp-erd.md<br/>관계·설계 근거"]
-    VAL{{"validate-column-definition.py"}}
+    FW["Flyway V*.sql<br/>진짜 스키마"]:::backend
+    XL["BOMI_컬럼정의서.xlsx<br/>의미·주의·예시"]:::data
+    CSV["snapshots/*.csv<br/>리뷰용 사본"]:::data
+    ERD["mvp-erd.md<br/>관계·설계 근거"]:::data
+    VAL{{"validate-column-definition.py"}}:::tool
 
     XL -->|export 스크립트| CSV
     FW --> VAL
     XL --> VAL
     CSV --> VAL
     ERD --> VAL
-    VAL -->|"불일치 1건이라도 → exit 1"| STOP(["커밋 금지"])
+    VAL -->|"불일치 1건이라도 → exit 1"| STOP(["커밋 금지"]):::danger
+
+    classDef backend fill:#c6dcff,stroke:#305bab
+    classDef data fill:#e7e7e7,stroke:#595959
+    classDef tool fill:#fff6b6,stroke:#af7e02
+    classDef danger fill:#ffc6c6,stroke:#bd0909
 ```
 
 화살표가 `Flyway → 검증기` 한 방향인 것이 핵심입니다 — 문서가 스키마를 바꾸지 못하고,

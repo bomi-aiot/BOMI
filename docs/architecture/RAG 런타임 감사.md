@@ -52,31 +52,39 @@ Prometheus 시계열에는 접근하지 않았으므로 운영 트래픽의 사�
 
 ```mermaid
 flowchart TB
-    START(["턴 시작"]) --> R{"route_ingress"}
-    R -->|"어르신 발화"| NI["note_interaction"]
-    R -->|"능동 제안"| PG["proactive_gate"]
-    R -->|"현관 센서"| DE["door_event"]
-    R -->|"백엔드 START_CONVERSATION"| BC["backend_command"]
+    classDef term fill:#adf0c7,stroke:#087429
+    classDef gate fill:#fff6b6,stroke:#af7e02
+    classDef robot fill:#dbfaad,stroke:#608520
+    classDef be fill:#c6dcff,stroke:#305bab
+    classDef sensor fill:#f8d3af,stroke:#9b4a07
+    classDef safety fill:#ffc6c6,stroke:#bd0909
+    classDef hw fill:#c3faf5,stroke:#187574
 
-    DE --> E1(["END — 사실만 반영"])
-    PG -->|"침묵 선택"| E2(["END"])
-    NI -->|"맞장구뿐"| E3(["END"])
+    START(["턴 시작"]):::term --> R{"route_ingress"}:::gate
+    R -->|"어르신 발화"| NI["note_interaction"]:::robot
+    R -->|"능동 제안"| PG["proactive_gate"]:::gate
+    R -->|"현관 센서"| DE["door_event"]:::sensor
+    R -->|"백엔드 START_CONVERSATION"| BC["backend_command"]:::be
 
-    NI --> ST["safety_triage"]
-    ST -->|"T1 응급"| ESC["escalation"]
-    ST -->|"확인 필요"| SC["safety_confirm"]
-    ST -->|"비응급"| CI["classify_intent"]
+    DE --> E1(["END — 사실만 반영"]):::term
+    PG -->|"침묵 선택"| E2(["END"]):::term
+    NI -->|"맞장구뿐"| E3(["END"]):::term
+
+    NI --> ST["safety_triage"]:::safety
+    ST -->|"T1 응급"| ESC["escalation"]:::safety
+    ST -->|"확인 필요"| SC["safety_confirm"]:::safety
+    ST -->|"비응급"| CI["classify_intent"]:::gate
     PG --> CI
     BC --> CI
 
-    CI --> CR["context_read<br/>RAG 는 여기 하나뿐"]
-    CR --> H["인텐트별 handle 노드"]
-    ESC --> RS["response_shaper"]
+    CI --> CR["context_read<br/>RAG 는 여기 하나뿐"]:::be
+    CR --> H["인텐트별 handle 노드"]:::robot
+    ESC --> RS["response_shaper"]:::robot
     SC --> RS
     H --> RS
-    RS --> EM["emit — 스피커로"]
-    EM --> MW["memory_write — 대화 적재"]
-    MW --> E4(["END"])
+    RS --> EM["emit — 스피커로"]:::hw
+    EM --> MW["memory_write — 대화 적재"]:::be
+    MW --> E4(["END"]):::term
 ```
 
 응급 T1(`escalation`)과 확인 응답(`safety_confirm`)이 `classify_intent`·`context_read`를
@@ -91,25 +99,43 @@ flowchart TB
 
 ```mermaid
 flowchart LR
-    A["사용자 발화 / STT"] --> B["LangGraph safety_triage"]
-    B -->|"비응급"| C["classify_intent (로컬 규칙)"]
-    B -->|"T1"| X["확인·긴급 응답"]
-    C --> D["context_read"]
-    D --> E["BackendContextClient POST /conversation-context"]
-    E --> F["Spring ConversationContextService"]
-    F --> G["PostgreSQL 권위 후보 선필터"]
-    G --> H["query embedding 1회 (조건부)"]
-    H --> I["Qdrant memory + conversation_summary"]
-    I --> J["권위 후보 안에서만 재정렬"]
-    F --> K["번들 복지 코퍼스 (info만)"]
-    J --> L["retrieval 실제 결과 + 기억·요약"]
-    K --> L
-    L --> M["로봇 RetrievalStatus + 프롬프트"]
-    M --> N["LLM handler"]
-    N --> O["response_shaper"]
-    O --> P["emit / TTS dispatch"]
-    P --> Q["memory_write / 대화 적재"]
-    Q --> R["백그라운드 사실 추출·요약·재색인"]
+    classDef robot fill:#dbfaad,stroke:#608520
+    classDef gate fill:#fff6b6,stroke:#af7e02
+    classDef be fill:#c6dcff,stroke:#305bab
+    classDef data fill:#e7e7e7,stroke:#595959
+    classDef safety fill:#ffc6c6,stroke:#bd0909
+    classDef hw fill:#c3faf5,stroke:#187574
+
+    subgraph ROBOT_IN["로봇 — 턴 진입"]
+        direction TB
+        A["사용자 발화 / STT"]:::robot --> B["LangGraph safety_triage"]:::safety
+        B -->|"비응급"| C["classify_intent (로컬 규칙)"]:::gate
+        B -->|"T1"| X["확인·긴급 응답"]:::safety
+        C --> D["context_read"]:::be
+    end
+
+    subgraph BE_RAG["백엔드 — 검색 한 번"]
+        direction TB
+        E["BackendContextClient POST /conversation-context"]:::be --> F["Spring ConversationContextService"]:::be
+        F --> G["PostgreSQL 권위 후보 선필터"]:::data
+        G --> H["query embedding 1회 (조건부)"]:::be
+        H --> I["Qdrant memory + conversation_summary"]:::data
+        I --> J["권위 후보 안에서만 재정렬"]:::be
+        F --> K["번들 복지 코퍼스 (info만)"]:::data
+        J --> L["retrieval 실제 결과 + 기억·요약"]:::be
+        K --> L
+    end
+
+    subgraph ROBOT_OUT["로봇 — 응답과 기록"]
+        direction TB
+        M["로봇 RetrievalStatus + 프롬프트"]:::robot --> N["LLM handler"]:::robot
+        N --> O["response_shaper"]:::robot
+        O --> P["emit / TTS dispatch"]:::hw
+        P --> Q["memory_write / 대화 적재"]:::be
+        Q --> R["백그라운드 사실 추출·요약·재색인"]:::data
+    end
+
+    ROBOT_IN --> BE_RAG --> ROBOT_OUT
 ```
 
 핵심 순서는 `classify_intent -> context_read`다. 이전 순서는 정보 의도를 알기 전에
@@ -175,16 +201,23 @@ PostgreSQL의 허용 후보 집합에 없으면 최종 문맥에 들어오지 �
 
 ```mermaid
 flowchart LR
-    Q["어르신 발화"] --> V["가시성 결정<br/>requesterGuardianId 로 visibility 집합"]
-    V --> P["PostgreSQL findRetrievable<br/>senior + ACTIVE + REJECTED 제외 + visibility IN"]
-    P --> C[["권위 후보 집합<br/>허용된 id 들"]]
-    C --> QD["Qdrant 검색<br/>limit = topK 곱하기 3"]
-    QD --> HIT["hit — id 와 score 만"]
-    C --> F{"hit.id 가 권위 후보 안인가"}
+    classDef robot fill:#dbfaad,stroke:#608520
+    classDef be fill:#c6dcff,stroke:#305bab
+    classDef data fill:#e7e7e7,stroke:#595959
+    classDef gate fill:#fff6b6,stroke:#af7e02
+    classDef reject fill:#ffc6c6,stroke:#bd0909
+    classDef ok fill:#adf0c7,stroke:#087429
+
+    Q["어르신 발화"]:::robot --> V["가시성 결정<br/>requesterGuardianId 로 visibility 집합"]:::be
+    V --> P["PostgreSQL findRetrievable<br/>senior + ACTIVE + REJECTED 제외 + visibility IN"]:::data
+    P --> C[["권위 후보 집합<br/>허용된 id 들"]]:::data
+    C --> QD["Qdrant 검색<br/>limit = topK 곱하기 3"]:::data
+    QD --> HIT["hit — id 와 score 만"]:::data
+    C --> F{"hit.id 가 권위 후보 안인가"}:::gate
     HIT --> F
-    F -->|"예"| S["유사도를 점수에 반영"]
-    F -->|"아니오"| D(["버린다"])
-    S --> RANK["최종 순위"]
+    F -->|"예"| S["유사도를 점수에 반영"]:::be
+    F -->|"아니오"| D(["버린다"]):::reject
+    S --> RANK["최종 순위"]:::ok
     C --> RANK
 ```
 

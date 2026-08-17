@@ -12,16 +12,23 @@ OpenAPI와 AsyncAPI의 브라우저 렌더링용 스펙 파일은 Spring Boot �
 
 ```mermaid
 graph LR
+    classDef robot fill:#dbfaad,stroke:#608520
+    classDef be fill:#c6dcff,stroke:#305bab
+    classDef fe fill:#dedaff,stroke:#6631d7
+    classDef iot fill:#f8d3af,stroke:#9b4a07
+    classDef op fill:#fff6b6,stroke:#af7e02
+    classDef ext fill:#e7e7e7,stroke:#595959
+
     subgraph 로봇["젯슨 (한 대)"]
-        AC["ai_chat<br/>대화·웨이크워드"]
-        AV["ai_vision<br/>사람 추적"]
-        BR["bridge<br/>MQTT ↔ Nav2"]
+        AC["ai_chat<br/>대화·웨이크워드"]:::robot
+        AV["ai_vision<br/>사람 추적"]:::robot
+        BR["bridge<br/>MQTT ↔ Nav2"]:::robot
     end
-    SAAS["외부 SaaS<br/>Typecast · VITO · Gemini"]
-    FE["가디언웹 (SPA)"]
-    OP["운영자 도구"]
-    IOT["IoT 파이<br/>문·온습도"]
-    BE["Spring Boot<br/>i15e102.p.ssafy.io"]
+    SAAS["외부 SaaS<br/>Typecast · VITO · Gemini"]:::ext
+    FE["가디언웹 (SPA)"]:::fe
+    OP["운영자 도구"]:::op
+    IOT["IoT 파이<br/>문·온습도"]:::iot
+    BE["Spring Boot<br/>i15e102.p.ssafy.io"]:::be
 
     AC -->|"REST + X-Robot-Shared-Secret<br/>[BE-Robot]"| BE
     FE -->|"REST 무인증<br/>[BE-Guardian]"| BE
@@ -133,13 +140,18 @@ MQTT와 WebSocket은 HTTP가 아니라 브라우저에서 발행·구독 시험�
 
 ```mermaid
 flowchart TD
-    A["로봇이 멈췄다 / 시나리오가 안 끝난다"] --> B["GET runtime-state<br/>mode와 활성 시나리오 확인"]
-    B --> C{"활성 시나리오가 있는가"}
-    C -->|있음| D["POST active-scenario-cancellations<br/>시나리오 종료 · mode → SAFE_STOP<br/>주행 중이면 MQTT CANCEL 발행"]
+    classDef danger fill:#ffc6c6,stroke:#bd0909
+    classDef api fill:#c6dcff,stroke:#305bab
+    classDef check fill:#fff6b6,stroke:#af7e02
+    classDef ok fill:#adf0c7,stroke:#087429
+
+    A["로봇이 멈췄다 / 시나리오가 안 끝난다"]:::danger --> B["GET runtime-state<br/>mode와 활성 시나리오 확인"]:::api
+    B --> C{"활성 시나리오가 있는가"}:::check
+    C -->|있음| D["POST active-scenario-cancellations<br/>시나리오 종료 · mode → SAFE_STOP<br/>주행 중이면 MQTT CANCEL 발행"]:::danger
     C -->|"없고 mode가 SAFE_STOP"| E
-    D --> F["현장에서 로봇이 실제로 멈춘 것을 눈으로 확인"]
-    F --> E["POST mode-recoveries<br/>physicalSafetyConfirmed=true<br/>mode → IDLE · MQTT 발행 없음"]
-    E --> G["다음 시나리오 시작 가능"]
+    D --> F["현장에서 로봇이 실제로 멈춘 것을 눈으로 확인"]:::check
+    F --> E["POST mode-recoveries<br/>physicalSafetyConfirmed=true<br/>mode → IDLE · MQTT 발행 없음"]:::ok
+    E --> G["다음 시나리오 시작 가능"]:::ok
 ```
 
 | 엔드포인트 | 하는 일 | mode 변화 | MQTT |
