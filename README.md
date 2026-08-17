@@ -142,16 +142,25 @@ https://github.com/user-attachments/assets/15367ec8-7c80-41e5-96aa-a899e60192fe
 ### 응급 상황 발생 시 보호자 알림
 https://github.com/user-attachments/assets/a54a09e6-0212-4bef-98c5-98af125e09f9
 
-<img width="480" alt="Image" src="https://github.com/user-attachments/assets/2acac68b-442d-43b1-b0fe-b74bbd74da5e" />
-
-응급 상황을 감지하면 보호자에게 알림을 전송합니다.
+<table>
+<tr>
+<td><img src="https://github.com/user-attachments/assets/2acac68b-442d-43b1-b0fe-b74bbd74da5e" width="480" alt="보호자 대시보드의 응급 알림 화면"></td>
+<td>응급 상황을 감지하면 보호자에게 알림을 전송합니다.</td>
+</tr>
+</table>
 
 ## 💻 웹 페이지 화면
 
-| 대시보드 | 확인·기록 |
-| :---: | :---: |
-| <img src="https://github.com/user-attachments/assets/294e53c3-7643-4c71-96bc-85c538ecf5e0" width="480" alt="보호자 대시보드 화면"> | <img src="https://github.com/user-attachments/assets/b1f36a12-81bf-4c78-96fb-e6b3c8cf0aed" width="480" alt="보호자 대시보드 화면"> |
-| <img src="https://github.com/user-attachments/assets/3f0939c0-007d-4fc4-9302-fa4ae95093f6" width="480" alt="보호자 대시보드 화면"> | <img src="https://github.com/user-attachments/assets/367a71ac-aa71-4e4c-a724-db22f61faa1e" width="480" alt="보호자 대시보드 화면"> |
+<table>
+<tr>
+<td><img src="https://github.com/user-attachments/assets/294e53c3-7643-4c71-96bc-85c538ecf5e0" width="480" alt="보호자 대시보드 화면"></td>
+<td><img src="https://github.com/user-attachments/assets/b1f36a12-81bf-4c78-96fb-e6b3c8cf0aed" width="480" alt="보호자 대시보드 화면"></td>
+</tr>
+<tr>
+<td><img src="https://github.com/user-attachments/assets/3f0939c0-007d-4fc4-9302-fa4ae95093f6" width="480" alt="보호자 대시보드 화면"></td>
+<td><img src="https://github.com/user-attachments/assets/367a71ac-aa71-4e4c-a724-db22f61faa1e" width="480" alt="보호자 대시보드 화면"></td>
+</tr>
+</table>
 
 화면 구성은 다음과 같습니다. 데이터는 백엔드 REST를 1초 주기로 폴링해 갱신합니다.
 
