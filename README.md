@@ -142,10 +142,10 @@ https://github.com/user-attachments/assets/15367ec8-7c80-41e5-96aa-a899e60192fe
 ### 응급 상황 발생 시 보호자 알림
 https://github.com/user-attachments/assets/a54a09e6-0212-4bef-98c5-98af125e09f9
 
-<table>
+<table width="100%">
 <tr>
-<td><img src="https://github.com/user-attachments/assets/2acac68b-442d-43b1-b0fe-b74bbd74da5e" width="480" alt="보호자 대시보드의 응급 알림 화면"></td>
-<td>응급 상황을 감지하면 보호자에게 알림을 전송합니다.</td>
+<td width="50%"><img src="https://github.com/user-attachments/assets/2acac68b-442d-43b1-b0fe-b74bbd74da5e" width="100%" alt="보호자 대시보드의 응급 알림 화면"></td>
+<td width="50%">응급 상황을 감지하면 보호자에게 알림을 전송합니다.</td>
 </tr>
 </table>
 
