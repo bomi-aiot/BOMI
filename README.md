@@ -329,27 +329,24 @@ Backend·Frontend·MQTT 브로커만 해당됩니다. 젯슨과 라즈베리파�
 
 ## 📚 문서
 
-문서 전체 목록과 읽기 순서는 [docs 문서 안내](docs/README.md)에 있습니다.
-주요 진입점은 다음과 같습니다.
+전체 안내와 읽기 순서는 [docs 문서 안내](docs/README.md)에 있습니다.
 
-| 궁금한 것 | 문서 |
-| --- | --- |
-| 전체 구조를 그림으로 | [시스템 개요](<docs/architecture/시스템 개요.md>) · [아키텍처 다이어그램](<docs/architecture/아키텍처 다이어그램.md>) |
-| 메시지·API 계약 | [시나리오 계약 v1](<docs/mqtt/시나리오 계약 v1.md>) · [토픽 규약](<docs/mqtt/토픽 규약.md>) · [API·메시지 계약](docs/api/README.md) |
-| 데이터 모델 | [MVP 데이터 모델](docs/database/mvp-erd.md) · [데이터베이스](docs/database/README.md) |
-| 대화 런타임 이해 | [코드 읽는 순서](<docs/carebot/코드 읽는 순서.md>) · [개념과 설계 판단](<docs/carebot/개념과 설계 판단.md>) · [현재 구조 감사](<docs/natural-conversation/현재 구조 감사.md>) |
-| 지금 어디까지 됐나 | [진행 상황](<docs/carebot/진행 상황.md>) · [구현 계획](<docs/natural-conversation/구현 계획.md>) |
-| 실기·시연 절차 | [실기 통합 가이드](<docs/scenario/실기 통합 가이드.md>) · [하드웨어 구성](docs/hardware/README.md) · [exec/](exec/01-build-deploy.md) |
-| 라인별 안내 | [Frontend](frontend/README.md) · [Backend](backend/README.md) · [Robot](robot/README.md) · [IoT](iot/README.md) |
+- **docs/architecture/** — [시스템 개요](<docs/architecture/시스템 개요.md>) · [아키텍처 다이어그램](<docs/architecture/아키텍처 다이어그램.md>) · [RAG 런타임 감사](<docs/architecture/RAG 런타임 감사.md>)
+- **docs/mqtt/** — [시나리오 계약 v1](<docs/mqtt/시나리오 계약 v1.md>) · [토픽 규약](<docs/mqtt/토픽 규약.md>) · [MQTT 계약 쉽게 이해하기](<docs/mqtt/MQTT 계약 쉽게 이해하기.md>)
+- **docs/scenario/** — [귀가 환영 시나리오](<docs/scenario/귀가 환영 시나리오.md>) · [실기 통합 가이드](<docs/scenario/실기 통합 가이드.md>) · [운영자 시나리오 취소](<docs/scenario/운영자 시나리오 취소.md>) · [로컬 E2E 검증 보고](<docs/scenario/로컬 E2E 검증 보고.md>)
+- **docs/database/** — [MVP 데이터 모델](docs/database/mvp-erd.md) · [데이터베이스](docs/database/README.md) · [Flyway 가이드](<docs/database/Flyway 가이드.md>) · [온보딩 환경 설계](<docs/database/온보딩 환경 설계.md>) · [질문 세트 v1](docs/database/onboarding-question-set-v1.json) · [컬럼정의서 안내](docs/database/column-definition/README.md)
+- **docs/carebot/** — [진행 상황](<docs/carebot/진행 상황.md>) · [코드 읽는 순서](<docs/carebot/코드 읽는 순서.md>) · [개념과 설계 판단](<docs/carebot/개념과 설계 판단.md>) · [대조표](<docs/carebot/대조표.md>) · [검증 절차](<docs/carebot/검증 절차.md>) · [개인화 로컬 점검](<docs/carebot/개인화 로컬 점검.html>)
+- **docs/natural-conversation/** — [현재 구조 감사](<docs/natural-conversation/현재 구조 감사.md>) · [구현 계획](<docs/natural-conversation/구현 계획.md>) · [목표 구조](<docs/natural-conversation/목표 구조.md>)
+- **docs/hardware/** — [하드웨어 구성](docs/hardware/README.md) · [오디오 에코 바지인 검증](<docs/hardware/오디오 에코 바지인 검증.md>)
+- **docs/design/** — [돌봄봇 설계](<docs/design/돌봄봇 설계.md>)
+- **docs/api/** — [API·메시지 계약](docs/api/README.md)
+- **docs/meeting/** — [회의록 규약](docs/meeting/README.md)
+- **exec/** — [빌드·배포](exec/01-build-deploy.md) · [외부 서비스](exec/02-external-services.md) · [DB 덤프](exec/03-database-dump.md) · [시연 시나리오](exec/04-demo-scenario.md)
+- **라인별 README** — [Frontend](frontend/README.md) · [Backend](backend/README.md) · [Robot](robot/README.md) · [IoT](iot/README.md)
 
 운영 배포에는 브라우저에서 여는 도구 세 가지가 함께 올라가며, 셋 다 Nginx Basic 인증 뒤에
 있습니다 — 운영자 콘솔 `/operator-console/`, DB 뷰어 `/db-viewer/`, 웨이포인트 편집기
 `/waypoint-editor/`. API 문서 진입점은 `/docs/`(Swagger UI와 MQTT AsyncAPI)입니다.
-
-<!-- ## 팀
-| 이름 | 담당 라인 | 주요 기여 |
-| --- | --- | --- |
-팀원 정보를 채운 뒤 이 주석을 해제하세요. -->
 
 ## 🤝 협업 규칙
 
