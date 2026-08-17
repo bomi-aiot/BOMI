@@ -250,7 +250,7 @@ flowchart TB
         MDD --> MOT
     end
 
-    JR ==>|"MQTT Command / Event"| S4
+    R1 ==>|"MQTT Command / Event"| R2
 
     style R1 fill:transparent,stroke:transparent
     style R2 fill:transparent,stroke:transparent
