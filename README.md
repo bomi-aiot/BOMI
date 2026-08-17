@@ -67,7 +67,7 @@ https://github.com/user-attachments/assets/b3370b72-ec84-431c-820e-700f7dc8fc24
 ```mermaid
 flowchart TB
     accTitle: 귀가 시나리오 — 센서부터 로봇 이동·음성 응답까지
-    accDescr: 문 열림 이벤트 하나가 이동 흐름 15단계와 대화 흐름 5단계로 갈라져 전체 시스템을 지나는 구조. 원본 인포그래픽과 동일한 구성입니다. 두 흐름이 좌우로 나란히, 단계는 세로로 진행합니다.
+    accDescr: 문 열림 이벤트가 이동 흐름 15단계와 대화 흐름 5단계로 갈라지는 구조. 이동 흐름은 세 기둥으로 접어 가로 폭을 채웠습니다.
     classDef door fill:#ffffff,stroke:#2b6cb8
     classDef move fill:#eef4fd,stroke:#2b6cb8
     classDef chat fill:#eaf6ec,stroke:#2f8a4c
@@ -76,31 +76,42 @@ flowchart TB
     DO["문 열림"]:::door
 
     subgraph MOVE["🤖 이동 흐름"]
-        direction TB
-        M1["1. 문 열림"]:::move --> M2["2. DOOR_OPENED"]:::move
-        M2 --> M3["3. Pi Translator"]:::move --> M4["4. Pi Mosquitto"]:::move
-        M4 --> M5["5. Bridge"]:::move --> M6["6. EC2 Mosquitto"]:::move
-        M6 --> M7["7. Backend"]:::move --> M8["8. NAVIGATE(ENTRANCE)"]:::move
-        M8 --> M9["9. Jetson"]:::move --> M10["10. Nav2"]:::move
-        M10 --> M11["11. /cmd_vel"]:::move --> M12["12. Pico"]:::move
-        M12 --> M13["13. MDD10A"]:::move --> M14["14. Motor"]:::move
-        M14 --> M15["15. 현관 이동"]:::move
+        direction LR
+        subgraph MA["센서 → 클라우드"]
+            direction TB
+            M1["1. 문 열림"]:::move --> M2["2. DOOR_OPENED"]:::move
+            M2 --> M3["3. Pi Translator"]:::move --> M4["4. Pi Mosquitto"]:::move
+            M4 --> M5["5. Bridge"]:::move --> M6["6. EC2 Mosquitto"]:::move
+        end
+        subgraph MB["명령 → 경로 계획"]
+            direction TB
+            M7["7. Backend"]:::move --> M8["8. NAVIGATE(ENTRANCE)"]:::move
+            M8 --> M9["9. Jetson"]:::move --> M10["10. Nav2"]:::move
+            M10 --> M11["11. /cmd_vel"]:::move
+        end
+        subgraph MC["구동 → 도착"]
+            direction TB
+            M12["12. Pico"]:::move --> M13["13. MDD10A"]:::move
+            M13 --> M14["14. Motor"]:::move --> M15["15. 현관 이동"]:::move
+        end
+        MA --> MB --> MC
     end
 
-    subgraph TALK["💬 대화 흐름"]
-        direction TB
+    subgraph TALK["💬 대화 흐름 — 이동과 동시에 진행"]
+        direction LR
         C1["1. DOOR_OPENED"]:::chat --> C2["2. Jetson AI Chat"]:::chat
         C2 --> C3["3. 귀가 대화 시나리오"]:::chat
         C3 --> C4["4. STT / Gemini / TTS"]:::chat --> C5["5. Speaker"]:::chat
     end
 
-    BADGE(("동시에<br/>진행")):::badge
-
     DO --> MOVE
     DO --> TALK
-    MOVE -.- BADGE -.- TALK
+    MOVE ~~~ TALK
 
     style MOVE fill:#f7fafd,stroke:#2b6cb8
+    style MA fill:#ffffff,stroke:#9db8d9
+    style MB fill:#ffffff,stroke:#9db8d9
+    style MC fill:#ffffff,stroke:#9db8d9
     style TALK fill:#f4faf5,stroke:#2f8a4c
 ```
 
