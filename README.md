@@ -65,9 +65,9 @@ https://github.com/user-attachments/assets/b3370b72-ec84-431c-820e-700f7dc8fc24
 현관문이 열리면 이를 감지하고, 먼저 마중 나갑니다.
 
 ```mermaid
-flowchart TB
+flowchart LR
     accTitle: 귀가 시나리오 — 센서부터 로봇 이동·음성 응답까지
-    accDescr: 문 열림 이벤트 하나가 이동 흐름 15단계와 대화 흐름 5단계로 갈라져 전체 시스템을 지나는 구조. 원본 인포그래픽과 동일한 구성입니다.
+    accDescr: 문 열림 이벤트 하나가 이동 흐름 15단계와 대화 흐름 5단계로 갈라져 전체 시스템을 지나는 구조. 원본 인포그래픽과 동일한 구성이며 가로로 배치했습니다.
     classDef door fill:#ffffff,stroke:#2b6cb8
     classDef move fill:#eef4fd,stroke:#2b6cb8
     classDef chat fill:#eaf6ec,stroke:#2f8a4c
@@ -76,7 +76,7 @@ flowchart TB
     DO["문 열림"]:::door
 
     subgraph MOVE["🤖 이동 흐름"]
-        direction TB
+        direction LR
         M1["1. 문 열림"]:::move --> M2["2. DOOR_OPENED"]:::move
         M2 --> M3["3. Pi Translator"]:::move --> M4["4. Pi Mosquitto"]:::move
         M4 --> M5["5. Bridge"]:::move --> M6["6. EC2 Mosquitto"]:::move
@@ -88,7 +88,7 @@ flowchart TB
     end
 
     subgraph TALK["💬 대화 흐름"]
-        direction TB
+        direction LR
         C1["1. DOOR_OPENED"]:::chat --> C2["2. Jetson AI Chat"]:::chat
         C2 --> C3["3. 귀가 대화 시나리오"]:::chat
         C3 --> C4["4. STT / Gemini / TTS"]:::chat --> C5["5. Speaker"]:::chat
