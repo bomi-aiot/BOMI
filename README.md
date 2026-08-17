@@ -65,17 +65,15 @@ https://github.com/user-attachments/assets/b3370b72-ec84-431c-820e-700f7dc8fc24
 현관문이 열리면 이를 감지하고, 먼저 마중 나갑니다.
 
 ```mermaid
-flowchart TB
+flowchart LR
     accTitle: 귀가 시나리오 — 센서부터 로봇 이동·음성 응답까지
-    accDescr: 문 열림 이벤트가 이동 흐름 15단계와 대화 흐름 5단계로 갈라지는 구조. 이동 흐름은 세 기둥으로 접어 가로 폭을 채웠습니다.
+    accDescr: 왼쪽의 문 열림 이벤트가 오른쪽의 이동 흐름 15단계와 대화 흐름 5단계로 갈라지는 구조. 두 흐름은 위아래로 배치됩니다.
     classDef door fill:#ffffff,stroke:#2b6cb8
     classDef move fill:#eef4fd,stroke:#2b6cb8
     classDef chat fill:#eaf6ec,stroke:#2f8a4c
     classDef badge fill:#c6dcff,stroke:#305bab
-    classDef invis fill:transparent,stroke:transparent,color:transparent
 
     DO["문 열림"]:::door
-    SP["&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"]:::invis
 
     subgraph MOVE["🤖 이동 흐름"]
         direction LR
@@ -108,8 +106,6 @@ flowchart TB
 
     DO --> MOVE
     DO --> TALK
-    SP ~~~ MOVE
-    MOVE ~~~ TALK
 
     style MOVE fill:#f7fafd,stroke:#2b6cb8
     style MA fill:#ffffff,stroke:#9db8d9
