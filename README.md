@@ -142,37 +142,65 @@ https://github.com/user-attachments/assets/a54a09e6-0212-4bef-98c5-98af125e09f9
 
 ```mermaid
 flowchart LR
-    accTitle: BOMI 시스템 구성
-    accDescr: 라즈베리파이 센서가 MQTT 브로커로 이벤트를 올리면 EC2 백엔드가 시나리오를 만들어 젯슨의 브릿지와 대화 AI에 명령을 내리고, 결과는 같은 브로커로 회신됩니다. 보호자 대시보드는 백엔드 REST를 1초 주기로 폴링합니다.
+    accTitle: 돌봄 로봇 전체 시스템 구조
+    accDescr: 스마트홈 센서, Raspberry Pi, EC2, Jetson Robot, 구동 하드웨어로 이어지는 전체 구조. 원본 인포그래픽과 동일한 구성입니다.
+    classDef sensor fill:#e8f1fd,stroke:#2b6cb8
+    classDef pi fill:#eaf6ec,stroke:#2f8a4c
+    classDef ec2 fill:#e8f1fd,stroke:#2b6cb8
+    classDef jetson fill:#eaf6ec,stroke:#2f8a4c
+    classDef pico fill:#e6f4f2,stroke:#1f7a6d
+    classDef pdrv fill:#f1ecfa,stroke:#6b46c1
+    classDef hw fill:#e8f1fd,stroke:#2b6cb8
 
-    subgraph PI["라즈베리파이 — 수동 배포"]
-        IOT["Zigbee 문열림 · DHT11 온습도"]
-    end
-    BROKER["MQTT 브로커<br/>TLS 8883 · QoS 1"]
-    subgraph EC2["EC2 — Jenkins 자동 배포"]
-        BE["Spring Boot 백엔드"]
-        FE["React 대시보드"]
-        PG[("PostgreSQL 17")]
-        QD[("Qdrant<br/>기본 비활성")]
-    end
-    subgraph JET["젯슨 — 수동 배포"]
-        AI["ai_chat<br/>웨이크워드·대화·TTS"]
-        BR["bridge<br/>MQTT ↔ Nav2"]
-        VI["ai_vision<br/>사람 탐지"]
-        CORE["core<br/>주행·모터 제어"]
+    subgraph S1["1. 스마트홈 센서"]
+        DOOR["Door"]:::sensor
+        PIR["PIR"]:::sensor
+        TH["온습도"]:::sensor
     end
 
-    IOT -->|"센서 이벤트"| BROKER
-    BROKER <-->|"이벤트 수신 · 명령 발행"| BE
-    BROKER -->|"NAVIGATE · FOLLOW"| BR
-    BROKER <-->|"대화 명령·결과"| AI
-    AI -->|"REST 기록·조회"| BE
-    AI -->|"UDP 5006 — 소리 방향"| CORE
-    VI -->|"UDP 5005 — 사람 좌표"| CORE
-    BR -->|"주행 지시"| CORE
-    FE -->|"REST 1초 폴링"| BE
-    BE --> PG
-    BE -.->|"기본 꺼짐"| QD
+    subgraph S2["2. Raspberry Pi"]
+        Z2M["Zigbee2MQTT"]:::pi
+        LM["Local Mosquitto :1883"]:::pi
+        TR["Translator"]:::pi
+        MB["Mosquitto Bridge"]:::pi
+    end
+
+    EM["3. EC2 Mosquitto :8883"]:::ec2
+    BE["Backend"]:::ec2
+    JR["Jetson AI Chat / Robot"]:::jetson
+
+    subgraph S4["4. Jetson"]
+        subgraph ROS["ROS 2"]
+            NAV["Nav2"]:::jetson --> CMD["/cmd_vel"]:::jetson
+        end
+        subgraph CHAT["AI Chat"]
+            STT["STT / LLM"]:::jetson --> TTS["TTS"]:::jetson
+        end
+        subgraph VIS["Vision"]
+            YOLO["YOLO"]:::jetson --> BT["ByteTrack"]:::jetson
+        end
+    end
+
+    PD["pico_driver"]:::pdrv
+
+    subgraph PICO["Pico"]
+        ENC["Encoder"]:::pico ---|"PI 제어"| IMU["IMU"]:::pico
+    end
+
+    MDD["MDD10A"]:::hw
+    MOT["4개 Motor"]:::hw
+
+    DOOR --> S2
+    PIR --> S2
+    TH --> S2
+    S2 -->|"MQTT over TLS"| EM
+    EM --> BE
+    EM --> JR
+    JR -->|"MQTT Command / Event"| S4
+    CMD --> PD
+    PD -->|"USB Serial"| PICO
+    PICO -->|"PWM / DIR"| MDD
+    MDD --> MOT
 ```
 
 - **MQTT**: 센서·로봇 이벤트와 명령·결과. 기계 간 통신의 단일 통로입니다.
