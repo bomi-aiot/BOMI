@@ -409,8 +409,8 @@ Backend·Frontend·MQTT 브로커만 해당됩니다. 젯슨과 라즈베리파�
 <table align="center">
   <tr>
     <td align="center" width="200">
-      <a href="https://github.com/ehdrbs327">
-        <img src="https://github.com/ehdrbs327.png" width="100" height="100"><br>
+      <a href="https://github.com/K00-yjyj">
+        <img src="https://github.com/K00-yjyj.png" width="100" height="100"><br>
         <b>구윤지</b>
       </a>
       <br>
