@@ -4,7 +4,39 @@
 
 BOMI는 1인 가구와 돌봄이 필요한 사용자의 일상을 지원하는 **AIoT 기반 개인 맞춤형 돌봄 로봇**입니다. 주거 공간의 센서와 이동형 로봇, 대화형 AI, 보호자 대시보드를 연결해 사용자의 상태를 살피고 일상 기록과 이상 징후를 보호자에게 전달합니다.
 
-## 📑 목차
+## ✨ 프로젝트 한눈에 보기
+
+| 구분 | 내용 |
+| --- | --- |
+| 개발 기간 | 2026.07.06 ~ 2026.08.14 |
+| 개발 인원 | 7명 |
+| 주요 사용자 | 혼자 생활하는 어르신과 보호자 |
+| 핵심 경험 | 생활 신호 감지 → 사용자에게 이동 → 대화 → 기록·보호자 알림 |
+| 구성 | 스마트홈 센서 · 이동형 로봇 · AI 음성 대화 · 보호자 웹 대시보드 |
+
+### 핵심 기능
+
+- **선제적 돌봄**: 현관문과 온습도 등 생활 신호를 감지해 사용자가 먼저 요청하지 않아도 안부를 묻습니다.
+- **사용자 중심 이동**: 자율주행과 사람 탐지·추적을 결합해 필요한 장소나 사용자에게 이동합니다.
+- **개인화 음성 대화**: 웨이크워드, STT, LLM, TTS를 연결해 대화하고 필요한 내용을 기록합니다.
+- **일상 관리**: 복약 시간과 환경 변화를 안내하고 귀가·대화·돌봄 기록을 남깁니다.
+- **보호자 연계**: 대시보드에서 로봇과 재실 상태, 복약·일정·돌봄 기록을 확인하고 이상 징후 알림을 받습니다.
+
+### BOMI의 차별점
+
+기존 AI 스피커가 사용자의 호출을 기다리고 고정형 센서가 상태 감지에 머무는 것과 달리,
+BOMI는 집 안의 생활 신호를 행동의 계기로 사용합니다. 센서 이벤트가 발생하면 상황에 맞는
+시나리오를 생성하고, 로봇이 사용자에게 이동해 먼저 말을 건 뒤 결과를 기록하고 보호자에게
+전달합니다.
+
+| 구분 | AI 스피커 | 고정형 생활 센서 | BOMI |
+| --- | :---: | :---: | :---: |
+| 사용자에게 이동 | — | — | O |
+| 먼저 대화 시작 | 제한적 | — | O |
+| 생활 신호와 행동 연계 | 제한적 | 감지 중심 | 감지 → 이동 → 대화 |
+| 보호자에게 돌봄 기록 제공 | 제한적 | 센서 기록 중심 | 대화·복약·일정·돌봄 기록 |
+
+## 📑 상세 목차
 
 1. [🤖 로봇 외형](#-로봇-외형)
 2. [💡 왜 만들었나](#-왜-만들었나)
@@ -24,9 +56,19 @@ BOMI는 1인 가구와 돌봄이 필요한 사용자의 일상을 지원하는 *
 
 | 외형 없는 내부 구조 | 외형 적용 모습 |
 | :---: | :---: |
-| <img src="docs/assets/보미 로봇 내부.png" width="600" alt="LiDAR, 카메라, Jetson, 모터 구동부가 보이는 BOMI 내부 구조"> | <img src="docs/assets/보미 로봇 외형.png" width="420" alt="분홍색 캐릭터 외형을 적용한 BOMI 돌봄 로봇"> |
+| <img src="docs/assets/보미 로봇 내부.png" width="600" alt="LiDAR, 카메라, Jetson, 모터 구동부가 보이는 BOMI 내부 구조"> | <img src="docs/assets/보미 로봇 외형 실제.png" width="420" alt="분홍색 캐릭터 외형과 전면 디스플레이를 적용한 실제 BOMI 돌봄 로봇"> |
 
 외형 내부는 전원·구동, 연산·I/O, 카메라·마이크, LiDAR의 4단 구조로 구성되며, 외형을 적용한 상태에서도 상단 LiDAR와 전면 카메라가 주변 환경과 사용자를 인식합니다.
+
+### 상태 디스플레이
+
+<p align="center">
+  <img src="docs/assets/display/bomi-display-states.png" width="800" alt="대기, 이동, 따라가기, 듣기, 생각, 말하기, 연결 오류 상태를 표시하는 BOMI 전면 디스플레이">
+</p>
+
+전면 디스플레이는 PySide6 기반 전체 화면 UI로, 대기·이동·추종·음성 대화·오류 등 로봇의
+현재 상태를 사용자가 한눈에 알 수 있도록 보여 줍니다. 위 이미지는 실제 디스플레이 UI 코드를
+800×480 해상도로 렌더링해 상태별 화면을 모은 것입니다.
 
 ## 💡 왜 만들었나
 
@@ -164,12 +206,12 @@ https://github.com/user-attachments/assets/a54a09e6-0212-4bef-98c5-98af125e09f9
 
 <table>
 <tr>
-<td><img src="https://github.com/user-attachments/assets/294e53c3-7643-4c71-96bc-85c538ecf5e0" width="480" alt="보호자 대시보드 화면"></td>
-<td><img src="https://github.com/user-attachments/assets/b1f36a12-81bf-4c78-96fb-e6b3c8cf0aed" width="480" alt="보호자 대시보드 화면"></td>
+<td align="center"><img src="https://github.com/user-attachments/assets/294e53c3-7643-4c71-96bc-85c538ecf5e0" width="480" alt="BOMI 서비스 소개와 3D 로봇을 보여주는 랜딩 화면"><br><sub><b>서비스 소개 및 3D 로봇 랜딩</b></sub></td>
+<td align="center"><img src="https://github.com/user-attachments/assets/b1f36a12-81bf-4c78-96fb-e6b3c8cf0aed" width="480" alt="웨이크워드 호출부터 이동과 대화까지의 동작 방식을 설명하는 화면"><br><sub><b>웨이크워드 호출부터 대화까지</b></sub></td>
 </tr>
 <tr>
-<td><img src="https://github.com/user-attachments/assets/3f0939c0-007d-4fc4-9302-fa4ae95093f6" width="480" alt="보호자 대시보드 화면"></td>
-<td><img src="https://github.com/user-attachments/assets/367a71ac-aa71-4e4c-a724-db22f61faa1e" width="480" alt="보호자 대시보드 화면"></td>
+<td align="center"><img src="https://github.com/user-attachments/assets/3f0939c0-007d-4fc4-9302-fa4ae95093f6" width="480" alt="호출, 귀가, 복약, 환경 변화에 대응하는 네 가지 돌봄 시나리오 소개 화면"><br><sub><b>호출·귀가·복약·환경 돌봄 시나리오</b></sub></td>
+<td align="center"><img src="https://github.com/user-attachments/assets/367a71ac-aa71-4e4c-a724-db22f61faa1e" width="480" alt="LiDAR, 카메라, 온습도·문열림 센서, 마이크·스피커의 역할을 소개하는 화면"><br><sub><b>로봇과 주거 공간의 센서 구성</b></sub></td>
 </tr>
 </table>
 
@@ -400,9 +442,13 @@ Backend·Frontend·MQTT 브로커만 해당됩니다. 젯슨과 라즈베리파�
 
 ## 👥 팀
 
+BOMI는 **7인 팀 프로젝트**로, AI·Backend·Frontend·Robot·IoT·Infra 영역을 나누어
+개발하고 실제 하드웨어와 서비스가 하나의 시나리오로 동작하도록 통합했습니다.
+
 <p align="center">
   <img src="docs/assets/팀 사진.jpg" width="760" alt="BOMI 팀원 일곱 명과 로봇 보미">
 </p>
+
 
 <!-- 이름·담당 라인·주요 기여 표를 팀이 채워 넣을 자리입니다. -->
 
@@ -490,5 +536,6 @@ Backend·Frontend·MQTT 브로커만 해당됩니다. 젯슨과 라즈베리파�
 
 ## 📜 이용 조건
 
-본 저장소는 SSAFY(삼성 청년 SW·AI 아카데미) 15기 프로젝트 산출물입니다. 별도의 오픈소스
-라이선스를 부여하지 않았으며, 코드와 문서의 사용은 팀 및 SSAFY 규정을 따릅니다.
+본 저장소는 SSAFY(삼성 청년 SW·AI 아카데미) 15기 프로젝트 산출물입니다. 라이선스 정책은
+아직 확정되지 않았으며, 확정 전까지 코드와 문서의 사용은 팀 및 SSAFY 규정을 따릅니다.
+저장소의 공개만으로 자유로운 사용·수정·재배포를 허용하는 것은 아닙니다.
