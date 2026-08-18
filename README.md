@@ -414,7 +414,7 @@ Backend·Frontend·MQTT 브로커만 해당됩니다. 젯슨과 라즈베리파�
         <b>구윤지</b>
       </a>
       <br>
-      <sub>Robot</sub>
+      <sub>Vision AI</sub>
     </td>
     <td align="center" width="200">
       <a href="https://github.com/Seol-Munhyeok">
