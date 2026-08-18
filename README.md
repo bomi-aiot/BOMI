@@ -449,6 +449,76 @@ BOMI는 **7인 팀 프로젝트**로, AI·Backend·Frontend·Robot·IoT·Infra �
   <img src="docs/assets/팀 사진.jpg" width="760" alt="BOMI 팀원 일곱 명과 로봇 보미">
 </p>
 
+
+<!-- 이름·담당 라인·주요 기여 표를 팀이 채워 넣을 자리입니다. -->
+
+<table align="center">
+  <tr>
+    <td align="center" width="200">
+      <a href="https://github.com/K00-yjyj">
+        <img src="https://github.com/K00-yjyj.png" width="100" height="100"><br>
+        <b>구윤지</b>
+      </a>
+      <br>
+      <sub>Vision AI</sub>
+    </td>
+    <td align="center" width="200">
+      <a href="https://github.com/Seol-Munhyeok">
+        <img src="https://github.com/Seol-Munhyeok.png" width="100" height="100"><br>
+        <b>설문혁</b>
+      </a>
+      <br>
+      <sub>Backend · Infra · Frontend</sub>
+    </td>
+    <td align="center" width="200">
+      <a href="https://github.com/thisis-joe">
+        <img src="https://github.com/thisis-joe.png" width="100" height="100"><br>
+        <b>우동균</b>
+      </a>
+      <br>
+      <sub>Backend · Chat AI</sub>
+    </td>
+    <td align="center" width="200">
+      <a href="https://github.com/masihe">
+        <img src="https://github.com/masihe.png" width="100" height="100"><br>
+        <b>김용석</b>
+      </a>
+      <br>
+      <sub>Vision AI</sub>
+    </td>
+  </tr>
+</table>
+
+<!-- 앞줄 : 왼쪽 → 오른쪽 -->
+<table align="center">
+  <tr>
+    <td align="center" width="200">
+      <a href="https://github.com/sherry-107">
+        <img src="https://github.com/sherry-107.png" width="100" height="100"><br>
+        <b>차서영</b>
+      </a>
+      <br>
+      <sub>Chat AI</sub>
+    </td>
+    <td align="center" width="200">
+      <a href="https://github.com/givesilverstick">
+        <img src="https://github.com/givesilverstick.png" width="100" height="100"><br>
+        <b>조은채</b>
+      </a>
+      <br>
+      <sub>Robot</sub>
+    </td>
+    <td align="center" width="200">
+      <a href="https://github.com/hyeonnkang">
+        <img src="https://github.com/hyeonnkang.png" width="100" height="100"><br>
+        <b>강현</b>
+      </a>
+      <br>
+      <sub>Robot</sub>
+    </td>
+  </tr>
+</table>
+
 ## 🤝 협업 규칙
 
 - `main`: 시연·배포 가능한 안정 버전
